@@ -26,10 +26,13 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,10 +67,12 @@ import java.time.Instant
 @Composable
 fun GradesScreen(
     repository: CampusRepository,
-    onNavigateToImporter: () -> Unit
+    onNavigateToImporter: () -> Unit,
+    resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
@@ -76,6 +81,17 @@ fun GradesScreen(
     var selectedCategoryFilter by remember { mutableStateOf<CourseCategory?>(null) }
     var trendMetricIndex by remember { mutableIntStateOf(0) }
     var showTrendSection by remember { mutableStateOf(false) }
+    var showSimulatorSection by remember { mutableStateOf(false) }
+    var simulatedNewCredits by remember { mutableFloatStateOf(22f) }
+    var simulatedNewGpa by remember { mutableFloatStateOf(3.8f) }
+
+    LaunchedEffect(resetTrigger) {
+        if (resetTrigger > 0) {
+            scrollState.animateScrollTo(0)
+            selectedTermFilter = null
+            selectedCategoryFilter = null
+        }
+    }
 
     val availableTerms = remember(attempts) {
         attempts.map { it.termId }.distinct().sortedDescending()
@@ -148,7 +164,7 @@ fun GradesScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -213,7 +229,11 @@ fun GradesScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        XPeachStatusBadge(text = gpaReport.primarySourceType.badgeLabel)
+                        XPeachFilterPill(
+                            label = if (showSimulatorSection) "收起模拟" else "绩点模拟",
+                            selected = showSimulatorSection,
+                            onClick = { showSimulatorSection = !showSimulatorSection }
+                        )
                         if (gpaReport.termTrends.isNotEmpty()) {
                             XPeachFilterPill(
                                 label = if (showTrendSection) "收起走势" else "走势分析",
@@ -248,6 +268,55 @@ fun GradesScreen(
                             label = "已修总学分",
                             value = if (privacyMasked) "∗∗.∗" else gpaReport.totalEarnedCredits.toPlainString(),
                             modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // 目标绩点与新修学分模拟器
+                if (showSimulatorSection) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val baseCredits = gpaReport.gpaIncludedCredits.toFloat().coerceAtLeast(0f)
+                    val baseGpa = gpaReport.cumulativeGpa?.toFloat() ?: 3.2f
+                    val totalSimCredits = (baseCredits + simulatedNewCredits).coerceAtLeast(1f)
+                    val projectedGpa = ((baseCredits * baseGpa) + (simulatedNewCredits * simulatedNewGpa)) / totalSimCredits
+
+                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "预计新修后总 GPA",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Text(
+                                text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "未来计划新修学分：${simulatedNewCredits.toInt()} 学分",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = simulatedNewCredits,
+                            onValueChange = { simulatedNewCredits = it },
+                            valueRange = 2f..60f
+                        )
+                        Text(
+                            text = "预计新修课程均绩：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = simulatedNewGpa,
+                            onValueChange = { simulatedNewGpa = it },
+                            valueRange = 2.0f..4.5f
                         )
                     }
                 }

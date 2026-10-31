@@ -9,16 +9,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,16 +33,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,15 +54,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarViewWeek
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,18 +70,26 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -98,6 +115,8 @@ import cn.edu.haut.campus.feature.timetable.TimetableScreen
 import cn.edu.haut.campus.feature.today.TodayScreen
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 enum class PrimaryBottomTab(
     val route: String,
@@ -107,7 +126,8 @@ enum class PrimaryBottomTab(
     TODAY("today", "今天", Icons.Default.Schedule),
     TIMETABLE("timetable", "课表", Icons.Default.CalendarViewWeek),
     GRADES("grades", "学业", Icons.Default.Assessment),
-    CAMPUS("map", "校园", Icons.Default.Map)
+    CAMPUS("map", "校园", Icons.Default.Map),
+    PROFILE("profile", "我的", Icons.Default.Person)
 }
 
 class MainActivity : ComponentActivity() {
@@ -177,6 +197,10 @@ fun HautCampusRootApp(
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
     var overlayScreen by rememberSaveable { mutableStateOf<String?>(null) }
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var tabResetCounter by remember { mutableIntStateOf(0) }
+
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
 
     BackHandler(enabled = overlayScreen != null || currentTab != PrimaryBottomTab.TODAY) {
         if (overlayScreen != null) {
@@ -205,12 +229,6 @@ fun HautCampusRootApp(
                 onBack = { overlayScreen = null }
             )
         }
-        overlayScreen == "settings" -> {
-            SettingsScreen(
-                repository = repository,
-                onBack = { overlayScreen = null }
-            )
-        }
         !prefs.hasCompletedOnboarding -> {
             OnboardingWelcomeScreen(
                 repository = repository,
@@ -223,8 +241,15 @@ fun HautCampusRootApp(
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    when (currentTab) {
+                AnimatedContent(
+                    targetState = currentTab,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(130))
+                    },
+                    label = "mainTabTransition",
+                    modifier = Modifier.fillMaxSize()
+                ) { targetTab ->
+                    when (targetTab) {
                         PrimaryBottomTab.TODAY -> TodayScreen(
                             repository = repository,
                             onNavigateToMapWithRoom = { room ->
@@ -232,7 +257,8 @@ fun HautCampusRootApp(
                                 currentTab = PrimaryBottomTab.CAMPUS
                             },
                             onNavigateToImporter = { overlayScreen = "importer" },
-                            onNavigateToSettings = { overlayScreen = "settings" }
+                            onNavigateToSettings = { currentTab = PrimaryBottomTab.PROFILE },
+                            resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
                         )
                         PrimaryBottomTab.TIMETABLE -> TimetableScreen(
                             repository = repository,
@@ -240,24 +266,50 @@ fun HautCampusRootApp(
                             onNavigateToMapWithRoom = { room ->
                                 mapRoomQuery = room
                                 currentTab = PrimaryBottomTab.CAMPUS
-                            }
+                            },
+                            resetTrigger = if (currentTab == PrimaryBottomTab.TIMETABLE) tabResetCounter else 0
                         )
                         PrimaryBottomTab.GRADES -> GradesScreen(
                             repository = repository,
-                            onNavigateToImporter = { overlayScreen = "importer" }
+                            onNavigateToImporter = { overlayScreen = "importer" },
+                            resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
                         )
                         PrimaryBottomTab.CAMPUS -> CampusMapScreen(
                             repository = repository,
-                            initialClassroomQuery = mapRoomQuery
+                            initialClassroomQuery = mapRoomQuery,
+                            resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
+                        )
+                        PrimaryBottomTab.PROFILE -> SettingsScreen(
+                            repository = repository,
+                            onBack = null,
+                            onNavigateToImporter = { overlayScreen = "importer" },
+                            onNavigateToMapWithRoom = { room ->
+                                mapRoomQuery = room
+                                currentTab = PrimaryBottomTab.CAMPUS
+                            },
+                            resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
                         )
                     }
                 }
 
-                XPeachBottomDock(
-                    currentTab = currentTab,
-                    onSelectTab = { currentTab = it },
+                // 软键盘弹出时自动收起底部悬浮椭圆导航栏，避免挤压输入区域
+                AnimatedVisibility(
+                    visible = !isImeVisible,
+                    enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it },
+                    exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it },
                     modifier = Modifier.align(Alignment.BottomCenter)
-                )
+                ) {
+                    XPeachBottomDock(
+                        currentTab = currentTab,
+                        onSelectTab = { clicked ->
+                            if (currentTab == clicked) {
+                                tabResetCounter++
+                            } else {
+                                currentTab = clicked
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -552,7 +604,10 @@ private fun OnboardingWelcomeScreen(
 }
 
 /**
- * Apple 风格悬浮椭圆胶囊底栏 + 弹簧物理动画滑动椭圆选中框
+ * Apple Liquid Glass 风格悬浮椭圆胶囊导航栏：
+ * - 支持手指按住连续左右拖拽滑动选框（Pan Scrubbing）与单击切换
+ * - 跨 Tab 位移时根据速度动态产生水平液态拉伸与垂直回弹形变（Velocity Stretch & Squish）
+ * - 线性马达触觉反馈（Haptics）+ 斜向高光折射边框 + 底部柔和渐隐遮罩（Bottom Scrim）
  */
 @Composable
 private fun XPeachBottomDock(
@@ -562,64 +617,178 @@ private fun XPeachBottomDock(
 ) {
     val tabs = PrimaryBottomTab.entries
     val selectedIndex = tabs.indexOf(currentTab).coerceAtLeast(0)
+    val haptic = LocalHapticFeedback.current
+    val latestOnSelectTab by rememberUpdatedState(onSelectTab)
+    val latestCurrentTab by rememberUpdatedState(currentTab)
+
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    var isPressing by remember { mutableStateOf(false) }
+
+    val targetFraction = dragFraction ?: selectedIndex.toFloat()
+    val animatedFraction by animateFloatAsState(
+        targetValue = targetFraction,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = 400f
+        ),
+        label = "liquidOvalFraction"
+    )
+
+    // 根据目标位置与当前动画位置的瞬时差值计算液态弹性拉伸系数
+    val travelDelta = abs(targetFraction - animatedFraction)
+    val pillScaleX by animateFloatAsState(
+        targetValue = 1f + (travelDelta * 0.28f).coerceAtMost(0.24f) + (if (isPressing) 0.05f else 0f),
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+        label = "pillScaleX"
+    )
+    val pillScaleY by animateFloatAsState(
+        targetValue = 1f - (travelDelta * 0.09f).coerceAtMost(0.09f) + (if (isPressing) 0.03f else 0f),
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+        label = "pillScaleY"
+    )
+
+    val bgColor = MaterialTheme.colorScheme.background
+    val specularRimBrush = Brush.linearGradient(
+        colors = listOf(
+            Color.White.copy(alpha = 0.75f),
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+        ),
+        start = Offset(0f, 0f),
+        end = Offset(800f, 220f)
+    )
 
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        bgColor.copy(alpha = 0.58f),
+                        bgColor.copy(alpha = 0.88f)
+                    )
+                )
+            )
             .navigationBarsPadding()
-            .padding(horizontal = 28.dp, vertical = 12.dp),
+            .padding(horizontal = 22.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             modifier = Modifier
+                .widthIn(max = 368.dp)
                 .fillMaxWidth()
                 .height(62.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-            tonalElevation = 3.dp,
-            shadowElevation = 14.dp,
-            border = BorderStroke(
-                width = 0.8.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
-            )
+            tonalElevation = 4.dp,
+            shadowElevation = 16.dp,
+            border = BorderStroke(width = 1.dp, brush = specularRimBrush)
         ) {
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 5.dp, vertical = 5.dp)
+                    .pointerInput(tabs.size) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            isPressing = true
+                            val totalWidthPx = size.width.toFloat().coerceAtLeast(1f)
+                            val slotWidthPx = totalWidthPx / tabs.size
+
+                            var lastTriggeredIndex = (down.position.x / slotWidthPx)
+                                .toInt()
+                                .coerceIn(0, tabs.lastIndex)
+                            var hasDragged = false
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                val moveDx = abs(change.position.x - down.position.x)
+                                if (moveDx > viewConfiguration.touchSlop * 0.45f) {
+                                    hasDragged = true
+                                }
+                                if (hasDragged) {
+                                    change.consume()
+                                    val rawFraction = ((change.position.x / slotWidthPx) - 0.5f)
+                                        .coerceIn(0f, (tabs.size - 1).toFloat())
+                                    dragFraction = rawFraction
+                                    val hoveredIndex = rawFraction.roundToInt().coerceIn(0, tabs.lastIndex)
+                                    if (hoveredIndex != lastTriggeredIndex) {
+                                        lastTriggeredIndex = hoveredIndex
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        latestOnSelectTab(tabs[hoveredIndex])
+                                    }
+                                }
+                            }
+
+                            isPressing = false
+                            if (hasDragged) {
+                                val finalIndex = (dragFraction ?: selectedIndex.toFloat())
+                                    .roundToInt()
+                                    .coerceIn(0, tabs.lastIndex)
+                                dragFraction = null
+                                if (tabs[finalIndex] != latestCurrentTab) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    latestOnSelectTab(tabs[finalIndex])
+                                }
+                            } else {
+                                dragFraction = null
+                                val tappedIndex = (down.position.x / slotWidthPx)
+                                    .toInt()
+                                    .coerceIn(0, tabs.lastIndex)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                latestOnSelectTab(tabs[tappedIndex])
+                            }
+                        }
+                    }
             ) {
                 val tabWidth = maxWidth / tabs.size
-                val indicatorOffset by animateDpAsState(
-                    targetValue = tabWidth * selectedIndex,
-                    animationSpec = spring(
-                        dampingRatio = 0.75f,
-                        stiffness = 380f
-                    ),
-                    label = "dynamicOvalOffset"
-                )
+                val indicatorOffset = tabWidth * animatedFraction
 
-                // 动态滑动椭圆选中胶囊（随 Tab 切换弹性平滑位移）
+                // 动态液态椭圆选中框（支持跟手连续位移 + 速度弹性拉伸 + 高光内描边）
                 Box(
                     modifier = Modifier
                         .offset(x = indicatorOffset)
                         .width(tabWidth)
                         .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = pillScaleX
+                            scaleY = pillScaleY
+                        }
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.88f))
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f)
+                                )
+                            )
+                        )
                         .border(
-                            width = 0.8.dp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                            width = 0.9.dp,
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.36f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                )
+                            ),
                             shape = CircleShape
                         )
                 )
 
-                // 4 个导航项
+                // 5 个导航项（今天 / 课表 / 学业 / 校园 / 我的）
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    for (tab in tabs) {
-                        val selected = currentTab == tab
+                    tabs.forEachIndexed { index, tab ->
+                        val distance = abs(animatedFraction - index)
+                        val selected = distance < 0.5f
                         val contentColor by animateColorAsState(
                             targetValue = if (selected) {
                                 MaterialTheme.colorScheme.primary
@@ -630,9 +799,9 @@ private fun XPeachBottomDock(
                             label = "tabColor"
                         )
                         val itemScale by animateFloatAsState(
-                            targetValue = if (selected) 1.05f else 0.96f,
+                            targetValue = if (selected) 1.06f else 0.95f,
                             animationSpec = spring(
-                                dampingRatio = 0.68f,
+                                dampingRatio = 0.65f,
                                 stiffness = 420f
                             ),
                             label = "tabScale"
@@ -642,12 +811,6 @@ private fun XPeachBottomDock(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .clip(CircleShape)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = { onSelectTab(tab) }
-                                )
                                 .graphicsLayer {
                                     scaleX = itemScale
                                     scaleY = itemScale

@@ -287,6 +287,14 @@ class CampusRepository private constructor(
         dao.upsertOccurrenceOverride(override.toEntity())
     }
 
+    suspend fun saveCalendarOverride(override: CalendarOverride) {
+        dao.upsertCalendarOverrides(listOf(override.toEntity()))
+    }
+
+    suspend fun deleteCalendarOverride(id: String) {
+        dao.deleteCalendarOverrideById(id)
+    }
+
     suspend fun confirmBuildingAliasForRoom(rawRoom: String, buildingId: String) {
         val alias = BuildingAlias(
             id = "al_user_${rawRoom.hashCode()}",

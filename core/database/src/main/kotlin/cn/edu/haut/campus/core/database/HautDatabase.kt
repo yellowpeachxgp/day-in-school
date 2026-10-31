@@ -47,6 +47,9 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCalendarOverrides(items: List<CalendarOverrideEntity>)
 
+    @Query("DELETE FROM calendar_overrides WHERE id = :id")
+    suspend fun deleteCalendarOverrideById(id: String)
+
     @Query("SELECT * FROM courses")
     fun observeCourses(): Flow<List<CourseEntity>>
 

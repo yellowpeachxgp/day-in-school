@@ -90,11 +90,13 @@ fun TodayScreen(
     repository: CampusRepository,
     onNavigateToMapWithRoom: (String) -> Unit,
     onNavigateToImporter: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
     val term by repository.currentTermFlow.collectAsState(initial = null)
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
@@ -126,6 +128,13 @@ fun TodayScreen(
 
     val effectiveScale = prefs.timelineZoomScale.coerceIn(1.1f, 2.2f)
     val todayDate = currentNow.toLocalDate()
+
+    LaunchedEffect(resetTrigger) {
+        if (resetTrigger > 0) {
+            selectedDate = todayDate
+            scrollState.animateScrollTo(0)
+        }
+    }
 
     val snapshot = remember(
         selectedDate,
@@ -223,7 +232,7 @@ fun TodayScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {

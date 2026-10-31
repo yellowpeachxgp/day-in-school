@@ -77,7 +77,8 @@ private val PERIOD_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 fun TimetableScreen(
     repository: CampusRepository,
     onNavigateToImporter: () -> Unit,
-    onNavigateToMapWithRoom: (String) -> Unit
+    onNavigateToMapWithRoom: (String) -> Unit,
+    resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -98,6 +99,11 @@ fun TimetableScreen(
     var selectedWeek by remember { mutableIntStateOf(currentActualWeek) }
     LaunchedEffect(currentActualWeek) {
         selectedWeek = currentActualWeek
+    }
+    LaunchedEffect(resetTrigger) {
+        if (resetTrigger > 0) {
+            selectedWeek = currentActualWeek
+        }
     }
 
     var editingOccurrence by remember { mutableStateOf<ClassOccurrence?>(null) }

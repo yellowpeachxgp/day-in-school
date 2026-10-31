@@ -197,7 +197,8 @@ private object CampusTileCache {
 @Composable
 fun CampusMapScreen(
     repository: CampusRepository,
-    initialClassroomQuery: String? = null
+    initialClassroomQuery: String? = null,
+    resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -259,6 +260,25 @@ fun CampusMapScreen(
     var mapCenterLatGcj by remember { mutableStateOf(defaultCenterGcj.first) }
     var mapCenterLonGcj by remember { mutableStateOf(defaultCenterGcj.second) }
     var mapZoom by remember { mutableFloatStateOf(16.2f) }
+
+    LaunchedEffect(resetTrigger) {
+        if (resetTrigger > 0) {
+            expandRouteSteps = false
+            if (userLocation?.isInsideLianhuajieCampus == true) {
+                val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                    userLocation!!.latitude,
+                    userLocation!!.longitude
+                )
+                mapCenterLatGcj = glat
+                mapCenterLonGcj = glon
+                mapZoom = 16.6f
+            } else {
+                mapCenterLatGcj = defaultCenterGcj.first
+                mapCenterLonGcj = defaultCenterGcj.second
+                mapZoom = 16.2f
+            }
+        }
+    }
 
     LaunchedEffect(resolution, buildings) {
         if (resolution?.building != null) {
@@ -325,6 +345,9 @@ fun CampusMapScreen(
                 mapCenterLatGcj = newLat
                 mapCenterLonGcj = newLon
                 mapZoom = newZoom
+                if (expandRouteSteps) {
+                    expandRouteSteps = false
+                }
             },
             onSelectBuilding = { clicked ->
                 selectedBuilding = clicked
