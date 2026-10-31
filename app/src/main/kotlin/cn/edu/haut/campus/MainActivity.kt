@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -55,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private var deepLinkRoomQuery by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         extractWidgetIntent(intent)
         val repository = CampusRepository.getInstance(applicationContext)
@@ -74,7 +77,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            HautCampusTheme {
+            HautCampusTheme(dynamicColor = prefs.useDynamicColor) {
                 HautCampusRootApp(
                     repository = repository,
                     externalTabRequest = deepLinkTab,
@@ -114,6 +117,15 @@ fun HautCampusRootApp(
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
     var overlayScreen by rememberSaveable { mutableStateOf<String?>(null) } // "importer" or "settings"
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Android 14/15/16 预测式返回手势（Predictive Back Gesture）状态回退支持
+    BackHandler(enabled = overlayScreen != null || currentTab != PrimaryBottomTab.TODAY) {
+        if (overlayScreen != null) {
+            overlayScreen = null
+        } else {
+            currentTab = PrimaryBottomTab.TODAY
+        }
+    }
 
     LaunchedEffect(externalTabRequest, externalRoomQuery) {
         if (externalTabRequest != null) {

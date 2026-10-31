@@ -4,25 +4,65 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val appVersionName = rootProject.extra["appVersionName"] as String
+val appVersionCode = rootProject.extra["appVersionCode"] as Int
+val compileSdkVer = rootProject.extra["compileSdkVersion"] as Int
+val targetSdkVer = rootProject.extra["targetSdkVersion"] as Int
+val minSdkVer = rootProject.extra["minSdkVersion"] as Int
+
 android {
     namespace = "cn.edu.haut.campus"
-    compileSdk = 35
+    compileSdk = compileSdkVer
 
     defaultConfig {
         applicationId = "cn.edu.haut.campus"
-        minSdk = 29
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        minSdk = minSdkVer
+        targetSdk = targetSdkVer
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         vectorDrawables {
             useSupportLibrary = true
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("SIGNING_STORE_FILE")
+                ?: (findProperty("SIGNING_STORE_FILE") as? String)
+                ?: rootProject.file("keystore/haut-release.jks").takeIf { it.exists() }?.absolutePath
+
+            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                    ?: (findProperty("SIGNING_STORE_PASSWORD") as? String)
+                    ?: "HautCampus2026Release"
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                    ?: (findProperty("SIGNING_KEY_ALIAS") as? String)
+                    ?: "haut_campus_key"
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                    ?: (findProperty("SIGNING_KEY_PASSWORD") as? String)
+                    ?: "HautCampus2026Release"
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
+            val releaseSigning = signingConfigs.getByName("release")
+            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
+                releaseSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -32,6 +72,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {

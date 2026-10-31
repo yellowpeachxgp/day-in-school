@@ -6,10 +6,10 @@ plugins {
 
 android {
     namespace = "cn.edu.haut.campus.feature.timetable"
-    compileSdk = 35
+    compileSdk = rootProject.extra["compileSdkVersion"] as Int
 
     defaultConfig {
-        minSdk = 29
+        minSdk = rootProject.extra["minSdkVersion"] as Int
     }
 
     buildFeatures {

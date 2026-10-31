@@ -1,5 +1,8 @@
 package cn.edu.haut.campus.feature.settings
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -224,6 +227,45 @@ fun SettingsScreen(
                     ) {
                         Text("立即同步刷新全部桌面小组件")
                     }
+
+                    // Android 12–16 原生一键固定小组件到桌面（AppWidgetManager.requestPinAppWidget）
+                    Text(
+                        text = "一键添加桌面小组件（Android 12–16 原生 PinAppWidget）：",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val pinTargets = listOf(
+                        "2×2 下一节" to "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider",
+                        "4×2 今日" to "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider",
+                        "4×4 时间轴" to "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider",
+                        "4×4 周课表" to "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((label, providerClass) in pinTargets) {
+                            OutlinedButton(
+                                onClick = {
+                                    val mgr = AppWidgetManager.getInstance(context)
+                                    val provider = ComponentName(context.packageName, providerClass)
+                                    if (mgr.isRequestPinAppWidgetSupported) {
+                                        val ok = mgr.requestPinAppWidget(provider, null, null)
+                                        feedbackText = if (ok) {
+                                            "已发起「$label」小组件桌面固定请求，请在系统弹窗确认。"
+                                        } else {
+                                            "当前桌面启动器未响应固定请求，请长按手机桌面添加。"
+                                        }
+                                    } else {
+                                        feedbackText = "当前桌面启动器不支持一键添加，请长按桌面空白处添加小组件。"
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -256,7 +298,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 4. 隐私与本地数据清除（PRD 5 & 11.D）
+            // 4. 隐私与本地数据清除（PRD 5 & 11.D）及 Android 16 动态色彩
             Card(
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -265,7 +307,27 @@ fun SettingsScreen(
                     modifier = Modifier.padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("隐私保护与本地数据主权", style = MaterialTheme.typography.titleMedium)
+                    Text("视觉、隐私保护与本地数据主权", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Android 12–16 Material You 壁纸动态取色", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "开启后跟随手机系统壁纸 Monet 色彩引擎动态生成全应用主题；关闭则使用河工大暖橙理性主题",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = prefs.useDynamicColor,
+                            onCheckedChange = { enabled ->
+                                scope.launch { repository.setUseDynamicColor(enabled) }
+                            }
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -311,6 +373,37 @@ fun SettingsScreen(
                             Text("清除全部个人数据")
                         }
                     }
+                }
+            }
+
+            // 5. 版本号与最新 Android 平台支持信息
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val pkgInfo = remember(context) {
+                    runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+                }
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("关于 · 版本管理与平台特性", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "应用版本：v${pkgInfo?.versionName ?: "0.1.0"} (Build ${pkgInfo?.longVersionCode ?: 100})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "构建目标：CompileSdk 36 / TargetSdk 36 (Android 16) · MinSdk 31 (Android 12)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "当前设备：Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · 已启用 Edge-to-Edge 与预测式返回手势",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

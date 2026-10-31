@@ -45,6 +45,7 @@ private val Context.appDataStore by preferencesDataStore(name = "haut_campus_pre
 
 data class AppPreferencesState(
     val gpaPrivacyShieldEnabled: Boolean = false,
+    val useDynamicColor: Boolean = false,
     val timelineZoomScale: Float = 2.0f,
     val officialGpaValuePlain: String? = null,
     val officialGpaNote: String? = null,
@@ -61,6 +62,7 @@ class CampusRepository private constructor(
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
+        val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")
         val TIMELINE_SCALE = floatPreferencesKey("timeline_zoom_scale")
         val OFFICIAL_GPA = stringPreferencesKey("official_gpa_value")
         val OFFICIAL_GPA_NOTE = stringPreferencesKey("official_gpa_note")
@@ -75,6 +77,7 @@ class CampusRepository private constructor(
     val preferencesFlow: Flow<AppPreferencesState> = appContext.appDataStore.data.map { prefs ->
         AppPreferencesState(
             gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
+            useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
             timelineZoomScale = prefs[PrefKeys.TIMELINE_SCALE] ?: 2.0f,
             officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
             officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
@@ -421,6 +424,10 @@ class CampusRepository private constructor(
 
     suspend fun setGpaPrivacyShield(enabled: Boolean) {
         appContext.appDataStore.edit { it[PrefKeys.GPA_PRIVACY] = enabled }
+    }
+
+    suspend fun setUseDynamicColor(enabled: Boolean) {
+        appContext.appDataStore.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
     }
 
     suspend fun setTimelineZoomScale(scale: Float) {
