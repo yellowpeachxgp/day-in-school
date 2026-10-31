@@ -160,7 +160,9 @@ fun SettingsScreen(
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val importAudits by repository.importAuditsFlow.collectAsState(initial = emptyList())
+    val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    var isDynamicSyncing by remember { mutableStateOf(false) }
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val resolvedWeekInfo = remember(today, currentTerm, calendarOverrides) {
@@ -309,7 +311,28 @@ fun SettingsScreen(
                 privacyMasked = prefs.gpaPrivacyShieldEnabled,
                 lastAudit = importAudits.firstOrNull(),
                 onEditProfile = { showEditProfileDialog = true },
-                onSyncNow = onNavigateToImporter
+                onSyncNow = {
+                    if (prefs.hasSavedCredentials && !isDynamicSyncing) {
+                        scope.launch {
+                            isDynamicSyncing = true
+                            feedbackText = "正在从教务系统动态拉取最新课表、考试与成绩..."
+                            val res = repository.performDynamicAcademicSync(force = true)
+                            isDynamicSyncing = false
+                            if (res == null) {
+                                onNavigateToImporter()
+                            } else {
+                                res.onSuccess { syncData ->
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    feedbackText = "动态同步完成：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
+                                }.onFailure { err ->
+                                    feedbackText = "动态同步失败：${err.message ?: "请检查网络"}"
+                                }
+                            }
+                        }
+                    } else {
+                        onNavigateToImporter()
+                    }
+                }
             )
 
             // 2. 本学期学业与课表 4 维全景看板
@@ -325,8 +348,8 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     )
                     ProfileMetricItem(
-                        label = "在修课程",
-                        value = "${courses.size}门",
+                        label = "考试安排",
+                        value = "${examSchedules.size}场",
                         modifier = Modifier.weight(1f)
                     )
                     ProfileMetricItem(
@@ -855,6 +878,29 @@ fun SettingsScreen(
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text("外观、隐私与数据", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("自动动态同步教务（课表与考试）", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "启动应用时自动拉取教务最新排课、期初/期中/期末考试与成绩",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = prefs.autoSyncEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setAutoSyncEnabled(enabled) }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

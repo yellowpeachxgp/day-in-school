@@ -68,6 +68,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.model.ClassStatus
+import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.ScheduleBreakInterval
@@ -79,6 +80,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
@@ -105,11 +107,14 @@ fun TodayScreen(
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
+    val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
     var currentNow by remember { mutableStateOf(ZonedDateTime.now(HAUT_ZONE_ID)) }
     var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
     var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
+    var isDynamicSyncing by remember { mutableStateOf(false) }
+    var dynamicSyncBanner by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -218,12 +223,33 @@ fun TodayScreen(
                 }
                 XPeachIconButton(
                     icon = Icons.Default.CloudDownload,
-                    contentDescription = "同步课表",
-                    onClick = onNavigateToImporter
+                    contentDescription = "动态同步课表与考试",
+                    onClick = {
+                        if (prefs.hasSavedCredentials && !isDynamicSyncing) {
+                            scope.launch {
+                                isDynamicSyncing = true
+                                dynamicSyncBanner = "正在从教务系统动态拉取最新课表与考试..."
+                                val res = repository.performDynamicAcademicSync(force = true)
+                                isDynamicSyncing = false
+                                if (res == null) {
+                                    onNavigateToImporter()
+                                } else {
+                                    res.onSuccess { syncData ->
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        dynamicSyncBanner = "已同步 ${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试"
+                                    }.onFailure { err ->
+                                        dynamicSyncBanner = "动态同步失败：${err.message ?: "请检查网络"}"
+                                    }
+                                }
+                            }
+                        } else {
+                            onNavigateToImporter()
+                        }
+                    }
                 )
                 XPeachIconButton(
                     icon = Icons.Default.Settings,
-                    contentDescription = "设置",
+                    contentDescription = "我的与设置",
                     onClick = onNavigateToSettings
                 )
             }
@@ -236,6 +262,28 @@ fun TodayScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            if (dynamicSyncBanner != null) {
+                XPeachCard(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    borderColor = Color.Transparent
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = dynamicSyncBanner!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { dynamicSyncBanner = null }) {
+                            Text("收起", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
             // 1. 轻量化 7 日横向周历条（取代繁琐的前一天/后一天/缩放按钮群）
             WeekDaySelectorStrip(
                 weekDays = weekDays,
@@ -338,6 +386,159 @@ fun TodayScreen(
                         onItemClick = { selectedOccurrenceForDetail = it },
                         onNavigateRoom = onNavigateToMapWithRoom
                     )
+                }
+            }
+
+            // 4. 教务考试动态提醒卡片（涵盖期初补缓考、期中分散/随堂考、期末集中考）
+            val relevantExams = remember(examSchedules, term, selectedDate, todayDate) {
+                val activeTermId = term?.id
+                val sameDateExams = examSchedules.filter { it.examDate == selectedDate }
+                if (sameDateExams.isNotEmpty()) {
+                    sameDateExams
+                } else {
+                    val termMatches = if (activeTermId != null) {
+                        examSchedules.filter { it.termId == activeTermId }
+                    } else {
+                        emptyList()
+                    }
+                    (termMatches.ifEmpty { examSchedules })
+                        .sortedWith(
+                            compareBy<ExamScheduleItem> {
+                                val d = it.examDate
+                                when {
+                                    d == null -> 2
+                                    !d.isBefore(todayDate) -> 0 // 未开始/进行中优先
+                                    else -> 1
+                                }
+                            }.thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
+                        )
+                        .take(6)
+                }
+            }
+
+            if (relevantExams.isNotEmpty()) {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = if (examSchedules.any { it.examDate == selectedDate }) "当日考试安排" else "本学期考试动态",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "自动识别期初补缓考 · 期中随堂考 · 期末集中考",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = "共 ${relevantExams.size} 场",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (exam in relevantExams) {
+                            val daysLeft = exam.examDate?.let { ChronoUnit.DAYS.between(todayDate, it) }
+                            val countdownBadge = when {
+                                daysLeft == null -> "待定"
+                                daysLeft == 0L -> "今天考试"
+                                daysLeft == 1L -> "明天考试"
+                                daysLeft > 1L -> "还有 ${daysLeft} 天"
+                                else -> "已结束"
+                            }
+                            val isUpcoming = daysLeft != null && daysLeft >= 0L
+
+                            XPeachWell(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = exam.courseName,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                            XPeachStatusBadge(
+                                                text = exam.examStageLabel,
+                                                containerColor = if (isUpcoming) {
+                                                    MaterialTheme.colorScheme.primaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.surface
+                                                },
+                                                contentColor = if (isUpcoming) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                            XPeachStatusBadge(
+                                                text = countdownBadge,
+                                                containerColor = if (daysLeft == 0L || daysLeft == 1L) {
+                                                    Color(0xFFFEF3C7)
+                                                } else {
+                                                    MaterialTheme.colorScheme.surface
+                                                },
+                                                contentColor = if (daysLeft == 0L || daysLeft == 1L) {
+                                                    Color(0xFFB45309)
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+                                        Text(
+                                            text = exam.rawTimeText,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = buildString {
+                                                append(exam.rawRoom)
+                                                if (!exam.seatNumber.isNullOrBlank()) {
+                                                    append(" · 座位 ${exam.seatNumber}号")
+                                                }
+                                                append(" · ${exam.examFormat}")
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    XPeachFilterPill(
+                                        label = "去考场",
+                                        selected = isUpcoming,
+                                        onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

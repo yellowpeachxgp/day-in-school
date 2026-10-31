@@ -13,6 +13,7 @@ import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.OccurrenceOverride
@@ -322,6 +323,45 @@ data class ImportAuditEntity(
     )
 }
 
+@Entity(tableName = "exam_schedules")
+data class ExamScheduleEntity(
+    @PrimaryKey val id: String,
+    val termId: String,
+    val courseCode: String,
+    val courseName: String,
+    val examBatchName: String,
+    val examStageLabel: String,
+    val examFormat: String,
+    val rawTimeText: String,
+    val examDateIso: String?,
+    val startTimeIso: String?,
+    val endTimeIso: String?,
+    val rawRoom: String,
+    val seatNumber: String?,
+    val campusName: String,
+    val isRetake: Boolean,
+    val syncedAtEpochMilli: Long
+) {
+    fun toDomain() = ExamScheduleItem(
+        id = id,
+        termId = termId,
+        courseCode = courseCode,
+        courseName = courseName,
+        examBatchName = examBatchName,
+        examStageLabel = examStageLabel,
+        examFormat = examFormat,
+        rawTimeText = rawTimeText,
+        examDate = examDateIso?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+        startTime = startTimeIso?.let { runCatching { LocalTime.parse(it) }.getOrNull() },
+        endTime = endTimeIso?.let { runCatching { LocalTime.parse(it) }.getOrNull() },
+        rawRoom = rawRoom,
+        seatNumber = seatNumber,
+        campusName = campusName,
+        isRetake = isRetake,
+        syncedAt = Instant.ofEpochMilli(syncedAtEpochMilli)
+    )
+}
+
 fun StudentProfile.toEntity() = StudentProfileEntity(
     id = id,
     schoolId = schoolId,
@@ -462,4 +502,23 @@ fun ImportAudit.toEntity() = ImportAuditEntity(
     rowCount = rowCount,
     conflictCount = conflictCount,
     outcome = outcome
+)
+
+fun ExamScheduleItem.toEntity() = ExamScheduleEntity(
+    id = id,
+    termId = termId,
+    courseCode = courseCode,
+    courseName = courseName,
+    examBatchName = examBatchName,
+    examStageLabel = examStageLabel,
+    examFormat = examFormat,
+    rawTimeText = rawTimeText,
+    examDateIso = examDate?.toString(),
+    startTimeIso = startTime?.toString(),
+    endTimeIso = endTime?.toString(),
+    rawRoom = rawRoom,
+    seatNumber = seatNumber,
+    campusName = campusName,
+    isRetake = isRetake,
+    syncedAtEpochMilli = syncedAt.toEpochMilli()
 )

@@ -48,6 +48,7 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.academic.HautZfsoftParser
+import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
@@ -73,17 +74,19 @@ fun ImporterScreen(
 
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val audits by repository.importAuditsFlow.collectAsState(initial = emptyList())
+    val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0: 统一认证, 1: 网页登录, 2: CSV 导入
     var diffPreview by remember { mutableStateOf<ImportDiffPreview?>(null) }
     var overwriteUserEdits by remember { mutableStateOf(false) }
+    var rememberForAutoSync by remember { mutableStateOf(true) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var isSyncing by remember { mutableStateOf(false) }
 
-    var studentIdInput by remember { mutableStateOf("") }
+    var studentIdInput by remember(prefs.savedStudentId) { mutableStateOf(prefs.savedStudentId ?: "") }
     var passwordInput by remember { mutableStateOf("") }
-    var selectedXnm by remember { mutableStateOf("2025") }
-    var selectedXqm by remember { mutableStateOf("12") }
+    var selectedXnm by remember(prefs.syncXnm) { mutableStateOf(prefs.syncXnm) }
+    var selectedXqm by remember(prefs.syncXqm) { mutableStateOf(prefs.syncXqm) }
 
     var csvInputText by remember {
         mutableStateOf(
@@ -152,7 +155,51 @@ fun ImporterScreen(
                                 text = "统一身份认证直连",
                                 style = MaterialTheme.typography.titleMedium
                             )
-                            XPeachStatusBadge(text = "课表 + 成绩")
+                            XPeachStatusBadge(text = "课表 + 考试 + 成绩")
+                        }
+
+                        if (prefs.hasSavedCredentials) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "已绑定学号 ${prefs.savedStudentId ?: ""}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = "免输密码一键拉取最新课表、考试与成绩",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    FilledTonalButton(
+                                        enabled = !isSyncing,
+                                        onClick = {
+                                            scope.launch {
+                                                isSyncing = true
+                                                statusBanner = "正在从教务系统动态拉取最新课表、考试与成绩..."
+                                                val res = repository.performDynamicAcademicSync(force = true)
+                                                isSyncing = false
+                                                res?.onSuccess { syncData ->
+                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                    statusBanner = "动态更新完成：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
+                                                }?.onFailure { err ->
+                                                    statusBanner = "动态更新失败：${err.message ?: "请检查网络或重新输入密码"}"
+                                                }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("一键动态更新", maxLines = 1, softWrap = false)
+                                    }
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -212,7 +259,23 @@ fun ImporterScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = rememberForAutoSync,
+                                onCheckedChange = { rememberForAutoSync = it }
+                            )
+                            Text(
+                                text = "授权自动动态更新（打开应用自动同步课表、期初/期中/期末考试与成绩）",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -222,11 +285,12 @@ fun ImporterScreen(
                                 enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
                                 onClick = {
                                     scope.launch {
+                                        val plainPwd = passwordInput
                                         isSyncing = true
-                                        statusBanner = "正在连接教务系统同步..."
+                                        statusBanner = "正在连接教务系统同步课表、考试与成绩..."
                                         val result = HautLiveAcademicClient.fetchLiveAcademicData(
                                             studentId = studentIdInput,
-                                            passwordPlain = passwordInput,
+                                            passwordPlain = plainPwd,
                                             xnm = selectedXnm,
                                             xqm = selectedXqm
                                         )
@@ -234,6 +298,15 @@ fun ImporterScreen(
                                         isSyncing = false
 
                                         result.onSuccess { syncData ->
+                                            if (rememberForAutoSync) {
+                                                repository.saveAuthorizedSyncCredentials(
+                                                    studentId = studentIdInput,
+                                                    passwordPlain = plainPwd,
+                                                    xnm = selectedXnm,
+                                                    xqm = selectedXqm
+                                                )
+                                                repository.setAutoSyncEnabled(true)
+                                            }
                                             syncData.studentProfile?.let { profile ->
                                                 repository.saveStudentProfile(profile)
                                             }
@@ -243,13 +316,19 @@ fun ImporterScreen(
                                                     replaceExisting = true
                                                 )
                                             }
+                                            if (syncData.examItems.isNotEmpty()) {
+                                                repository.saveImportedExams(
+                                                    exams = syncData.examItems,
+                                                    replaceExisting = true
+                                                )
+                                            }
                                             val targetTermId = currentTerm?.id ?: syncData.termId
                                             diffPreview = repository.previewCourseImportDiff(
                                                 termId = targetTermId,
                                                 source = CourseSource.OFFICIAL_JW,
                                                 candidates = syncData.timetableCandidates
                                             )
-                                            statusBanner = "已同步 ${syncData.gradeAttempts.size} 条成绩与 ${syncData.timetableCandidates.size} 条课程，请确认下方预览。"
+                                            statusBanner = "已同步 ${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩，请确认下方预览。"
                                         }.onFailure { err ->
                                             statusBanner = "同步失败：${err.message ?: "请检查网络或账号密码"}"
                                         }

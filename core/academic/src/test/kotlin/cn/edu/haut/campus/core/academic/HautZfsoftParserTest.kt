@@ -146,4 +146,69 @@ class HautZfsoftParserTest {
         assertEquals("编译原理", parsed.first().courseName)
         assertEquals(setOf(1, 3, 5, 7, 9, 11, 13, 15), parsed.first().weeks)
     }
+
+    @Test
+    fun `parseExamsJson classifies early makeup, mid-term decentralized, and final centralized exams`() {
+        val sampleExamsJson = """
+            {
+              "items": [
+                {
+                  "kch": "T01121402A",
+                  "kcmc": "高等数学A（二）",
+                  "xnm": "2025",
+                  "xqm": "12",
+                  "ksmc": "2025-2026-2学期集中考试",
+                  "sjbh": "统一-2025-2026-2学期集中考试-X01261002B",
+                  "ksfs": "笔试",
+                  "kssj": "2026-07-07(09:00-11:00)",
+                  "cdmc": "莲4号教学楼521",
+                  "zwh": "27",
+                  "xqmc": "莲花街校区",
+                  "cxbj": "是"
+                },
+                {
+                  "kch": "X01041307A",
+                  "kcmc": "服务式GIS",
+                  "xnm": "2025",
+                  "xqm": "12",
+                  "ksmc": "2025-2026-2学期分散考试",
+                  "sjbh": "随堂-2025-2026-2学期分散考试-X01041307A",
+                  "ksfs": "其他",
+                  "kssj": "2026-05-08(10:20-12:20)",
+                  "cdmc": "莲4号教学楼120",
+                  "zwh": "45",
+                  "xqmc": "莲花街校区",
+                  "cxbj": "否"
+                },
+                {
+                  "kch": "Z01041350A",
+                  "kcmc": "软件工程",
+                  "xnm": "2025",
+                  "xqm": "12",
+                  "ksmc": "2025-2026-2学期补（缓）考",
+                  "ksfs": "其他",
+                  "kssj": "2026-03-08(14:00-16:00)",
+                  "cdmc": "莲4号教学楼121",
+                  "zwh": "58",
+                  "xqmc": "莲花街校区"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val exams = HautZfsoftParser.parseExamsJson(sampleExamsJson)
+        assertEquals(3, exams.size)
+        // 按时间升序排列：03-08 期初补缓考 -> 05-08 期中随堂考 -> 07-07 期末集中考
+        assertEquals("软件工程", exams[0].courseName)
+        assertEquals("期初补缓考", exams[0].examStageLabel)
+        assertEquals("58", exams[0].seatNumber)
+
+        assertEquals("服务式GIS", exams[1].courseName)
+        assertEquals("期中/随堂考", exams[1].examStageLabel)
+        assertEquals("莲4号教学楼120", exams[1].rawRoom)
+
+        assertEquals("高等数学A（二）", exams[2].courseName)
+        assertEquals("期末集中考", exams[2].examStageLabel)
+        assertEquals("27", exams[2].seatNumber)
+    }
 }

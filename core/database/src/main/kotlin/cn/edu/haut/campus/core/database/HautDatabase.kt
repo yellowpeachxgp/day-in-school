@@ -134,6 +134,18 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertImportAudit(audit: ImportAuditEntity)
 
+    @Query("SELECT * FROM exam_schedules ORDER BY termId DESC, examDateIso ASC, startTimeIso ASC")
+    fun observeExamSchedules(): Flow<List<ExamScheduleEntity>>
+
+    @Query("SELECT * FROM exam_schedules ORDER BY termId DESC, examDateIso ASC, startTimeIso ASC")
+    suspend fun getExamSchedulesSnapshot(): List<ExamScheduleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertExamSchedules(items: List<ExamScheduleEntity>)
+
+    @Query("DELETE FROM exam_schedules")
+    suspend fun clearExamSchedules()
+
     @Query("DELETE FROM student_profile")
     suspend fun clearStudentProfile()
 
@@ -170,9 +182,10 @@ interface CampusDao {
         BuildingEntity::class,
         BuildingAliasEntity::class,
         WidgetInstanceConfigEntity::class,
-        ImportAuditEntity::class
+        ImportAuditEntity::class,
+        ExamScheduleEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class HautDatabase : RoomDatabase() {

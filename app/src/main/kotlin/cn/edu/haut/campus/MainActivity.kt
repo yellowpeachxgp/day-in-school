@@ -199,8 +199,19 @@ fun HautCampusRootApp(
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var tabResetCounter by remember { mutableIntStateOf(0) }
 
+    val context = LocalContext.current
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+
+    // 打开应用时若已绑定教务凭据且开启了自动同步，后台自动静默更新最新课表、期初/期中/期末考试与成绩
+    LaunchedEffect(prefs.hasCompletedOnboarding, prefs.autoSyncEnabled, prefs.hasSavedCredentials) {
+        if (prefs.hasCompletedOnboarding && prefs.autoSyncEnabled && prefs.hasSavedCredentials) {
+            val res = repository.performDynamicAcademicSync(force = false)
+            res?.onSuccess {
+                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+            }
+        }
+    }
 
     BackHandler(enabled = overlayScreen != null || currentTab != PrimaryBottomTab.TODAY) {
         if (overlayScreen != null) {
@@ -272,6 +283,10 @@ fun HautCampusRootApp(
                         PrimaryBottomTab.GRADES -> GradesScreen(
                             repository = repository,
                             onNavigateToImporter = { overlayScreen = "importer" },
+                            onNavigateToMapWithRoom = { room ->
+                                mapRoomQuery = room
+                                currentTab = PrimaryBottomTab.CAMPUS
+                            },
                             resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
                         )
                         PrimaryBottomTab.CAMPUS -> CampusMapScreen(
@@ -517,12 +532,13 @@ private fun OnboardingWelcomeScreen(
                     enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
                     onClick = {
                         scope.launch {
+                            val plainPwd = passwordInput
                             isSyncing = true
                             isErrorStatus = false
-                            syncStatusMessage = "正在同步教务课表与成绩..."
+                            syncStatusMessage = "正在同步教务课表、考试安排与成绩..."
                             val result = HautLiveAcademicClient.fetchLiveAcademicData(
                                 studentId = studentIdInput,
-                                passwordPlain = passwordInput,
+                                passwordPlain = plainPwd,
                                 xnm = selectedXnm,
                                 xqm = selectedXqm
                             )
@@ -530,12 +546,25 @@ private fun OnboardingWelcomeScreen(
                             isSyncing = false
 
                             result.onSuccess { syncData ->
+                                repository.saveAuthorizedSyncCredentials(
+                                    studentId = studentIdInput,
+                                    passwordPlain = plainPwd,
+                                    xnm = selectedXnm,
+                                    xqm = selectedXqm
+                                )
+                                repository.setAutoSyncEnabled(true)
                                 syncData.studentProfile?.let { profile ->
                                     repository.saveStudentProfile(profile)
                                 }
                                 if (syncData.gradeAttempts.isNotEmpty()) {
                                     repository.saveImportedGrades(
                                         attempts = syncData.gradeAttempts,
+                                        replaceExisting = true
+                                    )
+                                }
+                                if (syncData.examItems.isNotEmpty()) {
+                                    repository.saveImportedExams(
+                                        exams = syncData.examItems,
                                         replaceExisting = true
                                     )
                                 }

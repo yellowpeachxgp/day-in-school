@@ -4,10 +4,15 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.Room
+import androidx.room.migration.Migration
 import androidx.room.withTransaction
+import androidx.sqlite.db.SupportSQLiteDatabase
+import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
+import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.model.Building
@@ -16,6 +21,7 @@ import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.ImportChangeType
@@ -50,7 +56,13 @@ data class AppPreferencesState(
     val officialGpaValuePlain: String? = null,
     val officialGpaNote: String? = null,
     val hasSeededInitialMockData: Boolean = false,
-    val hasCompletedOnboarding: Boolean = false
+    val hasCompletedOnboarding: Boolean = false,
+    val autoSyncEnabled: Boolean = true,
+    val savedStudentId: String? = null,
+    val hasSavedCredentials: Boolean = false,
+    val syncXnm: String = "2025",
+    val syncXqm: String = "12",
+    val lastAutoSyncEpochMillis: Long? = null
 )
 
 class CampusRepository private constructor(
@@ -69,6 +81,12 @@ class CampusRepository private constructor(
         val TIMELINE_SCALE = floatPreferencesKey("timeline_zoom_scale")
         val OFFICIAL_GPA = stringPreferencesKey("official_gpa_value")
         val OFFICIAL_GPA_NOTE = stringPreferencesKey("official_gpa_note")
+        val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_jw_enabled")
+        val SAVED_STUDENT_ID = stringPreferencesKey("saved_jw_student_id")
+        val SAVED_PASSWORD_OBF = stringPreferencesKey("saved_jw_password_local")
+        val SAVED_SYNC_XNM = stringPreferencesKey("saved_jw_sync_xnm")
+        val SAVED_SYNC_XQM = stringPreferencesKey("saved_jw_sync_xqm")
+        val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
     }
 
     init {
@@ -85,7 +103,14 @@ class CampusRepository private constructor(
             officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
             officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
             hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false,
-            hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false
+            hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false,
+            autoSyncEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true,
+            savedStudentId = prefs[PrefKeys.SAVED_STUDENT_ID],
+            hasSavedCredentials = !prefs[PrefKeys.SAVED_STUDENT_ID].isNullOrBlank() &&
+                !prefs[PrefKeys.SAVED_PASSWORD_OBF].isNullOrBlank(),
+            syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025",
+            syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12",
+            lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS]
         )
     }
 
@@ -127,6 +152,9 @@ class CampusRepository private constructor(
 
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
+
+    val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
+        dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
 
     /**
      * 首次启动仅初始化公开的校历学期、1–10 节作息时间表与莲花街校区楼宇字典，
@@ -472,6 +500,113 @@ class CampusRepository private constructor(
         dao.upsertStudentProfile(profile.toEntity())
     }
 
+    suspend fun saveImportedExams(
+        exams: List<ExamScheduleItem>,
+        replaceExisting: Boolean = true
+    ) {
+        database.withTransaction {
+            if (replaceExisting) {
+                dao.clearExamSchedules()
+            }
+            dao.upsertExamSchedules(exams.map { it.toEntity() })
+        }
+    }
+
+    suspend fun setAutoSyncEnabled(enabled: Boolean) {
+        appContext.appDataStore.edit { it[PrefKeys.AUTO_SYNC_ENABLED] = enabled }
+    }
+
+    suspend fun saveAuthorizedSyncCredentials(
+        studentId: String,
+        passwordPlain: String,
+        xnm: String,
+        xqm: String
+    ) {
+        val encoded = java.util.Base64.getEncoder().encodeToString(
+            passwordPlain.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+        )
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.SAVED_STUDENT_ID] = studentId.trim()
+            prefs[PrefKeys.SAVED_PASSWORD_OBF] = encoded
+            prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
+            prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
+            prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * 应用全部实时教务同步数据（学籍名片 + 课表差异合并 + 成绩明细 + 期初/期中/期末全部考试安排）。
+     */
+    suspend fun applyLiveSyncData(
+        syncData: HautLiveSyncResult,
+        overwriteUserConflicts: Boolean = false
+    ) {
+        syncData.studentProfile?.let { profile ->
+            saveStudentProfile(profile)
+        }
+        if (syncData.gradeAttempts.isNotEmpty()) {
+            saveImportedGrades(
+                attempts = syncData.gradeAttempts,
+                replaceExisting = true
+            )
+        }
+        if (syncData.examItems.isNotEmpty()) {
+            saveImportedExams(
+                exams = syncData.examItems,
+                replaceExisting = true
+            )
+        }
+        val targetTermId = dao.getCurrentTerm()?.id ?: syncData.termId
+        val diff = previewCourseImportDiff(
+            termId = targetTermId,
+            source = CourseSource.OFFICIAL_JW,
+            candidates = syncData.timetableCandidates
+        )
+        commitCourseImportDiff(
+            preview = diff,
+            overwriteUserConflicts = overwriteUserConflicts
+        )
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * 后台或一键动态刷新：使用本地已授权保存的教务凭据，从正方教务系统拉取最新课表、期初/期中/期末考试安排与成绩。
+     * @param force 若为 false，则距离上次自动同步不足 15 分钟时跳过，避免频繁请求。
+     */
+    suspend fun performDynamicAcademicSync(force: Boolean = false): Result<HautLiveSyncResult>? {
+        val prefs = appContext.appDataStore.data.first()
+        val autoEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true
+        if (!force && !autoEnabled) return null
+
+        val studentId = prefs[PrefKeys.SAVED_STUDENT_ID]?.takeIf { it.isNotBlank() } ?: return null
+        val encodedPwd = prefs[PrefKeys.SAVED_PASSWORD_OBF]?.takeIf { it.isNotBlank() } ?: return null
+        val passwordPlain = runCatching {
+            String(java.util.Base64.getDecoder().decode(encodedPwd), java.nio.charset.StandardCharsets.UTF_8)
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+
+        val lastSyncMs = prefs[PrefKeys.LAST_AUTO_SYNC_MS] ?: 0L
+        val nowMs = System.currentTimeMillis()
+        if (!force && (nowMs - lastSyncMs) < 15 * 60 * 1000L) {
+            return null
+        }
+
+        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
+        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
+
+        val result = HautLiveAcademicClient.fetchLiveAcademicData(
+            studentId = studentId,
+            passwordPlain = passwordPlain,
+            xnm = xnm,
+            xqm = xqm
+        )
+        result.onSuccess { syncData ->
+            applyLiveSyncData(syncData, overwriteUserConflicts = false)
+        }
+        return result
+    }
+
     suspend fun setGpaPrivacyShield(enabled: Boolean) {
         appContext.appDataStore.edit { it[PrefKeys.GPA_PRIVACY] = enabled }
     }
@@ -503,12 +638,16 @@ class CampusRepository private constructor(
             dao.clearRules()
             dao.clearOccurrenceOverrides()
             dao.clearGradeAttempts()
+            dao.clearExamSchedules()
             dao.clearImportAudits()
             dao.clearWidgetConfigs()
         }
         appContext.appDataStore.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
             prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
+            prefs.remove(PrefKeys.SAVED_STUDENT_ID)
+            prefs.remove(PrefKeys.SAVED_PASSWORD_OBF)
+            prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
             prefs[PrefKeys.SEEDED] = true
             prefs[PrefKeys.CLEAN_BASE_V2] = true
             prefs[PrefKeys.ONBOARDING_COMPLETED] = false
@@ -539,6 +678,34 @@ class CampusRepository private constructor(
         @Volatile
         private var INSTANCE: CampusRepository? = null
 
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `exam_schedules` (
+                        `id` TEXT NOT NULL,
+                        `termId` TEXT NOT NULL,
+                        `courseCode` TEXT NOT NULL,
+                        `courseName` TEXT NOT NULL,
+                        `examBatchName` TEXT NOT NULL,
+                        `examStageLabel` TEXT NOT NULL,
+                        `examFormat` TEXT NOT NULL,
+                        `rawTimeText` TEXT NOT NULL,
+                        `examDateIso` TEXT,
+                        `startTimeIso` TEXT,
+                        `endTimeIso` TEXT,
+                        `rawRoom` TEXT NOT NULL,
+                        `seatNumber` TEXT,
+                        `campusName` TEXT NOT NULL,
+                        `isRetake` INTEGER NOT NULL,
+                        `syncedAtEpochMilli` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): CampusRepository {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
@@ -547,7 +714,10 @@ class CampusRepository private constructor(
                         appCtx,
                         HautDatabase::class.java,
                         "haut_campus_assistant.db"
-                    ).fallbackToDestructiveMigration().build()
+                    )
+                        .addMigrations(MIGRATION_1_2)
+                        .fallbackToDestructiveMigration()
+                        .build()
                     CampusRepository(appCtx, db).also { INSTANCE = it }
                 }
             }

@@ -5,6 +5,7 @@ import cn.edu.haut.campus.core.domain.WeeksSetParser
 import cn.edu.haut.campus.core.model.AttemptType
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.StudentProfile
@@ -21,6 +22,8 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
 import java.util.Base64
 
 /**
@@ -29,7 +32,8 @@ import java.util.Base64
  * - 教务系统直连入口：https://jwglxt.haut.edu.cn/jwglxt/xtgl/login_slogin.html
  * - 个人课表 JSON 接口：POST /jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151 (或 xskbcx_cxXsKb.html)
  * - 个人成绩 JSON 接口：POST /jwglxt/cjcx/cjcx_cxXsgrcj.html?doType=query&gnmkdm=N305005
- * - 严守隐私规范：密码仅在当次请求内存中用于本人授权同步，绝不落盘存储或上传第三方。
+ * - 个人考试安排接口：POST /jwglxt/kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105
+ * - 严守隐私规范：密码仅在本地受控同步请求中使用，绝不上传任何第三方。
  */
 object HautAcademicEndpoints {
     const val BASE_URL = "https://jwglxt.haut.edu.cn"
@@ -40,13 +44,16 @@ object HautAcademicEndpoints {
     const val TIMETABLE_ALT_API_PATH = "/jwglxt/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151"
     const val GRADES_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/cjcx/cjcx_cxDgXscj.html?gnmkdm=N305005"
     const val GRADES_API_PATH = "/jwglxt/cjcx/cjcx_cxXsgrcj.html?doType=query&gnmkdm=N305005"
+    const val EXAMS_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105"
+    const val EXAMS_API_PATH = "/jwglxt/kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105"
 }
 
 data class HautLiveSyncResult(
     val termId: String,
     val studentProfile: StudentProfile?,
     val timetableCandidates: List<ImportCourseCandidate>,
-    val gradeAttempts: List<GradeAttempt>
+    val gradeAttempts: List<GradeAttempt>,
+    val examItems: List<ExamScheduleItem> = emptyList()
 )
 
 object HautSessionManager {
@@ -193,13 +200,39 @@ object HautLiveAcademicClient {
                 emptyList()
             }
 
+            // 7. 拉取个人全部考试安排 JSON（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
+            val ksForm = buildFormBody(
+                "xnm" to "",
+                "xqm" to "",
+                "_search" to "false",
+                "nd" to System.currentTimeMillis().toString(),
+                "queryModel.showCount" to "200",
+                "queryModel.currentPage" to "1",
+                "queryModel.sortName" to "",
+                "queryModel.sortOrder" to "asc",
+                "time" to "0"
+            )
+            val ksResponse = request(
+                url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.EXAMS_API_PATH,
+                method = "POST",
+                cookieJar = jwCookies,
+                formBody = ksForm,
+                extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
+            )
+            val examItems = if (ksResponse.statusCode == 200 && ksResponse.body.contains("\"items\"")) {
+                HautZfsoftParser.parseExamsJson(ksResponse.body)
+            } else {
+                emptyList()
+            }
+
             val termNo = if (xqm == "12" || xqm == "2") 2 else 1
             val academicYear = "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
             HautLiveSyncResult(
                 termId = "$academicYear-$termNo",
                 studentProfile = studentProfile,
                 timetableCandidates = timetableCandidates,
-                gradeAttempts = gradeAttempts
+                gradeAttempts = gradeAttempts,
+                examItems = examItems
             )
         }
     }
@@ -438,6 +471,96 @@ object HautZfsoftParser {
             )
         }
         return result
+    }
+
+    private val EXAM_TIME_REGEX = Regex("""(\d{4}-\d{2}-\d{2})\s*\((\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\)""")
+
+    /**
+     * 解析正方教务 `/jwglxt/kwgl/kscx_cxXsksxxIndex.html` 返回的考试信息 JSON (`items`)。
+     * 自动识别期初补缓考、期中随堂/分散考试、期末集中考试，并提取考场、座位号与精确日期时间。
+     */
+    fun parseExamsJson(jsonText: String): List<ExamScheduleItem> {
+        val root = runCatching { JSONObject(jsonText) }.getOrNull() ?: return emptyList()
+        val items = root.optJSONArray("items") ?: JSONArray()
+        val now = Instant.now()
+        val result = mutableListOf<ExamScheduleItem>()
+
+        for (i in 0 until items.length()) {
+            val obj = items.optJSONObject(i) ?: continue
+            val kcmc = obj.optString("kcmc").trim()
+            if (kcmc.isEmpty()) continue
+            val kch = obj.optString("kch", kcmc).trim()
+            val xnm = obj.optString("xnm", "2025").trim()
+            val xnmc = obj.optString("xnmc", "").trim()
+            val academicYear = when {
+                xnmc.contains("-") -> xnmc
+                xnm.contains("-") -> xnm
+                else -> "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
+            }
+            val xqm = obj.optString("xqm", "3").trim()
+            val xqmmc = obj.optString("xqmmc", "").trim()
+            val termNo = when {
+                xqmmc == "2" || xqm == "12" || xqm == "2" -> 2
+                else -> 1
+            }
+            val termId = "$academicYear-$termNo"
+
+            val ksmc = obj.optString("ksmc", "课程考试").trim()
+            val sjbh = obj.optString("sjbh", "").trim()
+            val stageLabel = when {
+                ksmc.contains("补") || ksmc.contains("缓") -> "期初补缓考"
+                ksmc.contains("分散") || sjbh.contains("随堂") -> "期中/随堂考"
+                ksmc.contains("集中") || sjbh.contains("统一") -> "期末集中考"
+                else -> "课程考试"
+            }
+
+            val ksfs = obj.optString("ksfs", "考试").trim().ifBlank { "考试" }
+            val kssj = obj.optString("kssj", "").trim()
+            val match = EXAM_TIME_REGEX.find(kssj)
+            val parsedDate = match?.groupValues?.getOrNull(1)?.let {
+                runCatching { LocalDate.parse(it) }.getOrNull()
+            }
+            val parsedStart = match?.groupValues?.getOrNull(2)?.let { raw ->
+                val norm = if (raw.indexOf(':') == 1) "0$raw" else raw
+                runCatching { LocalTime.parse(norm) }.getOrNull()
+            }
+            val parsedEnd = match?.groupValues?.getOrNull(3)?.let { raw ->
+                val norm = if (raw.indexOf(':') == 1) "0$raw" else raw
+                runCatching { LocalTime.parse(norm) }.getOrNull()
+            }
+
+            val cdmc = obj.optString("cdmc", "待定考场").trim().ifBlank { "待定考场" }
+            val zwh = obj.optString("zwh", "").trim().takeIf { it.isNotBlank() && it != "无" }
+            val xqmc = obj.optString("xqmc", "莲花街校区").trim().ifBlank { "莲花街校区" }
+            val isRetake = obj.optString("cxbj", "").trim() == "是"
+
+            result.add(
+                ExamScheduleItem(
+                    id = "exam_${termId}_${kch}_${parsedDate ?: i}",
+                    termId = termId,
+                    courseCode = kch,
+                    courseName = kcmc,
+                    examBatchName = ksmc,
+                    examStageLabel = stageLabel,
+                    examFormat = ksfs,
+                    rawTimeText = kssj.ifBlank { "时间待定" },
+                    examDate = parsedDate,
+                    startTime = parsedStart,
+                    endTime = parsedEnd,
+                    rawRoom = cdmc,
+                    seatNumber = zwh,
+                    campusName = xqmc,
+                    isRetake = isRetake,
+                    syncedAt = now
+                )
+            )
+        }
+
+        return result.sortedWith(
+            compareByDescending<ExamScheduleItem> { it.termId }
+                .thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
+                .thenBy { it.startTime ?: LocalTime.MIN }
+        )
     }
 
     /**

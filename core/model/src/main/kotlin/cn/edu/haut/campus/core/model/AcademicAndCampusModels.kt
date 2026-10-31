@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.model
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 
 enum class AttemptType(val label: String) {
     NORMAL("正常修读"),
@@ -241,4 +242,26 @@ data class ImportAudit(
     val rowCount: Int,
     val conflictCount: Int,
     val outcome: String
+)
+
+/**
+ * 正方教务系统学生考试安排模型（兼容期初补缓考、期中随堂分散考试、期末集中考试）。
+ */
+data class ExamScheduleItem(
+    val id: String,
+    val termId: String,
+    val courseCode: String,
+    val courseName: String,
+    val examBatchName: String,
+    val examStageLabel: String,
+    val examFormat: String,
+    val rawTimeText: String,
+    val examDate: LocalDate? = null,
+    val startTime: LocalTime? = null,
+    val endTime: LocalTime? = null,
+    val rawRoom: String,
+    val seatNumber: String? = null,
+    val campusName: String = "莲花街校区",
+    val isRetake: Boolean = false,
+    val syncedAt: Instant = Instant.now()
 )

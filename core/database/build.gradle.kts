@@ -26,6 +26,7 @@ android {
 dependencies {
     api(project(":core:model"))
     api(project(":core:domain"))
+    api(project(":core:academic"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     api(libs.androidx.room.runtime)
