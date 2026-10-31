@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -45,14 +44,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-val XPeachBrandLight = Color(0xFF0072BC)
-val XPeachBrandHoverLight = Color(0xFF005FA3)
-val XPeachBrandSoftLight = Color(0xFFEBF5FB)
-val XPeachBrandBorderLight = Color(0xFFB3D7EE)
+val XPeachBrandLight = Color(0xFF0066CC)
+val XPeachBrandHoverLight = Color(0xFF0052A3)
+val XPeachBrandSoftLight = Color(0xFFEAF3FF)
+val XPeachBrandBorderLight = Color(0xFFC2DDFB)
 
-val XPeachBrandDark = Color(0xFF1D74D6)
-val XPeachBrandSoftDark = Color(0xFF1B2C42)
-val XPeachBrandBorderDark = Color(0xFF2B5485)
+val XPeachBrandDark = Color(0xFF479BFF)
+val XPeachBrandSoftDark = Color(0xFF1A2B42)
+val XPeachBrandBorderDark = Color(0xFF2B4C7E)
 
 val XPeachOk = Color(0xFF16A34A)
 val XPeachOkSoft = Color(0xFFEAF7EE)
@@ -62,24 +61,25 @@ val XPeachDanger = Color(0xFFDC2626)
 val XPeachDangerSoft = Color(0xFFFEE2E2)
 val XPeachInfo = Color(0xFF0284C7)
 
-val XPeachBgLight = Color(0xFFFAFAFA)
+// 轻盈柔和的底色体系：以微灰蓝底色衬托纯白卡片，弱化硬边框
+val XPeachBgLight = Color(0xFFF5F7FA)
 val XPeachCardLight = Color(0xFFFFFFFF)
-val XPeachWellLight = Color(0xFFF7F7F7)
-val XPeachBorderLight = Color(0xFFE5E5E5)
-val XPeachBorderStrongLight = Color(0xFFD4D4D4)
-val XPeachTextLight = Color(0xFF0A0A0A)
-val XPeachText2Light = Color(0xFF404040)
-val XPeachMutedLight = Color(0xFF666666)
+val XPeachWellLight = Color(0xFFF2F5F9)
+val XPeachBorderLight = Color(0xFFE8ECF2)
+val XPeachBorderStrongLight = Color(0xFFD8E0EA)
+val XPeachTextLight = Color(0xFF111827)
+val XPeachText2Light = Color(0xFF374151)
+val XPeachMutedLight = Color(0xFF6B7280)
 
-val XPeachBgDark = Color(0xFF1E1E1E)
-val XPeachCardDark = Color(0xFF292929)
-val XPeachWellDark = Color(0xFF242424)
-val XPeachSidebarDark = Color(0xFF1B1B1B)
-val XPeachBorderDark = Color(0xFF383838)
-val XPeachBorderStrongDark = Color(0xFF4A4A4A)
-val XPeachTextDark = Color(0xFFF3F3F3)
-val XPeachText2Dark = Color(0xFFD4D4D4)
-val XPeachMutedDark = Color(0xFFB5B5B5)
+val XPeachBgDark = Color(0xFF111317)
+val XPeachCardDark = Color(0xFF1B1E24)
+val XPeachWellDark = Color(0xFF232730)
+val XPeachSidebarDark = Color(0xFF15181E)
+val XPeachBorderDark = Color(0xFF282D37)
+val XPeachBorderStrongDark = Color(0xFF363C4A)
+val XPeachTextDark = Color(0xFFF3F4F6)
+val XPeachText2Dark = Color(0xFFD1D5DB)
+val XPeachMutedDark = Color(0xFF9CA3AF)
 
 private val LightColors = lightColorScheme(
     primary = XPeachBrandLight,
@@ -112,7 +112,7 @@ private val DarkColors = darkColorScheme(
     primary = XPeachBrandDark,
     onPrimary = Color.White,
     primaryContainer = XPeachBrandSoftDark,
-    onPrimaryContainer = Color(0xFF66B2FF),
+    onPrimaryContainer = Color(0xFF7CC0FF),
     secondary = Color(0xFF38BDF8),
     onSecondary = Color(0xFF082F49),
     secondaryContainer = Color(0xFF16324A),
@@ -135,25 +135,24 @@ private val DarkColors = darkColorScheme(
     outlineVariant = XPeachBorderDark
 )
 
-// 统一克制的字阶体系（消除字号断层与跨字体跳变）
 val HautTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 18.sp,
-        lineHeight = 24.sp
+        fontSize = 20.sp,
+        lineHeight = 26.sp
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 22.sp
+        fontSize = 17.sp,
+        lineHeight = 23.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
+        fontSize = 15.sp,
+        lineHeight = 21.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -165,7 +164,7 @@ val HautTypography = Typography(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 13.sp,
-        lineHeight = 18.sp
+        lineHeight = 19.sp
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -183,7 +182,7 @@ val HautTypography = Typography(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 11.sp,
-        lineHeight = 14.sp
+        lineHeight = 15.sp
     )
 )
 
@@ -213,9 +212,9 @@ fun HautCampusTheme(
 fun XPeachCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
-    cornerRadius: Dp = 10.dp,
-    contentPadding: PaddingValues = PaddingValues(14.dp),
+    borderColor: Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+    cornerRadius: Dp = 16.dp,
+    contentPadding: PaddingValues = PaddingValues(16.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -228,7 +227,7 @@ fun XPeachCard(
         color = containerColor,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, borderColor)
+        border = BorderStroke(0.8.dp, borderColor)
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
@@ -240,10 +239,10 @@ fun XPeachCard(
 @Composable
 fun XPeachWell(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 8.dp,
-    borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
+    cornerRadius: Dp = 12.dp,
+    borderColor: Color = Color.Transparent,
     containerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    contentPadding: PaddingValues = PaddingValues(10.dp),
+    contentPadding: PaddingValues = PaddingValues(12.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
@@ -252,7 +251,7 @@ fun XPeachWell(
         color = containerColor,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, borderColor)
+        border = if (borderColor != Color.Transparent) BorderStroke(0.8.dp, borderColor) else null
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
@@ -272,13 +271,13 @@ fun XPeachTopBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -297,7 +296,7 @@ fun XPeachTopBar(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = title,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             softWrap = false,
@@ -310,6 +309,7 @@ fun XPeachTopBar(
                         }
                     }
                     if (!subtitle.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.padding(top = 1.dp))
                         Text(
                             text = subtitle,
                             style = MaterialTheme.typography.labelMedium,
@@ -323,12 +323,11 @@ fun XPeachTopBar(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 content = actions
             )
         }
-        HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -341,10 +340,14 @@ fun XPeachIconButton(
 ) {
     Box(
         modifier = modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .size(36.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .border(
+                0.8.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                RoundedCornerShape(12.dp)
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -352,7 +355,7 @@ fun XPeachIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
+            modifier = Modifier.size(18.dp)
         )
     }
 }
@@ -365,10 +368,14 @@ fun XPeachIconButton(
 ) {
     Box(
         modifier = modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .size(36.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .border(
+                0.8.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                RoundedCornerShape(12.dp)
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -387,12 +394,12 @@ fun XPeachFilterPill(
     val bg = if (selected) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.surface
     }
     val border = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
     } else {
-        MaterialTheme.colorScheme.outlineVariant
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
     }
     val fg = if (selected) {
         MaterialTheme.colorScheme.primary
@@ -402,11 +409,11 @@ fun XPeachFilterPill(
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(bg)
-            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .border(0.8.dp, border, RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -442,12 +449,12 @@ fun XPeachFilterPill(
     val bg = if (selected) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
-        MaterialTheme.colorScheme.surfaceVariant
+        MaterialTheme.colorScheme.surface
     }
     val border = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
     } else {
-        MaterialTheme.colorScheme.outlineVariant
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
     }
     val fg = if (selected) {
         MaterialTheme.colorScheme.primary
@@ -457,11 +464,11 @@ fun XPeachFilterPill(
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(bg)
-            .border(1.dp, border, RoundedCornerShape(6.dp))
+            .border(0.8.dp, border, RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -489,9 +496,8 @@ fun <T> XPeachSegmentedTabs(
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -501,21 +507,12 @@ fun <T> XPeachSegmentedTabs(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(
                         if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent
                     )
-                    .then(
-                        if (isSelected) {
-                            Modifier.border(
-                                0.5.dp,
-                                MaterialTheme.colorScheme.outlineVariant,
-                                RoundedCornerShape(6.dp)
-                            )
-                        } else Modifier
-                    )
                     .clickable { onSelect(option) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -559,14 +556,18 @@ fun XPeachStatusBadge(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.primaryContainer,
     contentColor: Color = MaterialTheme.colorScheme.primary,
-    borderColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+    borderColor: Color = Color.Transparent
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(containerColor)
-            .border(1.dp, borderColor, RoundedCornerShape(6.dp))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .then(
+                if (borderColor != Color.Transparent) {
+                    Modifier.border(0.8.dp, borderColor, RoundedCornerShape(20.dp))
+                } else Modifier
+            )
+            .padding(horizontal = 9.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(

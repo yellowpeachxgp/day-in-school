@@ -581,90 +581,43 @@ fun CampusMapScreen(
                 )
             }
 
-            // 楼宇目录
+            // 楼宇目录（双列轻量化网格，一屏尽览全校地标）
             Text(
-                text = "校内楼宇 (${filteredBuildings.size})",
+                text = "校内地点 (${filteredBuildings.size})",
                 style = MaterialTheme.typography.titleMedium
             )
 
-            for (building in filteredBuildings) {
-                val isSelected = building.id == targetBuilding?.id
-                val distanceFromUser = remember(userLocation, building) {
-                    if (userLocation != null) {
-                        CampusMapNavigator.calculateDistanceMeters(
-                            userLocation!!.latitude,
-                            userLocation!!.longitude,
-                            building.latitude,
-                            building.longitude
-                        )
-                    } else null
-                }
-
-                XPeachCard(
-                    borderColor = if (isSelected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.outlineVariant
-                    },
-                    containerColor = if (isSelected) {
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    },
-                    onClick = {
-                        selectedBuilding = building
-                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
-                            building.latitude,
-                            building.longitude
-                        )
-                        mapCenterLatGcj = glat
-                        mapCenterLonGcj = glon
-                    }
+            for (rowPair in filteredBuildings.chunked(2)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = building.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
+                    for (building in rowPair) {
+                        val isSelected = building.id == targetBuilding?.id
+                        val distanceFromUser = remember(userLocation, building) {
+                            if (userLocation != null) {
+                                CampusMapNavigator.calculateDistanceMeters(
+                                    userLocation!!.latitude,
+                                    userLocation!!.longitude,
+                                    building.latitude,
+                                    building.longitude
                                 )
-                                XPeachStatusBadge(text = building.category.label)
-                            }
-                            if (!building.description.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = building.description!!,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (distanceFromUser != null && distanceFromUser < 5000) {
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "距当前位置 ${distanceFromUser}m",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
+                            } else null
                         }
 
-                        OutlinedButton(
+                        XPeachCard(
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                            borderColor = if (isSelected) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                            },
+                            containerColor = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
                             onClick = {
                                 selectedBuilding = building
                                 val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
@@ -673,19 +626,37 @@ fun CampusMapScreen(
                                 )
                                 mapCenterLatGcj = glat
                                 mapCenterLonGcj = glon
-                                inAppNavigationActive = true
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            }
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DirectionsWalk,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp)
+                            Text(
+                                text = building.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("路线", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = buildString {
+                                    append(building.category.label)
+                                    if (distanceFromUser != null && distanceFromUser < 5000) {
+                                        append(" · ${distanceFromUser}m")
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
+                    }
+                    if (rowPair.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -707,9 +678,9 @@ private fun InAppNavigationCard(
 ) {
     XPeachCard(
         borderColor = if (inAppNavigationActive) {
-            MaterialTheme.colorScheme.primary
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
         } else {
-            MaterialTheme.colorScheme.outlineVariant
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         }
     ) {
         Row(
@@ -743,55 +714,27 @@ private fun InAppNavigationCard(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 三栏核心指标（简洁留白，绝不挤压）
-        Row(
+        // 单条聚合式路线摘要（消除多余的3个嵌套盒子）
+        XPeachWell(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            XPeachWell(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = "步行距离",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                Text(
-                    text = "${plan.estimatedWalkDistanceMeters} 米",
+                    text = "步行 ${plan.estimatedWalkDistanceMeters} 米 · 约 ${plan.estimatedWalkMinutes} 分钟",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     softWrap = false
                 )
-            }
-            XPeachWell(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "预计用时",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                Text(
-                    text = "约 ${plan.estimatedWalkMinutes} 分钟",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-            XPeachWell(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "行进方位",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false
-                )
                 Text(
                     text = "${plan.compassDirectionLabel} ${plan.bearingDegrees}°",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     softWrap = false
                 )

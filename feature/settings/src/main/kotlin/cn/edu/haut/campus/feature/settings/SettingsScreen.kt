@@ -73,6 +73,7 @@ fun SettingsScreen(
     var feedbackText by remember { mutableStateOf<String?>(null) }
     var widgetPrivacyDefault by remember { mutableStateOf(false) }
     var widgetCompactDefault by remember { mutableStateOf(false) }
+    var expandPeriodTable by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -286,26 +287,47 @@ fun SettingsScreen(
                 }
             }
 
-            // 3. 作息节次表
+            // 3. 作息节次表（默认折叠，保持页面清爽）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Text("作息时间", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(4.dp))
-                for (pt in periodTimes) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("作息时间", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "第 ${pt.periodNo} 节 (${pt.sectionLabel})",
-                            style = MaterialTheme.typography.bodyMedium
+                            text = "08:00–21:25 · 共 ${periodTimes.size} 节",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(onClick = { editingPeriod = pt }) {
+                    }
+                    XPeachFilterPill(
+                        label = if (expandPeriodTable) "收起" else "展开编辑",
+                        selected = expandPeriodTable,
+                        onClick = { expandPeriodTable = !expandPeriodTable }
+                    )
+                }
+
+                if (expandPeriodTable) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    for (pt in periodTimes) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "${pt.startLocalTime}–${pt.endLocalTime}",
-                                maxLines = 1,
-                                softWrap = false
+                                text = "第 ${pt.periodNo} 节 (${pt.sectionLabel})",
+                                style = MaterialTheme.typography.bodyMedium
                             )
+                            TextButton(onClick = { editingPeriod = pt }) {
+                                Text(
+                                    text = "${pt.startLocalTime}–${pt.endLocalTime}",
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
