@@ -9,25 +9,35 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -60,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -207,20 +218,12 @@ fun HautCampusRootApp(
             )
         }
         else -> {
-            Scaffold(
-                containerColor = MaterialTheme.colorScheme.background,
-                bottomBar = {
-                    XPeachBottomDock(
-                        currentTab = currentTab,
-                        onSelectTab = { currentTab = it }
-                    )
-                }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     when (currentTab) {
                         PrimaryBottomTab.TODAY -> TodayScreen(
                             repository = repository,
@@ -249,6 +252,12 @@ fun HautCampusRootApp(
                         )
                     }
                 }
+
+                XPeachBottomDock(
+                    currentTab = currentTab,
+                    onSelectTab = { currentTab = it },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
     }
@@ -542,69 +551,127 @@ private fun OnboardingWelcomeScreen(
     }
 }
 
+/**
+ * Apple 风格悬浮椭圆胶囊底栏 + 弹簧物理动画滑动椭圆选中框
+ */
 @Composable
 private fun XPeachBottomDock(
     currentTab: PrimaryBottomTab,
-    onSelectTab: (PrimaryBottomTab) -> Unit
+    onSelectTab: (PrimaryBottomTab) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = Modifier
+    val tabs = PrimaryBottomTab.entries
+    val selectedIndex = tabs.indexOf(currentTab).coerceAtLeast(0)
+
+    Box(
+        modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
             .navigationBarsPadding()
+            .padding(horizontal = 28.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
     ) {
-        HorizontalDivider(
-            thickness = 0.6.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-        )
-        Row(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .height(62.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            tonalElevation = 3.dp,
+            shadowElevation = 14.dp,
+            border = BorderStroke(
+                width = 0.8.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+            )
         ) {
-            for (tab in PrimaryBottomTab.entries) {
-                val selected = currentTab == tab
-                val contentColor = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 5.dp, vertical = 5.dp)
+            ) {
+                val tabWidth = maxWidth / tabs.size
+                val indicatorOffset by animateDpAsState(
+                    targetValue = tabWidth * selectedIndex,
+                    animationSpec = spring(
+                        dampingRatio = 0.75f,
+                        stiffness = 380f
+                    ),
+                    label = "dynamicOvalOffset"
+                )
 
-                Column(
+                // 动态滑动椭圆选中胶囊（随 Tab 切换弹性平滑位移）
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { onSelectTab(tab) }
-                        .padding(vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-                            )
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = tab.icon,
-                            contentDescription = tab.label,
-                            tint = contentColor,
-                            modifier = Modifier.size(20.dp)
+                        .offset(x = indicatorOffset)
+                        .width(tabWidth)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.88f))
+                        .border(
+                            width = 0.8.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                            shape = CircleShape
                         )
+                )
+
+                // 4 个导航项
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (tab in tabs) {
+                        val selected = currentTab == tab
+                        val contentColor by animateColorAsState(
+                            targetValue = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            animationSpec = spring(stiffness = 500f),
+                            label = "tabColor"
+                        )
+                        val itemScale by animateFloatAsState(
+                            targetValue = if (selected) 1.05f else 0.96f,
+                            animationSpec = spring(
+                                dampingRatio = 0.68f,
+                                stiffness = 420f
+                            ),
+                            label = "tabScale"
+                        )
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = { onSelectTab(tab) }
+                                )
+                                .graphicsLayer {
+                                    scaleX = itemScale
+                                    scaleY = itemScale
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                tint = contentColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = tab.label,
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = contentColor,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
-                    Text(
-                        text = tab.label,
-                        fontSize = 11.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                        color = contentColor,
-                        maxLines = 1,
-                        softWrap = false
-                    )
                 }
             }
         }

@@ -247,7 +247,7 @@ fun TimetableScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 92.dp)
             ) {
                 Column(
                     modifier = Modifier.width(38.dp)

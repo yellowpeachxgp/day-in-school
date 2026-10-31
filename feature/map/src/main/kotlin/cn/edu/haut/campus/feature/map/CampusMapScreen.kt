@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -509,7 +510,7 @@ fun CampusMapScreen(
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 14.dp, bottom = 80.dp),
+                .padding(end = 14.dp, bottom = 140.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             XPeachIconButton(
@@ -573,12 +574,13 @@ fun CampusMapScreen(
             )
         }
 
-        // 4. 底部悬浮楼宇快选与动态路网导航面板
+        // 4. 底部悬浮楼宇快选与动态路网导航面板（预留底部悬浮椭圆导航栏间距）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .navigationBarsPadding()
+                .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 86.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // 横向快选地标条（一指滑动即可切换目的地，不遮挡地图主视野）
