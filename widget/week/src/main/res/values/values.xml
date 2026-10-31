@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="wk_widget_bg">#FFFFFF</color>
-    <color name="wk_widget_stroke">#E2E8F0</color>
+    <color name="wk_widget_stroke">#CBD5E1</color>
     <color name="wk_widget_primary">#0F172A</color>
     <color name="wk_widget_secondary">#475569</color>
     <color name="wk_widget_accent">#EA580C</color>
     <color name="wk_widget_grid_bg">#F8FAFC</color>
+    <color name="wk_widget_row_stroke">#E2E8F0</color>
+    <color name="wk_widget_today_bg">#FFF7ED</color>
+    <color name="wk_widget_today_stroke">#FED7AA</color>
+    <color name="wk_widget_badge_bg">#FFEDD5</color>
     <string name="widget_week_desc">周一至周日简化周课表视图与当天高亮强调</string>
 </resources>

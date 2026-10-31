@@ -58,11 +58,14 @@ data class AppPreferencesState(
     val hasSeededInitialMockData: Boolean = false,
     val hasCompletedOnboarding: Boolean = false,
     val autoSyncEnabled: Boolean = true,
+    val autoCheckUpdateEnabled: Boolean = true,
     val savedStudentId: String? = null,
     val hasSavedCredentials: Boolean = false,
     val syncXnm: String = "2025",
     val syncXqm: String = "12",
-    val lastAutoSyncEpochMillis: Long? = null
+    val lastAutoSyncEpochMillis: Long? = null,
+    val customChannelUrls: Map<String, String> = emptyMap(),
+    val customClubGroupNumbers: Map<String, String> = emptyMap()
 )
 
 class CampusRepository private constructor(
@@ -82,11 +85,14 @@ class CampusRepository private constructor(
         val OFFICIAL_GPA = stringPreferencesKey("official_gpa_value")
         val OFFICIAL_GPA_NOTE = stringPreferencesKey("official_gpa_note")
         val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_jw_enabled")
+        val AUTO_CHECK_UPDATE = booleanPreferencesKey("auto_check_github_release_enabled")
         val SAVED_STUDENT_ID = stringPreferencesKey("saved_jw_student_id")
         val SAVED_PASSWORD_OBF = stringPreferencesKey("saved_jw_password_local")
         val SAVED_SYNC_XNM = stringPreferencesKey("saved_jw_sync_xnm")
         val SAVED_SYNC_XQM = stringPreferencesKey("saved_jw_sync_xqm")
         val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
+        val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
+        val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
     }
 
     init {
@@ -105,12 +111,15 @@ class CampusRepository private constructor(
             hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false,
             hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false,
             autoSyncEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true,
+            autoCheckUpdateEnabled = prefs[PrefKeys.AUTO_CHECK_UPDATE] ?: true,
             savedStudentId = prefs[PrefKeys.SAVED_STUDENT_ID],
             hasSavedCredentials = !prefs[PrefKeys.SAVED_STUDENT_ID].isNullOrBlank() &&
                 !prefs[PrefKeys.SAVED_PASSWORD_OBF].isNullOrBlank(),
             syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025",
             syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12",
-            lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS]
+            lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
+            customChannelUrls = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]),
+            customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS])
         )
     }
 
@@ -613,6 +622,48 @@ class CampusRepository private constructor(
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
         appContext.appDataStore.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
+    }
+
+    suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {
+        appContext.appDataStore.edit { it[PrefKeys.AUTO_CHECK_UPDATE] = enabled }
+    }
+
+    suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
+        appContext.appDataStore.edit { prefs ->
+            val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
+            if (inviteUrl.isBlank()) {
+                current.remove(channelId)
+            } else {
+                current[channelId] = inviteUrl.trim()
+            }
+            prefs[PrefKeys.CUSTOM_CHANNEL_URLS] = encodeKeyValueMap(current)
+        }
+    }
+
+    suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) {
+        appContext.appDataStore.edit { prefs ->
+            val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
+            if (groupNumber.isBlank()) {
+                current.remove(clubId)
+            } else {
+                current[clubId] = groupNumber.trim()
+            }
+            prefs[PrefKeys.CUSTOM_CLUB_GROUPS] = encodeKeyValueMap(current)
+        }
+    }
+
+    private fun decodeKeyValueMap(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return raw.split("\n").mapNotNull { line ->
+            val idx = line.indexOf('\t')
+            if (idx <= 0) null else line.substring(0, idx) to line.substring(idx + 1)
+        }.toMap()
+    }
+
+    private fun encodeKeyValueMap(map: Map<String, String>): String {
+        return map.entries.joinToString("\n") { (k, v) ->
+            "${k.replace("\t", " ").replace("\n", " ")}\t${v.replace("\n", "").trim()}"
+        }
     }
 
     suspend fun setTimelineZoomScale(scale: Float) {

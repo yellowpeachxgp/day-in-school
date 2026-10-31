@@ -5,8 +5,9 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_widget_surface"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="12dp">
 
+    <!-- 第一层：顶部状态胶囊与教学周角标 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -19,76 +20,110 @@
             android:layout_height="wrap_content"
             android:background="@drawable/bg_widget_badge"
             android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
-            android:text="下一节课"
+            android:paddingVertical="3dp"
+            android:text="▲ 下一节课"
             android:textColor="@color/widget_accent"
             android:textSize="11sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tv_week_tag"
             android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/tv_week_tag"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="end"
+            android:background="@drawable/bg_widget_pill"
+            android:paddingHorizontal="7dp"
+            android:paddingVertical="2dp"
             android:singleLine="true"
             android:text="第8周"
             android:textColor="@color/widget_text_secondary"
-            android:textSize="11sp" />
+            android:textSize="10sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/tv_course_name"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="6dp"
-        android:layout_weight="1"
-        android:ellipsize="end"
-        android:gravity="center_vertical"
-        android:maxLines="2"
-        android:text="数据结构与算法"
-        android:textColor="@color/widget_text_primary"
-        android:textSize="16sp"
-        android:textStyle="bold" />
-
+    <!-- 第二层：内嵌下沉式焦点课程主卡（带左侧强调色竖条） -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_marginTop="7dp"
+        android:layout_weight="1"
+        android:background="@drawable/bg_widget_well"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:paddingHorizontal="9dp"
+        android:paddingVertical="7dp">
 
         <TextView
-            android:id="@+id/tv_time_range"
+            android:layout_width="3.5dp"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_widget_accent_bar" />
+
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:singleLine="true"
-            android:text="10:10–11:50"
-            android:textColor="@color/widget_accent"
-            android:textSize="13sp"
-            android:textStyle="bold" />
+            android:orientation="vertical">
 
-        <Chronometer
-            android:id="@+id/chronometer_countdown"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:countDown="true"
-            android:textColor="@color/widget_accent"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            <TextView
+                android:id="@+id/tv_course_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:text="数据结构与算法"
+                android:textColor="@color/widget_text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_time_range"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:singleLine="true"
+                    android:text="10:10–11:50"
+                    android:textColor="@color/widget_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <Chronometer
+                    android:id="@+id/chronometer_countdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:countDown="true"
+                    android:textColor="@color/widget_accent"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 
+    <!-- 第三层：底部教室与导航胶囊条 -->
     <TextView
         android:id="@+id/tv_room_and_teacher"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/bg_widget_pill"
         android:ellipsize="end"
-        android:minHeight="24dp"
         android:gravity="center_vertical"
+        android:paddingHorizontal="9dp"
+        android:paddingVertical="5dp"
         android:singleLine="true"
-        android:text="2号教学楼2204 · 张伟"
+        android:text="📍 2号教学楼2204 · 张伟"
         android:textColor="@color/widget_text_secondary"
-        android:textSize="12sp" />
+        android:textSize="11sp" />
 
 </LinearLayout>

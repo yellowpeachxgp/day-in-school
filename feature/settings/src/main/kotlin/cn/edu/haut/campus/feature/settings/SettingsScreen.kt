@@ -1,7 +1,12 @@
 package cn.edu.haut.campus.feature.settings
 
 import android.appwidget.AppWidgetManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -66,6 +71,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
+import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
@@ -81,16 +88,21 @@ import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.CalendarOverrideType
+import cn.edu.haut.campus.core.model.CampusClubCategory
+import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetThemeStyle
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
+import java.io.File
 import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.Instant
@@ -227,6 +239,37 @@ fun SettingsScreen(
     var widgetCompactDefault by remember { mutableStateOf(false) }
     var expandPeriodTable by remember { mutableStateOf(false) }
     var expandStudyFinder by remember { mutableStateOf(true) }
+    var expandClubsSection by remember { mutableStateOf(true) }
+    var selectedClubCategory by remember { mutableStateOf<CampusClubCategory?>(null) }
+    var clubSearchQuery by remember { mutableStateOf("") }
+    var editingChannelItem by remember { mutableStateOf<PresetQqChannelItem?>(null) }
+    var editingClubItem by remember { mutableStateOf<CampusClubItem?>(null) }
+
+    // GitHub Release 自动版本检测与在线拉取直装状态
+    val currentInstalledVersion = remember(context) {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.9.0" }
+            .getOrDefault("0.9.0")
+    }
+    var isCheckingRelease by remember { mutableStateOf(false) }
+    var releaseInfoState by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
+    var isDownloadingApk by remember { mutableStateOf(false) }
+    var apkDownloadProgress by remember { mutableStateOf(0f) }
+    var releaseStatusMessage by remember { mutableStateOf<String?>(null) }
+    var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+
+    LaunchedEffect(Unit) {
+        isCheckingRelease = true
+        val checkRes = GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion)
+        isCheckingRelease = false
+        checkRes.onSuccess { info ->
+            releaseInfoState = info
+            releaseStatusMessage = if (info.hasNewerVersion) {
+                "发现新版本 ${info.tagName}（发布于 ${info.publishedAt}），支持一键直接拉取安装"
+            } else {
+                "当前 v$currentInstalledVersion 已是最新版本（远端 Release: ${info.tagName}）"
+            }
+        }
+    }
 
     // 空教室速查过滤状态
     val buildingKeys = remember { LIANHUAJIE_STUDY_ROOMS_BY_BUILDING.keys.toList() }
@@ -610,6 +653,337 @@ fun SettingsScreen(
                 }
             }
 
+            // 4B. 预置 QQ 频道模块（点击快速跳转未来或自定义的 QQ 频道加入）
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "预置 QQ 频道",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "点击卡片快速跳转加入工大 QQ 频道 · 支持自定义写入频道邀请链接",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = "快速跳转",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (channel in PresetCampusCommunityCatalog.defaultQqChannels) {
+                        val effectiveUrl = prefs.customChannelUrls[channel.id]?.takeIf { it.isNotBlank() }
+                            ?: channel.defaultInviteUrl
+                        val isCustomized = !prefs.customChannelUrls[channel.id].isNullOrBlank()
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                .border(
+                                    width = 0.8.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable {
+                                    feedbackText = jumpToPresetQqChannel(
+                                        context = context,
+                                        channelTitle = channel.title,
+                                        inviteUrl = effectiveUrl
+                                    )
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = channel.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    XPeachStatusBadge(
+                                        text = if (isCustomized) "已写入" else channel.tagLabel,
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(
+                                    text = channel.subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = effectiveUrl,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                XPeachFilterPill(
+                                    label = "写入链接",
+                                    selected = false,
+                                    onClick = { editingChannelItem = channel }
+                                )
+                                XPeachFilterPill(
+                                    label = "进入频道",
+                                    selected = true,
+                                    onClick = {
+                                        feedbackText = jumpToPresetQqChannel(
+                                            context = context,
+                                            channelTitle = channel.title,
+                                            inviteUrl = effectiveUrl
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4C. 工大社团与学生组织模块（方便新生了解各社团、一键复制群号或唤醒 QQ 加群）
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "工大社团与迎新加群",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "莲花街校区 ${PresetCampusCommunityCatalog.defaultCampusClubs.size} 个热门社团与组织 · 一键加群或复制群号",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachFilterPill(
+                        label = if (expandClubsSection) "收起" else "展开",
+                        selected = expandClubsSection,
+                        onClick = { expandClubsSection = !expandClubsSection }
+                    )
+                }
+
+                AnimatedVisibility(visible = expandClubsSection) {
+                    Column(modifier = Modifier.padding(top = 10.dp)) {
+                        // 分类过滤胶囊栏
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            XPeachFilterPill(
+                                label = "全部 (${PresetCampusCommunityCatalog.defaultCampusClubs.size})",
+                                selected = selectedClubCategory == null,
+                                onClick = { selectedClubCategory = null }
+                            )
+                            for (cat in CampusClubCategory.entries) {
+                                XPeachFilterPill(
+                                    label = cat.label,
+                                    selected = selectedClubCategory == cat,
+                                    onClick = { selectedClubCategory = cat }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = clubSearchQuery,
+                            onValueChange = { clubSearchQuery = it },
+                            label = { Text("搜索社团名称、竞赛关键词、活动地点或群号") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        val filteredClubs = remember(
+                            selectedClubCategory,
+                            clubSearchQuery,
+                            prefs.customClubGroupNumbers
+                        ) {
+                            val q = clubSearchQuery.trim().lowercase()
+                            PresetCampusCommunityCatalog.defaultCampusClubs.filter { club ->
+                                val catOk = selectedClubCategory == null || club.category == selectedClubCategory
+                                val groupNo = prefs.customClubGroupNumbers[club.id] ?: club.qqGroupNumber
+                                val queryOk = q.isEmpty() ||
+                                    club.name.lowercase().contains(q) ||
+                                    club.summary.lowercase().contains(q) ||
+                                    club.affiliatedUnit.lowercase().contains(q) ||
+                                    club.activityVenue.lowercase().contains(q) ||
+                                    groupNo.contains(q) ||
+                                    club.highlights.any { it.lowercase().contains(q) }
+                                catOk && queryOk
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (club in filteredClubs) {
+                                val effectiveGroupNo = prefs.customClubGroupNumbers[club.id]?.takeIf { it.isNotBlank() }
+                                    ?: club.qqGroupNumber
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f))
+                                        .border(
+                                            width = 0.8.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(11.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = club.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            XPeachStatusBadge(
+                                                text = club.category.label,
+                                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Text(
+                                            text = club.affiliatedUnit,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+
+                                    Text(
+                                        text = club.summary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+
+                                    if (club.highlights.isNotEmpty()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            for (tag in club.highlights) {
+                                                Text(
+                                                    text = "#$tag",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "活动场地：${club.activityVenue}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "纳新 QQ 群：$effectiveGroupNo",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
+                                        }
+
+                                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                            XPeachFilterPill(
+                                                label = "改群号",
+                                                selected = false,
+                                                onClick = { editingClubItem = club }
+                                            )
+                                            XPeachFilterPill(
+                                                label = "复制群号",
+                                                selected = false,
+                                                onClick = {
+                                                    copyTextToClipboard(context, "社团QQ群号", effectiveGroupNo)
+                                                    feedbackText = "已复制「${club.name}」QQ 群号：$effectiveGroupNo"
+                                                }
+                                            )
+                                            XPeachFilterPill(
+                                                label = "一键加群",
+                                                selected = true,
+                                                onClick = {
+                                                    feedbackText = joinOrCopyClubQqGroup(
+                                                        context = context,
+                                                        clubName = club.name,
+                                                        groupNumber = effectiveGroupNo
+                                                    )
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 5. 学分结构分类统计（当存在已导入成绩时展示）
             if (attempts.isNotEmpty()) {
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
@@ -974,31 +1348,227 @@ fun SettingsScreen(
                 }
             }
 
-            // 9. 关于与版本信息
+            // 9. 预置版本检测与 GitHub Release 在线直装更新模块
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                val pkgInfo = remember(context) {
-                    runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
-                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text("日在校园 · 河南工业大学", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "莲花街校区本地优先课表、学业与实景导航",
+                            text = "版本检测与在线直装更新",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "基于 GitHub Release API 自动检测并直接拉取最新 APK 安装包",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        text = "v${pkgInfo?.versionName ?: "0.7.0"} · Android ${Build.VERSION.RELEASE}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false
+                    XPeachStatusBadge(
+                        text = if (releaseInfoState?.hasNewerVersion == true) {
+                            "有新版 ${releaseInfoState?.tagName}"
+                        } else {
+                            "v$currentInstalledVersion"
+                        },
+                        containerColor = if (releaseInfoState?.hasNewerVersion == true) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (releaseInfoState?.hasNewerVersion == true) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                     )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("启动时自动从 GitHub 检测新版本", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "发现新版本时自动弹窗提醒，免去手动进 Release 页面下载",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = prefs.autoCheckUpdateEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setAutoCheckUpdateEnabled(enabled) }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = releaseStatusMessage
+                            ?: if (isCheckingRelease) "正在连接 GitHub Releases API 检测最新版本..."
+                            else "当前已安装版本：v$currentInstalledVersion · Android ${Build.VERSION.RELEASE}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (releaseInfoState?.hasNewerVersion == true) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                    )
+
+                    releaseInfoState?.let { info ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "最新 Release：${info.releaseTitle} (${info.tagName}) · 发布日期 ${info.publishedAt.ifBlank { "最新" }}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (info.changelog.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = info.changelog.take(240),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    if (isDownloadingApk) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { apkDownloadProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        enabled = !isCheckingRelease && !isDownloadingApk,
+                        onClick = {
+                            scope.launch {
+                                isCheckingRelease = true
+                                releaseStatusMessage = "正在从 GitHub Release API 检测最新版本..."
+                                val res = GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion)
+                                isCheckingRelease = false
+                                res.onSuccess { info ->
+                                    releaseInfoState = info
+                                    releaseStatusMessage = if (info.hasNewerVersion) {
+                                        "检测到新版本 ${info.tagName}！点击右侧按钮即可直接拉取并安装。"
+                                    } else {
+                                        "当前 v$currentInstalledVersion 已是最新版本（远端 Release: ${info.tagName}）。"
+                                    }
+                                }.onFailure { err ->
+                                    releaseStatusMessage = "检测失败：${err.message ?: "请检查网络连接"}"
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = if (isCheckingRelease) "正在检测..." else "检测更新",
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+
+                    Button(
+                        enabled = !isDownloadingApk && !isCheckingRelease,
+                        onClick = {
+                            val readyFile = downloadedApkFile
+                            if (readyFile != null && readyFile.exists()) {
+                                GitHubReleaseUpdater.triggerInstallApk(context, readyFile)
+                                    .onSuccess { installed ->
+                                        releaseStatusMessage = if (installed) {
+                                            "已唤起系统安装器，请确认安装。"
+                                        } else {
+                                            "请在系统设置中开启「允许安装未知应用」后再次点击安装。"
+                                        }
+                                    }
+                                    .onFailure { err ->
+                                        releaseStatusMessage = "唤起安装器失败：${err.message}"
+                                    }
+                            } else {
+                                scope.launch {
+                                    isDownloadingApk = true
+                                    apkDownloadProgress = 0f
+                                    releaseStatusMessage = "正在获取最新 Release APK 下载地址..."
+                                    val targetInfo = releaseInfoState
+                                        ?: GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion).getOrNull()
+                                    if (targetInfo == null) {
+                                        isDownloadingApk = false
+                                        releaseStatusMessage = "无法从 GitHub 获取最新 Release 信息，请检查网络后重试。"
+                                        return@launch
+                                    }
+                                    releaseInfoState = targetInfo
+                                    val dlRes = GitHubReleaseUpdater.downloadReleaseApk(
+                                        context = context,
+                                        releaseInfo = targetInfo,
+                                        onProgress = { dl, total ->
+                                            if (total > 0L) {
+                                                apkDownloadProgress = dl.toFloat() / total.toFloat()
+                                                val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
+                                                val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
+                                                releaseStatusMessage =
+                                                    "正在拉取 ${targetInfo.tagName} 安装包：${(apkDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
+                                            }
+                                        }
+                                    )
+                                    isDownloadingApk = false
+                                    dlRes.onSuccess { apkFile ->
+                                        downloadedApkFile = apkFile
+                                        GitHubReleaseUpdater.triggerInstallApk(context, apkFile)
+                                            .onSuccess { installed ->
+                                                releaseStatusMessage = if (installed) {
+                                                    "拉取完成！已自动调起系统安装程序。"
+                                                } else {
+                                                    "APK 拉取完成！请开启「允许安装未知应用」后再次点击此按钮完成安装。"
+                                                }
+                                            }
+                                            .onFailure { err ->
+                                                releaseStatusMessage = "安装调起失败：${err.message}"
+                                            }
+                                    }.onFailure { err ->
+                                        releaseStatusMessage = "拉取 APK 失败：${err.message ?: "请检查网络"}"
+                                    }
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = when {
+                                isDownloadingApk -> "正在拉取..."
+                                downloadedApkFile?.exists() == true -> "立即安装 APK"
+                                releaseInfoState?.hasNewerVersion == true -> "直接拉取新版本"
+                                else -> "直接拉取最新包"
+                            },
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
 
@@ -1294,6 +1864,162 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+
+    // 弹窗 6：自定义写入预置 QQ 频道邀请链接
+    val channelToEdit = editingChannelItem
+    if (channelToEdit != null) {
+        var channelUrlInput by remember(channelToEdit, prefs.customChannelUrls) {
+            mutableStateOf(
+                prefs.customChannelUrls[channelToEdit.id]?.takeIf { it.isNotBlank() }
+                    ?: channelToEdit.defaultInviteUrl
+            )
+        }
+
+        AlertDialog(
+            onDismissRequest = { editingChannelItem = null },
+            title = { Text("配置「${channelToEdit.title}」链接") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "可填入正式 QQ 频道邀请链接（如 https://pd.qq.com/s/xxxx 或 mqqapi:// 协议链接），保存后点击卡片即直接跳转。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = channelUrlInput,
+                        onValueChange = { channelUrlInput = it },
+                        label = { Text("QQ 频道邀请链接") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.saveCustomChannelUrl(channelToEdit.id, channelUrlInput.trim())
+                            editingChannelItem = null
+                            feedbackText = "已更新「${channelToEdit.title}」跳转链接。"
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingChannelItem = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 弹窗 7：修改社团纳新 QQ 群号
+    val clubToEdit = editingClubItem
+    if (clubToEdit != null) {
+        var groupNoInput by remember(clubToEdit, prefs.customClubGroupNumbers) {
+            mutableStateOf(
+                prefs.customClubGroupNumbers[clubToEdit.id]?.takeIf { it.isNotBlank() }
+                    ?: clubToEdit.qqGroupNumber
+            )
+        }
+
+        AlertDialog(
+            onDismissRequest = { editingClubItem = null },
+            title = { Text("更新「${clubToEdit.name}」纳新群号") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "若该社团更新了本学期最新迎新 QQ 群号，可在此直接修改保存，点击一键加群将自动跳转新群号。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = groupNoInput,
+                        onValueChange = { groupNoInput = it },
+                        label = { Text("社团 QQ 群号") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.saveCustomClubGroupNumber(clubToEdit.id, groupNoInput.trim())
+                            editingClubItem = null
+                            feedbackText = "已更新「${clubToEdit.name}」QQ 群号为 ${groupNoInput.trim()}。"
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingClubItem = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+private fun copyTextToClipboard(context: Context, label: String, text: String) {
+    runCatching {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
+    }
+}
+
+/**
+ * 一键唤醒手机 QQ 群资料卡或复制社团群号：
+ * 使用官方 `mqqapi://card/show_pslcard?src_type=internal&version=1&uin=<群号>&card_type=group&source=qrcode` 协议直达加群。
+ */
+private fun joinOrCopyClubQqGroup(
+    context: Context,
+    clubName: String,
+    groupNumber: String
+): String {
+    val cleanNo = groupNumber.trim()
+    copyTextToClipboard(context, "$clubName QQ群号", cleanNo)
+    val qqCardUri = Uri.parse(
+        "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=$cleanNo&card_type=group&source=qrcode"
+    )
+    return runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, qqCardUri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        "已复制群号 $cleanNo 并正在拉起手机 QQ 打开「$clubName」群资料卡..."
+    }.getOrElse {
+        "已复制「$clubName」群号 $cleanNo 到剪贴板（未检测到手机 QQ，可粘贴群号搜索加入）"
+    }
+}
+
+/**
+ * 快速跳转加入预置 QQ 频道：
+ * 同时将频道邀请链接复制到剪贴板，并通过系统 ACTION_VIEW 直接调起 QQ 频道或浏览器落地页。
+ */
+private fun jumpToPresetQqChannel(
+    context: Context,
+    channelTitle: String,
+    inviteUrl: String
+): String {
+    val cleanUrl = inviteUrl.trim().ifBlank { "https://pd.qq.com" }
+    copyTextToClipboard(context, channelTitle, cleanUrl)
+    return runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(cleanUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        "正在跳转进入「$channelTitle」..."
+    }.getOrElse {
+        "已复制「$channelTitle」频道链接：$cleanUrl"
     }
 }
 

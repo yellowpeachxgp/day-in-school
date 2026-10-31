@@ -5,5 +5,9 @@
     <color name="today_widget_primary">#F8FAFC</color>
     <color name="today_widget_secondary">#CBD5E1</color>
     <color name="today_widget_accent">#FB923C</color>
-    <color name="today_widget_highlight_bg">#334155</color>
+    <color name="today_widget_highlight_bg">#271A14</color>
+    <color name="today_widget_highlight_stroke">#7C2D12</color>
+    <color name="today_widget_sub_bg">#0F172A</color>
+    <color name="today_widget_sub_stroke">#334155</color>
+    <color name="today_widget_badge_bg">#7C2D12</color>
 </resources>

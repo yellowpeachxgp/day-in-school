@@ -6,4 +6,8 @@
     <color name="tl_widget_secondary">#CBD5E1</color>
     <color name="tl_widget_accent">#FB923C</color>
     <color name="tl_widget_card">#0F172A</color>
+    <color name="tl_widget_card_stroke">#334155</color>
+    <color name="tl_widget_active_bg">#271A14</color>
+    <color name="tl_widget_active_stroke">#7C2D12</color>
+    <color name="tl_widget_badge_bg">#7C2D12</color>
 </resources>

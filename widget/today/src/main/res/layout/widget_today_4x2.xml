@@ -5,8 +5,9 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_today_widget"
     android:orientation="vertical"
-    android:padding="14dp">
+    android:padding="12dp">
 
+    <!-- 顶部第1层：日期教学周标题与右侧胶囊倒计时 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -28,12 +29,16 @@
             android:id="@+id/chronometer_today"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/bg_today_badge"
             android:countDown="true"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
             android:textColor="@color/today_widget_accent"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 
+    <!-- 主体第2层：左侧高亮焦点主卡 + 右侧双层下沉子槽 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -45,74 +50,98 @@
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1.15"
+            android:layout_weight="1.18"
             android:background="@drawable/bg_today_highlight"
             android:gravity="center_vertical"
-            android:orientation="vertical"
+            android:orientation="horizontal"
             android:padding="10dp">
 
             <TextView
-                android:id="@+id/tv_focus_status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="▲ 下一节课"
-                android:textColor="@color/today_widget_accent"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+                android:layout_width="3.5dp"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_today_accent_bar" />
 
-            <TextView
-                android:id="@+id/tv_focus_title"
-                android:layout_width="match_parent"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:text="数据结构与算法"
-                android:textColor="@color/today_widget_primary"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/tv_focus_meta"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:ellipsize="end"
-                android:singleLine="true"
-                android:text="10:10–11:50 · 2号教学楼2204"
-                android:textColor="@color/today_widget_secondary"
-                android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/tv_focus_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_today_badge"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="1dp"
+                    android:text="▲ 下一节课"
+                    android:textColor="@color/today_widget_accent"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_focus_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="数据结构与算法"
+                    android:textColor="@color/today_widget_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_focus_meta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="10:10–11:50 · 2号教学楼2204"
+                    android:textColor="@color/today_widget_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/layout_subsequent"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginStart="10dp"
+            android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:gravity="center_vertical"
             android:orientation="vertical">
 
             <TextView
                 android:id="@+id/tv_sub_1"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_today_sub_slot"
                 android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="9dp"
                 android:singleLine="true"
                 android:text="14:30 操作系统原理 · 4教4102"
                 android:textColor="@color/today_widget_primary"
-                android:textSize="12sp" />
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tv_sub_2"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="0dp"
                 android:layout_marginTop="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_today_sub_slot"
                 android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="9dp"
                 android:singleLine="true"
                 android:text="19:00 形势与政策 · 钟楼101"
                 android:textColor="@color/today_widget_secondary"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
 

@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="today_widget_bg">#FFFFFF</color>
-    <color name="today_widget_stroke">#E2E8F0</color>
+    <color name="today_widget_stroke">#CBD5E1</color>
     <color name="today_widget_primary">#0F172A</color>
     <color name="today_widget_secondary">#475569</color>
     <color name="today_widget_accent">#EA580C</color>
     <color name="today_widget_highlight_bg">#FFF7ED</color>
+    <color name="today_widget_highlight_stroke">#FED7AA</color>
+    <color name="today_widget_sub_bg">#F8FAFC</color>
+    <color name="today_widget_sub_stroke">#E2E8F0</color>
+    <color name="today_widget_badge_bg">#FFEDD5</color>
     <string name="widget_today_desc">展示今天日期、教学周、当前/下节课及随后两节课程</string>
 </resources>

@@ -56,9 +56,11 @@ import androidx.compose.material.icons.filled.CalendarViewWeek
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -97,7 +99,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
+import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
+import java.io.File
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
@@ -200,8 +205,17 @@ fun HautCampusRootApp(
     var tabResetCounter by remember { mutableIntStateOf(0) }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+
+    // 启动自动检测 GitHub Release 最新版本状态
+    var detectedUpdateRelease by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
+    var hasCheckedStartupRelease by rememberSaveable { mutableStateOf(false) }
+    var isDownloadingStartupApk by remember { mutableStateOf(false) }
+    var startupDownloadProgress by remember { mutableStateOf(0f) }
+    var startupDownloadStatusText by remember { mutableStateOf<String?>(null) }
+    var downloadedStartupApkFile by remember { mutableStateOf<File?>(null) }
 
     // 打开应用时若已绑定教务凭据且开启了自动同步，后台自动静默更新最新课表、期初/期中/期末考试与成绩
     LaunchedEffect(prefs.hasCompletedOnboarding, prefs.autoSyncEnabled, prefs.hasSavedCredentials) {
@@ -209,6 +223,21 @@ fun HautCampusRootApp(
             val res = repository.performDynamicAcademicSync(force = false)
             res?.onSuccess {
                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+            }
+        }
+    }
+
+    // 打开应用时自动从 GitHub Release API 检测是否有新版本可直装更新
+    LaunchedEffect(prefs.hasCompletedOnboarding, prefs.autoCheckUpdateEnabled) {
+        if (prefs.hasCompletedOnboarding && prefs.autoCheckUpdateEnabled && !hasCheckedStartupRelease) {
+            hasCheckedStartupRelease = true
+            val currentVer = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.9.0"
+            }.getOrDefault("0.9.0")
+            GitHubReleaseUpdater.checkLatestRelease(currentVer).onSuccess { release ->
+                if (release.hasNewerVersion) {
+                    detectedUpdateRelease = release
+                }
             }
         }
     }
@@ -327,6 +356,130 @@ fun HautCampusRootApp(
                 }
             }
         }
+    }
+
+    val releaseToPrompt = detectedUpdateRelease
+    if (releaseToPrompt != null) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDownloadingStartupApk) {
+                    detectedUpdateRelease = null
+                }
+            },
+            title = {
+                Text("发现新版本 ${releaseToPrompt.tagName}")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "当前版本 v${releaseToPrompt.currentVersionNormalized} → 最新版本 ${releaseToPrompt.tagName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = releaseToPrompt.changelog.take(360),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (isDownloadingStartupApk || startupDownloadStatusText != null) {
+                        if (isDownloadingStartupApk) {
+                            LinearProgressIndicator(
+                                progress = { startupDownloadProgress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(CircleShape)
+                            )
+                        }
+                        startupDownloadStatusText?.let { msg ->
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isDownloadingStartupApk,
+                    onClick = {
+                        val readyFile = downloadedStartupApkFile
+                        if (readyFile != null && readyFile.exists()) {
+                            GitHubReleaseUpdater.triggerInstallApk(context, readyFile)
+                                .onSuccess { installed ->
+                                    startupDownloadStatusText = if (installed) {
+                                        "已调起系统安装器，请确认安装。"
+                                    } else {
+                                        "请在系统设置中允许「安装未知应用」后再次点击安装。"
+                                    }
+                                }
+                                .onFailure { err ->
+                                    startupDownloadStatusText = "唤起安装失败：${err.message}"
+                                }
+                        } else {
+                            scope.launch {
+                                isDownloadingStartupApk = true
+                                startupDownloadProgress = 0f
+                                startupDownloadStatusText = "正在从 GitHub Release 拉取最新 APK..."
+                                val dlRes = GitHubReleaseUpdater.downloadReleaseApk(
+                                    context = context,
+                                    releaseInfo = releaseToPrompt,
+                                    onProgress = { dl, total ->
+                                        if (total > 0L) {
+                                            startupDownloadProgress = dl.toFloat() / total.toFloat()
+                                            val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
+                                            val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
+                                            startupDownloadStatusText =
+                                                "正在拉取更新包 ${(startupDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
+                                        }
+                                    }
+                                )
+                                isDownloadingStartupApk = false
+                                dlRes.onSuccess { apkFile ->
+                                    downloadedStartupApkFile = apkFile
+                                    GitHubReleaseUpdater.triggerInstallApk(context, apkFile)
+                                        .onSuccess { installed ->
+                                            startupDownloadStatusText = if (installed) {
+                                                "下载完成，已自动唤起系统安装器。"
+                                            } else {
+                                                "下载完成！请开启「允许安装未知应用」权限后再次点击下方按钮安装。"
+                                            }
+                                        }
+                                        .onFailure { err ->
+                                            startupDownloadStatusText = "唤起安装失败：${err.message}"
+                                        }
+                                }.onFailure { err ->
+                                    startupDownloadStatusText = "拉取失败：${err.message ?: "请检查网络"}"
+                                }
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isDownloadingStartupApk -> "正在拉取..."
+                            downloadedStartupApkFile?.exists() == true -> "立即安装 APK"
+                            else -> "直接拉取并更新"
+                        },
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isDownloadingStartupApk,
+                    onClick = { detectedUpdateRelease = null }
+                ) {
+                    Text("稍后")
+                }
+            }
+        )
     }
 }
 

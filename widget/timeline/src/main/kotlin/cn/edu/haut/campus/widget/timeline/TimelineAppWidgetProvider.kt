@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
@@ -87,7 +88,20 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 R.id.tv_tl_slot_4
             )
 
+            val primaryColor = ContextCompat.getColor(context, R.color.tl_widget_primary)
+            val secondaryColor = ContextCompat.getColor(context, R.color.tl_widget_secondary)
+            val accentColor = ContextCompat.getColor(context, R.color.tl_widget_accent)
+            val activeItem = day.activeOrNextClass
+
             if (day.items.isEmpty()) {
+                for ((idx, slotId) in slotIds.withIndex()) {
+                    views.setInt(
+                        slotId,
+                        "setBackgroundResource",
+                        if (idx == 0) R.drawable.bg_timeline_slot_active else R.drawable.bg_timeline_slot
+                    )
+                    views.setTextColor(slotId, if (idx == 0) accentColor else secondaryColor)
+                }
                 views.setTextViewText(R.id.tv_tl_slot_1, "08:00 │ 今天没有安排课程")
                 val hint = day.nextClassDayHint
                 views.setTextViewText(
@@ -105,18 +119,30 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 for (index in slotIds.indices) {
                     val item = day.items.getOrNull(index)
                     val slotId = slotIds[index]
+                    val isFocus = item != null && item == activeItem
+                    views.setInt(
+                        slotId,
+                        "setBackgroundResource",
+                        if (isFocus) R.drawable.bg_timeline_slot_active else R.drawable.bg_timeline_slot
+                    )
                     if (item != null) {
+                        val color = when {
+                            isFocus -> accentColor
+                            item.status == ClassStatus.FINISHED -> secondaryColor
+                            else -> primaryColor
+                        }
+                        views.setTextColor(slotId, color)
                         views.setTextViewText(slotId, formatSlotLine(item, snapshot.config.privacyMode))
                     } else {
+                        views.setTextColor(slotId, secondaryColor)
                         views.setTextViewText(slotId, "──  空闲时段（自习/休息）")
                     }
                 }
             }
 
-            val active = day.activeOrNextClass
             views.setTextViewText(
                 R.id.tv_tl_footer,
-                active?.let { "当前焦点：${it.occurrence.courseName} (${it.statusText})" }
+                activeItem?.let { "焦点：${it.occurrence.courseName} · ${it.occurrence.rawRoom} (${it.statusText})" }
                     ?: "今日课程已全部完成 · 点击打开时间轴"
             )
 

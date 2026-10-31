@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
+import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.ScheduleSnapshotUseCase
@@ -79,6 +80,10 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 DayOfWeek.SUNDAY to R.id.tv_wk_day_7
             )
 
+            val primaryColor = ContextCompat.getColor(context, R.color.wk_widget_primary)
+            val secondaryColor = ContextCompat.getColor(context, R.color.wk_widget_secondary)
+            val accentColor = ContextCompat.getColor(context, R.color.wk_widget_accent)
+
             val byWeekday = snapshot.weekOccurrences.entries.associate { (date, list) ->
                 date.dayOfWeek to (date to list)
             }
@@ -89,13 +94,26 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 val prefix = if (isToday) "★${weekday.ChineseLabel}" else "  ${weekday.ChineseLabel}"
                 val occurrences = pair?.second.orEmpty()
                 val summary = if (occurrences.isEmpty()) {
-                    "无课"
+                    "无课（自由安排）"
                 } else {
                     occurrences.joinToString(" · ") { occ ->
                         val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(6)
                         "${occ.startPeriod}-${occ.endPeriod}$shortName"
                     }
                 }
+                views.setInt(
+                    viewId,
+                    "setBackgroundResource",
+                    if (isToday) R.drawable.bg_week_row_today else R.drawable.bg_week_row
+                )
+                views.setTextColor(
+                    viewId,
+                    when {
+                        isToday -> accentColor
+                        occurrences.isEmpty() -> secondaryColor
+                        else -> primaryColor
+                    }
+                )
                 views.setTextViewText(viewId, "$prefix │ $summary")
             }
 
