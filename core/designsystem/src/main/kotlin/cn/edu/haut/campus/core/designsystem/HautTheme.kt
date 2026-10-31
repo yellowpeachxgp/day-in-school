@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -46,12 +45,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ==========================================================================
-// XPeach SSO — Unified Flat Design System (shadcn/ui Aligned with xpeach.codes)
-// Clean Neutral Surfaces · 1dp Crisp Borders · 8–12dp Standard Radii
-// Zero Liquid Glass · Zero Specular Glare · Dual Adaptive Theme
-// ==========================================================================
-
 val XPeachBrandLight = Color(0xFF0072BC)
 val XPeachBrandHoverLight = Color(0xFF005FA3)
 val XPeachBrandSoftLight = Color(0xFFEBF5FB)
@@ -69,7 +62,6 @@ val XPeachDanger = Color(0xFFDC2626)
 val XPeachDangerSoft = Color(0xFFFEE2E2)
 val XPeachInfo = Color(0xFF0284C7)
 
-// Light Surfaces & Ink
 val XPeachBgLight = Color(0xFFFAFAFA)
 val XPeachCardLight = Color(0xFFFFFFFF)
 val XPeachWellLight = Color(0xFFF7F7F7)
@@ -79,7 +71,6 @@ val XPeachTextLight = Color(0xFF0A0A0A)
 val XPeachText2Light = Color(0xFF404040)
 val XPeachMutedLight = Color(0xFF666666)
 
-// Dark Surfaces & Ink
 val XPeachBgDark = Color(0xFF1E1E1E)
 val XPeachCardDark = Color(0xFF292929)
 val XPeachWellDark = Color(0xFF242424)
@@ -144,27 +135,25 @@ private val DarkColors = darkColorScheme(
     outlineVariant = XPeachBorderDark
 )
 
+// 统一克制的字阶体系（消除字号断层与跨字体跳变）
 val HautTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Bold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-        letterSpacing = (-0.4).sp
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 18.sp,
+        lineHeight = 24.sp
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 17.sp,
-        lineHeight = 23.sp,
-        letterSpacing = (-0.3).sp
+        fontSize = 16.sp,
+        lineHeight = 22.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
-        letterSpacing = (-0.2).sp
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -178,6 +167,12 @@ val HautTypography = Typography(
         fontSize = 13.sp,
         lineHeight = 18.sp
     ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 13.sp,
+        lineHeight = 18.sp
+    ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
@@ -185,8 +180,8 @@ val HautTypography = Typography(
         lineHeight = 16.sp
     ),
     labelSmall = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
         fontSize = 11.sp,
         lineHeight = 14.sp
     )
@@ -214,20 +209,13 @@ fun HautCampusTheme(
     )
 }
 
-// ==========================================================================
-// XPeach Reusable Flat shadcn/ui Primitives
-// ==========================================================================
-
-/**
- * XPeach 标准扁平卡片：0dp 阴影、1dp 清晰描边、12dp 圆角、纯白/深灰实色底面。
- */
 @Composable
 fun XPeachCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.surface,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
-    cornerRadius: Dp = 12.dp,
-    contentPadding: PaddingValues = PaddingValues(16.dp),
+    cornerRadius: Dp = 10.dp,
+    contentPadding: PaddingValues = PaddingValues(14.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -249,16 +237,13 @@ fun XPeachCard(
     }
 }
 
-/**
- * XPeach 扁平内嵌槽位容器（对应 xpeach-sso 的 `--glass-bg-well` / `--surface-2`）。
- */
 @Composable
 fun XPeachWell(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
     containerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    contentPadding: PaddingValues = PaddingValues(12.dp),
+    contentPadding: PaddingValues = PaddingValues(10.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
@@ -276,10 +261,6 @@ fun XPeachWell(
     }
 }
 
-/**
- * XPeach 扁平顶部栏（对应 xpeach-sso `.portal-topbar` / `.mobile-topbar`）：
- * 纯净底色 + 品牌方块徽章 + 标题/副标题 + 右侧 32dp 扁平描边图标按钮 + 底部 1dp 分割线。
- */
 @Composable
 fun XPeachTopBar(
     title: String,
@@ -303,47 +284,29 @@ fun XPeachTopBar(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
             ) {
                 if (navigationIcon != null) {
                     navigationIcon()
-                    Spacer(modifier = Modifier.width(8.dp))
-                } else {
-                    // XPeach Brand Mark (28dp rounded 7dp square)
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "日",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                     Spacer(modifier = Modifier.width(10.dp))
                 }
 
-                Column(modifier = Modifier.weight(1f, fill = false)) {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = title,
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         if (!badgeText.isNullOrBlank()) {
                             Spacer(modifier = Modifier.width(8.dp))
-                            XPeachStatusBadge(
-                                text = badgeText,
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary,
-                                borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                            )
+                            XPeachStatusBadge(text = badgeText)
                         }
                     }
                     if (!subtitle.isNullOrBlank()) {
@@ -352,6 +315,7 @@ fun XPeachTopBar(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
+                            softWrap = false,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -368,9 +332,6 @@ fun XPeachTopBar(
     }
 }
 
-/**
- * XPeach 32dp 扁平描边图标按钮（对应 xpeach-sso `.icon-btn`）。
- */
 @Composable
 fun XPeachIconButton(
     icon: ImageVector,
@@ -380,7 +341,7 @@ fun XPeachIconButton(
 ) {
     Box(
         modifier = modifier
-            .size(34.dp)
+            .size(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
@@ -391,7 +352,7 @@ fun XPeachIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(17.dp)
+            modifier = Modifier.size(16.dp)
         )
     }
 }
@@ -404,7 +365,7 @@ fun XPeachIconButton(
 ) {
     Box(
         modifier = modifier
-            .size(34.dp)
+            .size(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
@@ -415,9 +376,6 @@ fun XPeachIconButton(
     }
 }
 
-/**
- * XPeach 扁平胶囊筛选标签（对应 xpeach-sso `.filter-pill`）。
- */
 @Composable
 fun XPeachFilterPill(
     label: String,
@@ -465,7 +423,10 @@ fun XPeachFilterPill(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = fg
+            color = fg,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -510,14 +471,14 @@ fun XPeachFilterPill(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = fg
+            color = fg,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
 
-/**
- * XPeach 扁平分段切换栏（对应 xpeach-sso `.tabs-bar` / `.center-tabs`）。
- */
 @Composable
 fun <T> XPeachSegmentedTabs(
     options: List<T>,
@@ -554,7 +515,7 @@ fun <T> XPeachSegmentedTabs(
                         } else Modifier
                     )
                     .clickable { onSelect(option) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -565,7 +526,10 @@ fun <T> XPeachSegmentedTabs(
                         MaterialTheme.colorScheme.onSurface
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                    },
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -589,9 +553,6 @@ fun XPeachSegmentedTabs(
     )
 }
 
-/**
- * XPeach 语义状态徽章（对应 xpeach-sso `.badge`）。
- */
 @Composable
 fun XPeachStatusBadge(
     text: String,
@@ -610,9 +571,12 @@ fun XPeachStatusBadge(
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
-            fontWeight = FontWeight.SemiBold,
-            color = contentColor
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = contentColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

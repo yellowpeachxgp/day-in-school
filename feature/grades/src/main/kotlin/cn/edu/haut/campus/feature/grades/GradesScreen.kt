@@ -3,15 +3,16 @@ package cn.edu.haut.campus.feature.grades
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,7 +23,6 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
@@ -70,7 +71,7 @@ fun GradesScreen(
 
     var selectedTermFilter by remember { mutableStateOf<String?>(null) }
     var selectedCategoryFilter by remember { mutableStateOf<CourseCategory?>(null) }
-    var trendMetricIndex by remember { mutableIntStateOf(0) } // 0: GPA, 1: 平均分, 2: 获得学分
+    var trendMetricIndex by remember { mutableIntStateOf(0) }
 
     val availableTerms = remember(attempts) {
         attempts.map { it.termId }.distinct().sortedDescending()
@@ -84,7 +85,7 @@ fun GradesScreen(
             OfficialGpaSnapshot(
                 cumulativeGpa = officialVal,
                 fetchedAt = Instant.now(),
-                fieldDefinitionNote = prefs.officialGpaNote ?: "教务官方汇总"
+                fieldDefinitionNote = prefs.officialGpaNote ?: "教务汇总"
             )
         } else null
     }
@@ -106,50 +107,37 @@ fun GradesScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "我的学业与 GPA",
-            subtitle = latestTermId ?: "全部学期汇总",
-            badgeText = if (privacyMasked) "防截屏保护中" else null,
+            title = "学业成绩",
+            subtitle = latestTermId ?: "全部学期",
+            badgeText = if (privacyMasked) "已隐藏" else null,
             actions = {
                 XPeachIconButton(
+                    icon = if (privacyMasked) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = "切换成绩可见性",
                     onClick = {
                         scope.launch {
                             repository.setGpaPrivacyShield(!privacyMasked)
                         }
                     }
-                ) {
-                    Icon(
-                        if (privacyMasked) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = "切换成绩隐私与防截屏保护",
-                        tint = if (privacyMasked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                )
                 XPeachIconButton(
+                    icon = Icons.Default.Share,
+                    contentDescription = "导出CSV",
                     onClick = {
                         val csv = buildGradesCsv(attempts)
                         val sendIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/csv"
-                            putExtra(Intent.EXTRA_SUBJECT, "河南工业大学个人成绩明细导出.csv")
+                            putExtra(Intent.EXTRA_SUBJECT, "成绩明细.csv")
                             putExtra(Intent.EXTRA_TEXT, csv)
                         }
-                        context.startActivity(Intent.createChooser(sendIntent, "导出成绩 CSV（仅本地最小化字段）"))
+                        context.startActivity(Intent.createChooser(sendIntent, "导出 CSV"))
                     }
-                ) {
-                    Icon(
-                        Icons.Default.Share,
-                        contentDescription = "导出本地CSV",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                XPeachIconButton(onClick = onNavigateToImporter) {
-                    Icon(
-                        Icons.Default.CloudDownload,
-                        contentDescription = "同步教务成绩",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                )
+                XPeachIconButton(
+                    icon = Icons.Default.CloudDownload,
+                    contentDescription = "同步成绩",
+                    onClick = onNavigateToImporter
+                )
             }
         )
 
@@ -169,154 +157,142 @@ fun GradesScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "尚未同步学业成绩",
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                        XPeachStatusBadge(text = "空白")
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "当前没有任何预设演示成绩。点击下方按钮连接河南工业大学统一身份认证，即可拉取您的全部历史课程成绩、课程绩点与修读明细。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Button(
-                        onClick = onNavigateToImporter,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("同步河工大教务成绩")
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Text(
+                                text = "暂无成绩数据",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "登录教务系统同步历史课程成绩与绩点",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = onNavigateToImporter,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("去同步", maxLines = 1, softWrap = false)
+                        }
                     }
                 }
             }
 
-            // 1. 顶部 GPA 总览看板（对标 xpeach-sso Bento Metric Tiles 风格）
+            // 1. 2×2 绩点与学分概览卡片（避免4列横向拥挤）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "GPA 与学分概览",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("绩点与学分", style = MaterialTheme.typography.titleMedium)
                     XPeachStatusBadge(text = gpaReport.primarySourceType.badgeLabel)
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     XPeachWell(modifier = Modifier.weight(1f)) {
-                        GpaMetricColumn(
+                        GpaMetricTile(
                             label = "累计 GPA",
                             value = if (privacyMasked) "∗.∗∗" else (gpaReport.cumulativeGpa?.toPlainString() ?: "—")
                         )
                     }
                     XPeachWell(modifier = Modifier.weight(1f)) {
-                        GpaMetricColumn(
-                            label = "当前学期",
+                        GpaMetricTile(
+                            label = "当前学期 GPA",
                             value = if (privacyMasked) "∗.∗∗" else (gpaReport.currentTermGpa?.toPlainString() ?: "—")
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     XPeachWell(modifier = Modifier.weight(1f)) {
-                        GpaMetricColumn(
+                        GpaMetricTile(
                             label = "学年 GPA",
                             value = if (privacyMasked) "∗.∗∗" else (gpaReport.currentAcademicYearGpa?.toPlainString() ?: "—")
                         )
                     }
                     XPeachWell(modifier = Modifier.weight(1f)) {
-                        GpaMetricColumn(
+                        GpaMetricTile(
                             label = "已修学分",
                             value = if (privacyMasked) "∗∗.∗" else gpaReport.totalEarnedCredits.toPlainString()
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(
-                    text = gpaReport.sourceExplanation,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
-            // 2. 学期 GPA / 平均分 / 学分 趋势折线图
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("学期学业走势", style = MaterialTheme.typography.titleMedium)
-                    XPeachSegmentedTabs(
-                        items = listOf("GPA", "平均分", "学分"),
-                        selectedIndex = trendMetricIndex,
-                        onSelect = { trendMetricIndex = it },
-                        modifier = Modifier.width(196.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (gpaReport.termTrends.isEmpty()) {
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "暂无学期成绩数据，请点击右上角同步成绩。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            // 2. 学期趋势与分布
+            if (gpaReport.termTrends.isNotEmpty()) {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("学期走势", style = MaterialTheme.typography.titleMedium)
+                        XPeachSegmentedTabs(
+                            items = listOf("GPA", "均分", "学分"),
+                            selectedIndex = trendMetricIndex,
+                            onSelect = { trendMetricIndex = it },
+                            modifier = Modifier.width(168.dp)
                         )
                     }
-                } else {
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     TermTrendChart(
                         points = gpaReport.termTrends,
                         metricIndex = trendMetricIndex,
                         privacyMasked = privacyMasked
                     )
-                }
-            }
 
-            // 3. 课程成绩分布与绩点诊断说明
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Text("课程成绩分布与计算核查", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                val dist = gpaReport.distribution
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("优秀(90+): ${dist.excellentCount}门", style = MaterialTheme.typography.labelMedium)
-                    Text("良好(80-89): ${dist.goodCount}门", style = MaterialTheme.typography.labelMedium)
-                    Text("中等(70-79): ${dist.mediumCount}门", style = MaterialTheme.typography.labelMedium)
-                    Text("及格/通过: ${dist.passCount}门", style = MaterialTheme.typography.labelMedium)
-                }
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                if (gpaReport.diagnosticNotes.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (note in gpaReport.diagnosticNotes) {
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = "• $note",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
+                    val dist = gpaReport.distribution
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachWell(modifier = Modifier.weight(1f)) {
+                            Text("90+ 优秀", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                            Text("${dist.excellentCount} 门", style = MaterialTheme.typography.titleMedium, maxLines = 1, softWrap = false)
+                        }
+                        XPeachWell(modifier = Modifier.weight(1f)) {
+                            Text("80-89 良好", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                            Text("${dist.goodCount} 门", style = MaterialTheme.typography.titleMedium, maxLines = 1, softWrap = false)
+                        }
+                        XPeachWell(modifier = Modifier.weight(1f)) {
+                            Text("70-79 中等", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                            Text("${dist.mediumCount} 门", style = MaterialTheme.typography.titleMedium, maxLines = 1, softWrap = false)
+                        }
+                        XPeachWell(modifier = Modifier.weight(1f)) {
+                            Text("60+ 及格", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                            Text("${dist.passCount} 门", style = MaterialTheme.typography.titleMedium, maxLines = 1, softWrap = false)
                         }
                     }
                 }
             }
 
-            // 4. 学期与课程类别筛选栏（XPeachFilterPill）
+            // 3. 学期与课程类别筛选（横向滚动，杜绝文字换行变形）
             if (availableTerms.isNotEmpty()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     XPeachFilterPill(
@@ -335,7 +311,9 @@ fun GradesScreen(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 XPeachFilterPill(
@@ -352,7 +330,7 @@ fun GradesScreen(
                 }
             }
 
-            // 5. 课程成绩与绩点计算核查明细列表
+            // 4. 成绩列表
             val filteredAudit = remember(gpaReport.auditItems, selectedTermFilter, selectedCategoryFilter) {
                 gpaReport.auditItems.filter { item ->
                     val att = item.selectedAttempt ?: return@filter false
@@ -370,51 +348,49 @@ fun GradesScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 12.dp)
+                        ) {
                             Text(
                                 text = att.name,
-                                style = MaterialTheme.typography.titleMedium
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${att.termId} · ${att.category.label} · ${att.credits} 学分 · ${att.attemptType.label}",
+                                text = "${att.termId} · ${att.category.label} · ${att.credits} 学分",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = if (privacyMasked) "成绩 ∗∗" else "成绩 ${att.rawGrade}",
-                                style = MaterialTheme.typography.titleMedium,
+                                text = if (privacyMasked) "∗∗" else att.rawGrade,
+                                style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             Text(
                                 text = if (privacyMasked) {
                                     "绩点 ∗.∗"
                                 } else {
-                                    att.gradePoint?.let { "教务绩点 $it" } ?: "无课程绩点"
+                                    att.gradePoint?.let { "绩点 $it" } ?: att.attemptType.label
                                 },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = if (audit.includedInGpaDenominator) {
-                            "✓ 已纳入分母：${audit.exclusionOrChangeReason}"
-                        } else {
-                            "○ 未计入分母：${audit.exclusionOrChangeReason}"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (audit.includedInGpaDenominator) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
                 }
             }
         }
@@ -422,21 +398,26 @@ fun GradesScreen(
 }
 
 @Composable
-private fun GpaMetricColumn(label: String, value: String) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth()
+private fun GpaMetricTile(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false
+        )
         Text(
             text = value,
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -463,8 +444,8 @@ private fun TermTrendChart(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(110.dp)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .height(96.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             if (values.isEmpty()) return@Canvas
             val stepX = if (values.size > 1) size.width / (values.size - 1) else size.width / 2f
@@ -477,7 +458,7 @@ private fun TermTrendChart(
                 if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 drawCircle(
                     color = lineColor,
-                    radius = 5.dp.toPx(),
+                    radius = 4.5.dp.toPx(),
                     center = Offset(x, y)
                 )
             }
@@ -486,14 +467,16 @@ private fun TermTrendChart(
                 drawPath(
                     path = path,
                     color = lineColor,
-                    style = Stroke(width = 2.5.dp.toPx())
+                    style = Stroke(width = 2.dp.toPx())
                 )
             }
         }
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             for (pt in points) {
                 val valText = if (privacyMasked) {
@@ -510,12 +493,16 @@ private fun TermTrendChart(
                         text = valText,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Text(
                         text = pt.termLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }

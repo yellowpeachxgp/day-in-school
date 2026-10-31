@@ -62,7 +62,7 @@ class CampusRepository private constructor(
 
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
-        val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v2")
+        val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
         val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")

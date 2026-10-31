@@ -1,5 +1,10 @@
 package cn.edu.haut.campus.feature.map
 
+import android.Manifest
+import android.graphics.BitmapFactory
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.util.LruCache
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -7,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,25 +31,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.LocationSearching
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,41 +64,123 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachBrandLight
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachOk
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
-import cn.edu.haut.campus.core.designsystem.XPeachWarn
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
-import cn.edu.haut.campus.core.location.BuildingNavigationPlan
 import cn.edu.haut.campus.core.location.CampusMapNavigator
+import cn.edu.haut.campus.core.location.InAppNavigationPlan
 import cn.edu.haut.campus.core.location.UserGeoLocation
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusCategory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.PI
+import kotlin.math.asinh
+import kotlin.math.atan
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.ln
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sinh
+import kotlin.math.tan
+
+private object CampusTileCache {
+    private val memoryCache = LruCache<String, ImageBitmap>(96)
+    private val inFlight = ConcurrentHashMap.newKeySet<String>()
+
+    fun get(key: String): ImageBitmap? = synchronized(memoryCache) { memoryCache.get(key) }
+
+    fun put(key: String, bitmap: ImageBitmap) = synchronized(memoryCache) {
+        memoryCache.put(key, bitmap)
+    }
+
+    suspend fun loadTileIfNeeded(
+        cacheDir: File,
+        z: Int,
+        x: Int,
+        y: Int,
+        onLoaded: () -> Unit
+    ) {
+        val key = "${z}_${x}_${y}"
+        if (get(key) != null) return
+        if (!inFlight.add(key)) return
+
+        try {
+            val bitmap = withContext(Dispatchers.IO) {
+                val dir = File(cacheDir, "haut_map_tiles_v2").apply { mkdirs() }
+                val diskFile = File(dir, "$key.png")
+                if (diskFile.exists() && diskFile.length() > 256L) {
+                    runCatching {
+                        BitmapFactory.decodeFile(diskFile.absolutePath)?.asImageBitmap()
+                    }.getOrNull()?.let { return@withContext it }
+                }
+
+                val subdomain = ((x + y) % 4 + 4) % 4 + 1
+                val urls = listOf(
+                    "https://webrd0$subdomain.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=$x&y=$y&z=$z",
+                    "https://tile.openstreetmap.org/$z/$x/$y.png"
+                )
+                for (urlStr in urls) {
+                    val downloaded = runCatching {
+                        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 6000
+                            readTimeout = 6000
+                            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36")
+                        }
+                        if (conn.responseCode == 200) {
+                            val bytes = conn.inputStream.use { it.readBytes() }
+                            if (bytes.size > 256) {
+                                diskFile.writeBytes(bytes)
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                            } else null
+                        } else null
+                    }.getOrNull()
+                    if (downloaded != null) return@withContext downloaded
+                }
+                null
+            }
+            if (bitmap != null) {
+                put(key, bitmap)
+                onLoaded()
+            }
+        } finally {
+            inFlight.remove(key)
+        }
+    }
+}
 
 @Composable
 fun CampusMapScreen(
@@ -96,296 +188,283 @@ fun CampusMapScreen(
     initialClassroomQuery: String? = null
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val aliases by repository.buildingAliasesFlow.collectAsState(initial = emptyList())
 
-    var searchQuery by remember { mutableStateOf(initialClassroomQuery.orEmpty()) }
+    var searchQuery by remember(initialClassroomQuery) {
+        mutableStateOf(initialClassroomQuery.orEmpty())
+    }
     var selectedCategory by remember { mutableStateOf<CampusCategory?>(null) }
     var selectedBuilding by remember { mutableStateOf<Building?>(null) }
-    var isNavigatingInApp by remember { mutableStateOf(true) }
-    var useCampusAnchorWhenOffCampus by remember { mutableStateOf(false) }
+    var manualOriginBuilding by remember { mutableStateOf<Building?>(null) }
+    var inAppNavigationActive by remember { mutableStateOf(!initialClassroomQuery.isNullOrBlank()) }
 
-    // 设备定位权限状态与请求器
-    var hasLocationPerm by remember {
+    var hasLocationPermission by remember {
         mutableStateOf(CampusMapNavigator.hasLocationPermission(context))
     }
-    var locationRefreshTick by remember { mutableIntStateOf(0) }
-    var liveUserLocation by remember { mutableStateOf<UserGeoLocation?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val granted = result[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            result[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
-            CampusMapNavigator.hasLocationPermission(context)
-        hasLocationPerm = granted
-        if (granted) {
-            locationRefreshTick++
-        }
+    ) { grants ->
+        hasLocationPermission = grants.values.any { it } || CampusMapNavigator.hasLocationPermission(context)
     }
 
-    // 进入校园页时若尚未授权定位权限，主动请求设备定位权限
-    LaunchedEffect(Unit) {
-        if (!hasLocationPerm) {
-            permissionLauncher.launch(CampusMapNavigator.REQUIRED_LOCATION_PERMISSIONS)
-        }
-    }
-
-    // 订阅实时 GPS / Fused 设备定位流
-    LaunchedEffect(hasLocationPerm, locationRefreshTick) {
-        if (hasLocationPerm) {
-            CampusMapNavigator.observeUserLocation(context).collect { loc ->
-                if (loc != null) {
-                    liveUserLocation = loc
-                }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasLocationPermission = CampusMapNavigator.hasLocationPermission(context)
             }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(initialClassroomQuery) {
-        if (!initialClassroomQuery.isNullOrBlank()) {
-            searchQuery = initialClassroomQuery
-            isNavigatingInApp = true
-        }
+    val userLocationFlow = remember(hasLocationPermission, context) {
+        CampusMapNavigator.observeUserLocation(context)
     }
+    val userLocation by userLocationFlow.collectAsState(initial = null)
 
-    val classroomResolution = remember(searchQuery, buildings, aliases) {
+    val resolution = remember(searchQuery, buildings, aliases) {
         if (searchQuery.isBlank()) null
         else ClassroomBuildingResolver.resolve(searchQuery, buildings, aliases)
     }
 
-    LaunchedEffect(classroomResolution, buildings) {
-        if (classroomResolution?.building != null) {
-            selectedBuilding = classroomResolution.building
-            isNavigatingInApp = true
+    // 真实地图视口中心（GCJ-02 坐标）与缩放级别
+    val defaultCenterGcj = remember {
+        CampusMapNavigator.wgs84ToGcj02(CampusMapNavigator.CAMPUS_CENTER_LAT, CampusMapNavigator.CAMPUS_CENTER_LNG)
+    }
+    var mapCenterLatGcj by remember { mutableStateOf(defaultCenterGcj.first) }
+    var mapCenterLonGcj by remember { mutableStateOf(defaultCenterGcj.second) }
+    var mapZoom by remember { mutableFloatStateOf(16.3f) }
+
+    LaunchedEffect(resolution, buildings) {
+        if (resolution?.building != null) {
+            val b = resolution.building!!
+            selectedBuilding = b
+            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+            mapCenterLatGcj = glat
+            mapCenterLonGcj = glon
+            if (!initialClassroomQuery.isNullOrBlank()) {
+                inAppNavigationActive = true
+            }
         } else if (selectedBuilding == null && buildings.isNotEmpty()) {
             selectedBuilding = buildings.first()
         }
     }
 
-    val effectiveOrigin: UserGeoLocation = remember(liveUserLocation, useCampusAnchorWhenOffCampus) {
-        if (useCampusAnchorWhenOffCampus || liveUserLocation == null) {
-            CampusMapNavigator.simulatedSouthGateAnchor()
-        } else {
-            liveUserLocation!!
+    val filteredBuildings = remember(buildings, selectedCategory, searchQuery, resolution) {
+        buildings.filter { b ->
+            val catOk = selectedCategory == null || b.category == selectedCategory
+            val textOk = searchQuery.isBlank() ||
+                b.name.contains(searchQuery, ignoreCase = true) ||
+                b.shortName.contains(searchQuery, ignoreCase = true) ||
+                b.description?.contains(searchQuery, ignoreCase = true) == true ||
+                resolution?.building?.id == b.id
+            catOk && textOk
         }
     }
 
-    val activeTargetBuilding = selectedBuilding ?: classroomResolution?.building
-    val navigationPlan: BuildingNavigationPlan? = remember(
-        effectiveOrigin,
-        activeTargetBuilding,
+    val targetBuilding = selectedBuilding ?: filteredBuildings.firstOrNull()
+    val navigationPlan: InAppNavigationPlan? = remember(
+        targetBuilding,
+        userLocation,
+        manualOriginBuilding,
         buildings,
-        classroomResolution
+        searchQuery
     ) {
-        val target = activeTargetBuilding ?: return@remember null
-        CampusMapNavigator.buildInAppNavigationPlan(
-            origin = effectiveOrigin,
-            destination = target,
+        if (targetBuilding == null) null
+        else CampusMapNavigator.buildInAppNavigationPlan(
+            userLocation = if (manualOriginBuilding == null) userLocation else null,
+            fallbackOriginBuilding = manualOriginBuilding
+                ?: buildings.firstOrNull { it.id == "b_gate_south" }
+                ?: buildings.firstOrNull(),
+            destinationBuilding = targetBuilding,
             allBuildings = buildings,
-            roomNumberHint = classroomResolution?.roomNumberHint
+            rawClassroom = searchQuery.takeIf { it.isNotBlank() }
         )
     }
 
-    val filteredBuildings = remember(buildings, selectedCategory, searchQuery, classroomResolution) {
-        buildings.filter { b ->
-            val catOk = selectedCategory == null || b.category == selectedCategory
-            val queryOk = searchQuery.isBlank() ||
-                b.name.contains(searchQuery, ignoreCase = true) ||
-                b.shortName.contains(searchQuery, ignoreCase = true) ||
-                b.description.contains(searchQuery, ignoreCase = true) ||
-                classroomResolution?.building?.id == b.id
-            catOk && queryOk
-        }
-    }
-
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            XPeachTopBar(
-                title = "校园定位与导航",
-                subtitle = "莲花街校区 · 实时 GPS 定位与 App 内路线",
-                badgeText = if (hasLocationPerm && liveUserLocation != null) "GPS 已定位" else "待授权定位",
-                actions = {
-                    XPeachIconButton(
-                        icon = Icons.Default.MyLocation,
-                        contentDescription = "刷新我的定位",
-                        onClick = {
-                            if (hasLocationPerm) {
-                                useCampusAnchorWhenOffCampus = false
-                                locationRefreshTick++
-                            } else {
-                                permissionLauncher.launch(CampusMapNavigator.REQUIRED_LOCATION_PERMISSIONS)
-                            }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "校园地图",
+            subtitle = "河南工业大学莲花街校区",
+            badgeText = when {
+                !hasLocationPermission -> "未授权定位"
+                userLocation?.isInsideLianhuajieCampus == true -> "校内已定位"
+                userLocation != null -> "已定位"
+                else -> "定位中"
+            },
+            actions = {
+                XPeachIconButton(
+                    icon = Icons.Default.MyLocation,
+                    contentDescription = "定位当前位置",
+                    onClick = {
+                        if (!hasLocationPermission) {
+                            permissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        } else if (userLocation != null) {
+                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                userLocation!!.latitude,
+                                userLocation!!.longitude
+                            )
+                            mapCenterLatGcj = glat
+                            mapCenterLonGcj = glon
+                            mapZoom = 17.0f
+                        } else {
+                            mapCenterLatGcj = defaultCenterGcj.first
+                            mapCenterLonGcj = defaultCenterGcj.second
+                            mapZoom = 16.3f
                         }
-                    )
-                }
-            )
-        }
-    ) { innerPadding ->
+                    }
+                )
+            }
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 1. 设备定位权限与实时位置状态条
-            LocationPermissionAndStatusCard(
-                hasPermission = hasLocationPerm,
-                liveLocation = liveUserLocation,
-                useCampusAnchor = useCampusAnchorWhenOffCampus,
-                onRequestPermission = {
-                    permissionLauncher.launch(CampusMapNavigator.REQUIRED_LOCATION_PERMISSIONS)
-                },
-                onToggleCampusAnchor = { useCampusAnchorWhenOffCampus = !useCampusAnchorWhenOffCampus }
-            )
+            // 定位权限引导横条（仅在未授权时显示）
+            if (!hasLocationPermission) {
+                XPeachCard(
+                    contentPadding = PaddingValues(12.dp),
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Text(
+                                text = "开启位置权限",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "在地图上显示实时位置并规划校内步行路线",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                permissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("授权", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
 
-            // 2. 教室/建筑搜索框
+            // 搜索框
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                placeholder = { Text("输入教务教室（如 莲4号教学楼321、文科组团楼131）") },
+                placeholder = {
+                    Text(
+                        text = "搜索教室或楼宇（如 1号教学楼1204、图书馆）",
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "清空",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                },
                 singleLine = true,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                ),
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // 3. 教务教室解析结果与模糊匹配人工确认卡片
-            if (classroomResolution != null && searchQuery.isNotBlank()) {
+            // 模糊教室归属人工确认条
+            if (resolution != null && resolution.status != BuildingMatchStatus.EXACT_VERIFIED) {
                 XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    borderColor = when (classroomResolution.status) {
-                        BuildingMatchStatus.EXACT_VERIFIED -> XPeachOk.copy(alpha = 0.45f)
-                        BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION -> XPeachWarn.copy(alpha = 0.45f)
-                        BuildingMatchStatus.UNRESOLVED -> MaterialTheme.colorScheme.outlineVariant
-                    }
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                 ) {
-                    when (classroomResolution.status) {
-                        BuildingMatchStatus.EXACT_VERIFIED -> {
-                            val b = classroomResolution.building!!
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = XPeachOk,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "已定位教学楼：${b.name}",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                                XPeachStatusBadge(
-                                    text = classroomResolution.roomNumberHint?.let { "${it}室" } ?: "已核验",
-                                    containerColor = XPeachOk.copy(alpha = 0.12f),
-                                    contentColor = XPeachOk,
-                                    borderColor = XPeachOk.copy(alpha = 0.3f)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "教室「${classroomResolution.rawRoom}」 · 推荐入口：${b.entrances.joinToString(" / ")}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION -> {
-                            val candidate = classroomResolution.building
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.HelpOutline,
-                                    contentDescription = null,
-                                    tint = XPeachWarn,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "模糊匹配待确认（置信度 ${(classroomResolution.confidence * 100).toInt()}%）",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "「${classroomResolution.rawRoom}」推测位于「${candidate?.name ?: "未知楼宇"}」，确认后将永久记住该教室映射：",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            if (candidate != null) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        onClick = {
-                                            scope.launch {
-                                                repository.confirmBuildingAliasForRoom(
-                                                    rawRoom = classroomResolution.rawRoom,
-                                                    buildingId = candidate.id
-                                                )
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("确认绑定至 ${candidate.shortName}")
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            selectedBuilding = candidate
-                                            isNavigatingInApp = true
-                                        },
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("先在 App 内导航")
+                    Text(
+                        text = "确认「$searchQuery」所属楼宇",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (candidate in buildings.filter {
+                            it.category == CampusCategory.TEACHING_BUILDING || it.category == CampusCategory.LAB
+                        }) {
+                            XPeachFilterPill(
+                                label = candidate.shortName,
+                                selected = selectedBuilding?.id == candidate.id,
+                                onClick = {
+                                    scope.launch {
+                                        repository.confirmBuildingAliasForRoom(searchQuery, candidate.id)
+                                        selectedBuilding = candidate
+                                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                            candidate.latitude,
+                                            candidate.longitude
+                                        )
+                                        mapCenterLatGcj = glat
+                                        mapCenterLonGcj = glon
+                                        inAppNavigationActive = true
                                     }
                                 }
-                            }
-                        }
-
-                        BuildingMatchStatus.UNRESOLVED -> {
-                            Text(
-                                text = "尚未识别「${classroomResolution.rawRoom}」所属教学楼，请点击下方地图或建筑卡片选择目标。",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
             }
 
-            // 4. 交互式 App 内校园步行导航地图（含我的位置、路线矢量连线、方向箭头与点击选楼）
-            InteractiveCampusNavigationMapCard(
-                buildings = buildings,
-                origin = effectiveOrigin,
-                targetBuilding = activeTargetBuilding,
-                navigationPlan = if (isNavigatingInApp) navigationPlan else null,
-                onSelectBuilding = { clicked ->
-                    selectedBuilding = clicked
-                    isNavigatingInApp = true
-                }
-            )
-
-            // 5. App 内实时分步步行导航面板
-            if (navigationPlan != null) {
-                InAppTurnByTurnNavigationCard(
-                    plan = navigationPlan,
-                    onOpenExternalMap = {
-                        CampusMapNavigator.launchWalkingNavigation(context, navigationPlan.destination)
-                    }
-                )
-            }
-
-            // 6. 类别扁平筛选标签（XPeach .filter-pill 风格）
+            // 分类筛选栏（横向滚动，杜绝文字挤压变形）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -393,7 +472,7 @@ fun CampusMapScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 XPeachFilterPill(
-                    label = "全部楼宇 (${buildings.size})",
+                    label = "全部",
                     selected = selectedCategory == null,
                     onClick = { selectedCategory = null }
                 )
@@ -406,37 +485,140 @@ fun CampusMapScreen(
                 }
             }
 
-            // 7. 扁平建筑列表（显示实时直线距离与一键开启 App 内导航）
-            for (building in filteredBuildings) {
-                val isSelected = activeTargetBuilding?.id == building.id
-                val distMeters = remember(effectiveOrigin, building) {
-                    CampusMapNavigator.distanceBetweenMeters(
-                        effectiveOrigin.latitude,
-                        effectiveOrigin.longitude,
-                        building.latitude,
-                        building.longitude
+            // 真实高德/OSM 瓦片底图 + 校内建筑标注 + 实时定位与步行路线矢量层
+            XPeachCard(
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp)
+                ) {
+                    RealCampusTileMap(
+                        buildings = buildings,
+                        selectedBuilding = targetBuilding,
+                        userLocation = userLocation,
+                        navigationPlan = if (inAppNavigationActive) navigationPlan else null,
+                        centerLatGcj = mapCenterLatGcj,
+                        centerLonGcj = mapCenterLonGcj,
+                        zoom = mapZoom,
+                        onViewportChange = { newLat, newLon, newZoom ->
+                            mapCenterLatGcj = newLat
+                            mapCenterLonGcj = newLon
+                            mapZoom = newZoom
+                        },
+                        onSelectBuilding = { clicked ->
+                            selectedBuilding = clicked
+                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                clicked.latitude,
+                                clicked.longitude
+                            )
+                            mapCenterLatGcj = glat
+                            mapCenterLonGcj = glon
+                        }
                     )
+
+                    // 右下角缩放与归位控制组
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachIconButton(
+                            icon = Icons.Default.Add,
+                            contentDescription = "放大地图",
+                            onClick = { mapZoom = (mapZoom + 0.6f).coerceIn(15.0f, 18.2f) }
+                        )
+                        XPeachIconButton(
+                            icon = Icons.Default.Remove,
+                            contentDescription = "缩小地图",
+                            onClick = { mapZoom = (mapZoom - 0.6f).coerceIn(15.0f, 18.2f) }
+                        )
+                        XPeachIconButton(
+                            icon = Icons.Default.MyLocation,
+                            contentDescription = "回校区中心",
+                            onClick = {
+                                if (userLocation?.isInsideLianhuajieCampus == true) {
+                                    val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                        userLocation!!.latitude,
+                                        userLocation!!.longitude
+                                    )
+                                    mapCenterLatGcj = glat
+                                    mapCenterLonGcj = glon
+                                    mapZoom = 16.8f
+                                } else {
+                                    mapCenterLatGcj = defaultCenterGcj.first
+                                    mapCenterLonGcj = defaultCenterGcj.second
+                                    mapZoom = 16.3f
+                                }
+                            }
+                        )
+                    }
                 }
-                val distText = if (distMeters >= 1000f) {
-                    String.format("%.2f km", distMeters / 1000f)
-                } else {
-                    "${distMeters.roundToInt()} m"
+            }
+
+            // 当前选中楼宇与路线面板
+            if (targetBuilding != null && navigationPlan != null) {
+                InAppNavigationCard(
+                    building = targetBuilding,
+                    plan = navigationPlan,
+                    allBuildings = buildings,
+                    hasLiveGps = userLocation != null,
+                    manualOriginBuilding = manualOriginBuilding,
+                    inAppNavigationActive = inAppNavigationActive,
+                    onSelectOriginBuilding = { origin ->
+                        manualOriginBuilding = origin
+                        inAppNavigationActive = true
+                    },
+                    onToggleInAppNavigation = {
+                        inAppNavigationActive = !inAppNavigationActive
+                    },
+                    onOpenExternalMap = {
+                        CampusMapNavigator.openWalkingNavigation(context, targetBuilding)
+                    }
+                )
+            }
+
+            // 楼宇目录
+            Text(
+                text = "校内楼宇 (${filteredBuildings.size})",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            for (building in filteredBuildings) {
+                val isSelected = building.id == targetBuilding?.id
+                val distanceFromUser = remember(userLocation, building) {
+                    if (userLocation != null) {
+                        CampusMapNavigator.calculateDistanceMeters(
+                            userLocation!!.latitude,
+                            userLocation!!.longitude,
+                            building.latitude,
+                            building.longitude
+                        )
+                    } else null
                 }
 
                 XPeachCard(
-                    containerColor = if (isSelected) {
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    },
                     borderColor = if (isSelected) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.outlineVariant
                     },
+                    containerColor = if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
                     onClick = {
                         selectedBuilding = building
-                        isNavigatingInApp = true
+                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                            building.latitude,
+                            building.longitude
+                        )
+                        mapCenterLatGcj = glat
+                        mapCenterLonGcj = glon
                     }
                 ) {
                     Row(
@@ -444,52 +626,67 @@ fun CampusMapScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 Text(
                                     text = building.name,
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                XPeachStatusBadge(
-                                    text = "距你 $distText",
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    borderColor = MaterialTheme.colorScheme.outlineVariant
+                                XPeachStatusBadge(text = building.category.label)
+                            }
+                            if (!building.description.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = building.description!!,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "${building.category.label} · 入口：${building.entrances.joinToString(" / ")}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (distanceFromUser != null && distanceFromUser < 5000) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "距当前位置 ${distanceFromUser}m",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
 
-                        Button(
+                        OutlinedButton(
                             onClick = {
                                 selectedBuilding = building
-                                isNavigatingInApp = true
+                                val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                    building.latitude,
+                                    building.longitude
+                                )
+                                mapCenterLatGcj = glat
+                                mapCenterLonGcj = glon
+                                inAppNavigationActive = true
                             },
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Icon(
-                                Icons.Default.Navigation,
+                                imageVector = Icons.Default.DirectionsWalk,
                                 contentDescription = null,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isSelected) "导航中" else "App内导航", fontSize = 12.sp)
+                            Text("路线", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = building.description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -497,468 +694,536 @@ fun CampusMapScreen(
 }
 
 @Composable
-private fun LocationPermissionAndStatusCard(
-    hasPermission: Boolean,
-    liveLocation: UserGeoLocation?,
-    useCampusAnchor: Boolean,
-    onRequestPermission: () -> Unit,
-    onToggleCampusAnchor: () -> Unit
-) {
-    if (!hasPermission) {
-        XPeachCard(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "需要设备定位权限以启用 App 内实时导航",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "授权后可实时测算你与各教学楼的步行距离、方向角并在校内地图绘制步行路线。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Button(
-                    onClick = onRequestPermission,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Icon(Icons.Default.LocationSearching, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("授权定位")
-                }
-            }
-        }
-    } else {
-        XPeachWell(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (liveLocation != null) XPeachOk else XPeachWarn)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = when {
-                            useCampusAnchor -> "当前起点：莲花街校区南大门基准点（校内路线预览模式）"
-                            liveLocation != null -> "实时定位已就绪 (${String.format("%.4f, %.4f", liveLocation.latitude, liveLocation.longitude)} · ±${liveLocation.accuracyMeters.roundToInt()}m)"
-                            else -> "已获定位权限，正在搜索 GPS/Fused 信号（暂以南大门为起点）"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                XPeachFilterPill(
-                    label = if (useCampusAnchor) "切回真机GPS" else "南门起点预览",
-                    selected = useCampusAnchor,
-                    onClick = onToggleCampusAnchor
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun InteractiveCampusNavigationMapCard(
-    buildings: List<Building>,
-    origin: UserGeoLocation,
-    targetBuilding: Building?,
-    navigationPlan: BuildingNavigationPlan?,
-    onSelectBuilding: (Building) -> Unit
-) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val okColor = XPeachOk
-    val outlineColor = MaterialTheme.colorScheme.outlineVariant
-    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
-    val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val surfaceColor = MaterialTheme.colorScheme.surface
-    val textMeasurer: TextMeasurer = rememberTextMeasurer()
-    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-
-    val minLat = remember(buildings) {
-        (buildings.minOfOrNull { it.latitude } ?: 34.8265) - 0.0006
-    }
-    val maxLat = remember(buildings) {
-        (buildings.maxOfOrNull { it.latitude } ?: 34.8330) + 0.0006
-    }
-    val minLng = remember(buildings) {
-        (buildings.minOfOrNull { it.longitude } ?: 113.5455) - 0.0008
-    }
-    val maxLng = remember(buildings) {
-        (buildings.maxOfOrNull { it.longitude } ?: 113.5535) + 0.0008
-    }
-    val latSpan = (maxLat - minLat).coerceAtLeast(0.002)
-    val lngSpan = (maxLng - minLng).coerceAtLeast(0.002)
-
-    fun mapGeoToOffset(lat: Double, lng: Double, width: Float, height: Float): Offset {
-        val padX = 28f
-        val padY = 24f
-        val usableW = (width - padX * 2).coerceAtLeast(10f)
-        val usableH = (height - padY * 2).coerceAtLeast(10f)
-        val xRatio = ((lng - minLng) / lngSpan).toFloat().coerceIn(0f, 1f)
-        val yRatio = (1.0 - (lat - minLat) / latSpan).toFloat().coerceIn(0f, 1f)
-        return Offset(padX + xRatio * usableW, padY + yRatio * usableH)
-    }
-
-    XPeachCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "莲花街校区 App 内交互导航图（北↑）",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    text = "点击图中任意楼宇节点即可切换导航终点",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = mutedColor
-                )
-            }
-            if (navigationPlan != null) {
-                XPeachStatusBadge(
-                    text = "${navigationPlan.formattedDistance} · 约${navigationPlan.estimatedWalkMinutes}分钟",
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = primaryColor
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(1.dp, outlineColor, RoundedCornerShape(10.dp))
-                .onSizeChanged { canvasSize = it }
-                .pointerInput(buildings, canvasSize) {
-                    detectTapGestures { tapOffset ->
-                        if (buildings.isEmpty() || canvasSize.width == 0) return@detectTapGestures
-                        val nearest = buildings.minByOrNull { b ->
-                            val pt = mapGeoToOffset(
-                                b.latitude,
-                                b.longitude,
-                                canvasSize.width.toFloat(),
-                                canvasSize.height.toFloat()
-                            )
-                            hypot((tapOffset.x - pt.x).toDouble(), (tapOffset.y - pt.y).toDouble())
-                        }
-                        if (nearest != null) {
-                            onSelectBuilding(nearest)
-                        }
-                    }
-                }
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                if (buildings.isEmpty()) return@Canvas
-
-                // 1. 校园主干道路网参考线
-                val cols = 4
-                val rows = 3
-                for (c in 1..cols) {
-                    val x = size.width * c / (cols + 1)
-                    drawLine(
-                        color = outlineColor.copy(alpha = 0.6f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                }
-                for (r in 1..rows) {
-                    val y = size.height * r / (rows + 1)
-                    drawLine(
-                        color = outlineColor.copy(alpha = 0.6f),
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                }
-
-                val userPt = mapGeoToOffset(origin.latitude, origin.longitude, size.width, size.height)
-
-                // 2. 绘制 App 内步行导航路线（起点 -> 途经点 -> 目标教学楼）
-                if (targetBuilding != null) {
-                    val targetPt = mapGeoToOffset(
-                        targetBuilding.latitude,
-                        targetBuilding.longitude,
-                        size.width,
-                        size.height
-                    )
-                    val waypoint = navigationPlan?.waypointBuilding
-                    val pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 8f), 0f)
-
-                    if (waypoint != null) {
-                        val wayPt = mapGeoToOffset(waypoint.latitude, waypoint.longitude, size.width, size.height)
-                        drawLine(
-                            color = primaryColor,
-                            start = userPt,
-                            end = wayPt,
-                            strokeWidth = 3.dp.toPx(),
-                            pathEffect = pathEffect
-                        )
-                        drawLine(
-                            color = primaryColor,
-                            start = wayPt,
-                            end = targetPt,
-                            strokeWidth = 3.dp.toPx(),
-                            pathEffect = pathEffect
-                        )
-                    } else {
-                        drawLine(
-                            color = primaryColor,
-                            start = userPt,
-                            end = targetPt,
-                            strokeWidth = 3.dp.toPx(),
-                            pathEffect = pathEffect
-                        )
-                    }
-
-                    // 绘制指向目标建筑的箭头
-                    val angle = atan2((targetPt.y - userPt.y).toDouble(), (targetPt.x - userPt.x).toDouble())
-                    val arrowLen = 10.dp.toPx()
-                    val arrowAngle = Math.toRadians(28.0)
-                    val tipX = (userPt.x + targetPt.x) / 2f
-                    val tipY = (userPt.y + targetPt.y) / 2f
-                    val leftX = tipX - (arrowLen * cos(angle - arrowAngle)).toFloat()
-                    val leftY = tipY - (arrowLen * sin(angle - arrowAngle)).toFloat()
-                    val rightX = tipX - (arrowLen * cos(angle + arrowAngle)).toFloat()
-                    val rightY = tipY - (arrowLen * sin(angle + arrowAngle)).toFloat()
-                    drawLine(primaryColor, Offset(tipX, tipY), Offset(leftX, leftY), strokeWidth = 2.5.dp.toPx())
-                    drawLine(primaryColor, Offset(tipX, tipY), Offset(rightX, rightY), strokeWidth = 2.5.dp.toPx())
-                }
-
-                // 3. 绘制所有校园建筑节点与名称标签
-                for (b in buildings) {
-                    val pt = mapGeoToOffset(b.latitude, b.longitude, size.width, size.height)
-                    val isTarget = targetBuilding?.id == b.id
-
-                    if (isTarget) {
-                        drawCircle(
-                            color = primaryColor.copy(alpha = 0.18f),
-                            radius = 16.dp.toPx(),
-                            center = pt
-                        )
-                    }
-                    drawCircle(
-                        color = surfaceColor,
-                        radius = if (isTarget) 7.5.dp.toPx() else 5.5.dp.toPx(),
-                        center = pt
-                    )
-                    drawCircle(
-                        color = if (isTarget) primaryColor else mutedColor,
-                        radius = if (isTarget) 6.dp.toPx() else 4.dp.toPx(),
-                        center = pt
-                    )
-
-                    val labelLayout = textMeasurer.measure(
-                        text = b.shortName,
-                        style = TextStyle(
-                            color = if (isTarget) primaryColor else onSurfaceColor,
-                            fontSize = if (isTarget) 11.sp else 10.sp,
-                            fontWeight = if (isTarget) FontWeight.Bold else FontWeight.Medium
-                        )
-                    )
-                    val textX = (pt.x - labelLayout.size.width / 2f)
-                        .coerceIn(4f, size.width - labelLayout.size.width - 4f)
-                    val textY = (pt.y + 8.dp.toPx())
-                        .coerceIn(4f, size.height - labelLayout.size.height - 4f)
-                    drawText(
-                        textLayoutResult = labelLayout,
-                        topLeft = Offset(textX, textY)
-                    )
-                }
-
-                // 4. 绘制「我的位置」实时定位点（绿色圆点 + 精度光圈）
-                drawCircle(
-                    color = okColor.copy(alpha = 0.22f),
-                    radius = 14.dp.toPx(),
-                    center = userPt
-                )
-                drawCircle(
-                    color = surfaceColor,
-                    radius = 7.dp.toPx(),
-                    center = userPt
-                )
-                drawCircle(
-                    color = okColor,
-                    radius = 5.dp.toPx(),
-                    center = userPt
-                )
-                drawCircle(
-                    color = okColor,
-                    radius = 14.dp.toPx(),
-                    center = userPt,
-                    style = Stroke(width = 1.dp.toPx())
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(okColor))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("我的位置", style = MaterialTheme.typography.labelMedium, color = mutedColor)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(primaryColor))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = targetBuilding?.let { "终点：${it.name}" } ?: "未选择终点",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = primaryColor,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun InAppTurnByTurnNavigationCard(
-    plan: BuildingNavigationPlan,
+private fun InAppNavigationCard(
+    building: Building,
+    plan: InAppNavigationPlan,
+    allBuildings: List<Building>,
+    hasLiveGps: Boolean,
+    manualOriginBuilding: Building?,
+    inAppNavigationActive: Boolean,
+    onSelectOriginBuilding: (Building?) -> Unit,
+    onToggleInAppNavigation: () -> Unit,
     onOpenExternalMap: () -> Unit
 ) {
     XPeachCard(
-        containerColor = MaterialTheme.colorScheme.surface,
-        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+        borderColor = if (inAppNavigationActive) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        }
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                Text(
+                    text = building.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = building.entrances.joinToString(" / ").ifBlank { "正门入口" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            XPeachStatusBadge(
+                text = if (inAppNavigationActive) "导航中" else building.shortName
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 三栏核心指标（简洁留白，绝不挤压）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            XPeachWell(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "步行距离",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = "${plan.estimatedWalkDistanceMeters} 米",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+            XPeachWell(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "预计用时",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = "约 ${plan.estimatedWalkMinutes} 分钟",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+            XPeachWell(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "行进方位",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = "${plan.compassDirectionLabel} ${plan.bearingDegrees}°",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 起点选择（横向滚动）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "起点：",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false
+            )
+            XPeachFilterPill(
+                label = if (hasLiveGps) "当前定位" else "南门",
+                selected = manualOriginBuilding == null,
+                onClick = { onSelectOriginBuilding(null) }
+            )
+            for (b in allBuildings.filter { it.id != building.id }.take(6)) {
+                XPeachFilterPill(
+                    label = b.shortName,
+                    selected = manualOriginBuilding?.id == b.id,
+                    onClick = { onSelectOriginBuilding(b) }
+                )
+            }
+        }
+
+        if (inAppNavigationActive) {
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (step in plan.steps) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${step.stepIndex}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = step.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = step.detail,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "${step.distanceMeters}m",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onToggleInAppNavigation,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
                 Icon(
-                    Icons.Default.Explore,
+                    imageVector = Icons.Default.Navigation,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "App 内步行导航 → ${plan.destination.name}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    text = if (inAppNavigationActive) "结束校内导航" else "显示校内路线",
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
 
             OutlinedButton(
                 onClick = onOpenExternalMap,
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                modifier = Modifier.height(30.dp)
+                shape = RoundedCornerShape(8.dp)
             ) {
-                Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(13.dp))
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp)
+                )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("系统地图", fontSize = 11.sp)
+                Text("外部地图", maxLines = 1, softWrap = false)
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(10.dp))
+/**
+ * 真实街道与校园瓦片地图组件（Web Mercator Slippy Map + 实时标注与路线绘制）
+ */
+@Composable
+private fun RealCampusTileMap(
+    buildings: List<Building>,
+    selectedBuilding: Building?,
+    userLocation: UserGeoLocation?,
+    navigationPlan: InAppNavigationPlan?,
+    centerLatGcj: Double,
+    centerLonGcj: Double,
+    zoom: Float,
+    onViewportChange: (Double, Double, Float) -> Unit,
+    onSelectBuilding: (Building) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var tileLoadGeneration by remember { mutableIntStateOf(0) }
+    var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
+    var canvasHeightPx by remember { mutableFloatStateOf(900f) }
 
-        // 3 格核心导航指标（扁平 Bento 指标卡）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            XPeachWell(modifier = Modifier.weight(1f), contentPadding = PaddingValues(10.dp)) {
-                Text("直线距离", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    text = plan.formattedDistance,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            XPeachWell(modifier = Modifier.weight(1f), contentPadding = PaddingValues(10.dp)) {
-                Text("行进方位", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    text = "${plan.compassDirection} (${plan.bearingDegrees.roundToInt()}°)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            XPeachWell(modifier = Modifier.weight(1f), contentPadding = PaddingValues(10.dp)) {
-                Text("预计步行", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    text = "约 ${plan.estimatedWalkMinutes} 分钟",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+    val tileZ = zoom.roundToInt().coerceIn(15, 18)
+    val scaleFactor = 2.0.pow((zoom - tileZ).toDouble()).toFloat()
+    val baseTileRenderPx = 256f * context.resources.displayMetrics.density * 0.85f * scaleFactor
 
-        Spacer(modifier = Modifier.height(10.dp))
+    fun latLonToTileXY(lat: Double, lon: Double, z: Int): Pair<Double, Double> {
+        val n = 2.0.pow(z.toDouble())
+        val x = (lon + 180.0) / 360.0 * n
+        val latRad = Math.toRadians(lat.coerceIn(-85.0, 85.0))
+        val y = (1.0 - asinh(tan(latRad)) / PI) / 2.0 * n
+        return x to y
+    }
 
-        // 分步导航指引
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            plan.turnByTurnSteps.forEachIndexed { idx, stepText ->
-                Row(
-                    verticalAlignment = Alignment.Top,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer)
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                RoundedCornerShape(5.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "${idx + 1}",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+    fun tileXYToLatLon(tx: Double, ty: Double, z: Int): Pair<Double, Double> {
+        val n = 2.0.pow(z.toDouble())
+        val lon = tx / n * 360.0 - 180.0
+        val latRad = atan(sinh(PI * (1.0 - 2.0 * ty / n)))
+        val lat = Math.toDegrees(latRad)
+        return lat to lon
+    }
+
+    val (centerTileX, centerTileY) = remember(centerLatGcj, centerLonGcj, tileZ) {
+        latLonToTileXY(centerLatGcj, centerLonGcj, tileZ)
+    }
+
+    fun gcjToScreen(latGcj: Double, lonGcj: Double): Offset {
+        val (tx, ty) = latLonToTileXY(latGcj, lonGcj, tileZ)
+        val sx = (canvasWidthPx / 2f) + ((tx - centerTileX).toFloat() * baseTileRenderPx)
+        val sy = (canvasHeightPx / 2f) + ((ty - centerTileY).toFloat() * baseTileRenderPx)
+        return Offset(sx, sy)
+    }
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(buildings, centerLatGcj, centerLonGcj, zoom) {
+                detectTapGestures { tapOffset ->
+                    val hit = buildings.minByOrNull { b ->
+                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                        val pt = gcjToScreen(glat, glon)
+                        hypot((pt.x - tapOffset.x).toDouble(), (pt.y - tapOffset.y).toDouble())
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stepText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
+                    if (hit != null) {
+                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(hit.latitude, hit.longitude)
+                        val pt = gcjToScreen(glat, glon)
+                        if (hypot((pt.x - tapOffset.x).toDouble(), (pt.y - tapOffset.y).toDouble()) <= 84.0) {
+                            onSelectBuilding(hit)
+                        }
+                    }
+                }
+            }
+            .pointerInput(centerLatGcj, centerLonGcj, zoom, baseTileRenderPx) {
+                detectTransformGestures { _, pan, gestureZoom, _ ->
+                    val newZoom = (zoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
+                        .coerceIn(15.0f, 18.2f)
+                    val dTileX = -pan.x / baseTileRenderPx
+                    val dTileY = -pan.y / baseTileRenderPx
+                    val (newLat, newLon) = tileXYToLatLon(
+                        centerTileX + dTileX,
+                        centerTileY + dTileY,
+                        tileZ
+                    )
+                    onViewportChange(
+                        newLat.coerceIn(34.815, 34.845),
+                        newLon.coerceIn(113.525, 113.570),
+                        newZoom
                     )
                 }
             }
+    ) {
+        // 读取 generation 以触发瓦片下载完成后的重绘
+        val gen = tileLoadGeneration
+        if (gen < 0) return@Canvas
+
+        canvasWidthPx = size.width
+        canvasHeightPx = size.height
+
+        // 1. 底色背景
+        drawRect(color = Color(0xFFF2EFE9))
+
+        // 2. 计算当前视口覆盖的瓦片范围并绘制真实瓦片底图
+        val halfTilesW = (size.width / 2f) / baseTileRenderPx + 1f
+        val halfTilesH = (size.height / 2f) / baseTileRenderPx + 1f
+        val minTx = floor(centerTileX - halfTilesW).toInt()
+        val maxTx = ceil(centerTileX + halfTilesW).toInt()
+        val minTy = floor(centerTileY - halfTilesH).toInt()
+        val maxTy = ceil(centerTileY + halfTilesH).toInt()
+
+        for (tx in minTx..maxTx) {
+            for (ty in minTy..maxTy) {
+                val leftPx = (size.width / 2f) + ((tx - centerTileX).toFloat() * baseTileRenderPx)
+                val topPx = (size.height / 2f) + ((ty - centerTileY).toFloat() * baseTileRenderPx)
+                val key = "${tileZ}_${tx}_${ty}"
+                val bmp = CampusTileCache.get(key)
+                if (bmp != null) {
+                    drawImage(
+                        image = bmp,
+                        dstOffset = IntOffset(leftPx.roundToInt(), topPx.roundToInt()),
+                        dstSize = IntSize(ceil(baseTileRenderPx).toInt(), ceil(baseTileRenderPx).toInt())
+                    )
+                } else {
+                    scope.launch {
+                        CampusTileCache.loadTileIfNeeded(
+                            cacheDir = context.cacheDir,
+                            z = tileZ,
+                            x = tx,
+                            y = ty,
+                            onLoaded = { tileLoadGeneration++ }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. 绘制校内步行导航路线矢量与方向箭头
+        if (navigationPlan != null) {
+            val (origLatGcj, origLonGcj) = CampusMapNavigator.wgs84ToGcj02(
+                navigationPlan.originLatitude,
+                navigationPlan.originLongitude
+            )
+            val (destLatGcj, destLonGcj) = CampusMapNavigator.wgs84ToGcj02(
+                navigationPlan.destinationBuilding.latitude,
+                navigationPlan.destinationBuilding.longitude
+            )
+            val startPt = gcjToScreen(origLatGcj, origLonGcj)
+            val endPt = gcjToScreen(destLatGcj, destLonGcj)
+            val wp = navigationPlan.waypointBuilding
+            val midPt = if (wp != null) {
+                val (wLat, wLon) = CampusMapNavigator.wgs84ToGcj02(wp.latitude, wp.longitude)
+                gcjToScreen(wLat, wLon)
+            } else null
+
+            val dash = PathEffect.dashPathEffect(floatArrayOf(18f, 10f), 0f)
+            if (midPt != null) {
+                drawLine(
+                    color = XPeachBrandLight,
+                    start = startPt,
+                    end = midPt,
+                    strokeWidth = 7f,
+                    pathEffect = dash
+                )
+                drawLine(
+                    color = XPeachBrandLight,
+                    start = midPt,
+                    end = endPt,
+                    strokeWidth = 7f,
+                    pathEffect = dash
+                )
+            } else {
+                drawLine(
+                    color = XPeachBrandLight,
+                    start = startPt,
+                    end = endPt,
+                    strokeWidth = 7f,
+                    pathEffect = dash
+                )
+            }
+
+            // 终点箭头
+            val fromPt = midPt ?: startPt
+            val angle = atan2((endPt.y - fromPt.y).toDouble(), (endPt.x - fromPt.x).toDouble())
+            val arrowLen = 20f
+            val tip = Offset(
+                endPt.x - (cos(angle) * 20.0).toFloat(),
+                endPt.y - (sin(angle) * 20.0).toFloat()
+            )
+            val leftWing = Offset(
+                tip.x - (arrowLen * cos(angle - PI / 6)).toFloat(),
+                tip.y - (arrowLen * sin(angle - PI / 6)).toFloat()
+            )
+            val rightWing = Offset(
+                tip.x - (arrowLen * cos(angle + PI / 6)).toFloat(),
+                tip.y - (arrowLen * sin(angle + PI / 6)).toFloat()
+            )
+            val path = Path().apply {
+                moveTo(tip.x, tip.y)
+                lineTo(leftWing.x, leftWing.y)
+                lineTo(rightWing.x, rightWing.y)
+                close()
+            }
+            drawPath(path = path, color = XPeachBrandLight)
+        }
+
+        // 4. 绘制校内各建筑锚点与精简白底标签
+        val labelBgPaint = Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.argb(235, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
+        val labelBorderPaint = Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.argb(180, 0, 114, 188)
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+        val labelTextPaint = Paint().apply {
+            isAntiAlias = true
+            textSize = 26f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            color = android.graphics.Color.rgb(15, 23, 42)
+        }
+
+        for (b in buildings) {
+            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+            val pt = gcjToScreen(glat, glon)
+            if (pt.x < -60f || pt.x > size.width + 60f || pt.y < -60f || pt.y > size.height + 60f) {
+                continue
+            }
+            val isTarget = b.id == selectedBuilding?.id
+
+            if (isTarget) {
+                drawCircle(
+                    color = XPeachBrandLight.copy(alpha = 0.22f),
+                    radius = 28f,
+                    center = pt
+                )
+            }
+            drawCircle(
+                color = Color.White,
+                radius = if (isTarget) 14f else 10f,
+                center = pt
+            )
+            drawCircle(
+                color = if (isTarget) XPeachBrandLight else Color(0xFF334155),
+                radius = if (isTarget) 10f else 7f,
+                center = pt
+            )
+
+            // 仅对选中楼宇或缩放级别较大时绘制紧凑白底标签，避免地图文字重叠
+            if (isTarget || zoom >= 16.0f) {
+                val text = b.shortName
+                val textW = labelTextPaint.measureText(text)
+                val rectLeft = pt.x - textW / 2f - 10f
+                val rectTop = pt.y - 46f
+                val rectRight = pt.x + textW / 2f + 10f
+                val rectBottom = pt.y - 16f
+                drawContext.canvas.nativeCanvas.drawRoundRect(
+                    rectLeft,
+                    rectTop,
+                    rectRight,
+                    rectBottom,
+                    8f,
+                    8f,
+                    labelBgPaint
+                )
+                if (isTarget) {
+                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                        rectLeft,
+                        rectTop,
+                        rectRight,
+                        rectBottom,
+                        8f,
+                        8f,
+                        labelBorderPaint
+                    )
+                }
+                drawContext.canvas.nativeCanvas.drawText(
+                    text,
+                    pt.x - textW / 2f,
+                    pt.y - 23f,
+                    labelTextPaint
+                )
+            }
+        }
+
+        // 5. 绘制用户实时 GPS 蓝点
+        if (userLocation != null) {
+            val (uLatGcj, uLonGcj) = CampusMapNavigator.wgs84ToGcj02(
+                userLocation.latitude,
+                userLocation.longitude
+            )
+            val userPt = gcjToScreen(uLatGcj, uLonGcj)
+            drawCircle(
+                color = XPeachOk.copy(alpha = 0.24f),
+                radius = 30f,
+                center = userPt
+            )
+            drawCircle(
+                color = Color.White,
+                radius = 13f,
+                center = userPt
+            )
+            drawCircle(
+                color = XPeachOk,
+                radius = 9f,
+                center = userPt
+            )
         }
     }
 }

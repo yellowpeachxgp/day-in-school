@@ -9,59 +9,76 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
-import android.os.Build
+import android.os.Bundle
 import android.os.Looper
-import android.widget.Toast
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.model.Building
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 
+/**
+ * 实时设备端定位快照（WGS-84）
+ */
 data class UserGeoLocation(
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Float = 12f,
-    val bearingDegrees: Float? = null,
-    val provider: String = "FUSED",
-    val updatedAtMillis: Long = System.currentTimeMillis(),
-    val isSimulatedCampusAnchor: Boolean = false
+    val accuracyMeters: Float,
+    val bearingDegrees: Float?,
+    val provider: String,
+    val timestampMillis: Long,
+    val isInsideLianhuajieCampus: Boolean,
+    val distanceToCampusCenterMeters: Int
 )
 
-data class BuildingNavigationPlan(
-    val origin: UserGeoLocation,
-    val destination: Building,
-    val roomNumberHint: String? = null,
-    val distanceMeters: Float,
-    val bearingDegrees: Float,
-    val compassDirection: String,
-    val estimatedWalkMinutes: Int,
-    val isUserInsideCampus: Boolean,
-    val nearestBuildingToUser: Building? = null,
-    val waypointBuilding: Building? = null,
-    val turnByTurnSteps: List<String>
-) {
-    val formattedDistance: String
-        get() = if (distanceMeters >= 1000f) {
-            String.format("%.2f km", distanceMeters / 1000f)
-        } else {
-            "${distanceMeters.roundToInt()} m"
-        }
-}
+/**
+ * 校内步行路线单步指引
+ */
+data class InAppNavigationStep(
+    val stepIndex: Int,
+    val title: String,
+    val detail: String,
+    val distanceMeters: Int
+)
 
+/**
+ * 校内步行路线方案
+ */
+data class InAppNavigationPlan(
+    val originLabel: String,
+    val originLatitude: Double,
+    val originLongitude: Double,
+    val originIsLiveGps: Boolean,
+    val destinationBuilding: Building,
+    val rawClassroom: String?,
+    val straightDistanceMeters: Int,
+    val estimatedWalkDistanceMeters: Int,
+    val estimatedWalkMinutes: Int,
+    val bearingDegrees: Int,
+    val compassDirectionLabel: String,
+    val waypointBuilding: Building?,
+    val steps: List<InAppNavigationStep>
+)
+
+/**
+ * 河南工业大学莲花街校区定位、坐标系转换（WGS-84 <-> GCJ-02）与步行导航引擎。
+ */
 object CampusMapNavigator {
 
-    // 河南工业大学莲花街校区中心点（钟楼广场）与南大门基准坐标
-    const val HAUT_CENTER_LAT = 34.8295
-    const val HAUT_CENTER_LNG = 113.5495
-    const val HAUT_SOUTH_GATE_LAT = 34.8266
-    const val HAUT_SOUTH_GATE_LNG = 113.5495
+    // 河南工业大学莲花街校区真实中心点（WGS-84）
+    const val CAMPUS_CENTER_LAT = 34.831200
+    const val CAMPUS_CENTER_LNG = 113.544200
+    private const val CAMPUS_GEOFENCE_RADIUS_METERS = 1600
 
-    val REQUIRED_LOCATION_PERMISSIONS = arrayOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
+    private const val EARTH_RADIUS_M = 6378245.0
+    private const val EE = 0.00669342162296594323
 
     fun hasLocationPermission(context: Context): Boolean {
         val fine = ContextCompat.checkSelfPermission(
@@ -76,8 +93,41 @@ object CampusMapNavigator {
     }
 
     /**
-     * 实时监听设备端 GPS / Fused / Network 定位坐标流（需已授予 ACCESS_FINE_LOCATION 或 ACCESS_COARSE_LOCATION）。
+     * 将 WGS-84 坐标转换为国内高德瓦片使用的 GCJ-02 坐标。
      */
+    fun wgs84ToGcj02(lat: Double, lon: Double): Pair<Double, Double> {
+        if (outOfChina(lat, lon)) return lat to lon
+        var dLat = transformLat(lon - 105.0, lat - 35.0)
+        var dLon = transformLon(lon - 105.0, lat - 35.0)
+        val radLat = lat / 180.0 * PI
+        var magic = sin(radLat)
+        magic = 1 - EE * magic * magic
+        val sqrtMagic = sqrt(magic)
+        dLat = (dLat * 180.0) / ((EARTH_RADIUS_M * (1 - EE)) / (magic * sqrtMagic) * PI)
+        dLon = (dLon * 180.0) / (EARTH_RADIUS_M / sqrtMagic * cos(radLat) * PI)
+        return (lat + dLat) to (lon + dLon)
+    }
+
+    private fun outOfChina(lat: Double, lon: Double): Boolean {
+        return lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271
+    }
+
+    private fun transformLat(x: Double, y: Double): Double {
+        var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * sqrt(abs(x))
+        ret += (20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0
+        ret += (20.0 * sin(y * PI) + 40.0 * sin(y / 3.0 * PI)) * 2.0 / 3.0
+        ret += (160.0 * sin(y / 12.0 * PI) + 320.0 * sin(y * PI / 30.0)) * 2.0 / 3.0
+        return ret
+    }
+
+    private fun transformLon(x: Double, y: Double): Double {
+        var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * sqrt(abs(x))
+        ret += (20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0
+        ret += (20.0 * sin(x * PI) + 40.0 * sin(x / 3.0 * PI)) * 2.0 / 3.0
+        ret += (150.0 * sin(x / 12.0 * PI) + 300.0 * sin(x / 30.0 * PI)) * 2.0 / 3.0
+        return ret
+    }
+
     @SuppressLint("MissingPermission")
     fun observeUserLocation(context: Context): Flow<UserGeoLocation?> = callbackFlow {
         if (!hasLocationPermission(context)) {
@@ -94,7 +144,7 @@ object CampusMapNavigator {
         }
 
         val candidateProviders = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 add(LocationManager.FUSED_PROVIDER)
             }
             add(LocationManager.GPS_PROVIDER)
@@ -102,195 +152,193 @@ object CampusMapNavigator {
             add(LocationManager.PASSIVE_PROVIDER)
         }.distinct()
 
-        // 1. 先尝试立即发射最近缓存坐标
-        val bestLastKnown = candidateProviders
+        val lastKnown = candidateProviders
             .mapNotNull { provider ->
                 runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
             }
             .maxByOrNull { it.time }
 
-        if (bestLastKnown != null) {
-            trySend(bestLastKnown.toUserGeoLocation())
+        if (lastKnown != null) {
+            trySend(lastKnown.toUserGeoLocation())
         }
 
-        val listener = LocationListener { location ->
-            trySend(location.toUserGeoLocation())
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                trySend(location.toUserGeoLocation())
+            }
+
+            @Deprecated("Deprecated in Android API")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+            override fun onProviderEnabled(provider: String) = Unit
+            override fun onProviderDisabled(provider: String) = Unit
         }
 
-        // 2. 注册持续位置更新（每 2 秒或移动 2 米刷新一次）
+        val registeredProviders = mutableListOf<String>()
         for (provider in candidateProviders) {
-            runCatching {
-                if (locationManager.isProviderEnabled(provider)) {
+            val enabled = runCatching { locationManager.isProviderEnabled(provider) }.getOrDefault(false)
+            if (enabled) {
+                runCatching {
                     locationManager.requestLocationUpdates(
                         provider,
-                        2000L,
+                        3_000L,
                         2f,
                         listener,
                         Looper.getMainLooper()
                     )
-                    // Android 11+ (API 30+) 原生即时单次拉取最新坐标
-                    locationManager.getCurrentLocation(
-                        provider,
-                        null,
-                        context.mainExecutor
-                    ) { freshLoc ->
-                        if (freshLoc != null) {
-                            trySend(freshLoc.toUserGeoLocation())
-                        }
-                    }
+                    registeredProviders.add(provider)
                 }
             }
         }
 
         awaitClose {
-            runCatching { locationManager.removeUpdates(listener) }
+            if (registeredProviders.isNotEmpty()) {
+                runCatching { locationManager.removeUpdates(listener) }
+            }
         }
     }
 
-    fun simulatedSouthGateAnchor(): UserGeoLocation = UserGeoLocation(
-        latitude = HAUT_SOUTH_GATE_LAT,
-        longitude = HAUT_SOUTH_GATE_LNG,
-        accuracyMeters = 5f,
-        provider = "CAMPUS_ANCHOR",
-        isSimulatedCampusAnchor = true
-    )
+    private fun Location.toUserGeoLocation(): UserGeoLocation {
+        val distToCampus = calculateDistanceMeters(
+            latitude,
+            longitude,
+            CAMPUS_CENTER_LAT,
+            CAMPUS_CENTER_LNG
+        )
+        return UserGeoLocation(
+            latitude = latitude,
+            longitude = longitude,
+            accuracyMeters = if (hasAccuracy()) accuracy else 15f,
+            bearingDegrees = if (hasBearing()) bearing else null,
+            provider = provider ?: "fused",
+            timestampMillis = time,
+            isInsideLianhuajieCampus = distToCampus <= CAMPUS_GEOFENCE_RADIUS_METERS,
+            distanceToCampusCenterMeters = distToCampus
+        )
+    }
 
-    /**
-     * 计算 App 内实时步行路线、距离、方位角与分步引导指令。
-     */
     fun buildInAppNavigationPlan(
-        origin: UserGeoLocation,
-        destination: Building,
+        userLocation: UserGeoLocation?,
+        fallbackOriginBuilding: Building?,
+        destinationBuilding: Building,
         allBuildings: List<Building>,
-        roomNumberHint: String? = null
-    ): BuildingNavigationPlan {
-        val distResults = FloatArray(2)
-        Location.distanceBetween(
-            origin.latitude,
-            origin.longitude,
-            destination.latitude,
-            destination.longitude,
-            distResults
-        )
-        val distanceMeters = distResults[0].coerceAtLeast(1f)
-        val rawBearing = distResults[1]
-        val bearingDegrees = ((rawBearing % 360f) + 360f) % 360f
-        val compass = bearingToCompassLabel(bearingDegrees)
-
-        // 判断用户当前是否在莲花街校区 2.2 公里范围内
-        val centerCheck = FloatArray(1)
-        Location.distanceBetween(
-            origin.latitude,
-            origin.longitude,
-            HAUT_CENTER_LAT,
-            HAUT_CENTER_LNG,
-            centerCheck
-        )
-        val isUserInsideCampus = centerCheck[0] <= 2200f
-
-        // 计算离用户当前位置最近的校内建筑地标
-        val nearestBuilding = allBuildings
-            .filter { it.id != destination.id }
-            .minByOrNull { b ->
-                val r = FloatArray(1)
-                Location.distanceBetween(origin.latitude, origin.longitude, b.latitude, b.longitude, r)
-                r[0]
-            }
-
-        // 计算途经地标（若距离 > 120 米，寻找位于起点与终点连线中段附近的校内地标）
-        val midLat = (origin.latitude + destination.latitude) / 2.0
-        val midLng = (origin.longitude + destination.longitude) / 2.0
-        val waypoint = if (distanceMeters > 120f && isUserInsideCampus) {
-            allBuildings
-                .filter { it.id != destination.id && it.id != nearestBuilding?.id }
-                .minByOrNull { b ->
-                    val r = FloatArray(1)
-                    Location.distanceBetween(midLat, midLng, b.latitude, b.longitude, r)
-                    r[0]
+        rawClassroom: String? = null
+    ): InAppNavigationPlan {
+        val useLiveGps = userLocation != null && userLocation.isInsideLianhuajieCampus
+        val originLat = when {
+            useLiveGps -> userLocation!!.latitude
+            fallbackOriginBuilding != null -> fallbackOriginBuilding.latitude
+            else -> CAMPUS_CENTER_LAT
+        }
+        val originLng = when {
+            useLiveGps -> userLocation!!.longitude
+            fallbackOriginBuilding != null -> fallbackOriginBuilding.longitude
+            else -> CAMPUS_CENTER_LNG
+        }
+        val originLabel = when {
+            useLiveGps -> {
+                val nearest = findNearestBuilding(originLat, originLng, allBuildings)
+                if (nearest != null && nearest.second <= 120) {
+                    "当前位置（近${nearest.first.name}）"
+                } else {
+                    "当前位置"
                 }
+            }
+            fallbackOriginBuilding != null -> fallbackOriginBuilding.name
+            else -> "莲花街南门"
+        }
+
+        val straightMeters = calculateDistanceMeters(
+            originLat,
+            originLng,
+            destinationBuilding.latitude,
+            destinationBuilding.longitude
+        )
+        val walkMeters = (straightMeters * 1.22).roundToInt().coerceAtLeast(straightMeters)
+        val walkMinutes = (walkMeters / 72.0).roundToInt().coerceAtLeast(1)
+        val bearing = calculateBearingDegrees(
+            originLat,
+            originLng,
+            destinationBuilding.latitude,
+            destinationBuilding.longitude
+        )
+        val compass = bearingToCompassLabel(bearing)
+
+        val midLat = (originLat + destinationBuilding.latitude) / 2.0
+        val midLng = (originLng + destinationBuilding.longitude) / 2.0
+        val waypoint = if (straightMeters >= 180) {
+            allBuildings
+                .filter { it.id != destinationBuilding.id && it.id != fallbackOriginBuilding?.id }
+                .minByOrNull { calculateDistanceMeters(midLat, midLng, it.latitude, it.longitude) }
         } else null
 
-        val walkMinutes = (distanceMeters / 75f).roundToInt().coerceAtLeast(1)
-
         val steps = buildList {
-            if (origin.isSimulatedCampusAnchor) {
-                add("起点：莲花街校区南大门基准点（当前使用校内起点预览）")
-            } else if (isUserInsideCampus) {
-                val nearText = nearestBuilding?.let { "，靠近「${it.shortName}」" } ?: ""
-                add("起点：你的实时定位 (${String.format("%.5f, %.5f", origin.latitude, origin.longitude)} · 精度 ±${origin.accuracyMeters.roundToInt()}m$nearText)")
-            } else {
-                add("起点：你的当前设备位置（距莲花街校区约 ${String.format("%.1f km", centerCheck[0] / 1000f)}）")
-            }
-
+            add(
+                InAppNavigationStep(
+                    stepIndex = 1,
+                    title = "从 $originLabel 出发",
+                    detail = "朝 $compass (${bearing}°) 方向进入校园步道",
+                    distanceMeters = (walkMeters * 0.35).roundToInt().coerceAtLeast(15)
+                )
+            )
             if (waypoint != null) {
-                add("沿校园主干道朝【$compass (${bearingDegrees.roundToInt()}°)】方向前行，途经「${waypoint.name}」")
-            } else {
-                add("朝【$compass (${bearingDegrees.roundToInt()}°)】方向直行约 ${if (distanceMeters >= 1000f) String.format("%.2f km", distanceMeters / 1000f) else "${distanceMeters.roundToInt()} 米"}（步行约 $walkMinutes 分钟）")
+                add(
+                    InAppNavigationStep(
+                        stepIndex = 2,
+                        title = "途经 ${waypoint.name}",
+                        detail = "沿主干道继续向 $compass 直行",
+                        distanceMeters = (walkMeters * 0.45).roundToInt().coerceAtLeast(25)
+                    )
+                )
             }
-
-            val entranceText = destination.entrances.firstOrNull() ?: "主入口"
-            add("抵达目的地【${destination.name}】，推荐由「$entranceText」进入")
-
-            if (!roomNumberHint.isNullOrBlank()) {
-                val floorHint = roomNumberHint.firstOrNull { it.isDigit() }
-                if (floorHint != null) {
-                    add("进入楼宇后前往 ${floorHint} 层 → $roomNumberHint 教室")
-                } else {
-                    add("进入楼宇后根据指示牌前往 $roomNumberHint 教室")
-                }
-            }
+            add(
+                InAppNavigationStep(
+                    stepIndex = size + 1,
+                    title = "到达 ${destinationBuilding.name}",
+                    detail = if (!rawClassroom.isNullOrBlank()) {
+                        "进入楼宇前往 $rawClassroom"
+                    } else {
+                        destinationBuilding.description ?: "到达目标楼宇正门"
+                    },
+                    distanceMeters = (walkMeters * 0.20).roundToInt().coerceAtLeast(10)
+                )
+            )
         }
 
-        return BuildingNavigationPlan(
-            origin = origin,
-            destination = destination,
-            roomNumberHint = roomNumberHint,
-            distanceMeters = distanceMeters,
-            bearingDegrees = bearingDegrees,
-            compassDirection = compass,
+        return InAppNavigationPlan(
+            originLabel = originLabel,
+            originLatitude = originLat,
+            originLongitude = originLng,
+            originIsLiveGps = useLiveGps,
+            destinationBuilding = destinationBuilding,
+            rawClassroom = rawClassroom,
+            straightDistanceMeters = straightMeters,
+            estimatedWalkDistanceMeters = walkMeters,
             estimatedWalkMinutes = walkMinutes,
-            isUserInsideCampus = isUserInsideCampus,
-            nearestBuildingToUser = nearestBuilding,
+            bearingDegrees = bearing,
+            compassDirectionLabel = compass,
             waypointBuilding = waypoint,
-            turnByTurnSteps = steps
+            steps = steps
         )
     }
 
-    fun distanceBetweenMeters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Float {
-        val res = FloatArray(1)
-        Location.distanceBetween(lat1, lng1, lat2, lng2, res)
-        return res[0]
+    fun findNearestBuilding(
+        latitude: Double,
+        longitude: Double,
+        buildings: List<Building>
+    ): Pair<Building, Int>? {
+        if (buildings.isEmpty()) return null
+        val nearest = buildings.minByOrNull {
+            calculateDistanceMeters(latitude, longitude, it.latitude, it.longitude)
+        } ?: return null
+        val dist = calculateDistanceMeters(latitude, longitude, nearest.latitude, nearest.longitude)
+        return nearest to dist
     }
 
-    private fun bearingToCompassLabel(deg: Float): String = when {
-        deg >= 337.5f || deg < 22.5f -> "正北"
-        deg < 67.5f -> "东北"
-        deg < 112.5f -> "正东"
-        deg < 157.5f -> "东南"
-        deg < 202.5f -> "正南"
-        deg < 247.5f -> "西南"
-        deg < 292.5f -> "正西"
-        else -> "西北"
-    }
+    fun openWalkingNavigation(context: Context, building: Building) {
+        val (gcjLat, gcjLng) = wgs84ToGcj02(building.latitude, building.longitude)
+        val label = Uri.encode("河南工业大学莲花街校区-${building.name}")
 
-    private fun Location.toUserGeoLocation(): UserGeoLocation = UserGeoLocation(
-        latitude = latitude,
-        longitude = longitude,
-        accuracyMeters = if (hasAccuracy()) accuracy else 15f,
-        bearingDegrees = if (hasBearing()) bearing else null,
-        provider = provider ?: "GPS",
-        updatedAtMillis = time.takeIf { it > 0 } ?: System.currentTimeMillis(),
-        isSimulatedCampusAnchor = false
-    )
-
-    /**
-     * 备选：调起外部地图步行导航（高德/系统地图）。
-     */
-    fun launchWalkingNavigation(context: Context, building: Building) {
-        val label = Uri.encode("河南工业大学莲花街校区 ${building.name}")
-        val geoUri = Uri.parse(
-            "geo:${building.latitude},${building.longitude}?q=${building.latitude},${building.longitude}($label)"
-        )
+        val geoUri = Uri.parse("geo:$gcjLat,$gcjLng?q=$gcjLat,$gcjLng($label)")
         val geoIntent = Intent(Intent.ACTION_VIEW, geoUri).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -301,21 +349,68 @@ object CampusMapNavigator {
             return
         }
 
-        val webUri = Uri.parse(
-            "https://uri.amap.com/marker?position=${building.longitude},${building.latitude}&name=$label&callnative=1"
+        val webFallbackUri = Uri.parse(
+            "https://uri.amap.com/marker?position=$gcjLng,$gcjLat&name=$label&callnative=1"
         )
-        runCatching {
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW, webUri).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-            )
-        }.onFailure {
-            Toast.makeText(
-                context,
-                "目标建筑：${building.name} (${building.latitude}, ${building.longitude})",
-                Toast.LENGTH_LONG
-            ).show()
+        val webIntent = Intent(Intent.ACTION_VIEW, webFallbackUri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(webIntent) }
+    }
+
+    fun estimateWalkingMinutes(from: Building, to: Building): Int {
+        val distanceMeters = calculateDistanceMeters(
+            from.latitude,
+            from.longitude,
+            to.latitude,
+            to.longitude
+        )
+        return ((distanceMeters * 1.22) / 72.0).roundToInt().coerceAtLeast(1)
+    }
+
+    fun calculateDistanceMeters(
+        lat1: Double,
+        lon1: Double,
+        lat2: Double,
+        lon2: Double
+    ): Int {
+        val earthRadiusMeters = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return (earthRadiusMeters * c).roundToInt()
+    }
+
+    fun calculateBearingDegrees(
+        lat1: Double,
+        lon1: Double,
+        lat2: Double,
+        lon2: Double
+    ): Int {
+        val phi1 = Math.toRadians(lat1)
+        val phi2 = Math.toRadians(lat2)
+        val deltaLambda = Math.toRadians(lon2 - lon1)
+        val y = sin(deltaLambda) * cos(phi2)
+        val x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(deltaLambda)
+        val theta = Math.toDegrees(atan2(y, x))
+        return ((theta + 360.0) % 360.0).roundToInt() % 360
+    }
+
+    fun bearingToCompassLabel(degrees: Int): String {
+        val normalized = ((degrees % 360) + 360) % 360
+        return when (normalized) {
+            in 0..22 -> "正北"
+            in 23..67 -> "东北"
+            in 68..112 -> "正东"
+            in 113..157 -> "东南"
+            in 158..202 -> "正南"
+            in 203..247 -> "西南"
+            in 248..292 -> "正西"
+            in 293..337 -> "西北"
+            else -> "正北"
         }
     }
 }
