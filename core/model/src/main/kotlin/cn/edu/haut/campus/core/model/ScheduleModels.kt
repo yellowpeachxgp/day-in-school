@@ -127,6 +127,73 @@ enum class ClassStatus {
     FINISHED
 }
 
+/**
+ * 连堂课程内部的小课间（或跨大节连排课内部的课间）。
+ * 例如 1-2 节（08:30–10:05）内部的 09:15–09:20（5 分钟小课间）。
+ */
+data class InternalPeriodBreak(
+    val afterPeriod: Int,
+    val beforePeriod: Int,
+    val startTime: LocalTime,
+    val endTime: LocalTime,
+    val durationMinutes: Long
+) {
+    val label: String
+        get() = if (durationMinutes <= 10) {
+            "小课间 ${durationMinutes}分钟"
+        } else {
+            "大课间 ${durationMinutes}分钟"
+        }
+}
+
+/**
+ * 跨课程课间类型（自动根据两门课起止时刻与节次识别）。
+ */
+enum class BreakType {
+    /** 课间小休息（<= 10 分钟） */
+    SMALL_BREAK,
+    /** 跨大节大课间（11..45 分钟，如 2-3 节间 10:05–10:25 的 20 分钟大课间） */
+    BIG_BREAK,
+    /** 午间休息（上午课与下午课之间，如 12:00–14:30） */
+    NOON_BREAK,
+    /** 傍晚/晚餐休息（下午课与晚课之间，如 18:00–19:30） */
+    EVENING_BREAK,
+    /** 跨大节空堂间歇（> 45 分钟的非午休/晚休空档） */
+    FREE_PERIOD_GAP
+}
+
+/**
+ * 同一天相邻两门课程之间的课间区间（含时长、类型、纵轴比例位置、以及跨教室/跨楼栋换教室提醒）。
+ */
+data class ScheduleBreakInterval(
+    val previousCourseName: String,
+    val nextCourseName: String,
+    val afterPeriod: Int,
+    val beforePeriod: Int,
+    val startTime: LocalTime,
+    val endTime: LocalTime,
+    val durationMinutes: Long,
+    val breakType: BreakType,
+    val label: String,
+    val fromRoom: String,
+    val toRoom: String,
+    val fromBuildingId: String? = null,
+    val toBuildingId: String? = null,
+    val requiresRoomChange: Boolean = fromRoom != toRoom,
+    val requiresBuildingChange: Boolean = fromBuildingId != null && toBuildingId != null && fromBuildingId != toBuildingId,
+    val topPx: Float = 0f,
+    val heightPx: Float = 0f,
+    val isActiveNow: Boolean = false,
+    val minutesRemainingInBreak: Long? = null
+) {
+    val roomTransferText: String?
+        get() = when {
+            requiresBuildingChange -> "跨楼换教室：$fromRoom → $toRoom"
+            requiresRoomChange -> "换教室：$fromRoom → $toRoom"
+            else -> null
+        }
+}
+
 data class ClassOccurrence(
     val occurrenceId: String,
     val courseId: String,
@@ -149,10 +216,19 @@ data class ClassOccurrence(
     val overrideReason: String? = null,
     val userModified: Boolean = false,
     val conflictColumnIndex: Int = 0,
-    val conflictColumnCount: Int = 1
+    val conflictColumnCount: Int = 1,
+    val internalBreaks: List<InternalPeriodBreak> = emptyList()
 ) {
     val periodRangeText: String
         get() = if (startPeriod == endPeriod) "第${startPeriod}节" else "${startPeriod}-${endPeriod}节"
+
+    val internalBreaksSummary: String?
+        get() {
+            if (internalBreaks.isEmpty()) return null
+            return internalBreaks.joinToString(" / ") { brk ->
+                "${brk.startTime}–${brk.endTime} (${brk.label})"
+            }
+        }
 }
 
 enum class TermDateStatus {
@@ -171,6 +247,8 @@ data class TimelineOccurrenceState(
     val minutesUntilStart: Long? = null,
     val minutesElapsed: Long? = null,
     val minutesRemaining: Long? = null,
+    val activeInternalBreak: InternalPeriodBreak? = null,
+    val currentSubPeriodNo: Int? = null,
     val statusText: String
 )
 
@@ -196,5 +274,7 @@ data class DayTimelineSnapshot(
     val currentTimeLinePx: Float?,
     val activeOrNextClass: TimelineOccurrenceState?,
     val items: List<TimelineOccurrenceState>,
+    val breakIntervals: List<ScheduleBreakInterval> = emptyList(),
+    val activeBreakInterval: ScheduleBreakInterval? = null,
     val nextClassDayHint: NextClassDayHint? = null
 )

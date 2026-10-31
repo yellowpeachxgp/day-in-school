@@ -70,10 +70,12 @@ import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
+import cn.edu.haut.campus.core.model.BreakType
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.ScheduleBreakInterval
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.delay
@@ -272,9 +274,10 @@ fun TodayScreen(
                 }
             }
 
-            // 核心卡片：下一节课 / 当前正在上课
+            // 核心卡片：下一节课 / 当前正在上课 / 当前课间提醒
             NextClassHeroCard(
                 activeOrNext = snapshot.activeOrNextClass,
+                activeBreak = snapshot.activeBreakInterval,
                 nextDayHint = snapshot.nextClassDayHint,
                 totalTodayClasses = snapshot.items.size,
                 onNavigateBuilding = { rawRoom ->
@@ -324,7 +327,9 @@ fun TodayScreen(
                             currentTimeLineDp = snapshot.currentTimeLinePx,
                             nowTimeText = currentNow.toLocalTime().format(TIME_FMT),
                             items = snapshot.items,
-                            onItemClick = { selectedOccurrenceForDetail = it }
+                            breakIntervals = snapshot.breakIntervals,
+                            onItemClick = { selectedOccurrenceForDetail = it },
+                            onNavigateRoom = { rawRoom -> onNavigateToMapWithRoom(rawRoom) }
                         )
                     }
                 }
@@ -336,7 +341,6 @@ fun TodayScreen(
     val detailState = selectedOccurrenceForDetail
     if (detailState != null) {
         val occ = detailState.occurrence
-        var editRoom by remember(occ) { mutableStateOf(occ.rawRoom) }
         AlertDialog(
             onDismissRequest = { selectedOccurrenceForDetail = null },
             title = { Text(occ.courseName) },
@@ -344,6 +348,13 @@ fun TodayScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("状态：${detailState.statusText}", fontWeight = FontWeight.SemiBold)
                     Text("时间：${occ.startTime.format(TIME_FMT)} — ${occ.endTime.format(TIME_FMT)} (${occ.periodRangeText})")
+                    occ.internalBreaksSummary?.let { brkSummary ->
+                        Text(
+                            text = "课内间歇：$brkSummary",
+                            color = MaterialTheme.colorScheme.tertiary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Text("教室：${occ.rawRoom}")
                     if (!occ.teacher.isNullOrBlank()) {
                         Text("任课教师：${occ.teacher}")
@@ -404,6 +415,7 @@ fun TodayScreen(
 @Composable
 private fun NextClassHeroCard(
     activeOrNext: TimelineOccurrenceState?,
+    activeBreak: ScheduleBreakInterval?,
     nextDayHint: cn.edu.haut.campus.core.model.NextClassDayHint?,
     totalTodayClasses: Int,
     onNavigateBuilding: (String) -> Unit,
@@ -423,6 +435,34 @@ private fun NextClassHeroCard(
             )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // 若当前正处于两门课之间的跨课课间（如 10:05–10:25 大课间 / 午间休息），顶部高亮提示
+            if (activeBreak != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Text(
+                            text = "☕ 当前处于：${activeBreak.label} (${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
+                                (activeBreak.minutesRemainingInBreak?.let { " · 剩 ${it}分钟" } ?: "") + ")",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        activeBreak.roomTransferText?.let { transfer ->
+                            Text(
+                                text = "🚶 $transfer",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
             if (activeOrNext != null) {
                 val occ = activeOrNext.occurrence
                 val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
@@ -456,7 +496,7 @@ private fun NextClassHeroCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "${occ.rawRoom} ${occ.teacher?.let { "· $it" } ?: ""}",
+                            text = "${occ.rawRoom} ${occ.teacher?.let { "· $it" } ?: ""} (${occ.periodRangeText})",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -466,6 +506,13 @@ private fun NextClassHeroCard(
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
+                        occ.internalBreaksSummary?.let { brkSummary ->
+                            Text(
+                                text = "课内含：$brkSummary",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
                     }
 
                     Button(
@@ -548,7 +595,9 @@ private fun ProportionalDayTimelineCanvas(
     currentTimeLineDp: Float?,
     nowTimeText: String,
     items: List<TimelineOccurrenceState>,
-    onItemClick: (TimelineOccurrenceState) -> Unit
+    breakIntervals: List<ScheduleBreakInterval>,
+    onItemClick: (TimelineOccurrenceState) -> Unit,
+    onNavigateRoom: (String) -> Unit
 ) {
     val totalMinutes = Duration.between(timelineStart, timelineEnd).toMinutes().coerceAtLeast(60)
     val totalHeightDp = (totalMinutes * dpPerMinute).dp
@@ -598,13 +647,82 @@ private fun ProportionalDayTimelineCanvas(
                 .background(axisColor)
         )
 
-        // 3. 按真实时间比例放置每节课程卡片：y = (t - timelineStart) * pxPerMinute
+        // 3. 按真实时间比例放置每节课程卡片与跨课程课间提示条：y = (t - timelineStart) * pxPerMinute
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(start = 60.dp)
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
+                // 3a. 跨课程课间区间条（自动显示大课间 20 分钟 / 午间休息 / 换教室提醒）
+                for (interval in breakIntervals) {
+                    val gapTopDp = interval.topPx.dp
+                    val gapHeightDp = interval.heightPx.coerceAtLeast(22f).dp
+                    val isHighlightBreak = interval.breakType == BreakType.BIG_BREAK ||
+                        interval.breakType == BreakType.SMALL_BREAK ||
+                        interval.requiresRoomChange ||
+                        interval.isActiveNow
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset(y = gapTopDp)
+                            .height(gapHeightDp)
+                            .padding(end = 4.dp, top = 1.dp, bottom = 1.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Surface(
+                            color = if (interval.isActiveNow) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else if (isHighlightBreak) {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (interval.requiresRoomChange) {
+                                        Modifier.clickable { onNavigateRoom(interval.toRoom) }
+                                    } else Modifier
+                                )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = buildString {
+                                        when (interval.breakType) {
+                                            BreakType.SMALL_BREAK -> append("☕ ")
+                                            BreakType.BIG_BREAK -> append("🔔 ")
+                                            BreakType.NOON_BREAK -> append("🍱 ")
+                                            BreakType.EVENING_BREAK -> append("🌆 ")
+                                            BreakType.FREE_PERIOD_GAP -> append("⏳ ")
+                                        }
+                                        append("${interval.label} (${interval.startTime.format(TIME_FMT)}–${interval.endTime.format(TIME_FMT)})")
+                                        interval.roomTransferText?.let { transfer ->
+                                            append(" · $transfer")
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                    color = if (interval.isActiveNow) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3b. 课程卡片（含连堂课内部小课间标签）
                 for (item in items) {
                     val occ = item.occurrence
                     val yOffset = item.topPx.dp
@@ -668,8 +786,22 @@ private fun ProportionalDayTimelineCanvas(
                                 )
                             }
 
+                            occ.internalBreaksSummary?.let { brkText ->
+                                Text(
+                                    text = "含课内间歇：$brkText",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                                    color = if (item.activeInternalBreak != null) {
+                                        primaryColor
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
                             Text(
-                                text = "教室 ${occ.rawRoom}  ·  ${occ.startTime.format(TIME_FMT)} — ${occ.endTime.format(TIME_FMT)}",
+                                text = "教室 ${occ.rawRoom}  ·  ${occ.startTime.format(TIME_FMT)} — ${occ.endTime.format(TIME_FMT)} (${occ.periodRangeText})",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,

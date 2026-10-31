@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.domain
 
+import cn.edu.haut.campus.core.model.BreakType
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.ClassOccurrence
@@ -7,9 +8,11 @@ import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.DayTimelineSnapshot
+import cn.edu.haut.campus.core.model.InternalPeriodBreak
 import cn.edu.haut.campus.core.model.NextClassDayHint
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.ScheduleBreakInterval
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.TermDateStatus
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
@@ -154,17 +157,151 @@ object ScheduleEngine {
             )
         }
 
-        // 3. 同一天同一门课同一教室相邻节次纵向合并
+        // 3. 同一天同一门课同一教室相邻节次纵向合并，并自动识别连堂课内部的小课间/大课间
         val merged = mergeAdjacentSameCourse(
             rawOccurrences.sortedWith(
                 compareBy<ClassOccurrence> { it.startTime }
                     .thenBy { it.startPeriod }
                     .thenBy { it.courseName }
             )
-        )
+        ).map { occ ->
+            occ.copy(
+                internalBreaks = computeInternalBreaks(
+                    startPeriod = occ.startPeriod,
+                    endPeriod = occ.endPeriod,
+                    periodMap = periodMap
+                )
+            )
+        }
 
         // 4. 冲突检测与并列分栏标记
         return assignConflictColumns(merged)
+    }
+
+    /**
+     * 自动识别连堂课（如 1-2 节、3-4 节、1-4 节实验课）内部各小节之间的课间时间。
+     * 例如 1-2 节（08:30–10:05）包含第 1 节结束（09:15）至第 2 节开始（09:20）的 5 分钟小课间。
+     */
+    fun computeInternalBreaks(
+        startPeriod: Int,
+        endPeriod: Int,
+        periodMap: Map<Int, PeriodTime>
+    ): List<InternalPeriodBreak> {
+        if (endPeriod <= startPeriod) return emptyList()
+        val breaks = mutableListOf<InternalPeriodBreak>()
+        for (p in startPeriod until endPeriod) {
+            val currentPeriod = periodMap[p] ?: continue
+            val nextPeriod = periodMap[p + 1] ?: continue
+            if (currentPeriod.endLocalTime.isBefore(nextPeriod.startLocalTime)) {
+                val mins = Duration.between(currentPeriod.endLocalTime, nextPeriod.startLocalTime).toMinutes()
+                if (mins > 0) {
+                    breaks.add(
+                        InternalPeriodBreak(
+                            afterPeriod = p,
+                            beforePeriod = p + 1,
+                            startTime = currentPeriod.endLocalTime,
+                            endTime = nextPeriod.startLocalTime,
+                            durationMinutes = mins
+                        )
+                    )
+                }
+            }
+        }
+        return breaks
+    }
+
+    /**
+     * 自动识别同一天相邻两门不同课程之间的跨课间歇：
+     * - 课间小休息（<= 10 分钟）
+     * - 跨大节大课间（11..45 分钟，如 2-3 节之间 10:05–10:25 的 20 分钟大课间）
+     * - 午间休息（如 4 节 12:00 下课至 5 节 14:30 上课的 150 分钟）
+     * - 傍晚/晚餐间歇（如 8 节 18:00 下课至 9 节 19:30 上课的 90 分钟）
+     * - 跨大节空堂间歇（如 1-2 节下课至 7-8 节上课）
+     * 同时自动检测两节课是否需要更换教室或跨教学楼转移。
+     */
+    fun computeBreakIntervals(
+        occurrences: List<ClassOccurrence>,
+        date: LocalDate,
+        now: ZonedDateTime,
+        timelineStart: LocalTime,
+        pxPerMinute: Float
+    ): List<ScheduleBreakInterval> {
+        if (occurrences.size <= 1) return emptyList()
+        val sorted = occurrences.sortedWith(
+            compareBy<ClassOccurrence> { it.startTime }.thenBy { it.endTime }
+        )
+        val nowLocalDate = now.toLocalDate()
+        val nowLocalTime = now.toLocalTime()
+        val intervals = mutableListOf<ScheduleBreakInterval>()
+
+        for (i in 0 until sorted.size - 1) {
+            val prev = sorted[i]
+            val next = sorted[i + 1]
+            if (!prev.endTime.isBefore(next.startTime)) continue
+
+            val durationMinutes = Duration.between(prev.endTime, next.startTime).toMinutes()
+            if (durationMinutes <= 0) continue
+
+            val breakType = when {
+                prev.endPeriod <= 4 && next.startPeriod in 5..8 -> BreakType.NOON_BREAK
+                prev.endPeriod <= 8 && next.startPeriod >= 9 -> BreakType.EVENING_BREAK
+                durationMinutes <= 10L -> BreakType.SMALL_BREAK
+                durationMinutes <= 45L -> BreakType.BIG_BREAK
+                else -> BreakType.FREE_PERIOD_GAP
+            }
+
+            val formattedDuration = formatDurationChinese(durationMinutes)
+            val label = when (breakType) {
+                BreakType.SMALL_BREAK -> "课间小休 $formattedDuration"
+                BreakType.BIG_BREAK -> "大课间 $formattedDuration"
+                BreakType.NOON_BREAK -> "午间休息 $formattedDuration"
+                BreakType.EVENING_BREAK -> "傍晚间歇 $formattedDuration"
+                BreakType.FREE_PERIOD_GAP -> "空堂间歇 $formattedDuration"
+            }
+
+            val isActiveNow = date == nowLocalDate &&
+                !nowLocalTime.isBefore(prev.endTime) &&
+                nowLocalTime.isBefore(next.startTime)
+
+            val minutesRemainingInBreak = if (isActiveNow) {
+                Duration.between(nowLocalTime, next.startTime).toMinutes().coerceAtLeast(0)
+            } else {
+                null
+            }
+
+            intervals.add(
+                ScheduleBreakInterval(
+                    previousCourseName = prev.courseName,
+                    nextCourseName = next.courseName,
+                    afterPeriod = prev.endPeriod,
+                    beforePeriod = next.startPeriod,
+                    startTime = prev.endTime,
+                    endTime = next.startTime,
+                    durationMinutes = durationMinutes,
+                    breakType = breakType,
+                    label = label,
+                    fromRoom = prev.rawRoom,
+                    toRoom = next.rawRoom,
+                    fromBuildingId = prev.buildingId,
+                    toBuildingId = next.buildingId,
+                    topPx = mapTimeToY(prev.endTime, timelineStart, pxPerMinute),
+                    heightPx = durationMinutes * pxPerMinute,
+                    isActiveNow = isActiveNow,
+                    minutesRemainingInBreak = minutesRemainingInBreak
+                )
+            )
+        }
+        return intervals
+    }
+
+    private fun formatDurationChinese(minutes: Long): String {
+        val hours = minutes / 60
+        val remMinutes = minutes % 60
+        return when {
+            hours > 0 && remMinutes > 0 -> "${hours}小时${remMinutes}分钟"
+            hours > 0 -> "${hours}小时"
+            else -> "${minutes}分钟"
+        }
     }
 
     /**
@@ -273,6 +410,10 @@ object ScheduleEngine {
             null
         }
 
+        val periodMap = periodTimes
+            .filter { it.timeTableId == term.timeTableId }
+            .associateBy { it.periodNo }
+
         val timelineItems = occurrences.map { occ ->
             val topPx = mapTimeToY(occ.startTime, timelineStart, pxPerMinute)
             val durationMinutes = Duration.between(occ.startTime, occ.endTime).toMinutes().coerceAtLeast(15)
@@ -289,6 +430,19 @@ object ScheduleEngine {
 
             val minutesRemaining = if (status == ClassStatus.IN_PROGRESS && date == nowLocalDate) {
                 Duration.between(nowLocalTime, occ.endTime).toMinutes().coerceAtLeast(0)
+            } else null
+
+            val activeInternalBreak = if (status == ClassStatus.IN_PROGRESS && date == nowLocalDate) {
+                occ.internalBreaks.firstOrNull { brk ->
+                    !nowLocalTime.isBefore(brk.startTime) && nowLocalTime.isBefore(brk.endTime)
+                }
+            } else null
+
+            val currentSubPeriodNo = if (status == ClassStatus.IN_PROGRESS && date == nowLocalDate && activeInternalBreak == null) {
+                (occ.startPeriod..occ.endPeriod).firstOrNull { p ->
+                    val pt = periodMap[p] ?: return@firstOrNull false
+                    !nowLocalTime.isBefore(pt.startLocalTime) && !nowLocalTime.isAfter(pt.endLocalTime)
+                }
             } else null
 
             val statusText = when (status) {
@@ -308,7 +462,14 @@ object ScheduleEngine {
                     }
                 }
                 ClassStatus.IN_PROGRESS -> {
-                    "正在上课 · 已上 ${minutesElapsed ?: 0} 分钟 / 剩 ${minutesRemaining ?: 0} 分钟"
+                    if (activeInternalBreak != null) {
+                        val breakLeft = Duration.between(nowLocalTime, activeInternalBreak.endTime).toMinutes().coerceAtLeast(1)
+                        "课内${activeInternalBreak.label}休息中 (${activeInternalBreak.startTime}–${activeInternalBreak.endTime} · 剩 ${breakLeft}分) · 即将第${activeInternalBreak.beforePeriod}节"
+                    } else if (currentSubPeriodNo != null && occ.startPeriod != occ.endPeriod) {
+                        "第${currentSubPeriodNo}节上课中 · 已上 ${minutesElapsed ?: 0} 分钟 / 剩 ${minutesRemaining ?: 0} 分钟"
+                    } else {
+                        "正在上课 · 已上 ${minutesElapsed ?: 0} 分钟 / 剩 ${minutesRemaining ?: 0} 分钟"
+                    }
                 }
                 ClassStatus.FINISHED -> "已结束"
             }
@@ -321,9 +482,20 @@ object ScheduleEngine {
                 minutesUntilStart = minutesUntilStart,
                 minutesElapsed = minutesElapsed,
                 minutesRemaining = minutesRemaining,
+                activeInternalBreak = activeInternalBreak,
+                currentSubPeriodNo = currentSubPeriodNo,
                 statusText = statusText
             )
         }
+
+        val breakIntervals = computeBreakIntervals(
+            occurrences = occurrences,
+            date = date,
+            now = now,
+            timelineStart = timelineStart,
+            pxPerMinute = pxPerMinute
+        )
+        val activeBreakInterval = breakIntervals.firstOrNull { it.isActiveNow }
 
         val activeOrNextClass = timelineItems.firstOrNull { it.status == ClassStatus.IN_PROGRESS }
             ?: timelineItems.firstOrNull { it.status == ClassStatus.UPCOMING }
@@ -357,6 +529,8 @@ object ScheduleEngine {
             currentTimeLinePx = currentTimeLinePx,
             activeOrNextClass = activeOrNextClass,
             items = timelineItems,
+            breakIntervals = breakIntervals,
+            activeBreakInterval = activeBreakInterval,
             nextClassDayHint = nextClassDayHint
         )
     }

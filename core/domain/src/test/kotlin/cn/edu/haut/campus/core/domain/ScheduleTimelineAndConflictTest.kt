@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.domain
 
+import cn.edu.haut.campus.core.model.BreakType
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
@@ -220,5 +221,108 @@ class ScheduleTimelineAndConflictTest {
         assertEquals(1, diff.conflictUserEditCount)
         val conflictEntry = diff.entries.first { it.changeType == ImportChangeType.CONFLICT_USER_MODIFIED }
         assertTrue(conflictEntry.keepUserEditByDefault)
+    }
+
+    @Test
+    fun `automatically recognizes intra-class small breaks and inter-class big breaks on HAUT timetable`() {
+        val hautPeriods = listOf(
+            PeriodTime("p1", "haut_default", 1, LocalTime.of(8, 30), LocalTime.of(9, 15)),
+            PeriodTime("p2", "haut_default", 2, LocalTime.of(9, 20), LocalTime.of(10, 5)),
+            PeriodTime("p3", "haut_default", 3, LocalTime.of(10, 25), LocalTime.of(11, 10)),
+            PeriodTime("p4", "haut_default", 4, LocalTime.of(11, 15), LocalTime.of(12, 0)),
+            PeriodTime("p5", "haut_default", 5, LocalTime.of(14, 30), LocalTime.of(15, 15)),
+            PeriodTime("p6", "haut_default", 6, LocalTime.of(15, 20), LocalTime.of(16, 5)),
+            PeriodTime("p7", "haut_default", 7, LocalTime.of(16, 25), LocalTime.of(17, 10)),
+            PeriodTime("p8", "haut_default", 8, LocalTime.of(17, 15), LocalTime.of(18, 0)),
+            PeriodTime("p9", "haut_default", 9, LocalTime.of(19, 30), LocalTime.of(20, 15)),
+            PeriodTime("p10", "haut_default", 10, LocalTime.of(20, 25), LocalTime.of(21, 10))
+        )
+
+        val wednesday = LocalDate.of(2026, 10, 28) // 第 8 周周三
+        val rules = listOf(
+            CourseScheduleRule(
+                id = "r_stat",
+                courseId = "c_algo",
+                termId = term.id,
+                weekday = DayOfWeek.WEDNESDAY,
+                startPeriod = 1,
+                endPeriod = 2,
+                weeks = (1..16).toSet(),
+                rawRoom = "莲4号教学楼321",
+                buildingId = "b_teach_4"
+            ),
+            CourseScheduleRule(
+                id = "r_pol",
+                courseId = "c_os",
+                termId = term.id,
+                weekday = DayOfWeek.WEDNESDAY,
+                startPeriod = 3,
+                endPeriod = 4,
+                weeks = (1..16).toSet(),
+                rawRoom = "文科组团楼131",
+                buildingId = "b_wenke_group"
+            ),
+            CourseScheduleRule(
+                id = "r_pm",
+                courseId = "c_elective",
+                termId = term.id,
+                weekday = DayOfWeek.WEDNESDAY,
+                startPeriod = 5,
+                endPeriod = 6,
+                weeks = (1..16).toSet(),
+                rawRoom = "莲5号教学楼208",
+                buildingId = "b_teach_5"
+            )
+        )
+
+        // 1) 在 09:17（1-2节连堂课中间的 5 分钟小课间 09:15-09:20）验证课内小课间识别
+        val nowAt917 = ZonedDateTime.of(wednesday, LocalTime.of(9, 17), HAUT_ZONE_ID)
+        val snapshotAtSmallBreak = ScheduleEngine.buildDayTimelineSnapshot(
+            date = wednesday,
+            now = nowAt917,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = hautPeriods
+        )
+
+        val firstItem = snapshotAtSmallBreak.items[0]
+        assertEquals(1, firstItem.occurrence.internalBreaks.size)
+        val internalBreak = firstItem.occurrence.internalBreaks.first()
+        assertEquals(LocalTime.of(9, 15), internalBreak.startTime)
+        assertEquals(LocalTime.of(9, 20), internalBreak.endTime)
+        assertEquals(5L, internalBreak.durationMinutes)
+        assertNotNull(firstItem.activeInternalBreak)
+        assertTrue(firstItem.statusText.contains("小课间"))
+
+        // 2) 在 10:12（1-2节与3-4节之间的 20 分钟大课间 10:05-10:25）验证跨课程大课间与跨楼换教室识别
+        val nowAt1012 = ZonedDateTime.of(wednesday, LocalTime.of(10, 12), HAUT_ZONE_ID)
+        val snapshotAtBigBreak = ScheduleEngine.buildDayTimelineSnapshot(
+            date = wednesday,
+            now = nowAt1012,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = hautPeriods
+        )
+
+        assertEquals(2, snapshotAtBigBreak.breakIntervals.size)
+        val morningBigBreak = snapshotAtBigBreak.breakIntervals[0]
+        assertEquals(BreakType.BIG_BREAK, morningBigBreak.breakType)
+        assertEquals(20L, morningBigBreak.durationMinutes)
+        assertEquals(LocalTime.of(10, 5), morningBigBreak.startTime)
+        assertEquals(LocalTime.of(10, 25), morningBigBreak.endTime)
+        assertTrue(morningBigBreak.requiresRoomChange)
+        assertTrue(morningBigBreak.requiresBuildingChange)
+        assertEquals("跨楼换教室：莲4号教学楼321 → 文科组团楼131", morningBigBreak.roomTransferText)
+        assertTrue(morningBigBreak.isActiveNow)
+        assertEquals(13L, morningBigBreak.minutesRemainingInBreak)
+        assertEquals(morningBigBreak, snapshotAtBigBreak.activeBreakInterval)
+
+        val noonBreak = snapshotAtBigBreak.breakIntervals[1]
+        assertEquals(BreakType.NOON_BREAK, noonBreak.breakType)
+        assertEquals(150L, noonBreak.durationMinutes)
+        assertEquals(LocalTime.of(12, 0), noonBreak.startTime)
+        assertEquals(LocalTime.of(14, 30), noonBreak.endTime)
     }
 }

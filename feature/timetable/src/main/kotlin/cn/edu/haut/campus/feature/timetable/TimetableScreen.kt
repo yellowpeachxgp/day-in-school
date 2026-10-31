@@ -255,6 +255,10 @@ fun TimetableScreen(
                 ) {
                     for (p in 1..maxPeriods) {
                         val pt = periodByNo[p]
+                        val nextPt = periodByNo[p + 1]
+                        val gapMins = if (pt != null && nextPt != null && pt.endLocalTime.isBefore(nextPt.startLocalTime)) {
+                            java.time.Duration.between(pt.endLocalTime, nextPt.startLocalTime).toMinutes()
+                        } else null
                         Column(
                             modifier = Modifier
                                 .height(slotHeightDp)
@@ -281,6 +285,19 @@ fun TimetableScreen(
                                     text = pt.endLocalTime.format(PERIOD_TIME_FMT),
                                     fontSize = 9.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (gapMins != null && gapMins > 0) {
+                                val gapLabel = when {
+                                    p == 4 -> "午休2.5h"
+                                    p == 8 -> "晚休1.5h"
+                                    gapMins >= 15 -> "大课${gapMins}m"
+                                    else -> "小休${gapMins}m"
+                                }
+                                Text(
+                                    text = gapLabel,
+                                    fontSize = 8.sp,
+                                    color = if (gapMins >= 15) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                                 )
                             }
                         }
@@ -392,6 +409,19 @@ fun TimetableScreen(
             title = { Text("课程详情与编辑") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "上课时刻：${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    occToEdit.internalBreaksSummary?.let { brkSummary ->
+                        Text(
+                            text = "课内间歇：$brkSummary",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
                     OutlinedTextField(
                         value = editedName,
                         onValueChange = { editedName = it },
