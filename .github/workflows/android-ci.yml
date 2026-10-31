@@ -29,18 +29,27 @@ jobs:
       - name: Extract Version Info
         id: version
         run: |
-          chmod +x ./gradlew
-          ./gradlew printVersion -q > version_out.txt
-          cat version_out.txt >> $GITHUB_OUTPUT
+          MAJOR=$(grep '^VERSION_MAJOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          MINOR=$(grep '^VERSION_MINOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          PATCH=$(grep '^VERSION_PATCH=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          VER_NAME="${MAJOR:-0}.${MINOR:-1}.${PATCH:-0}"
+          VER_CODE=$(( ${MAJOR:-0} * 10000 + ${MINOR:-1} * 100 + ${PATCH:-0} ))
+          echo "VERSION_NAME=${VER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_CODE=${VER_CODE}" >> "$GITHUB_OUTPUT"
 
       - name: Run Unit Tests
-        run: ./gradlew :core:domain:test :core:academic:testDebugUnitTest --stacktrace
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :core:domain:test :core:academic:testDebugUnitTest --stacktrace
 
       - name: Decode Release Keystore (if configured)
-        if: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p keystore
-          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > keystore/haut-release.jks
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            mkdir -p keystore
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > keystore/haut-release.jks
+          fi
 
       - name: Assemble Debug & Signed Release APKs
         env:

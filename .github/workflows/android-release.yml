@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v0.1.0)'
+        description: 'Release Tag (e.g. v0.3.0)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.3.0'
 
 permissions:
   contents: write
@@ -42,15 +42,18 @@ jobs:
           PATCH=${PATCH%%-*}
           PATCH=${PATCH:-0}
           VER_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
-          echo "TAG_NAME=v${CLEAN_VER}" >> $GITHUB_OUTPUT
-          echo "VERSION_NAME=${CLEAN_VER}" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=${VER_CODE}" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=v${CLEAN_VER}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_NAME=${CLEAN_VER}" >> "$GITHUB_OUTPUT"
+          echo "VERSION_CODE=${VER_CODE}" >> "$GITHUB_OUTPUT"
 
       - name: Decode Release Keystore
-        if: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p keystore
-          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > keystore/haut-release.jks
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            mkdir -p keystore
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > keystore/haut-release.jks
+          fi
 
       - name: Run Unit Tests & Assemble Release APK
         env:
