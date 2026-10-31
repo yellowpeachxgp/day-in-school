@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="wk_widget_bg">#1E293B</color>
+    <color name="wk_widget_stroke">#334155</color>
+    <color name="wk_widget_primary">#F8FAFC</color>
+    <color name="wk_widget_secondary">#CBD5E1</color>
+    <color name="wk_widget_accent">#FB923C</color>
+    <color name="wk_widget_grid_bg">#0F172A</color>
+</resources>

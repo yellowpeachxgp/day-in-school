@@ -1,0 +1,224 @@
+package cn.edu.haut.campus.core.domain
+
+import cn.edu.haut.campus.core.model.ClassStatus
+import cn.edu.haut.campus.core.model.Course
+import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.ImportChangeType
+import cn.edu.haut.campus.core.model.ImportCourseCandidate
+import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.Term
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.math.BigDecimal
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZonedDateTime
+
+class ScheduleTimelineAndConflictTest {
+
+    private val term = Term(
+        id = "2026-2027-1",
+        academicYear = "2026-2027",
+        termNumber = 1,
+        startDate = LocalDate.of(2026, 9, 7),
+        weekCount = 20,
+        timeTableId = "haut_default",
+        current = true
+    )
+
+    private val periods = listOf(
+        PeriodTime("p1", "haut_default", 1, LocalTime.of(8, 0), LocalTime.of(8, 45)),
+        PeriodTime("p2", "haut_default", 2, LocalTime.of(8, 55), LocalTime.of(9, 40)),
+        PeriodTime("p3", "haut_default", 3, LocalTime.of(10, 10), LocalTime.of(10, 55)),
+        PeriodTime("p4", "haut_default", 4, LocalTime.of(11, 5), LocalTime.of(11, 50)),
+        PeriodTime("p5", "haut_default", 5, LocalTime.of(14, 30), LocalTime.of(15, 15)),
+        PeriodTime("p6", "haut_default", 6, LocalTime.of(15, 25), LocalTime.of(16, 10))
+    )
+
+    private val courses = listOf(
+        Course("c_algo", "JW01", "数据结构与算法", "张伟", 0xFF2563EB, BigDecimal("4.0")),
+        Course("c_os", "JW02", "操作系统原理", "李娜", 0xFFEA580C, BigDecimal("3.5")),
+        Course("c_elective", "JW03", "粮食储藏工程导论", "王建国", 0xFF059669, BigDecimal("2.0"))
+    )
+
+    @Test
+    fun `timeline maps time proportionally and transitions UPCOMING to IN_PROGRESS to FINISHED`() {
+        // 2026-10-31 是第 8 周周六
+        val oct31 = LocalDate.of(2026, 10, 31)
+        val rules = listOf(
+            CourseScheduleRule(
+                id = "r1",
+                courseId = "c_os",
+                termId = term.id,
+                weekday = DayOfWeek.SATURDAY,
+                startPeriod = 1,
+                endPeriod = 2,
+                weeks = (1..16).toSet(),
+                rawRoom = "1号教学楼1204"
+            ),
+            CourseScheduleRule(
+                id = "r2",
+                courseId = "c_algo",
+                termId = term.id,
+                weekday = DayOfWeek.SATURDAY,
+                startPeriod = 3,
+                endPeriod = 4,
+                weeks = setOf(2, 4, 6, 8, 10, 12, 14, 16), // 双周课，第8周有课
+                rawRoom = "2号教学楼A204"
+            )
+        )
+
+        val nowAt946 = ZonedDateTime.of(oct31, LocalTime.of(9, 46), HAUT_ZONE_ID)
+        val snapshot = ScheduleEngine.buildDayTimelineSnapshot(
+            date = oct31,
+            now = nowAt946,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periods,
+            pxPerMinute = 2.0f,
+            defaultStart = LocalTime.of(8, 0),
+            defaultEnd = LocalTime.of(18, 0)
+        )
+
+        assertEquals(2, snapshot.items.size)
+        val first = snapshot.items[0]
+        val second = snapshot.items[1]
+
+        // 08:00 - 09:40 在 09:46 已结束
+        assertEquals(ClassStatus.FINISHED, first.status)
+        assertEquals(0f, first.topPx, 0.01f)
+        assertEquals(200f, first.heightPx, 0.01f) // 100 mins * 2.0 px/min
+
+        // 10:10 - 11:50 在 09:46 未开始，距开始 24 分钟
+        assertEquals(ClassStatus.UPCOMING, second.status)
+        assertEquals(260f, second.topPx, 0.01f) // (10:10 - 08:00) = 130 mins * 2.0 = 260px
+        assertEquals(24L, second.minutesUntilStart)
+        assertEquals("c_algo", snapshot.activeOrNextClass?.occurrence?.courseId)
+
+        // 当前时间线位置：(09:46 - 08:00) = 106 mins * 2.0 = 212px
+        assertNotNull(snapshot.currentTimeLinePx)
+        assertEquals(212f, snapshot.currentTimeLinePx!!, 0.01f)
+
+        // 当时间推进到 10:30（课中）
+        val nowAt1030 = ZonedDateTime.of(oct31, LocalTime.of(10, 30), HAUT_ZONE_ID)
+        val inProgressSnapshot = ScheduleEngine.buildDayTimelineSnapshot(
+            date = oct31,
+            now = nowAt1030,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periods,
+            pxPerMinute = 2.0f,
+            defaultStart = LocalTime.of(8, 0),
+            defaultEnd = LocalTime.of(18, 0)
+        )
+        val secondInProgress = inProgressSnapshot.items[1]
+        assertEquals(ClassStatus.IN_PROGRESS, secondInProgress.status)
+        assertEquals(20L, secondInProgress.minutesElapsed)
+        assertEquals(80L, secondInProgress.minutesRemaining)
+    }
+
+    @Test
+    fun `detects overlapping course conflicts and splits columns`() {
+        val date = LocalDate.of(2026, 10, 26) // 第 8 周周一
+        val rules = listOf(
+            CourseScheduleRule("r1", "c_algo", term.id, DayOfWeek.MONDAY, 1, 2, setOf(8), "1号教学楼1102"),
+            CourseScheduleRule("r2", "c_elective", term.id, DayOfWeek.MONDAY, 2, 3, setOf(8), "3号教学楼3201")
+        )
+
+        val occurrences = ScheduleEngine.resolveOccurrencesForDate(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periods
+        )
+
+        assertEquals(2, occurrences.size)
+        assertEquals(0, occurrences[0].conflictColumnIndex)
+        assertEquals(2, occurrences[0].conflictColumnCount)
+        assertEquals(1, occurrences[1].conflictColumnIndex)
+        assertEquals(2, occurrences[1].conflictColumnCount)
+    }
+
+    @Test
+    fun `occurrence override cancels or moves single day class without polluting original rule`() {
+        val date = LocalDate.of(2026, 10, 26) // 第 8 周周一
+        val nextWeekDate = LocalDate.of(2026, 11, 2) // 第 9 周周一
+        val rules = listOf(
+            CourseScheduleRule("r1", "c_algo", term.id, DayOfWeek.MONDAY, 1, 2, setOf(8, 9), "1号教学楼1102")
+        )
+        val overrides = listOf(
+            OccurrenceOverride(
+                id = "ov1",
+                termId = term.id,
+                courseRuleId = "r1",
+                date = date,
+                room = "4号教学楼4308",
+                reason = "临时更换机房"
+            )
+        )
+
+        val week8List = ScheduleEngine.resolveOccurrencesForDate(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periods,
+            occurrenceOverrides = overrides
+        )
+        assertEquals(1, week8List.size)
+        assertEquals("4号教学楼4308", week8List.first().rawRoom)
+        assertTrue(week8List.first().isMakeupOrOverridden)
+
+        // 第 9 周不受第 8 周单次调课污染
+        val week9List = ScheduleEngine.resolveOccurrencesForDate(
+            date = nextWeekDate,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periods,
+            occurrenceOverrides = overrides
+        )
+        assertEquals(1, week9List.size)
+        assertEquals("1号教学楼1102", week9List.first().rawRoom)
+    }
+
+    @Test
+    fun `import diff engine protects user modified courses from silent overwrite`() {
+        val existingCourses = listOf(
+            Course("c1", "JW01", "数据结构（自改备注）", "张伟", 0xFF2563EB, BigDecimal("4.0"), userModified = true),
+            Course("c2", "JW02", "操作系统原理", "李娜", 0xFFEA580C, BigDecimal("3.5"), userModified = false)
+        )
+        val existingRules = listOf(
+            CourseScheduleRule("r1", "c1", term.id, DayOfWeek.MONDAY, 1, 2, (1..16).toSet(), "A204(我的自习座)", userModified = true),
+            CourseScheduleRule("r2", "c2", term.id, DayOfWeek.TUESDAY, 3, 4, (1..16).toSet(), "B302", userModified = false)
+        )
+        val candidates = listOf(
+            ImportCourseCandidate("JW01", "数据结构", "张伟", BigDecimal("4.0"), DayOfWeek.MONDAY, 1, 2, (1..16).toSet(), "A204"),
+            ImportCourseCandidate("JW02", "操作系统原理", "李娜", BigDecimal("3.5"), DayOfWeek.TUESDAY, 3, 4, (1..16).toSet(), "B306"),
+            ImportCourseCandidate("JW03", "计算机网络", "赵敏", BigDecimal("3.0"), DayOfWeek.THURSDAY, 5, 6, (1..16).toSet(), "C108")
+        )
+
+        val diff = ImportDiffEngine.computeDiff(
+            termId = term.id,
+            source = CourseSource.OFFICIAL_JW,
+            existingCourses = existingCourses,
+            existingRules = existingRules,
+            incomingCandidates = candidates
+        )
+
+        assertEquals(1, diff.addedCount)
+        assertEquals(1, diff.modifiedCount)
+        assertEquals(1, diff.conflictUserEditCount)
+        val conflictEntry = diff.entries.first { it.changeType == ImportChangeType.CONFLICT_USER_MODIFIED }
+        assertTrue(conflictEntry.keepUserEditByDefault)
+    }
+}

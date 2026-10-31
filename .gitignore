@@ -1,0 +1,23 @@
+# Android & Gradle
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing & Secrets (NEVER commit credentials, sessions, cookies, or keystores)
+*.jks
+*.keystore
+*.cookies
+*.session
+secrets.properties
+credentials.json
+
+# OS
+.DS_Store
+Thumbs.db

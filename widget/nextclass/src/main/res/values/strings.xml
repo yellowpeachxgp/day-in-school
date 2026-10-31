@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_next_class_title">下一节课 Mini (2×2)</string>
+    <string name="widget_next_class_desc">显示下一节课名称、起止时间、教学楼教室与系统级倒计时</string>
+</resources>

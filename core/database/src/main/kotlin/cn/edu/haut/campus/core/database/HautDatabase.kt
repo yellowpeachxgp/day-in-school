@@ -1,0 +1,177 @@
+package cn.edu.haut.campus.core.database
+
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.RoomDatabase
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface CampusDao {
+
+    @Query("SELECT * FROM student_profile LIMIT 1")
+    fun observeStudentProfile(): Flow<StudentProfileEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStudentProfile(profile: StudentProfileEntity)
+
+    @Query("SELECT * FROM terms ORDER BY academicYear DESC, termNumber DESC")
+    fun observeTerms(): Flow<List<TermEntity>>
+
+    @Query("SELECT * FROM terms WHERE current = 1 LIMIT 1")
+    suspend fun getCurrentTerm(): TermEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTerms(terms: List<TermEntity>)
+
+    @Query("UPDATE terms SET current = CASE WHEN id = :termId THEN 1 ELSE 0 END")
+    suspend fun setCurrentTerm(termId: String)
+
+    @Query("SELECT * FROM period_times ORDER BY periodNo ASC")
+    fun observePeriodTimes(): Flow<List<PeriodTimeEntity>>
+
+    @Query("SELECT * FROM period_times ORDER BY periodNo ASC")
+    suspend fun getPeriodTimesSnapshot(): List<PeriodTimeEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPeriodTimes(items: List<PeriodTimeEntity>)
+
+    @Query("SELECT * FROM calendar_overrides")
+    fun observeCalendarOverrides(): Flow<List<CalendarOverrideEntity>>
+
+    @Query("SELECT * FROM calendar_overrides")
+    suspend fun getCalendarOverridesSnapshot(): List<CalendarOverrideEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCalendarOverrides(items: List<CalendarOverrideEntity>)
+
+    @Query("SELECT * FROM courses")
+    fun observeCourses(): Flow<List<CourseEntity>>
+
+    @Query("SELECT * FROM courses")
+    suspend fun getCoursesSnapshot(): List<CourseEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCourses(items: List<CourseEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCourse(item: CourseEntity)
+
+    @Query("SELECT * FROM course_schedule_rules")
+    fun observeRules(): Flow<List<CourseScheduleRuleEntity>>
+
+    @Query("SELECT * FROM course_schedule_rules")
+    suspend fun getRulesSnapshot(): List<CourseScheduleRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRules(items: List<CourseScheduleRuleEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRule(item: CourseScheduleRuleEntity)
+
+    @Query("DELETE FROM course_schedule_rules WHERE id = :ruleId")
+    suspend fun deleteRuleById(ruleId: String)
+
+    @Query("SELECT * FROM occurrence_overrides")
+    fun observeOccurrenceOverrides(): Flow<List<OccurrenceOverrideEntity>>
+
+    @Query("SELECT * FROM occurrence_overrides")
+    suspend fun getOccurrenceOverridesSnapshot(): List<OccurrenceOverrideEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertOccurrenceOverrides(items: List<OccurrenceOverrideEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertOccurrenceOverride(item: OccurrenceOverrideEntity)
+
+    @Query("SELECT * FROM grade_attempts ORDER BY academicYear DESC, termNumber DESC, courseKey ASC")
+    fun observeGradeAttempts(): Flow<List<GradeAttemptEntity>>
+
+    @Query("SELECT * FROM grade_attempts ORDER BY academicYear DESC, termNumber DESC, courseKey ASC")
+    suspend fun getGradeAttemptsSnapshot(): List<GradeAttemptEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGradeAttempts(items: List<GradeAttemptEntity>)
+
+    @Query("SELECT * FROM buildings ORDER BY id ASC")
+    fun observeBuildings(): Flow<List<BuildingEntity>>
+
+    @Query("SELECT * FROM buildings ORDER BY id ASC")
+    suspend fun getBuildingsSnapshot(): List<BuildingEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBuildings(items: List<BuildingEntity>)
+
+    @Query("SELECT * FROM building_aliases")
+    fun observeBuildingAliases(): Flow<List<BuildingAliasEntity>>
+
+    @Query("SELECT * FROM building_aliases")
+    suspend fun getBuildingAliasesSnapshot(): List<BuildingAliasEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertBuildingAliases(items: List<BuildingAliasEntity>)
+
+    @Query("SELECT * FROM widget_instance_configs")
+    fun observeWidgetConfigs(): Flow<List<WidgetInstanceConfigEntity>>
+
+    @Query("SELECT * FROM widget_instance_configs WHERE appWidgetId = :appWidgetId LIMIT 1")
+    suspend fun getWidgetConfig(appWidgetId: Int): WidgetInstanceConfigEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertWidgetConfig(config: WidgetInstanceConfigEntity)
+
+    @Query("DELETE FROM widget_instance_configs WHERE appWidgetId = :appWidgetId")
+    suspend fun deleteWidgetConfig(appWidgetId: Int)
+
+    @Query("SELECT * FROM import_audits ORDER BY importedAtEpochMilli DESC")
+    fun observeImportAudits(): Flow<List<ImportAuditEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertImportAudit(audit: ImportAuditEntity)
+
+    @Query("DELETE FROM student_profile")
+    suspend fun clearStudentProfile()
+
+    @Query("DELETE FROM courses")
+    suspend fun clearCourses()
+
+    @Query("DELETE FROM course_schedule_rules")
+    suspend fun clearRules()
+
+    @Query("DELETE FROM occurrence_overrides")
+    suspend fun clearOccurrenceOverrides()
+
+    @Query("DELETE FROM grade_attempts")
+    suspend fun clearGradeAttempts()
+
+    @Query("DELETE FROM import_audits")
+    suspend fun clearImportAudits()
+
+    @Query("DELETE FROM widget_instance_configs")
+    suspend fun clearWidgetConfigs()
+}
+
+@Database(
+    entities = [
+        StudentProfileEntity::class,
+        TermEntity::class,
+        PeriodTimeEntity::class,
+        CalendarOverrideEntity::class,
+        CourseEntity::class,
+        CourseScheduleRuleEntity::class,
+        OccurrenceOverrideEntity::class,
+        GradeAttemptEntity::class,
+        GpaPolicyEntity::class,
+        BuildingEntity::class,
+        BuildingAliasEntity::class,
+        WidgetInstanceConfigEntity::class,
+        ImportAuditEntity::class
+    ],
+    version = 1,
+    exportSchema = false
+)
+abstract class HautDatabase : RoomDatabase() {
+    abstract fun campusDao(): CampusDao
+}

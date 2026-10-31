@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:name=".HautCampusApplication"
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher_vector"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ic_launcher_vector"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 1. 下一节课 Mini 2x2 小组件 -->
+        <receiver
+            android:name="cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider"
+            android:exported="true"
+            android:label="下一节课 Mini (2×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_next_class_info" />
+        </receiver>
+
+        <!-- 2. 今日课程 Today 4x2 小组件 -->
+        <receiver
+            android:name="cn.edu.haut.campus.widget.today.TodayAppWidgetProvider"
+            android:exported="true"
+            android:label="今日课程 Today (4×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_today_info" />
+        </receiver>
+
+        <!-- 3. 日程时间轴 Timeline 4x4 小组件 -->
+        <receiver
+            android:name="cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider"
+            android:exported="true"
+            android:label="日程时间轴 Timeline (4×4)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_timeline_info" />
+        </receiver>
+
+        <!-- 4. 周课表 Week 4x4 小组件 -->
+        <receiver
+            android:name="cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
+            android:exported="true"
+            android:label="周课表 Week (4×4)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_week_info" />
+        </receiver>
+
+    </application>
+</manifest>

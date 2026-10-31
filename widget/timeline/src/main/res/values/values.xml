@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tl_widget_bg">#FFFFFF</color>
+    <color name="tl_widget_stroke">#E2E8F0</color>
+    <color name="tl_widget_primary">#0F172A</color>
+    <color name="tl_widget_secondary">#475569</color>
+    <color name="tl_widget_accent">#EA580C</color>
+    <color name="tl_widget_card">#F8FAFC</color>
+    <string name="widget_timeline_desc">左侧时间刻度与竖向时间轴，直观呈现今日全天课程进度</string>
+</resources>
