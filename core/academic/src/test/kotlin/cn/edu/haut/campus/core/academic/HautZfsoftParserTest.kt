@@ -64,6 +64,78 @@ class HautZfsoftParserTest {
     }
 
     @Test
+    fun `parseTimetableJson and parseGradesJson handle real HAUT field variants`() {
+        val realShapedKbJson = """
+            {
+              "xsxx": {
+                "XH": "231040600000",
+                "XM": "测试同学",
+                "BJMC": "空信2302",
+                "ZYMC": "空间信息与数字技术"
+              },
+              "kbList": [
+                {
+                  "kch_id": "0A2FA6787AB7527AE0635FFE12AC5BBD",
+                  "kcmc": "空间信息前沿与应用",
+                  "xm": "赵颜创",
+                  "xf": "1.5",
+                  "xqj": "1",
+                  "jc": "3-4节",
+                  "zcd": "1-3周(单),4-6周",
+                  "cdmc": "文科组团楼131",
+                  "lh": "莲03号教学楼"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val profile = HautZfsoftParser.parseStudentProfileFromTimetableJson(realShapedKbJson)
+        assertEquals("测试同学", profile?.displayName)
+        assertEquals("空间信息与数字技术 · 空信2302", profile?.major)
+
+        val kbCandidates = HautZfsoftParser.parseTimetableJson(realShapedKbJson)
+        assertEquals(1, kbCandidates.size)
+        assertEquals(3, kbCandidates[0].startPeriod)
+        assertEquals(4, kbCandidates[0].endPeriod)
+        assertEquals(setOf(1, 3, 4, 5, 6), kbCandidates[0].weeks)
+        assertEquals("文科组团楼131", kbCandidates[0].rawRoom)
+
+        val realShapedGradesJson = """
+            {
+              "items": [
+                {
+                  "kch_id": "C1",
+                  "kcmc": "工程训练",
+                  "xnm": "2024",
+                  "xqm": "3",
+                  "xf": "2.0",
+                  "cj": "优",
+                  "jd": "4.50",
+                  "ksxz": "正常考试",
+                  "kcxzmc": "必修课"
+                },
+                {
+                  "kch_id": "C2",
+                  "kcmc": "软件工程",
+                  "xnm": "2025",
+                  "xqm": "12",
+                  "xf": "3.0",
+                  "cj": "60",
+                  "jd": "1.00",
+                  "ksxz": "补考一",
+                  "kcxzmc": "必修课"
+                }
+              ]
+            }
+        """.trimIndent()
+        val grades = HautZfsoftParser.parseGradesJson(realShapedGradesJson)
+        assertEquals(AttemptType.FIVE_LEVEL, grades[0].attemptType)
+        assertEquals(BigDecimal("4.50"), grades[0].gradePoint)
+        assertEquals(AttemptType.MAKEUP, grades[1].attemptType)
+        assertEquals(BigDecimal("1.00"), grades[1].gradePoint)
+    }
+
+    @Test
     fun `parseCsvSchedule parses custom local CSV courses`() {
         val csv = """
             # 课程名,教师,星期(1-7),开始节,结束节,周次,教室,学分

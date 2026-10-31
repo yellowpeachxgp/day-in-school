@@ -395,9 +395,15 @@ class CampusRepository private constructor(
     suspend fun saveImportedGrades(
         attempts: List<GradeAttempt>,
         officialGpa: BigDecimal? = null,
-        officialNote: String? = null
+        officialNote: String? = null,
+        replaceExisting: Boolean = false
     ) {
-        dao.upsertGradeAttempts(attempts.map { it.toEntity() })
+        database.withTransaction {
+            if (replaceExisting) {
+                dao.clearGradeAttempts()
+            }
+            dao.upsertGradeAttempts(attempts.map { it.toEntity() })
+        }
         appContext.appDataStore.edit { prefs ->
             if (officialGpa != null) {
                 prefs[PrefKeys.OFFICIAL_GPA] = officialGpa.toPlainString()
@@ -407,6 +413,10 @@ class CampusRepository private constructor(
                 prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
             }
         }
+    }
+
+    suspend fun saveStudentProfile(profile: StudentProfile) {
+        dao.upsertStudentProfile(profile.toEntity())
     }
 
     suspend fun setGpaPrivacyShield(enabled: Boolean) {

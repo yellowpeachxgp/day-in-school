@@ -52,7 +52,11 @@ object GpaCalculator {
         var missingGradePointCourses = 0
 
         for ((courseKey, courseAttempts) in groupedByCourse) {
-            val sortedAttempts = courseAttempts.sortedBy { it.syncedAt }
+            val sortedAttempts = courseAttempts.sortedWith(
+                compareBy<GradeAttempt> { it.academicYear }
+                    .thenBy { it.termNumber }
+                    .thenBy { it.syncedAt }
+            )
             val chosen = selectRepresentativeAttempt(sortedAttempts, policy.retakeStrategy)
 
             if (chosen != null && chosen.passed && chosen.credits > BigDecimal.ZERO) {
@@ -253,11 +257,17 @@ object GpaCalculator {
                     compareBy<GradeAttempt> { it.passed }
                         .thenBy { it.gradePoint ?: BigDecimal("-1") }
                         .thenBy { it.numericScore ?: BigDecimal("-1") }
+                        .thenBy { it.academicYear }
+                        .thenBy { it.termNumber }
                         .thenBy { it.syncedAt }
                 )
             }
             RetakeInclusionStrategy.LATEST_ATTEMPT -> {
-                attempts.maxByOrNull { it.syncedAt }
+                attempts.maxWithOrNull(
+                    compareBy<GradeAttempt> { it.academicYear }
+                        .thenBy { it.termNumber }
+                        .thenBy { it.syncedAt }
+                )
             }
             RetakeInclusionStrategy.FIRST_ATTEMPT_ONLY -> {
                 attempts.firstOrNull { it.attemptType == AttemptType.NORMAL } ?: attempts.first()

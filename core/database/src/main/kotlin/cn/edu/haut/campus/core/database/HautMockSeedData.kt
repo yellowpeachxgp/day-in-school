@@ -76,16 +76,16 @@ object HautMockSeedData {
     )
 
     val defaultPeriodTimes = listOf(
-        PeriodTime("pt_1", DEFAULT_TIMETABLE_ID, 1, LocalTime.of(8, 0), LocalTime.of(8, 45), "上午"),
-        PeriodTime("pt_2", DEFAULT_TIMETABLE_ID, 2, LocalTime.of(8, 55), LocalTime.of(9, 40), "上午"),
-        PeriodTime("pt_3", DEFAULT_TIMETABLE_ID, 3, LocalTime.of(10, 10), LocalTime.of(10, 55), "上午"),
-        PeriodTime("pt_4", DEFAULT_TIMETABLE_ID, 4, LocalTime.of(11, 5), LocalTime.of(11, 50), "上午"),
+        PeriodTime("pt_1", DEFAULT_TIMETABLE_ID, 1, LocalTime.of(8, 30), LocalTime.of(9, 15), "上午"),
+        PeriodTime("pt_2", DEFAULT_TIMETABLE_ID, 2, LocalTime.of(9, 20), LocalTime.of(10, 5), "上午"),
+        PeriodTime("pt_3", DEFAULT_TIMETABLE_ID, 3, LocalTime.of(10, 25), LocalTime.of(11, 10), "上午"),
+        PeriodTime("pt_4", DEFAULT_TIMETABLE_ID, 4, LocalTime.of(11, 15), LocalTime.of(12, 0), "上午"),
         PeriodTime("pt_5", DEFAULT_TIMETABLE_ID, 5, LocalTime.of(14, 30), LocalTime.of(15, 15), "下午"),
-        PeriodTime("pt_6", DEFAULT_TIMETABLE_ID, 6, LocalTime.of(15, 25), LocalTime.of(16, 10), "下午"),
-        PeriodTime("pt_7", DEFAULT_TIMETABLE_ID, 7, LocalTime.of(16, 30), LocalTime.of(17, 15), "下午"),
-        PeriodTime("pt_8", DEFAULT_TIMETABLE_ID, 8, LocalTime.of(17, 25), LocalTime.of(18, 10), "下午"),
-        PeriodTime("pt_9", DEFAULT_TIMETABLE_ID, 9, LocalTime.of(19, 0), LocalTime.of(19, 45), "晚间"),
-        PeriodTime("pt_10", DEFAULT_TIMETABLE_ID, 10, LocalTime.of(19, 55), LocalTime.of(20, 40), "晚间")
+        PeriodTime("pt_6", DEFAULT_TIMETABLE_ID, 6, LocalTime.of(15, 20), LocalTime.of(16, 5), "下午"),
+        PeriodTime("pt_7", DEFAULT_TIMETABLE_ID, 7, LocalTime.of(16, 25), LocalTime.of(17, 10), "下午"),
+        PeriodTime("pt_8", DEFAULT_TIMETABLE_ID, 8, LocalTime.of(17, 15), LocalTime.of(18, 0), "下午"),
+        PeriodTime("pt_9", DEFAULT_TIMETABLE_ID, 9, LocalTime.of(19, 30), LocalTime.of(20, 15), "晚间"),
+        PeriodTime("pt_10", DEFAULT_TIMETABLE_ID, 10, LocalTime.of(20, 25), LocalTime.of(21, 10), "晚间")
     )
 
     val lianhuajieBuildings = listOf(
@@ -225,19 +225,32 @@ object HautMockSeedData {
 
     val defaultBuildingAliases = listOf(
         BuildingAlias("al_1", "b_t1", "1号教学楼", 1.0f, true),
+        BuildingAlias("al_1b", "b_t1", "莲1号教学楼", 1.0f, true),
+        BuildingAlias("al_1c", "b_t1", "莲01号教学楼", 1.0f, true),
         BuildingAlias("al_2", "b_t1", "一号教学楼", 0.98f, true),
         BuildingAlias("al_3", "b_t1", "1教", 0.95f, true),
         BuildingAlias("al_4", "b_t2", "2号教学楼", 1.0f, true),
+        BuildingAlias("al_4b", "b_t2", "莲2号教学楼", 1.0f, true),
+        BuildingAlias("al_4c", "b_t2", "莲02号教学楼", 1.0f, true),
         BuildingAlias("al_5", "b_t2", "二号教学楼", 0.98f, true),
         BuildingAlias("al_6", "b_t2", "教学楼A", 0.90f, true),
         BuildingAlias("al_7", "b_t2", "A座", 0.72f, false), // 模糊别名：触发用户确认弹窗
         BuildingAlias("al_8", "b_t3", "3号教学楼", 1.0f, true),
+        BuildingAlias("al_8b", "b_t3", "莲3号教学楼", 1.0f, true),
+        BuildingAlias("al_8c", "b_t3", "莲03号教学楼", 1.0f, true),
+        BuildingAlias("al_8d", "b_t3", "文科组团楼", 1.0f, true),
         BuildingAlias("al_9", "b_t3", "教学楼B", 0.88f, true),
         BuildingAlias("al_10", "b_t4", "4号教学楼", 1.0f, true),
+        BuildingAlias("al_10b", "b_t4", "莲4号教学楼", 1.0f, true),
+        BuildingAlias("al_10c", "b_t4", "莲04号教学楼", 1.0f, true),
         BuildingAlias("al_11", "b_t4", "计算中心", 0.92f, true),
         BuildingAlias("al_12", "b_bell", "钟楼", 0.96f, true),
         BuildingAlias("al_13", "b_eng", "训练中心", 0.95f, true),
-        BuildingAlias("al_14", "b_stadium", "田径场", 0.95f, true)
+        BuildingAlias("al_13b", "b_eng", "莲34号实训楼", 1.0f, true),
+        BuildingAlias("al_13c", "b_eng", "34号实训楼", 1.0f, true),
+        BuildingAlias("al_13d", "b_eng", "实训楼", 0.95f, true),
+        BuildingAlias("al_14", "b_stadium", "田径场", 0.95f, true),
+        BuildingAlias("al_14b", "b_stadium", "莲花操场", 1.0f, true)
     )
 
     val defaultCourses = listOf(
