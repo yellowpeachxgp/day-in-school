@@ -63,8 +63,8 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :core:domain:test :core:academic:testDebugUnitTest :app:assembleRelease :app:assembleDebug --stacktrace
           mkdir -p release-assets
-          REL_APK="release-assets/haut-campus-assistant-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk"
-          DBG_APK="release-assets/haut-campus-assistant-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk"
+          REL_APK="release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk"
+          DBG_APK="release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk"
           cp app/build/outputs/apk/release/app-release.apk "$REL_APK"
           cp app/build/outputs/apk/debug/app-debug.apk "$DBG_APK"
           cd release-assets
@@ -74,9 +74,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.TAG_NAME }}
-          name: "HAUT Campus Assistant ${{ steps.meta.outputs.TAG_NAME }} (Android 16 / API 36)"
+          name: "日在校园 (Day in School) ${{ steps.meta.outputs.TAG_NAME }} (Android 16 / API 36)"
           generate_release_notes: true
           files: |
-            release-assets/haut-campus-assistant-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk
-            release-assets/haut-campus-assistant-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk
+            release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk
+            release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk
             release-assets/SHA256SUMS.txt

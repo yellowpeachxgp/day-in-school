@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "haut-campus-assistant"
+rootProject.name = "day-in-school"
 
 include(
     ":app",
