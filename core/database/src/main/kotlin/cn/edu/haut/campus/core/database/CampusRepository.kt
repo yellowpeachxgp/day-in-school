@@ -49,7 +49,8 @@ data class AppPreferencesState(
     val timelineZoomScale: Float = 2.0f,
     val officialGpaValuePlain: String? = null,
     val officialGpaNote: String? = null,
-    val hasSeededInitialMockData: Boolean = false
+    val hasSeededInitialMockData: Boolean = false,
+    val hasCompletedOnboarding: Boolean = false
 )
 
 class CampusRepository private constructor(
@@ -61,6 +62,8 @@ class CampusRepository private constructor(
 
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
+        val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v2")
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
         val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")
         val TIMELINE_SCALE = floatPreferencesKey("timeline_zoom_scale")
@@ -81,7 +84,8 @@ class CampusRepository private constructor(
             timelineZoomScale = prefs[PrefKeys.TIMELINE_SCALE] ?: 2.0f,
             officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
             officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
-            hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false
+            hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false,
+            hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false
         )
     }
 
@@ -124,14 +128,40 @@ class CampusRepository private constructor(
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
 
+    /**
+     * 首次启动仅初始化公开的校历学期、1–10 节作息时间表与莲花街校区楼宇字典，
+     * 绝不自动塞入模拟课程或模拟成绩，确保用户首次打开直接进入干净的欢迎引导页。
+     */
     suspend fun ensureInitialSeedIfNeeded() {
         val prefs = appContext.appDataStore.data.first()
-        if (prefs[PrefKeys.SEEDED] == true) return
-        val existingTerms = dao.getCurrentTerm()
-        if (existingTerms == null) {
-            seedDemoDataInternal()
+        if (prefs[PrefKeys.CLEAN_BASE_V2] == true) return
+        database.withTransaction {
+            if (prefs[PrefKeys.ONBOARDING_COMPLETED] != true) {
+                dao.clearStudentProfile()
+                dao.clearCourses()
+                dao.clearRules()
+                dao.clearOccurrenceOverrides()
+                dao.clearGradeAttempts()
+            }
+            seedBaseCampusDictionaryInternal()
         }
-        appContext.appDataStore.edit { it[PrefKeys.SEEDED] = true }
+        appContext.appDataStore.edit {
+            it[PrefKeys.SEEDED] = true
+            it[PrefKeys.CLEAN_BASE_V2] = true
+        }
+    }
+
+    suspend fun completeOnboarding() {
+        appContext.appDataStore.edit {
+            it[PrefKeys.ONBOARDING_COMPLETED] = true
+            it[PrefKeys.CLEAN_BASE_V2] = true
+        }
+    }
+
+    suspend fun resetOnboardingForGuide() {
+        appContext.appDataStore.edit {
+            it[PrefKeys.ONBOARDING_COMPLETED] = false
+        }
     }
 
     suspend fun resetToDemoSeedData() {
@@ -144,20 +174,26 @@ class CampusRepository private constructor(
         }
         appContext.appDataStore.edit {
             it[PrefKeys.SEEDED] = true
+            it[PrefKeys.CLEAN_BASE_V2] = true
+            it[PrefKeys.ONBOARDING_COMPLETED] = true
             it.remove(PrefKeys.OFFICIAL_GPA)
             it.remove(PrefKeys.OFFICIAL_GPA_NOTE)
         }
     }
 
-    private suspend fun seedDemoDataInternal() {
-        dao.upsertStudentProfile(HautMockSeedData.defaultStudent.toEntity())
+    private suspend fun seedBaseCampusDictionaryInternal() {
         dao.upsertTerms(HautMockSeedData.defaultTerms.map { it.toEntity() })
         dao.upsertPeriodTimes(HautMockSeedData.defaultPeriodTimes.map { it.toEntity() })
         dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
         dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+        dao.upsertCalendarOverrides(HautMockSeedData.defaultCalendarOverrides.map { it.toEntity() })
+    }
+
+    private suspend fun seedDemoDataInternal() {
+        seedBaseCampusDictionaryInternal()
+        dao.upsertStudentProfile(HautMockSeedData.defaultStudent.toEntity())
         dao.upsertCourses(HautMockSeedData.defaultCourses.map { it.toEntity() })
         dao.upsertRules(HautMockSeedData.defaultRules.map { it.toEntity() })
-        dao.upsertCalendarOverrides(HautMockSeedData.defaultCalendarOverrides.map { it.toEntity() })
         dao.upsertOccurrenceOverrides(HautMockSeedData.defaultOccurrenceOverrides.map { it.toEntity() })
         dao.upsertGradeAttempts(HautMockSeedData.defaultGradeAttempts.map { it.toEntity() })
     }
@@ -287,8 +323,8 @@ class CampusRepository private constructor(
         overwriteUserConflicts: Boolean = false
     ) {
         val palette = listOf(
-            0xFF2563EB, 0xFFEA580C, 0xFF059669, 0xFF7C3AED,
-            0xFFD97706, 0xFF0891B2, 0xFF16A34A, 0xFFDC2626
+            0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,
+            0xFF4F46E5, 0xFF7C3AED, 0xFFD97706, 0xFFE11D48
         )
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
@@ -393,6 +429,10 @@ class CampusRepository private constructor(
                 ).toEntity()
             )
         }
+        appContext.appDataStore.edit {
+            it[PrefKeys.ONBOARDING_COMPLETED] = true
+            it[PrefKeys.CLEAN_BASE_V2] = true
+        }
     }
 
     suspend fun saveImportedGrades(
@@ -408,6 +448,8 @@ class CampusRepository private constructor(
             dao.upsertGradeAttempts(attempts.map { it.toEntity() })
         }
         appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.ONBOARDING_COMPLETED] = true
+            prefs[PrefKeys.CLEAN_BASE_V2] = true
             if (officialGpa != null) {
                 prefs[PrefKeys.OFFICIAL_GPA] = officialGpa.toPlainString()
                 prefs[PrefKeys.OFFICIAL_GPA_NOTE] = officialNote ?: "正方教务系统返回平均学分绩点"
@@ -459,7 +501,9 @@ class CampusRepository private constructor(
         appContext.appDataStore.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
             prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
-            prefs[PrefKeys.SEEDED] = true // 防止清除后立即自动恢复模拟数据
+            prefs[PrefKeys.SEEDED] = true
+            prefs[PrefKeys.CLEAN_BASE_V2] = true
+            prefs[PrefKeys.ONBOARDING_COMPLETED] = false
         }
     }
 

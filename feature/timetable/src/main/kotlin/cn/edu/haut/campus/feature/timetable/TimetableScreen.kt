@@ -3,7 +3,6 @@ package cn.edu.haut.campus.feature.timetable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,22 +24,16 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -57,11 +50,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
@@ -78,7 +73,6 @@ import java.time.format.DateTimeFormatter
 private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("MM/dd")
 private val PERIOD_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimetableScreen(
     repository: CampusRepository,
@@ -132,251 +126,276 @@ fun TimetableScreen(
         )
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { if (selectedWeek > 1) selectedWeek-- }
-                        ) {
-                            Icon(Icons.Default.ChevronLeft, contentDescription = "上一周")
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "第 $selectedWeek 教学周",
+            subtitle = term?.displayName ?: "河南工业大学",
+            badgeText = if (selectedWeek == currentActualWeek) "本周" else null,
+            actions = {
+                XPeachIconButton(
+                    onClick = { if (selectedWeek > 1) selectedWeek-- }
+                ) {
+                    Icon(
+                        Icons.Default.ChevronLeft,
+                        contentDescription = "上一周",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                XPeachIconButton(
+                    onClick = {
+                        val maxW = term?.weekCount ?: 20
+                        if (selectedWeek < maxW) selectedWeek++
+                    }
+                ) {
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = "下一周",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                if (selectedWeek != currentActualWeek) {
+                    XPeachFilterPill(
+                        label = "回本周",
+                        selected = true,
+                        onClick = { selectedWeek = currentActualWeek }
+                    )
+                }
+                XPeachIconButton(onClick = { showAddCourseDialog = true }) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "手动添加课程",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                XPeachIconButton(onClick = onNavigateToImporter) {
+                    Icon(
+                        Icons.Default.CloudDownload,
+                        contentDescription = "教务导入",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        )
+
+        val weekDates = remember(term, selectedWeek) {
+            term?.let { TeachingWeekCalculator.datesOfTeachingWeek(it, selectedWeek) }
+                ?: (0L..6L).map { today.plusDays(it) }
+        }
+
+        // 顶部星期与日期栏（周一至周日，扁平 1dp 底部分割线）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.width(44.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${selectedWeek}周",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            for (date in weekDates) {
+                val isToday = date == today
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (isToday) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                        )
+                        .then(
+                            if (isToday) {
+                                Modifier.border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                            } else Modifier
+                        )
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = date.dayOfWeek.ChineseLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = date.format(SHORT_DATE_FMT),
+                        fontSize = 10.sp,
+                        color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline)
+
+        // 纵向 1-10 节周课表网格
+        val slotHeightDp = 62.dp
+        val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
+        val periodByNo = periodTimes.associateBy { it.periodNo }
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 16.dp)
+        ) {
+            // 左侧节次与起止时刻栏
+            Column(
+                modifier = Modifier
+                    .width(44.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                for (p in 1..maxPeriods) {
+                    val pt = periodByNo[p]
+                    val nextPt = periodByNo[p + 1]
+                    val gapMins = if (pt != null && nextPt != null && pt.endLocalTime.isBefore(nextPt.startLocalTime)) {
+                        java.time.Duration.between(pt.endLocalTime, nextPt.startLocalTime).toMinutes()
+                    } else null
+                    Column(
+                        modifier = Modifier
+                            .height(slotHeightDp)
+                            .fillMaxWidth()
+                            .border(
+                                width = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outline
+                            ),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "$p",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (pt != null) {
                             Text(
-                                text = "第 $selectedWeek 教学周" + if (selectedWeek == currentActualWeek) " (本周)" else "",
-                                style = MaterialTheme.typography.titleMedium
+                                text = pt.startLocalTime.format(PERIOD_TIME_FMT),
+                                fontSize = 9.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = term?.displayName ?: "河南工业大学",
-                                style = MaterialTheme.typography.labelMedium,
+                                text = pt.endLocalTime.format(PERIOD_TIME_FMT),
+                                fontSize = 9.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(
-                            onClick = {
-                                val maxW = term?.weekCount ?: 20
-                                if (selectedWeek < maxW) selectedWeek++
+                        if (gapMins != null && gapMins > 0) {
+                            val gapLabel = when {
+                                p == 4 -> "午休2.5h"
+                                p == 8 -> "晚休1.5h"
+                                gapMins >= 15 -> "大课${gapMins}m"
+                                else -> "小休${gapMins}m"
                             }
-                        ) {
-                            Icon(Icons.Default.ChevronRight, contentDescription = "下一周")
-                        }
-                    }
-                },
-                actions = {
-                    if (selectedWeek != currentActualWeek) {
-                        AssistChip(
-                            onClick = { selectedWeek = currentActualWeek },
-                            label = { Text("回本周") }
-                        )
-                    }
-                    IconButton(onClick = { showAddCourseDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "手动添加课程")
-                    }
-                    IconButton(onClick = onNavigateToImporter) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = "教务导入")
-                    }
-                }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            val weekDates = remember(term, selectedWeek) {
-                term?.let { TeachingWeekCalculator.datesOfTeachingWeek(it, selectedWeek) }
-                    ?: (0L..6L).map { today.plusDays(it) }
-            }
-
-            // 顶部星期与日期栏（周一至周日）
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier.width(44.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "${selectedWeek}周",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                for (date in weekDates) {
-                    val isToday = date == today
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (isToday) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-                            )
-                            .padding(vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = date.dayOfWeek.ChineseLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = date.format(SHORT_DATE_FMT),
-                            fontSize = 10.sp,
-                            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            // 纵向 1-10 节周课表网格
-            val slotHeightDp = 62.dp
-            val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
-            val periodByNo = periodTimes.associateBy { it.periodNo }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 16.dp)
-            ) {
-                // 左侧节次与起止时刻栏
-                Column(
-                    modifier = Modifier
-                        .width(44.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-                ) {
-                    for (p in 1..maxPeriods) {
-                        val pt = periodByNo[p]
-                        val nextPt = periodByNo[p + 1]
-                        val gapMins = if (pt != null && nextPt != null && pt.endLocalTime.isBefore(nextPt.startLocalTime)) {
-                            java.time.Duration.between(pt.endLocalTime, nextPt.startLocalTime).toMinutes()
-                        } else null
-                        Column(
-                            modifier = Modifier
-                                .height(slotHeightDp)
-                                .fillMaxWidth()
-                                .border(
-                                    width = 0.5.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                                ),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
                             Text(
-                                text = "$p",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (pt != null) {
-                                Text(
-                                    text = pt.startLocalTime.format(PERIOD_TIME_FMT),
-                                    fontSize = 9.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = pt.endLocalTime.format(PERIOD_TIME_FMT),
-                                    fontSize = 9.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (gapMins != null && gapMins > 0) {
-                                val gapLabel = when {
-                                    p == 4 -> "午休2.5h"
-                                    p == 8 -> "晚休1.5h"
-                                    gapMins >= 15 -> "大课${gapMins}m"
-                                    else -> "小休${gapMins}m"
+                                text = gapLabel,
+                                fontSize = 8.sp,
+                                color = if (gapMins >= 15) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                                 }
-                                Text(
-                                    text = gapLabel,
-                                    fontSize = 8.sp,
-                                    color = if (gapMins >= 15) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                                )
-                            }
+                            )
                         }
                     }
                 }
+            }
 
-                // 周一至周日 7 列排课块（跨节次纵向合并、冲突横向并列）
-                for (date in weekDates) {
-                    val dayOccurrences = weekOccurrencesMap[date].orEmpty()
-                    val isToday = date == today
+            // 周一至周日 7 列排课块（扁平化卡片块 + 清晰边框）
+            for (date in weekDates) {
+                val dayOccurrences = weekOccurrencesMap[date].orEmpty()
+                val isToday = date == today
 
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(slotHeightDp * maxPeriods)
-                            .background(
-                                if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.12f)
-                                else Color.Transparent
-                            )
-                    ) {
-                        // 背景网格线
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            repeat(maxPeriods) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(slotHeightDp)
-                                        .border(
-                                            width = 0.5.dp,
-                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                                        )
-                                )
-                            }
-                        }
-
-                        // 课程块
-                        for (occ in dayOccurrences) {
-                            val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
-                            val topOffset = slotHeightDp * (occ.startPeriod - 1)
-                            val blockHeight = slotHeightDp * span
-                            val baseColor = Color(occ.colorArgb)
-
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(slotHeightDp * maxPeriods)
+                        .background(
+                            if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                            else MaterialTheme.colorScheme.surface
+                        )
+                ) {
+                    // 背景网格线
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        repeat(maxPeriods) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .offset(y = topOffset)
-                                    .height(blockHeight)
-                                    .padding(1.5.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(baseColor.copy(alpha = 0.88f))
-                                    .clickable { editingOccurrence = occ }
-                                    .padding(3.dp)
+                                    .height(slotHeightDp)
+                                    .border(
+                                        width = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                    )
+                            )
+                        }
+                    }
+
+                    // 课程块（XPeach 扁平风：浅底 + 1dp 清晰色边 + 浓郁文字，告别厚重果冻块）
+                    for (occ in dayOccurrences) {
+                        val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
+                        val topOffset = slotHeightDp * (occ.startPeriod - 1)
+                        val blockHeight = slotHeightDp * span
+                        val baseColor = Color(occ.colorArgb)
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .offset(y = topOffset)
+                                .height(blockHeight)
+                                .padding(1.5.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(baseColor.copy(alpha = 0.14f))
+                                .border(
+                                    width = 1.dp,
+                                    color = baseColor.copy(alpha = 0.65f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .clickable { editingOccurrence = occ }
+                                .padding(4.dp)
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxSize()
                             ) {
-                                Column(
-                                    verticalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    Text(
-                                        text = buildString {
-                                            if (occ.conflictColumnCount > 1) append("[冲突]")
-                                            if (occ.userModified) append("★")
-                                            append(occ.courseName)
-                                        },
-                                        color = Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        lineHeight = 13.sp,
-                                        maxLines = 3,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "@${occ.rawRoom}",
-                                        color = Color.White.copy(alpha = 0.92f),
-                                        fontSize = 9.sp,
-                                        lineHeight = 11.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                Text(
+                                    text = buildString {
+                                        if (occ.conflictColumnCount > 1) append("[冲突]")
+                                        if (occ.userModified) append("★")
+                                        append(occ.courseName)
+                                    },
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 13.sp,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "@${occ.rawRoom}",
+                                    color = baseColor,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    lineHeight = 11.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -385,7 +404,7 @@ fun TimetableScreen(
         }
     }
 
-    // 点击课程：查看详情或手动编辑（编辑后标记 userModified = true，不被下次导入覆盖）
+    // 点击课程：查看详情或手动编辑
     val occToEdit = editingOccurrence
     if (occToEdit != null) {
         val targetCourse = courses.firstOrNull { it.id == occToEdit.courseId }
@@ -400,8 +419,8 @@ fun TimetableScreen(
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
 
         val palette = listOf(
-            0xFF2563EB, 0xFFEA580C, 0xFF059669, 0xFF7C3AED,
-            0xFFD97706, 0xFF0891B2, 0xFF16A34A, 0xFFDC2626
+            0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,
+            0xFF4F46E5, 0xFF7C3AED, 0xFFD97706, 0xFFE11D48
         )
 
         AlertDialog(
@@ -419,7 +438,7 @@ fun TimetableScreen(
                         Text(
                             text = "课内间歇：$brkSummary",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.tertiary
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                     OutlinedTextField(
@@ -482,11 +501,12 @@ fun TimetableScreen(
                             editingOccurrence = null
                             onNavigateToMapWithRoom(editedRoom)
                         },
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("在莲花街校区地图中查看该教室")
+                        Text("在校区地图中定位并开启步行导航")
                     }
                 }
             },
@@ -511,7 +531,8 @@ fun TimetableScreen(
                             }
                             editingOccurrence = null
                         }
-                    }
+                    },
+                    shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("保存修改")
                 }
@@ -595,7 +616,7 @@ fun TimetableScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val activeTermId = term?.id ?: "2026-2027-1"
+                        val activeTermId = term?.id ?: "2025-2026-2"
                         if (newName.isNotBlank()) {
                             scope.launch {
                                 val sp = (newStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 10)
@@ -610,13 +631,14 @@ fun TimetableScreen(
                                     startPeriod = sp,
                                     endPeriod = ep,
                                     weeks = weeks,
-                                    colorArgb = 0xFF059669
+                                    colorArgb = 0xFF0072BC
                                 )
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 showAddCourseDialog = false
                             }
                         }
-                    }
+                    },
+                    shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("添加")
                 }

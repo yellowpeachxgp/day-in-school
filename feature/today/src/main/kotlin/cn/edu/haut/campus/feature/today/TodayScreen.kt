@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.feature.today
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,25 +24,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -68,10 +58,15 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.model.BreakType
-import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OccurrenceOverride
@@ -90,7 +85,6 @@ import java.util.UUID
 private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 private val DATE_TITLE_FMT = DateTimeFormatter.ofPattern("MM月dd日")
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
     repository: CampusRepository,
@@ -111,7 +105,7 @@ fun TodayScreen(
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
-    // 前台生命周期感知的每分钟时钟：仅当 App 在前台 STARTED 状态时更新，切后台自动停止重绘
+    // 前台生命周期感知的每分钟时钟：仅当 App 在前台 STARTED 状态时更新
     var currentNow by remember { mutableStateOf(ZonedDateTime.now(HAUT_ZONE_ID)) }
     var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
     var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
@@ -122,7 +116,6 @@ fun TodayScreen(
                 val updatedNow = ZonedDateTime.now(HAUT_ZONE_ID)
                 val previousDate = currentNow.toLocalDate()
                 currentNow = updatedNow
-                // 跨日自动切换到新的一天
                 if (selectedDate == previousDate && updatedNow.toLocalDate() != previousDate) {
                     selectedDate = updatedNow.toLocalDate()
                 }
@@ -158,180 +151,201 @@ fun TodayScreen(
         )
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "${selectedDate.format(DATE_TITLE_FMT)}  ${selectedDate.dayOfWeek.ChineseLabel}",
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = snapshot.teachingWeek?.let { "第 $it 教学周" } ?: "非教学周",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = term?.displayName ?: "河南工业大学 · 莲花街校区",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToImporter) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = "导入课表与成绩")
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置与小组件")
-                    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "${selectedDate.format(DATE_TITLE_FMT)} · ${selectedDate.dayOfWeek.ChineseLabel}",
+            subtitle = term?.displayName ?: "河南工业大学 · 莲花街校区",
+            badgeText = snapshot.teachingWeek?.let { "第 $it 周" } ?: "非教学周",
+            actions = {
+                XPeachIconButton(onClick = onNavigateToImporter) {
+                    Icon(
+                        Icons.Default.CloudDownload,
+                        contentDescription = "导入课表与成绩",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
-            )
-        }
-    ) { innerPadding ->
+                XPeachIconButton(onClick = onNavigateToSettings) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "设置与小组件",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 日期快捷切换与缩放条
+            // 日期快捷切换与时间轴缩放条（扁平化胶囊按钮）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AssistChip(
-                        onClick = { selectedDate = selectedDate.minusDays(1) },
-                        label = { Text("前一天") }
+                    XPeachFilterPill(
+                        label = "← 前一天",
+                        selected = false,
+                        onClick = { selectedDate = selectedDate.minusDays(1) }
                     )
-                    AssistChip(
+                    XPeachFilterPill(
+                        label = "今天",
+                        selected = selectedDate == currentNow.toLocalDate(),
                         onClick = { selectedDate = currentNow.toLocalDate() },
                         leadingIcon = {
                             Icon(
                                 Icons.Default.Today,
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                tint = if (selectedDate == currentNow.toLocalDate()) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.size(14.dp)
                             )
-                        },
-                        label = { Text("今天") }
+                        }
                     )
-                    AssistChip(
-                        onClick = { selectedDate = selectedDate.plusDays(1) },
-                        label = { Text("后一天") }
+                    XPeachFilterPill(
+                        label = "后一天 →",
+                        selected = false,
+                        onClick = { selectedDate = selectedDate.plusDays(1) }
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    XPeachFilterPill(
+                        label = "缩小",
+                        selected = false,
                         onClick = {
                             scope.launch {
                                 repository.setTimelineZoomScale(prefs.timelineZoomScale - 0.3f)
                             }
                         }
-                    ) {
-                        Text("缩小")
-                    }
-                    TextButton(
+                    )
+                    XPeachFilterPill(
+                        label = "放大",
+                        selected = false,
                         onClick = {
                             scope.launch {
                                 repository.setTimelineZoomScale(prefs.timelineZoomScale + 0.3f)
                             }
                         }
-                    ) {
-                        Text("放大")
-                    }
+                    )
                 }
             }
 
             // 节假日/调休提示横幅
             if (!snapshot.calendarNotice.isNullOrBlank()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ),
-                    modifier = Modifier.fillMaxWidth()
+                XPeachCard(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                 ) {
                     Text(
                         text = "校历提醒：${snapshot.calendarNotice}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(12.dp)
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
 
-            // 核心卡片：下一节课 / 当前正在上课 / 当前课间提醒
-            NextClassHeroCard(
-                activeOrNext = snapshot.activeOrNextClass,
-                activeBreak = snapshot.activeBreakInterval,
-                nextDayHint = snapshot.nextClassDayHint,
-                totalTodayClasses = snapshot.items.size,
-                onNavigateBuilding = { rawRoom ->
-                    onNavigateToMapWithRoom(rawRoom)
-                },
-                onCardClick = { state ->
-                    selectedOccurrenceForDetail = state
-                }
-            )
-
-            // 日时间轴（真实时间比例绘制 y = (t - timelineStart) * pxPerMinute）
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+            // 若用户尚未导入任何课程，展示扁平化引导卡片而非空白或假数据
+            if (courses.isEmpty()) {
+                XPeachCard(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "日时间轴（按真实时刻比例绘制）",
-                            style = MaterialTheme.typography.titleMedium
+                            text = "尚未绑定个人课表",
+                            style = MaterialTheme.typography.titleLarge
                         )
-                        Text(
-                            text = "现在 ${currentNow.toLocalTime().format(TIME_FMT)}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        XPeachStatusBadge(text = "待初始化")
                     }
-
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "当前工作台为空白状态（无任何预设虚拟课程）。点击下方按钮登录河南工业大学统一身份认证，即可同步本学期真实课表与历史成绩。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
-
-                    if (snapshot.items.isEmpty()) {
-                        EmptyDayTimelineBox(
-                            nextClassHint = snapshot.nextClassDayHint,
-                            onJumpToDate = { nextDate -> selectedDate = nextDate }
-                        )
-                    } else {
-                        ProportionalDayTimelineCanvas(
-                            timelineStart = snapshot.timelineStart,
-                            timelineEnd = snapshot.timelineEnd,
-                            dpPerMinute = snapshot.pxPerMinute,
-                            currentTimeLineDp = snapshot.currentTimeLinePx,
-                            nowTimeText = currentNow.toLocalTime().format(TIME_FMT),
-                            items = snapshot.items,
-                            breakIntervals = snapshot.breakIntervals,
-                            onItemClick = { selectedOccurrenceForDetail = it },
-                            onNavigateRoom = { rawRoom -> onNavigateToMapWithRoom(rawRoom) }
-                        )
+                    Button(
+                        onClick = onNavigateToImporter,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("同步河工大教务课表与成绩")
                     }
+                }
+            } else {
+                // 核心卡片：下一节课 / 当前正在上课 / 当前课间提醒
+                NextClassHeroCard(
+                    activeOrNext = snapshot.activeOrNextClass,
+                    activeBreak = snapshot.activeBreakInterval,
+                    nextDayHint = snapshot.nextClassDayHint,
+                    totalTodayClasses = snapshot.items.size,
+                    onNavigateBuilding = { rawRoom ->
+                        onNavigateToMapWithRoom(rawRoom)
+                    },
+                    onCardClick = { state ->
+                        selectedOccurrenceForDetail = state
+                    }
+                )
+            }
+
+            // 日时间轴（真实时间比例绘制 y = (t - timelineStart) * pxPerMinute）
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "日时间轴（按真实时刻比例绘制）",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    XPeachStatusBadge(
+                        text = "现在 ${currentNow.toLocalTime().format(TIME_FMT)}"
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (snapshot.items.isEmpty()) {
+                    EmptyDayTimelineBox(
+                        hasAnyCourses = courses.isNotEmpty(),
+                        nextClassHint = snapshot.nextClassDayHint,
+                        onJumpToDate = { nextDate -> selectedDate = nextDate },
+                        onOpenImporter = onNavigateToImporter
+                    )
+                } else {
+                    ProportionalDayTimelineCanvas(
+                        timelineStart = snapshot.timelineStart,
+                        timelineEnd = snapshot.timelineEnd,
+                        dpPerMinute = snapshot.pxPerMinute,
+                        currentTimeLineDp = snapshot.currentTimeLinePx,
+                        nowTimeText = currentNow.toLocalTime().format(TIME_FMT),
+                        items = snapshot.items,
+                        breakIntervals = snapshot.breakIntervals,
+                        onItemClick = { selectedOccurrenceForDetail = it },
+                        onNavigateRoom = { rawRoom -> onNavigateToMapWithRoom(rawRoom) }
+                    )
                 }
             }
         }
@@ -351,7 +365,7 @@ fun TodayScreen(
                     occ.internalBreaksSummary?.let { brkSummary ->
                         Text(
                             text = "课内间歇：$brkSummary",
-                            color = MaterialTheme.colorScheme.tertiary,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -371,11 +385,12 @@ fun TodayScreen(
                             onClick = {
                                 selectedOccurrenceForDetail = null
                                 onNavigateToMapWithRoom(occ.rawRoom)
-                            }
+                            },
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("去该教学楼")
+                            Text("APP 内步行导航")
                         }
                         OutlinedButton(
                             onClick = {
@@ -396,7 +411,8 @@ fun TodayScreen(
                                     }
                                     selectedOccurrenceForDetail = null
                                 }
-                            }
+                            },
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("仅今日停课")
                         }
@@ -421,132 +437,137 @@ private fun NextClassHeroCard(
     onNavigateBuilding: (String) -> Unit,
     onCardClick: (TimelineOccurrenceState) -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
+    XPeachCard(
         modifier = Modifier
             .fillMaxWidth()
             .then(
                 if (activeOrNext != null) {
                     Modifier.clickable { onCardClick(activeOrNext) }
                 } else Modifier
-            )
+            ),
+        containerColor = MaterialTheme.colorScheme.surface,
+        borderColor = if (activeOrNext != null) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+        } else {
+            MaterialTheme.colorScheme.outline
+        }
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // 若当前正处于两门课之间的跨课课间（如 10:05–10:25 大课间 / 午间休息），顶部高亮提示
-            if (activeBreak != null) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                        Text(
-                            text = "☕ 当前处于：${activeBreak.label} (${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
-                                (activeBreak.minutesRemainingInBreak?.let { " · 剩 ${it}分钟" } ?: "") + ")",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        activeBreak.roomTransferText?.let { transfer ->
-                            Text(
-                                text = "🚶 $transfer",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+        // 若当前正处于两门课之间的跨课课间（如 10:05–10:25 大课间 / 午间休息），顶部高亮提示
+        if (activeBreak != null) {
+            XPeachWell(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp)
+            ) {
+                Text(
+                    text = "☕ 当前处于：${activeBreak.label} (${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
+                        (activeBreak.minutesRemainingInBreak?.let { " · 剩 ${it}分钟" } ?: "") + ")",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                activeBreak.roomTransferText?.let { transfer ->
+                    Text(
+                        text = "🚶 $transfer",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
+        }
 
-            if (activeOrNext != null) {
-                val occ = activeOrNext.occurrence
-                val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
+        if (activeOrNext != null) {
+            val occ = activeOrNext.occurrence
+            val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
+                    XPeachStatusBadge(
+                        text = if (isOngoing) "● 正在上课" else "下一节"
+                    )
                     Text(
-                        text = if (isOngoing) "● 正在上课 · ${occ.courseName}" else "下一节 · ${occ.courseName}",
+                        text = occ.courseName,
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        text = "${occ.rawRoom} ${occ.teacher?.let { "· $it" } ?: ""} (${occ.periodRangeText})",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = activeOrNext.statusText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    occ.internalBreaksSummary?.let { brkSummary ->
                         Text(
-                            text = "${occ.rawRoom} ${occ.teacher?.let { "· $it" } ?: ""} (${occ.periodRangeText})",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = activeOrNext.statusText,
+                            text = "课内含：$brkSummary",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        occ.internalBreaksSummary?.let { brkSummary ->
-                            Text(
-                                text = "课内含：$brkSummary",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                            )
-                        }
-                    }
-
-                    Button(
-                        onClick = { onNavigateBuilding(occ.rawRoom) }
-                    ) {
-                        Icon(
-                            Icons.Default.LocationOn,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("教学楼导航")
                     }
                 }
+
+                Button(
+                    onClick = { onNavigateBuilding(occ.rawRoom) },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("步行导航")
+                }
+            }
+        } else {
+            Text(
+                text = if (totalTodayClasses == 0) "今天没有课程安排" else "今日 $totalTodayClasses 节课程已全部结束",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            if (nextDayHint != null) {
+                Text(
+                    text = "下一次上课：${nextDayHint.nextDate.format(DATE_TITLE_FMT)} (${nextDayHint.nextDate.dayOfWeek.ChineseLabel}) ${nextDayHint.firstCourseStartTime.format(TIME_FMT)} 《${nextDayHint.firstCourseName}》 @${nextDayHint.firstCourseRoom}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
                 Text(
-                    text = if (totalTodayClasses == 0) "今天没有课程安排" else "今日 $totalTodayClasses 节课程已全部结束",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    text = "近期没有待上课程，可前往图书馆或查看全学期周课表。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                if (nextDayHint != null) {
-                    Text(
-                        text = "下一次上课：${nextDayHint.nextDate.format(DATE_TITLE_FMT)} (${nextDayHint.nextDate.dayOfWeek.ChineseLabel}) ${nextDayHint.firstCourseStartTime.format(TIME_FMT)} 《${nextDayHint.firstCourseName}》 @${nextDayHint.firstCourseRoom}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                } else {
-                    Text(
-                        text = "近期没有待上课程，可前往图书馆或查看全学期周课表。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
             }
         }
     }
@@ -554,35 +575,56 @@ private fun NextClassHeroCard(
 
 @Composable
 private fun EmptyDayTimelineBox(
+    hasAnyCourses: Boolean,
     nextClassHint: cn.edu.haut.campus.core.model.NextClassDayHint?,
-    onJumpToDate: (LocalDate) -> Unit
+    onJumpToDate: (LocalDate) -> Unit,
+    onOpenImporter: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+    XPeachWell(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Text(
-            text = "今天没有排课",
-            style = MaterialTheme.typography.titleMedium
-        )
-        if (nextClassHint != null) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Text(
-                text = "距离下次课还有 ${nextClassHint.daysUntil} 天（${nextClassHint.nextDate.format(DATE_TITLE_FMT)} ${nextClassHint.firstCourseName}）",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = if (hasAnyCourses) "今天没有排课" else "课表为空",
+                style = MaterialTheme.typography.titleMedium
             )
-            FilledTonalButton(onClick = { onJumpToDate(nextClassHint.nextDate) }) {
-                Text("预览下次上课日 (${nextClassHint.nextDate.format(DATE_TITLE_FMT)})")
+            if (nextClassHint != null) {
+                Text(
+                    text = "距离下次课还有 ${nextClassHint.daysUntil} 天（${nextClassHint.nextDate.format(DATE_TITLE_FMT)} ${nextClassHint.firstCourseName}）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(
+                    onClick = { onJumpToDate(nextClassHint.nextDate) },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("预览下次上课日 (${nextClassHint.nextDate.format(DATE_TITLE_FMT)})")
+                }
+            } else if (!hasAnyCourses) {
+                Text(
+                    text = "请先通过教务系统同步或在「课表」页手动添加您的课程",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(
+                    onClick = onOpenImporter,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("前往导入课表")
+                }
+            } else {
+                Text(
+                    text = "享受自由安排的一天",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-        } else {
-            Text(
-                text = "享受自由安排的一天",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -601,7 +643,7 @@ private fun ProportionalDayTimelineCanvas(
 ) {
     val totalMinutes = Duration.between(timelineStart, timelineEnd).toMinutes().coerceAtLeast(60)
     val totalHeightDp = (totalMinutes * dpPerMinute).dp
-    val axisColor = MaterialTheme.colorScheme.outlineVariant
+    val axisColor = MaterialTheme.colorScheme.outline
     val primaryColor = MaterialTheme.colorScheme.primary
 
     Box(
@@ -632,7 +674,7 @@ private fun ProportionalDayTimelineCanvas(
                         modifier = Modifier
                             .weight(1f)
                             .height(1.dp)
-                            .background(axisColor.copy(alpha = 0.45f))
+                            .background(axisColor.copy(alpha = 0.6f))
                     )
                 }
             }
@@ -642,7 +684,7 @@ private fun ProportionalDayTimelineCanvas(
         Box(
             modifier = Modifier
                 .offset(x = 50.dp)
-                .width(2.dp)
+                .width(1.dp)
                 .fillMaxHeight()
                 .background(axisColor)
         )
@@ -658,10 +700,6 @@ private fun ProportionalDayTimelineCanvas(
                 for (interval in breakIntervals) {
                     val gapTopDp = interval.topPx.dp
                     val gapHeightDp = interval.heightPx.coerceAtLeast(22f).dp
-                    val isHighlightBreak = interval.breakType == BreakType.BIG_BREAK ||
-                        interval.breakType == BreakType.SMALL_BREAK ||
-                        interval.requiresRoomChange ||
-                        interval.isActiveNow
 
                     Box(
                         modifier = Modifier
@@ -673,15 +711,22 @@ private fun ProportionalDayTimelineCanvas(
                     ) {
                         Surface(
                             color = if (interval.isActiveNow) {
-                                MaterialTheme.colorScheme.secondaryContainer
-                            } else if (isHighlightBreak) {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                MaterialTheme.colorScheme.primaryContainer
                             } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                MaterialTheme.colorScheme.surfaceVariant
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(6.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .border(
+                                    width = 1.dp,
+                                    color = if (interval.isActiveNow) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                    } else {
+                                        MaterialTheme.colorScheme.outline
+                                    },
+                                    shape = RoundedCornerShape(6.dp)
+                                )
                                 .then(
                                     if (interval.requiresRoomChange) {
                                         Modifier.clickable { onNavigateRoom(interval.toRoom) }
@@ -722,7 +767,7 @@ private fun ProportionalDayTimelineCanvas(
                     }
                 }
 
-                // 3b. 课程卡片（含连堂课内部小课间标签）
+                // 3b. 课程卡片（扁平化 1dp 边框 + 左侧色条）
                 for (item in items) {
                     val occ = item.occurrence
                     val yOffset = item.topPx.dp
@@ -742,15 +787,15 @@ private fun ProportionalDayTimelineCanvas(
                             .height(cardHeight)
                             .padding(end = 4.dp, bottom = 2.dp)
                             .alpha(if (isFinished) 0.58f else 1.0f)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(
-                                if (isOngoing) baseColor.copy(alpha = 0.22f)
-                                else baseColor.copy(alpha = 0.13f)
+                                if (isOngoing) baseColor.copy(alpha = 0.16f)
+                                else baseColor.copy(alpha = 0.09f)
                             )
                             .border(
-                                width = if (isOngoing) 2.dp else 1.dp,
-                                color = if (isOngoing) primaryColor else baseColor.copy(alpha = 0.55f),
-                                shape = RoundedCornerShape(12.dp)
+                                width = if (isOngoing) 1.5.dp else 1.dp,
+                                color = if (isOngoing) primaryColor else baseColor.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(8.dp)
                             )
                             .clickable { onItemClick(item) }
                             .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -834,14 +879,14 @@ private fun ProportionalDayTimelineCanvas(
                 }
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(7.dp)
                         .clip(CircleShape)
                         .background(primaryColor)
                 )
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(2.dp)
+                        .height(1.5.dp)
                         .background(primaryColor)
                 )
             }

@@ -3,6 +3,7 @@ package cn.edu.haut.campus.feature.settings
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,21 +21,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,16 +44,19 @@ import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetThemeStyle
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
-import java.time.LocalDate
 import java.time.LocalTime
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     repository: CampusRepository,
@@ -78,333 +76,322 @@ fun SettingsScreen(
     var widgetPrivacyDefault by remember { mutableStateOf(false) }
     var widgetCompactDefault by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("设置 · 学期节次 · 小组件与隐私") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "设置与工作台管理",
+            subtitle = "学期节次 · 桌面小组件 · 视觉与隐私主权",
+            navigationIcon = {
+                XPeachIconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
-            )
-        }
-    ) { innerPadding ->
+            }
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (feedbackText != null) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    ),
-                    modifier = Modifier.fillMaxWidth()
+                XPeachCard(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
                 ) {
                     Text(
                         text = feedbackText!!,
                         style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(12.dp)
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
             }
 
             // 1. 学期管理与第一周开学日期配置
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("学期切换与第一教学周起始日", style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (term in terms) {
-                            FilterChip(
-                                selected = term.id == currentTerm?.id,
-                                onClick = {
-                                    scope.launch {
-                                        repository.selectCurrentTerm(term.id)
-                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    }
-                                },
-                                label = { Text(term.id) }
-                            )
-                        }
-                    }
-                    if (currentTerm != null) {
-                        Text(
-                            text = "当前学期：${currentTerm!!.displayName} · 第一教学周起始于 ${currentTerm!!.startDate}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Text("学期切换与第一教学周起始日", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (term in terms) {
+                        XPeachFilterPill(
+                            label = term.id,
+                            selected = term.id == currentTerm?.id,
+                            onClick = {
+                                scope.launch {
+                                    repository.selectCurrentTerm(term.id)
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                }
+                            }
                         )
                     }
+                }
+                if (currentTerm != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "当前学期：${currentTerm!!.displayName} · 第一教学周起始于 ${currentTerm!!.startDate}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
             // 2. 桌面小组件全局/实例预设与主动刷新
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("桌面小组件配置与主动刷新", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = "支持 2×2 下一节课 Mini（含 Chronometer 倒计时）、4×2 今日课程、4×4 日程时间轴、4×4 周课表。",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("小组件紧凑布局（隐藏次要信息）", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = widgetCompactDefault,
-                            onCheckedChange = { checked ->
-                                widgetCompactDefault = checked
-                                scope.launch {
-                                    for (id in 0..20) {
-                                        repository.saveWidgetConfig(
-                                            WidgetInstanceConfig(
-                                                appWidgetId = id,
-                                                widgetType = WidgetType.NEXT_CLASS_2X2,
-                                                themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
-                                                compact = checked,
-                                                privacyMode = widgetPrivacyDefault
-                                            )
-                                        )
-                                    }
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已更新小组件紧凑度并广播刷新。"
-                                }
-                            }
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("小组件隐私模式（桌面隐藏具体课程名与教室）", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = widgetPrivacyDefault,
-                            onCheckedChange = { checked ->
-                                widgetPrivacyDefault = checked
-                                scope.launch {
-                                    for (id in 0..20) {
-                                        repository.saveWidgetConfig(
-                                            WidgetInstanceConfig(
-                                                appWidgetId = id,
-                                                widgetType = WidgetType.NEXT_CLASS_2X2,
-                                                themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
-                                                compact = widgetCompactDefault,
-                                                privacyMode = checked
-                                            )
-                                        )
-                                    }
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已切换小组件隐私模式并立即刷新桌面组件。"
-                                }
-                            }
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = {
-                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                            feedbackText = "已向所有已安装的桌面小组件发送刷新指令。"
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("立即同步刷新全部桌面小组件")
-                    }
-
-                    // Android 12–16 原生一键固定小组件到桌面（AppWidgetManager.requestPinAppWidget）
-                    Text(
-                        text = "一键添加桌面小组件（Android 12–16 原生 PinAppWidget）：",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    val pinTargets = listOf(
-                        "2×2 下一节" to "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider",
-                        "4×2 今日" to "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider",
-                        "4×4 时间轴" to "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider",
-                        "4×4 周课表" to "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        for ((label, providerClass) in pinTargets) {
-                            OutlinedButton(
-                                onClick = {
-                                    val mgr = AppWidgetManager.getInstance(context)
-                                    val provider = ComponentName(context.packageName, providerClass)
-                                    if (mgr.isRequestPinAppWidgetSupported) {
-                                        val ok = mgr.requestPinAppWidget(provider, null, null)
-                                        feedbackText = if (ok) {
-                                            "已发起「$label」小组件桌面固定请求，请在系统弹窗确认。"
-                                        } else {
-                                            "当前桌面启动器未响应固定请求，请长按手机桌面添加。"
-                                        }
-                                    } else {
-                                        feedbackText = "当前桌面启动器不支持一键添加，请长按桌面空白处添加小组件。"
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(label, style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
+                    XPeachStatusBadge(text = "4 款组件")
                 }
-            }
-
-            // 3. 完整时间节次表编辑器（PRD 2.2：给用户完整时间节次表的编辑权）
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "支持 2×2 下一节课 Mini（含 Chronometer 倒计时）、4×2 今日课程、4×4 日程时间轴、4×4 周课表。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("作息节次时间表（点击任意节次可自定义起止时刻）", style = MaterialTheme.typography.titleMedium)
-                    for (pt in periodTimes) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "第 ${pt.periodNo} 节 (${pt.sectionLabel})",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                            TextButton(onClick = { editingPeriod = pt }) {
-                                Text("${pt.startLocalTime} — ${pt.endLocalTime} (修改)")
+                    Text("小组件紧凑布局（隐藏次要信息）", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = widgetCompactDefault,
+                        onCheckedChange = { checked ->
+                            widgetCompactDefault = checked
+                            scope.launch {
+                                for (id in 0..20) {
+                                    repository.saveWidgetConfig(
+                                        WidgetInstanceConfig(
+                                            appWidgetId = id,
+                                            widgetType = WidgetType.NEXT_CLASS_2X2,
+                                            themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
+                                            compact = checked,
+                                            privacyMode = widgetPrivacyDefault
+                                        )
+                                    )
+                                }
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                feedbackText = "已更新小组件紧凑度并广播刷新。"
                             }
                         }
-                    }
+                    )
                 }
-            }
-
-            // 4. 隐私与本地数据清除（PRD 5 & 11.D）及 Android 16 动态色彩
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("视觉、隐私保护与本地数据主权", style = MaterialTheme.typography.titleMedium)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Android 12–16 Material You 壁纸动态取色", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = "开启后跟随手机系统壁纸 Monet 色彩引擎动态生成全应用主题；关闭则使用河工大暖橙理性主题",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = prefs.useDynamicColor,
-                            onCheckedChange = { enabled ->
-                                scope.launch { repository.setUseDynamicColor(enabled) }
+                    Text("小组件隐私模式（桌面隐藏具体课程名与教室）", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = widgetPrivacyDefault,
+                        onCheckedChange = { checked ->
+                            widgetPrivacyDefault = checked
+                            scope.launch {
+                                for (id in 0..20) {
+                                    repository.saveWidgetConfig(
+                                        WidgetInstanceConfig(
+                                            appWidgetId = id,
+                                            widgetType = WidgetType.NEXT_CLASS_2X2,
+                                            themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
+                                            compact = widgetCompactDefault,
+                                            privacyMode = checked
+                                        )
+                                    )
+                                }
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                feedbackText = "已切换小组件隐私模式并立即刷新桌面组件。"
                             }
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("GPA 与成绩页面防截屏/多任务模糊", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = "开启后隐藏成绩数值并启用 Android FLAG_SECURE 阻止最近任务缩略图与截屏",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
-                        Switch(
-                            checked = prefs.gpaPrivacyShieldEnabled,
-                            onCheckedChange = { enabled ->
-                                scope.launch { repository.setGpaPrivacyShield(enabled) }
-                            }
-                        )
-                    }
+                    )
+                }
+                FilledTonalButton(
+                    onClick = {
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        feedbackText = "已向所有已安装的桌面小组件发送刷新指令。"
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("立即同步刷新全部桌面小组件")
+                }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "一键添加桌面小组件（Android 12–16 原生 PinAppWidget）：",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                val pinTargets = listOf(
+                    "2×2 下一节" to "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider",
+                    "4×2 今日" to "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider",
+                    "4×4 时间轴" to "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider",
+                    "4×4 周课表" to "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    for ((label, providerClass) in pinTargets) {
                         OutlinedButton(
                             onClick = {
-                                scope.launch {
-                                    repository.resetToDemoSeedData()
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已恢复河南工业大学莲花街校区演示课表与多学期成绩。"
+                                val mgr = AppWidgetManager.getInstance(context)
+                                val provider = ComponentName(context.packageName, providerClass)
+                                if (mgr.isRequestPinAppWidgetSupported) {
+                                    val ok = mgr.requestPinAppWidget(provider, null, null)
+                                    feedbackText = if (ok) {
+                                        "已发起「$label」小组件桌面固定请求，请在系统弹窗确认。"
+                                    } else {
+                                        "当前桌面启动器未响应固定请求，请长按手机桌面添加。"
+                                    }
+                                } else {
+                                    feedbackText = "当前桌面启动器不支持一键添加，请长按桌面空白处添加小组件。"
                                 }
                             },
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("恢复演示数据")
+                            Text(label, style = MaterialTheme.typography.labelMedium)
                         }
+                    }
+                }
+            }
 
-                        Button(
-                            onClick = { showWipeConfirmDialog = true },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("清除全部个人数据")
+            // 3. 完整时间节次表编辑器
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Text("作息节次时间表（点击任意节次可自定义起止时刻）", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(6.dp))
+                for (pt in periodTimes) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "第 ${pt.periodNo} 节 (${pt.sectionLabel})",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        TextButton(onClick = { editingPeriod = pt }) {
+                            Text("${pt.startLocalTime} — ${pt.endLocalTime} (修改)")
                         }
+                    }
+                }
+            }
+
+            // 4. 视觉、引导页与本地数据清除
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Text("视觉风格、首次引导与本地数据主权", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Android 12–16 Material You 壁纸动态取色", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "默认关闭以保持 XPeach 扁平化中性蓝灰设计系统；开启后跟随系统壁纸取色",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = prefs.useDynamicColor,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setUseDynamicColor(enabled) }
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("GPA 与成绩页面防截屏/多任务模糊", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "开启后隐藏成绩数值并启用 Android FLAG_SECURE 阻止最近任务缩略图与截屏",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = prefs.gpaPrivacyShieldEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setGpaPrivacyShield(enabled) }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                repository.resetOnboardingForGuide()
+                                onBack()
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("重新进入欢迎引导页")
+                    }
+
+                    Button(
+                        onClick = { showWipeConfirmDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("清除全部个人数据")
                     }
                 }
             }
 
             // 5. 版本号与最新 Android 平台支持信息
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 val pkgInfo = remember(context) {
                     runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
                 }
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text("关于 · 版本管理与平台特性", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = "应用版本：v${pkgInfo?.versionName ?: "0.1.0"} (Build ${pkgInfo?.longVersionCode ?: 100})",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "构建目标：CompileSdk 36 / TargetSdk 36 (Android 16) · MinSdk 31 (Android 12)",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "当前设备：Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · 已启用 Edge-to-Edge 与预测式返回手势",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text("关于 · 版本管理与平台特性", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "应用版本：v${pkgInfo?.versionName ?: "0.2.0"} (Build ${pkgInfo?.longVersionCode ?: 200})",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "视觉规范：XPeach Flat Design System (1dp Crisp Borders · Clean Neutral Surfaces)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "构建目标：CompileSdk 36 / TargetSdk 36 (Android 16) · MinSdk 31 (Android 12)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "当前设备：Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · 已启用 Edge-to-Edge 与预测式返回手势",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -451,7 +438,8 @@ fun SettingsScreen(
                             }
                         }
                         editingPeriod = null
-                    }
+                    },
+                    shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("保存")
                 }
@@ -469,7 +457,7 @@ fun SettingsScreen(
             onDismissRequest = { showWipeConfirmDialog = false },
             title = { Text("确认彻底清除个人数据？") },
             text = {
-                Text("将清空本地存储的所有个人课程、手动调课、成绩明细、教务授权 Cookie 会话及小组件配置。")
+                Text("将清空本地存储的所有个人课程、手动调课、成绩明细、教务授权 Cookie 会话及小组件配置，并回到首次欢迎引导界面。")
             },
             confirmButton = {
                 Button(
@@ -477,16 +465,18 @@ fun SettingsScreen(
                         scope.launch {
                             HautSessionManager.clearAuthorizedSessionCookies()
                             repository.wipeAllPersonalData()
+                            repository.resetOnboardingForGuide()
                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                             showWipeConfirmDialog = false
-                            feedbackText = "已彻底清除个人课表、成绩、教务会话与小组件缓存。"
+                            onBack()
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
-                    )
+                    ),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("确认清除")
+                    Text("确认清除并重置")
                 }
             },
             dismissButton = {
