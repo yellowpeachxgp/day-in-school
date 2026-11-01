@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.util.LruCache
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -92,12 +94,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.XPeachBrandLight
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachOk
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.location.CampusMapNavigator
@@ -106,6 +110,7 @@ import cn.edu.haut.campus.core.location.UserGeoLocation
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusCategory
+import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -198,6 +203,9 @@ private object CampusTileCache {
 fun CampusMapScreen(
     repository: CampusRepository,
     initialClassroomQuery: String? = null,
+    onNavigateToElectricity: () -> Unit = {},
+    onNavigateToEmptyClassrooms: () -> Unit = {},
+    onNavigateToCommunity: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -206,6 +214,16 @@ fun CampusMapScreen(
 
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val aliases by repository.buildingAliasesFlow.collectAsState(initial = emptyList())
+    val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
+    val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
+    val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
+
+    var isFullScreenMap by remember(initialClassroomQuery) {
+        mutableStateOf(!initialClassroomQuery.isNullOrBlank())
+    }
+    BackHandler(enabled = isFullScreenMap) {
+        isFullScreenMap = false
+    }
 
     var searchQuery by remember(initialClassroomQuery) {
         mutableStateOf(initialClassroomQuery.orEmpty())
@@ -278,6 +296,7 @@ fun CampusMapScreen(
 
     LaunchedEffect(resetTrigger) {
         if (resetTrigger > 0) {
+            isFullScreenMap = false
             expandRouteSteps = false
             manualOriginBuilding = null
             isFollowingUser = true
@@ -344,6 +363,376 @@ fun CampusMapScreen(
         )
     }
 
+    if (!isFullScreenMap) {
+        // 默认展示「校园生活与 4×4 地图小预览」概览页
+        val (elecBadge, elecSub) = remember(onlineRooms, utilityMeters, utilityReadings) {
+            if (onlineRooms.isNotEmpty()) {
+                val room = onlineRooms.first()
+                val firstDev = decodeOnlineDevicesJson(room.devicesJson).firstOrNull()
+                val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑寝室"
+                b to room.roomName
+            } else if (utilityMeters.isNotEmpty()) {
+                val meter = utilityMeters.first()
+                val latest = utilityReadings.filter { it.meterId == meter.id }
+                    .maxByOrNull { it.recordedAtEpochMs }
+                val b = if (latest != null) "${latest.value}${meter.unit}" else "台账"
+                b to "${meter.roomName} · ${meter.name}"
+            } else {
+                "水电" to "寝室电费余量与趋势"
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            XPeachTopBar(
+                title = "校园",
+                subtitle = "河南工业大学 · 莲花街校区",
+                badgeText = if (userLocation?.isInsideLianhuajieCampus == true) "校内实时定位" else "校园服务",
+                actions = {
+                    XPeachIconButton(
+                        icon = Icons.Default.ZoomOutMap,
+                        contentDescription = "展开全屏地图",
+                        onClick = { isFullScreenMap = true }
+                    )
+                }
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // 1. 4×4 交互式校园地图小预览模块
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "校区实时地图预览",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (targetBuilding != null && navigationPlan != null) {
+                                    "当前目标：${targetBuilding.shortName} · 步行约 ${navigationPlan.estimatedWalkMinutes} 分钟 (${navigationPlan.estimatedWalkDistanceMeters}m)"
+                                } else {
+                                    "支持预览实时位置与校内建筑，点击展开全屏地图"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachFilterPill(
+                            label = "全屏地图",
+                            selected = true,
+                            onClick = { isFullScreenMap = true }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(210.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                width = 0.8.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                    ) {
+                        RealCampusTileMap(
+                            buildings = buildings,
+                            selectedBuilding = targetBuilding,
+                            userLocation = if (manualOriginBuilding == null) userLocation else null,
+                            deviceHeadingDegrees = effectiveHeadingDegrees,
+                            navigationPlan = if (inAppNavigationActive) navigationPlan else null,
+                            centerLatGcj = mapCenterLatGcj,
+                            centerLonGcj = mapCenterLonGcj,
+                            zoom = mapZoom.coerceIn(15.6f, 16.6f),
+                            onViewportChange = { newLat, newLon, newZoom ->
+                                mapCenterLatGcj = newLat
+                                mapCenterLonGcj = newLon
+                                mapZoom = newZoom
+                            },
+                            onSelectBuilding = { clicked ->
+                                selectedBuilding = clicked
+                                inAppNavigationActive = true
+                                isFullScreenMap = true
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 热门地标一键展开导航条
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "快速去往：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        for (b in buildings.take(8)) {
+                            XPeachFilterPill(
+                                label = b.shortName,
+                                selected = selectedBuilding?.id == b.id,
+                                onClick = {
+                                    selectedBuilding = b
+                                    val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                                    mapCenterLatGcj = glat
+                                    mapCenterLonGcj = glon
+                                    inAppNavigationActive = true
+                                    isFullScreenMap = true
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 2. 校园生活与社群 Bento 矩阵（2×2）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToElectricity
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("宿舍水电", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = elecBadge,
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = elecSub,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToEmptyClassrooms
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("空教室速查", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "5–11号楼",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "按教学楼与节次反查空闲教室",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToCommunity
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("学生社团", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "${PresetCampusCommunityCatalog.defaultCampusClubs.size} 社团",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "校区社团名录与一键加群",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToCommunity
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("校园频道", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "${PresetCampusCommunityCatalog.defaultQqChannels.size} 频道",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "迎新互助、二手与失物招领",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // 3. 校区地标与建筑目录
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "校区建筑与地点导航",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "共 ${filteredBuildings.size} 处",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachFilterPill(
+                            label = "全部",
+                            selected = selectedCategory == null,
+                            onClick = { selectedCategory = null }
+                        )
+                        for (category in CampusCategory.entries) {
+                            XPeachFilterPill(
+                                label = category.label,
+                                selected = selectedCategory == category,
+                                onClick = { selectedCategory = if (selectedCategory == category) null else category }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (b in filteredBuildings) {
+                            XPeachWell(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedBuilding = b
+                                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                                        mapCenterLatGcj = glat
+                                        mapCenterLonGcj = glon
+                                        inAppNavigationActive = true
+                                        isFullScreenMap = true
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = b.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        if (!b.description.isNullOrBlank()) {
+                                            Text(
+                                                text = b.description!!,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    XPeachFilterPill(
+                                        label = "去这里",
+                                        selected = false,
+                                        onClick = {
+                                            selectedBuilding = b
+                                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                                            mapCenterLatGcj = glat
+                                            mapCenterLonGcj = glon
+                                            inAppNavigationActive = true
+                                            isFullScreenMap = true
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(92.dp))
+            }
+        }
+        return
+    }
+
     // 全屏沉浸式交互地图容器（彻底移除外层 verticalScroll，保证单指拖拽与双指缩放 100% 顺滑响应）
     Box(
         modifier = Modifier
@@ -391,6 +780,30 @@ fun CampusMapScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.clickable { isFullScreenMap = false }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回校园页",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "收起",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
                 Surface(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),

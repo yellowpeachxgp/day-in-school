@@ -59,16 +59,22 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.GpaCalculator
 import cn.edu.haut.campus.core.model.CourseCategory
+import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.TermGpaTrendPoint
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.ZonedDateTime
 
 @Composable
 fun GradesScreen(
     repository: CampusRepository,
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit = {},
+    onNavigateToLibrarySeats: () -> Unit = {},
+    onNavigateToLibraryCatalog: () -> Unit = {},
+    onNavigateToFocus: () -> Unit = {},
+    onNavigateToEmptyClassrooms: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -78,6 +84,9 @@ fun GradesScreen(
     val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
+    val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
+    val todayDate = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
 
     var selectedTermFilter by remember { mutableStateOf<String?>(null) }
     var selectedCategoryFilter by remember { mutableStateOf<CourseCategory?>(null) }
@@ -201,6 +210,144 @@ fun GradesScreen(
                         ) {
                             Text("去同步", maxLines = 1, softWrap = false)
                         }
+                    }
+                }
+            }
+
+            // 0. 学习与图书馆安排 Bento 矩阵（座位预约 / 馆藏检索 / 自习专注 / 空教室查询）
+            val todayDoneMins = remember(completedFocusSessions, todayDate) {
+                completedFocusSessions.sumOf { s ->
+                    val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
+                    val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
+                    if (d == todayDate) s.durationMinutes else 0
+                }
+            }
+            val runningFocus = activeFocusSession
+            val focusSub = if (runningFocus != null) {
+                val remMin = ((runningFocus.remainingMillis(System.currentTimeMillis()) + 59_999L) / 60_000L)
+                    .coerceAtLeast(1L)
+                "进行中 · 约剩 $remMin 分钟"
+            } else if (todayDoneMins > 0) {
+                "今日已专注 $todayDoneMins 分钟"
+            } else {
+                "番茄钟倒计时与课前提醒"
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToLibrarySeats
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("图书馆选座", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "预约",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "实时余位查询与在线选座",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToLibraryCatalog
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("馆藏检索", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "OPAC",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "书目搜索与在馆索书号",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        containerColor = if (runningFocus != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToFocus
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("自习专注", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = if (runningFocus != null) "专注中" else "番茄钟",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = focusSub,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = onNavigateToEmptyClassrooms
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("空教室自习", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            XPeachStatusBadge(
+                                text = "教学楼",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "按节次查 5–11 号楼无课教室",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }

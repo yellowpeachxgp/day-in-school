@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,6 +85,7 @@ import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -169,9 +172,15 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    var showSystemSettingsMenu by remember { mutableStateOf(onBack != null) }
+
+    BackHandler(enabled = showSystemSettingsMenu && onBack == null) {
+        showSystemSettingsMenu = false
+    }
 
     LaunchedEffect(resetTrigger) {
         if (resetTrigger > 0) {
+            showSystemSettingsMenu = false
             scrollState.animateScrollTo(0)
         }
     }
@@ -190,6 +199,11 @@ fun SettingsScreen(
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
+    val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
+    val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
+    val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
+    val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
+    val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
     var reminderPermSnapshot by remember(context) {
@@ -336,29 +350,60 @@ fun SettingsScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = if (onBack == null) "我的" else "设置",
-            subtitle = "河南工业大学 · 莲花街校区",
-            badgeText = resolvedWeekInfo?.teachingWeek?.let { "第 $it 周" },
-            navigationIcon = if (onBack != null) {
+            title = if (showSystemSettingsMenu) "设置" else "我的",
+            subtitle = if (showSystemSettingsMenu) {
+                "提醒、作息、调休、小组件、隐私与版本更新"
+            } else {
+                "河南工业大学 · 莲花街校区"
+            },
+            badgeText = if (showSystemSettingsMenu) {
+                "v$currentInstalledVersion"
+            } else {
+                resolvedWeekInfo?.teachingWeek?.let { "第 $it 周" }
+            },
+            navigationIcon = if (showSystemSettingsMenu || onBack != null) {
                 {
                     XPeachIconButton(
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "返回",
-                        onClick = onBack
+                        onClick = {
+                            if (onBack != null) {
+                                onBack()
+                            } else {
+                                showSystemSettingsMenu = false
+                                scope.launch { scrollState.animateScrollTo(0) }
+                            }
+                        }
                     )
                 }
             } else null,
             actions = {
-                XPeachIconButton(
-                    icon = Icons.Default.History,
-                    contentDescription = "同步记录",
-                    onClick = { showImportHistoryDialog = true }
-                )
-                XPeachIconButton(
-                    icon = Icons.Default.CloudSync,
-                    contentDescription = "教务同步",
-                    onClick = onNavigateToImporter
-                )
+                if (showSystemSettingsMenu) {
+                    XPeachIconButton(
+                        icon = Icons.Default.History,
+                        contentDescription = "同步记录",
+                        onClick = { showImportHistoryDialog = true }
+                    )
+                    XPeachIconButton(
+                        icon = Icons.Default.CloudSync,
+                        contentDescription = "教务同步",
+                        onClick = onNavigateToImporter
+                    )
+                } else {
+                    XPeachIconButton(
+                        icon = Icons.Default.CloudSync,
+                        contentDescription = "教务同步",
+                        onClick = onNavigateToImporter
+                    )
+                    XPeachIconButton(
+                        icon = Icons.Default.Settings,
+                        contentDescription = "设置",
+                        onClick = {
+                            showSystemSettingsMenu = true
+                            scope.launch { scrollState.animateScrollTo(0) }
+                        }
+                    )
+                }
             }
         )
 
@@ -392,233 +437,365 @@ fun SettingsScreen(
                 }
             }
 
-            // 1. 数字学生证 / 个人学籍名片
-            StudentDigitalIdCard(
-                profile = studentProfile,
-                privacyMasked = prefs.gpaPrivacyShieldEnabled,
-                lastAudit = importAudits.firstOrNull(),
-                onEditProfile = { showEditProfileDialog = true },
-                onSyncNow = {
-                    if (prefs.hasSavedCredentials && !isDynamicSyncing) {
-                        scope.launch {
-                            isDynamicSyncing = true
-                            feedbackText = "正在同步课表、考试和成绩..."
-                            val res = repository.performDynamicAcademicSync(force = true)
-                            isDynamicSyncing = false
-                            if (res == null) {
-                                onNavigateToImporter()
-                            } else {
-                                res.onSuccess { syncData ->
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试、${syncData.gradeAttempts.size} 条成绩"
-                                }.onFailure { err ->
-                                    feedbackText = "同步失败：${err.message ?: "请检查网络"}"
+            if (!showSystemSettingsMenu) {
+                // =========================================================================
+                // 一级页面：「我的」—— 仅展示个人必要核心数据
+                // =========================================================================
+
+                // 1. 数字学生证 / 个人学籍名片
+                StudentDigitalIdCard(
+                    profile = studentProfile,
+                    privacyMasked = prefs.gpaPrivacyShieldEnabled,
+                    lastAudit = importAudits.firstOrNull(),
+                    onEditProfile = { showEditProfileDialog = true },
+                    onSyncNow = {
+                        if (prefs.hasSavedCredentials && !isDynamicSyncing) {
+                            scope.launch {
+                                isDynamicSyncing = true
+                                feedbackText = "正在同步课表、考试和成绩..."
+                                val res = repository.performDynamicAcademicSync(force = true)
+                                isDynamicSyncing = false
+                                if (res == null) {
+                                    onNavigateToImporter()
+                                } else {
+                                    res.onSuccess { syncData ->
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        feedbackText = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试、${syncData.gradeAttempts.size} 条成绩"
+                                    }.onFailure { err ->
+                                        feedbackText = "同步失败：${err.message ?: "请检查网络"}"
+                                    }
                                 }
                             }
+                        } else {
+                            onNavigateToImporter()
                         }
-                    } else {
-                        onNavigateToImporter()
                     }
-                }
-            )
-
-            // 2. 本学期学业与课表 4 维全景看板
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ProfileMetricItem(
-                        label = "本周课时",
-                        value = "${thisWeekClassCount}节",
-                        modifier = Modifier.weight(1f)
-                    )
-                    ProfileMetricItem(
-                        label = "考试安排",
-                        value = "${examSchedules.size}场",
-                        modifier = Modifier.weight(1f)
-                    )
-                    ProfileMetricItem(
-                        label = "已获学分",
-                        value = if (prefs.gpaPrivacyShieldEnabled) "**.*" else gpaReport.totalEarnedCredits.stripTrailingZeros().toPlainString(),
-                        modifier = Modifier.weight(1f)
-                    )
-                    ProfileMetricItem(
-                        label = "平均绩点",
-                        value = if (prefs.gpaPrivacyShieldEnabled) "*.**" else (gpaReport.cumulativeGpa?.toPlainString() ?: "--"),
-                        highlight = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // 3. 校历学期进度环 & 调休/停课管理
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                val totalWeeks = (currentTerm?.weekCount ?: 20).coerceAtLeast(1)
-                val weekProgress = (currentTeachingWeek.toFloat() / totalWeeks.toFloat()).coerceIn(0.05f, 1f)
-                val examStartDate = currentTerm?.startDate?.plusWeeks(18)
-                val daysToExam = examStartDate?.let { ChronoUnit.DAYS.between(today, it) }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = currentTerm?.displayName ?: "2025-2026 学年",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = if (daysToExam != null && daysToExam > 0) {
-                                "第 $currentTeachingWeek / $totalWeeks 周 · 距期末周约 $daysToExam 天"
-                            } else {
-                                "第 $currentTeachingWeek / $totalWeeks 周 · 学期进行中"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    XPeachStatusBadge(
-                        text = "${(weekProgress * 100).toInt()}%",
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "当前学期",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    for (t in terms) {
-                        val count = rules.count { it.termId == t.id }
-                        XPeachFilterPill(
-                            label = "${t.displayName} ($count)",
-                            selected = t.id == currentTerm?.id,
-                            onClick = {
-                                scope.launch {
-                                    repository.selectCurrentTerm(t.id)
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已切换至 ${t.displayName}（共 $count 门排课）"
-                                }
-                            }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                LinearProgressIndicator(
-                    progress = { weekProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(7.dp)
-                        .clip(CircleShape),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "调休与停课 (${calendarOverrides.size})",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    XPeachFilterPill(
-                        label = "+ 添加",
-                        selected = false,
-                        onClick = { showAddCalendarOverrideDialog = true }
-                    )
-                }
-
-                if (calendarOverrides.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (ov in calendarOverrides.sortedBy { it.date }) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${ov.date} · ${ov.title}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = when (ov.overrideType) {
-                                            CalendarOverrideType.HOLIDAY_NO_CLASS -> "全天停课放假"
-                                            CalendarOverrideType.MAKEUP_FOLLOW_DATE -> "调休补课（按 ${ov.followDate ?: "指定日"} 课表）"
-                                            CalendarOverrideType.CUSTOM_TEACHING_WEEK -> "自定义教学周"
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            repository.deleteCalendarOverride(ov.id)
-                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                        }
-                                    },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "删除调休",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3.5 校园服务快捷入口（宿舍水电 / 馆藏查询 / 座位预约 / 自习专注 / 课表互通）
-            if (prefs.utilitiesEnabled || prefs.libraryNativeEnabled || prefs.librarySeatEnabled || prefs.focusEnabled) {
+                // 2. 个人 4 维核心数据看板
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "校园服务",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
+                        ProfileMetricItem(
+                            label = "本周课时",
+                            value = "${thisWeekClassCount}节",
+                            modifier = Modifier.weight(1f)
                         )
+                        ProfileMetricItem(
+                            label = "考试安排",
+                            value = "${examSchedules.size}场",
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileMetricItem(
+                            label = "已获学分",
+                            value = if (prefs.gpaPrivacyShieldEnabled) "**.*" else gpaReport.totalEarnedCredits.stripTrailingZeros().toPlainString(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        ProfileMetricItem(
+                            label = "平均绩点",
+                            value = if (prefs.gpaPrivacyShieldEnabled) "*.**" else (gpaReport.cumulativeGpa?.toPlainString() ?: "--"),
+                            highlight = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // 3. 学分分类结构统计
+                if (attempts.isNotEmpty()) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Text("已修学分构成", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val categoryCredits = remember(attempts) {
+                            val passed = attempts.filter { it.passed }.distinctBy { it.courseKey }
+                            CourseCategory.entries.associateWith { cat ->
+                                passed.filter { it.category == cat }
+                                    .fold(BigDecimal.ZERO) { acc, item -> acc.add(item.credits) }
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (cat in CourseCategory.entries) {
+                                val cred = categoryCredits[cat] ?: BigDecimal.ZERO
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = if (prefs.gpaPrivacyShieldEnabled) "**" else cred.stripTrailingZeros().toPlainString(),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    Text(
+                                        text = cat.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. 本学期校历进度卡（纯展示与快速切换学期，调休管理归入二级设置菜单）
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    val totalWeeks = (currentTerm?.weekCount ?: 20).coerceAtLeast(1)
+                    val weekProgress = (currentTeachingWeek.toFloat() / totalWeeks.toFloat()).coerceIn(0.05f, 1f)
+                    val examStartDate = currentTerm?.startDate?.plusWeeks(18)
+                    val daysToExam = examStartDate?.let { ChronoUnit.DAYS.between(today, it) }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = currentTerm?.displayName ?: "2025-2026 学年",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = if (daysToExam != null && daysToExam > 0) {
+                                    "第 $currentTeachingWeek / $totalWeeks 周 · 距期末周约 $daysToExam 天"
+                                } else {
+                                    "第 $currentTeachingWeek / $totalWeeks 周 · 学期进行中"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = "${(weekProgress * 100).toInt()}%",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    LinearProgressIndicator(
+                        progress = { weekProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(7.dp)
+                            .clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+
+                    if (terms.size > 1) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "当前学期",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                            for (t in terms) {
+                                val count = rules.count { it.termId == t.id }
+                                XPeachFilterPill(
+                                    label = "${t.displayName} ($count)",
+                                    selected = t.id == currentTerm?.id,
+                                    onClick = {
+                                        scope.launch {
+                                            repository.selectCurrentTerm(t.id)
+                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                            feedbackText = "已切换至 ${t.displayName}（共 $count 门排课）"
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 5. 个人绑定与累计数据摘要卡
+                val primaryOnlineRoom = onlineRooms.firstOrNull()
+                val onlineDevices = remember(primaryOnlineRoom) {
+                    primaryOnlineRoom?.let { decodeOnlineDevicesJson(it.devicesJson) }.orEmpty()
+                }
+                val primaryMeter = utilityMeters.firstOrNull()
+                val latestReading = remember(primaryMeter, utilityReadings) {
+                    primaryMeter?.let { m ->
+                        utilityReadings
+                            .filter { it.meterId == m.id }
+                            .maxByOrNull { it.recordedAtEpochMs }
+                    }
+                }
+                val roomSummaryTitle = when {
+                    primaryOnlineRoom != null -> primaryOnlineRoom.roomName
+                    primaryMeter != null -> "${primaryMeter.roomName} · ${primaryMeter.name}"
+                    else -> "未绑定宿舍"
+                }
+                val roomSummaryValue = when {
+                    onlineDevices.isNotEmpty() -> {
+                        onlineDevices.joinToString(" · ") { it.balanceRaw.ifBlank { "在线水电" } }
+                    }
+                    latestReading != null && primaryMeter != null -> "剩余 ${latestReading.value}${primaryMeter.unit}"
+                    else -> "点击绑定寝室水电"
+                }
+                val todayFocusMinutes = remember(completedFocusSessions, today) {
+                    completedFocusSessions.sumOf { s ->
+                        val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
+                        val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
+                        if (d == today) s.durationMinutes else 0
+                    }
+                }
+                val totalFocusMinutes = remember(completedFocusSessions) {
+                    completedFocusSessions.sumOf { it.durationMinutes }
+                }
+                val latestAudit = importAudits.firstOrNull()
+
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Text("个人状态摘要", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        XPeachWell(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onNavigateToElectricity)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "绑定宿舍 · $roomSummaryTitle",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = roomSummaryValue,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "水电详情",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        XPeachWell(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onNavigateToFocus)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (activeFocusSession != null) {
+                                            "自习专注 · 进行中（${activeFocusSession?.durationMinutes}分钟）"
+                                        } else {
+                                            "自习专注记录"
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "今日已专注 ${todayFocusMinutes} 分钟 · 累计 ${totalFocusMinutes} 分钟（${completedFocusSessions.size} 次）",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "进入计时",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        XPeachWell(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showImportHistoryDialog = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "教务数据同步状态",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = if (latestAudit != null) {
+                                            "最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)} · 已存 ${courses.size} 门课 / ${attempts.size} 条成绩"
+                                        } else {
+                                            "尚未同步教务数据 · 点击查看记录"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = "同步日志",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // =========================================================================
+                // 二级页面：「设置」—— 提醒、调休、作息、小组件、隐私安全与版本更新
+                // =========================================================================
+
+                // 1. 学期、调休与停课管理 + 课表文件互通
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "学期、调休与课表互通",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "切换当前学期、管理法定节假日调休及导入导出课表文件",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (prefs.timetableInterchangeEnabled) {
                             XPeachFilterPill(
-                                label = "课表文件互通 (.md/.json)",
+                                label = "课表互通 (.md/.json)",
                                 selected = false,
                                 onClick = onNavigateToImporter
                             )
@@ -627,113 +804,116 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    val serviceEntries = buildList {
-                        if (prefs.utilitiesEnabled) {
-                            add(Triple("宿舍水电", "电费余量与每日趋势", onNavigateToElectricity))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "当前学期",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        for (t in terms) {
+                            val count = rules.count { it.termId == t.id }
+                            XPeachFilterPill(
+                                label = "${t.displayName} ($count)",
+                                selected = t.id == currentTerm?.id,
+                                onClick = {
+                                    scope.launch {
+                                        repository.selectCurrentTerm(t.id)
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        feedbackText = "已切换至 ${t.displayName}（共 $count 门排课）"
+                                    }
+                                }
+                            )
                         }
-                        if (prefs.libraryNativeEnabled) {
-                            add(Triple("馆藏查询", "书目检索与在馆状态", onNavigateToLibraryCatalog))
-                        }
-                        if (prefs.librarySeatEnabled) {
-                            add(Triple("座位预约", "图书馆选座与余位", onNavigateToLibrarySeats))
-                        }
-                        if (prefs.focusEnabled) {
-                            add(Triple("自习专注", "倒计时与到点提醒", onNavigateToFocus))
-                        }
-                        add(Triple("空教室查询", "按节次反查空闲自习教室", onNavigateToEmptyClassrooms))
-                        add(Triple("社团与频道", "32个学生社团与校园频道", onNavigateToCommunity))
                     }
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (rowItems in serviceEntries.chunked(2)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                for ((titleText, subText, action) in rowItems) {
-                                    XPeachWell(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable(onClick = action)
-                                    ) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "调休与停课 (${calendarOverrides.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        XPeachFilterPill(
+                            label = "+ 添加",
+                            selected = false,
+                            onClick = { showAddCalendarOverrideDialog = true }
+                        )
+                    }
+
+                    if (calendarOverrides.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (ov in calendarOverrides.sortedBy { it.date }) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = titleText,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.primary
+                                            text = "${ov.date} · ${ov.title}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = subText,
+                                            text = when (ov.overrideType) {
+                                                CalendarOverrideType.HOLIDAY_NO_CLASS -> "全天停课放假"
+                                                CalendarOverrideType.MAKEUP_FOLLOW_DATE -> "调休补课（按 ${ov.followDate ?: "指定日"} 课表）"
+                                                CalendarOverrideType.CUSTOM_TEACHING_WEEK -> "自定义教学周"
+                                            },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                }
-                                if (rowItems.size == 1) {
-                                    Spacer(modifier = Modifier.weight(1f))
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.deleteCalendarOverride(ov.id)
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DeleteOutline,
+                                            contentDescription = "删除调休",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // 5. 学分结构分类统计（当存在已导入成绩时展示）
-            if (attempts.isNotEmpty()) {
+                // 6. 桌面小组件中心
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("学分统计", style = MaterialTheme.typography.titleMedium)
+                    Text("桌面小组件", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(8.dp))
-                    val categoryCredits = remember(attempts) {
-                        val passed = attempts.filter { it.passed }.distinctBy { it.courseKey }
-                        CourseCategory.entries.associateWith { cat ->
-                            passed.filter { it.category == cat }
-                                .fold(BigDecimal.ZERO) { acc, item -> acc.add(item.credits) }
-                        }
-                    }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        for (cat in CourseCategory.entries) {
-                            val cred = categoryCredits[cat] ?: BigDecimal.ZERO
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                    .padding(vertical = 8.dp, horizontal = 6.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = if (prefs.gpaPrivacyShieldEnabled) "**" else cred.stripTrailingZeros().toPlainString(),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                Text(
-                                    text = cat.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 6. 学期切换与桌面小组件中心
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Text("学期与桌面小组件", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     for (term in terms) {
@@ -1717,6 +1897,7 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
             }
 
             // 预留底部悬浮胶囊导航栏高度

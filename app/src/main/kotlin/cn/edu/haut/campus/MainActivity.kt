@@ -425,11 +425,18 @@ fun HautCampusRootApp(
                                 mapRoomQuery = room
                                 currentTab = PrimaryBottomTab.CAMPUS
                             },
+                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                            onNavigateToFocus = { overlayScreen = "focus" },
+                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                             resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
                         )
                         PrimaryBottomTab.CAMPUS -> CampusMapScreen(
                             repository = repository,
                             initialClassroomQuery = mapRoomQuery,
+                            onNavigateToElectricity = { overlayScreen = "electricity" },
+                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                            onNavigateToCommunity = { overlayScreen = "community" },
                             resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
                         )
                         PrimaryBottomTab.PROFILE -> SettingsScreen(
