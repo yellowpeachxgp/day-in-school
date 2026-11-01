@@ -83,6 +83,7 @@ fun TimetableScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val terms by repository.termsFlow.collectAsState(initial = emptyList())
     val term by repository.currentTermFlow.collectAsState(initial = null)
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val rules by repository.rulesFlow.collectAsState(initial = emptyList())
@@ -93,11 +94,11 @@ fun TimetableScreen(
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val currentActualWeek = remember(term, today, calendarOverrides) {
-        term?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 8
+        term?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }
 
     var selectedWeek by remember { mutableIntStateOf(currentActualWeek) }
-    LaunchedEffect(currentActualWeek) {
+    LaunchedEffect(currentActualWeek, term?.id) {
         selectedWeek = currentActualWeek
     }
     LaunchedEffect(resetTrigger) {
@@ -108,6 +109,7 @@ fun TimetableScreen(
 
     var editingOccurrence by remember { mutableStateOf<ClassOccurrence?>(null) }
     var showAddCourseDialog by remember { mutableStateOf(false) }
+    var showTermSwitcherDialog by remember { mutableStateOf(false) }
 
     val weekOccurrencesMap = remember(
         selectedWeek,
@@ -139,8 +141,9 @@ fun TimetableScreen(
     ) {
         XPeachTopBar(
             title = "第 $selectedWeek 周",
-            subtitle = term?.displayName ?: "河南工业大学",
+            subtitle = term?.displayName ?: "选择学期",
             badgeText = if (selectedWeek == currentActualWeek) "本周" else null,
+            onSubtitleClick = { showTermSwitcherDialog = true },
             actions = {
                 if (selectedWeek != currentActualWeek) {
                     XPeachFilterPill(
@@ -178,6 +181,40 @@ fun TimetableScreen(
         val weekDates = remember(term, selectedWeek) {
             term?.let { TeachingWeekCalculator.datesOfTeachingWeek(it, selectedWeek) }
                 ?: (0L..6L).map { today.plusDays(it) }
+        }
+
+        val currentTermRuleCount = remember(term?.id, rules) {
+            rules.count { it.termId == term?.id }
+        }
+        val otherTermsWithCourses = remember(terms, term?.id, rules) {
+            terms.filter { t -> t.id != term?.id && rules.any { it.termId == t.id } }
+        }
+
+        if (currentTermRuleCount == 0 && otherTermsWithCourses.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
+                    .clickable { showTermSwitcherDialog = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${term?.displayName ?: "当前学期"}暂无排课，可切换至 ${otherTermsWithCourses.first().displayName}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "切换学期 ▸",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
 
         // 极简课表卡片容器（去重框线，柔和圆角色块）
@@ -604,6 +641,137 @@ fun TimetableScreen(
             dismissButton = {
                 TextButton(onClick = { showAddCourseDialog = false }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showTermSwitcherDialog) {
+        var startDateInput by remember(term?.id, term?.startDate) {
+            mutableStateOf(term?.startDate?.toString() ?: "2026-08-31")
+        }
+        var dateError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { showTermSwitcherDialog = false },
+            title = { Text("切换学期与校历设置") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "选择当前显示学期",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    for (t in terms) {
+                        val isCurrent = t.id == term?.id
+                        val count = rules.count { it.termId == t.id }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                )
+                                .clickable {
+                                    scope.launch {
+                                        repository.selectCurrentTerm(t.id)
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        showTermSwitcherDialog = false
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = t.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (isCurrent) "当前 ($count 门)" else "$count 门课",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    Text(
+                        text = "校准当前学期（${term?.displayName ?: ""}）第1周周一日期",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = startDateInput,
+                        onValueChange = {
+                            startDateInput = it
+                            dateError = null
+                        },
+                        label = { Text("格式 YYYY-MM-DD") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (dateError != null) {
+                        Text(
+                            text = dateError!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                val parsedDate = runCatching { LocalDate.parse(startDateInput.trim()) }.getOrNull()
+                                val activeTermId = term?.id
+                                if (parsedDate == null || activeTermId == null) {
+                                    dateError = "请输入有效日期，如 2026-03-02 或 2026-08-31"
+                                } else {
+                                    scope.launch {
+                                        repository.updateTermStartDate(activeTermId, parsedDate)
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        showTermSwitcherDialog = false
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("保存开学日期", maxLines = 1, softWrap = false)
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                showTermSwitcherDialog = false
+                                onNavigateToImporter()
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("去同步该学期", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTermSwitcherDialog = false }) {
+                    Text("关闭")
                 }
             }
         )

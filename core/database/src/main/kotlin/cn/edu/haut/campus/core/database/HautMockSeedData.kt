@@ -44,6 +44,46 @@ object HautMockSeedData {
 
     val defaultTerms = listOf(
         Term(
+            id = "2023-2024-1",
+            academicYear = "2023-2024",
+            termNumber = 1,
+            startDate = LocalDate.of(2023, 9, 4),
+            weekStartDay = DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = DEFAULT_TIMETABLE_ID,
+            current = false
+        ),
+        Term(
+            id = "2023-2024-2",
+            academicYear = "2023-2024",
+            termNumber = 2,
+            startDate = LocalDate.of(2024, 2, 26),
+            weekStartDay = DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = DEFAULT_TIMETABLE_ID,
+            current = false
+        ),
+        Term(
+            id = "2024-2025-1",
+            academicYear = "2024-2025",
+            termNumber = 1,
+            startDate = LocalDate.of(2024, 9, 2),
+            weekStartDay = DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = DEFAULT_TIMETABLE_ID,
+            current = false
+        ),
+        Term(
+            id = "2024-2025-2",
+            academicYear = "2024-2025",
+            termNumber = 2,
+            startDate = LocalDate.of(2025, 2, 24),
+            weekStartDay = DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = DEFAULT_TIMETABLE_ID,
+            current = false
+        ),
+        Term(
             id = "2025-2026-1",
             academicYear = "2025-2026",
             termNumber = 1,
@@ -59,7 +99,7 @@ object HautMockSeedData {
             termNumber = 2,
             startDate = LocalDate.of(2026, 3, 2),
             weekStartDay = DayOfWeek.MONDAY,
-            weekCount = 20,
+            weekCount = 19,
             timeTableId = DEFAULT_TIMETABLE_ID,
             current = false
         ),
@@ -67,7 +107,7 @@ object HautMockSeedData {
             id = CURRENT_TERM_ID,
             academicYear = "2026-2027",
             termNumber = 1,
-            startDate = LocalDate.of(2026, 9, 7), // 2026-10-31 对应第 8 教学周周六
+            startDate = LocalDate.of(2026, 8, 31),
             weekStartDay = DayOfWeek.MONDAY,
             weekCount = 20,
             timeTableId = DEFAULT_TIMETABLE_ID,

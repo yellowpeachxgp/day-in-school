@@ -114,6 +114,7 @@ fun TodayScreen(
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
+    val terms by repository.termsFlow.collectAsState(initial = emptyList())
     val term by repository.currentTermFlow.collectAsState(initial = null)
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val rules by repository.rulesFlow.collectAsState(initial = emptyList())
@@ -141,6 +142,7 @@ fun TodayScreen(
     var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
     var isDynamicSyncing by remember { mutableStateOf(false) }
     var dynamicSyncBanner by remember { mutableStateOf<String?>(null) }
+    var showTermSwitcherDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -237,8 +239,9 @@ fun TodayScreen(
     ) {
         XPeachTopBar(
             title = if (selectedDate == todayDate) "今天" else selectedDate.format(DATE_TITLE_FMT),
-            subtitle = "${selectedDate.format(DATE_TITLE_FMT)} ${selectedDate.dayOfWeek.ChineseLabel} · ${term?.displayName ?: "河南工业大学"}",
+            subtitle = "${selectedDate.format(DATE_TITLE_FMT)} ${selectedDate.dayOfWeek.ChineseLabel} · ${term?.displayName ?: "选择学期"}",
             badgeText = snapshot.teachingWeek?.let { "第 ${it} 周" } ?: "非教学周",
+            onSubtitleClick = { showTermSwitcherDialog = true },
             actions = {
                 if (selectedDate != todayDate) {
                     XPeachFilterPill(
@@ -659,6 +662,78 @@ fun TodayScreen(
                 onNavigateToMapWithRoom(room)
             },
             onDismiss = { selectedOccurrenceForDetail = null }
+        )
+    }
+
+    if (showTermSwitcherDialog) {
+        AlertDialog(
+            onDismissRequest = { showTermSwitcherDialog = false },
+            title = { Text("切换当前学期") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (t in terms) {
+                        val isCurrent = t.id == term?.id
+                        val count = rules.count { it.termId == t.id }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                )
+                                .clickable {
+                                    scope.launch {
+                                        repository.selectCurrentTerm(t.id)
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        showTermSwitcherDialog = false
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = t.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (isCurrent) "当前 ($count 门)" else "$count 门课",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = {
+                            showTermSwitcherDialog = false
+                            onNavigateToImporter()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("去同步其他学期课表", maxLines = 1, softWrap = false)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTermSwitcherDialog = false }) {
+                    Text("关闭")
+                }
+            }
         )
     }
 }

@@ -28,17 +28,29 @@ object ImportDiffEngine {
         val matchedRuleIds = mutableSetOf<String>()
 
         for (candidate in incomingCandidates) {
-            // 优先匹配相同星期 + 重叠节次的规则或同名课程规则
+            fun isSameCourse(course: Course?): Boolean {
+                if (course == null) return false
+                if (course.name == candidate.courseName) return true
+                if (!candidate.externalId.isNullOrBlank() && course.externalId == candidate.externalId) return true
+                return false
+            }
+
+            // 仅匹配未被消费的同课程规则（优先完全匹配周次，其次匹配同星期同节次同课程），绝不跨课程互相覆盖
             val matchingRule = existingRules.firstOrNull { rule ->
-                rule.termId == termId &&
+                rule.id !in matchedRuleIds &&
+                    rule.termId == termId &&
                     rule.weekday == candidate.weekday &&
                     rule.startPeriod == candidate.startPeriod &&
                     rule.endPeriod == candidate.endPeriod &&
-                    courseById[rule.courseId]?.name == candidate.courseName
+                    rule.weeks == candidate.weeks &&
+                    isSameCourse(courseById[rule.courseId])
             } ?: existingRules.firstOrNull { rule ->
-                rule.termId == termId &&
+                rule.id !in matchedRuleIds &&
+                    rule.termId == termId &&
                     rule.weekday == candidate.weekday &&
-                    periodsOverlap(rule.startPeriod, rule.endPeriod, candidate.startPeriod, candidate.endPeriod)
+                    rule.startPeriod == candidate.startPeriod &&
+                    rule.endPeriod == candidate.endPeriod &&
+                    isSameCourse(courseById[rule.courseId])
             }
 
             if (matchingRule == null) {

@@ -38,14 +38,31 @@ import java.util.Base64
 object HautAcademicEndpoints {
     const val BASE_URL = "https://jwglxt.haut.edu.cn"
     const val CAS_SSO_ENTRY_URL = "https://jwglxt.haut.edu.cn/sso/jhlogin"
+    const val STUDENT_PORTAL_URL = "https://mapp.haut.edu.cn/haut/"
     const val OFFICIAL_LOGIN_URL = "https://jwglxt.haut.edu.cn/jwglxt/xtgl/login_slogin.html"
     const val TIMETABLE_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html?gnmkdm=N2151"
+    const val TIMETABLE_WEEK_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/kbcx/xskbcxZccx_cxXskbcxIndex.html?gnmkdm=N215304&layout=default"
     const val TIMETABLE_API_PATH = "/jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151"
     const val TIMETABLE_ALT_API_PATH = "/jwglxt/kbcx/xskbcx_cxXsKb.html?gnmkdm=N2151"
+    const val TERM_WEEKS_API_PATH = "/jwglxt/kbcx/xskbcxZccx_cxZcByXnxq.html?gnmkdm=N215304"
     const val GRADES_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/cjcx/cjcx_cxDgXscj.html?gnmkdm=N305005"
     const val GRADES_API_PATH = "/jwglxt/cjcx/cjcx_cxXsgrcj.html?doType=query&gnmkdm=N305005"
     const val EXAMS_PAGE_URL = "https://jwglxt.haut.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html?gnmkdm=N358105"
     const val EXAMS_API_PATH = "/jwglxt/kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105"
+
+    fun toTermId(xnm: String, xqm: String): String {
+        val cleanXnm = xnm.trim().take(4).toIntOrNull() ?: 2025
+        val termNo = if (xqm.trim() == "12" || xqm.trim() == "2") 2 else 1
+        return "$cleanXnm-${cleanXnm + 1}-$termNo"
+    }
+
+    fun fromTermId(termId: String): Pair<String, String> {
+        val parts = termId.trim().split("-")
+        val xnm = parts.firstOrNull()?.takeIf { it.length == 4 && it.all(Char::isDigit) } ?: "2025"
+        val termNo = parts.lastOrNull()?.toIntOrNull() ?: 1
+        val xqm = if (termNo == 2) "12" else "3"
+        return xnm to xqm
+    }
 }
 
 data class HautLiveSyncResult(
@@ -53,7 +70,13 @@ data class HautLiveSyncResult(
     val studentProfile: StudentProfile?,
     val timetableCandidates: List<ImportCourseCandidate>,
     val gradeAttempts: List<GradeAttempt>,
-    val examItems: List<ExamScheduleItem> = emptyList()
+    val examItems: List<ExamScheduleItem> = emptyList(),
+    val semesterStart: LocalDate? = null,
+    val totalWeeks: Int? = null,
+    val regularCourseCount: Int = timetableCandidates.size,
+    val practiceCourseCount: Int = 0,
+    val additionalTermTimetables: Map<String, List<ImportCourseCandidate>> = emptyMap(),
+    val additionalTermCalendars: Map<String, Pair<LocalDate, Int>> = emptyMap()
 )
 
 object HautSessionManager {
@@ -90,8 +113,10 @@ object HautLiveAcademicClient {
                 method = "GET",
                 cookieJar = jwCookies
             )
-            val casLoginUrl = (hop0.location ?: error("未获取到统一身份认证跳转地址"))
-                .replace(Regex("^http:"), "https:")
+            val casLoginUrl = normalizeRedirectUrl(
+                rawLocation = hop0.location ?: error("未获取到统一身份认证跳转地址"),
+                baseHostUrl = "https://mapp.haut.edu.cn"
+            )
 
             // 2. 请求 https://mapp.haut.edu.cn/cas/login 获取 lt 与 execution
             val hop1 = request(
@@ -100,9 +125,18 @@ object HautLiveAcademicClient {
                 cookieJar = casCookies
             )
             val lt = Regex("""name="lt"\s+value="([^"]+)"""").find(hop1.body)?.groupValues?.get(1)
+                ?: Regex("""value="([^"]+)"\s+name="lt"""").find(hop1.body)?.groupValues?.get(1)
                 ?: error("未能从统一身份认证页面提取 lt 令牌")
             val execution = Regex("""name="execution"\s+value="([^"]+)"""").find(hop1.body)?.groupValues?.get(1)
                 ?: "e1s1"
+            val formActionRaw = Regex("""<form[^>]*id="fm1"[^>]*action="([^"]+)"""").find(hop1.body)
+                ?.groupValues?.get(1)
+                ?.replace("&amp;", "&")
+            val casPostUrl = if (!formActionRaw.isNullOrBlank()) {
+                normalizeRedirectUrl(formActionRaw, "https://mapp.haut.edu.cn")
+            } else {
+                casLoginUrl
+            }
 
             // 3. 提交统一身份认证登录表单（密码格式为 {gilight}_ + Base64）
             val encodedPwd = "{gilight}_" + Base64.getEncoder().encodeToString(
@@ -116,7 +150,7 @@ object HautLiveAcademicClient {
                 "_eventId" to "submit"
             )
             val hop2 = request(
-                url = casLoginUrl,
+                url = casPostUrl,
                 method = "POST",
                 cookieJar = casCookies,
                 formBody = formBody
@@ -132,48 +166,55 @@ object HautLiveAcademicClient {
 
             // 4. 跟随教务系统 SSO 票据验证重定向链（jhlogin?ticket=... -> ticketlogin -> index_initMenu.html）
             var redirectCount = 0
-            while (!nextLocation.isNullOrBlank() && redirectCount < 10) {
+            while (!nextLocation.isNullOrBlank() && redirectCount < 12) {
                 redirectCount++
-                val normalizedUrl = when {
-                    nextLocation.startsWith("/") -> HautAcademicEndpoints.BASE_URL + nextLocation
-                    nextLocation.startsWith("http://jwglxt.haut.edu.cn") ->
-                        nextLocation.replaceFirst("http://", "https://")
-                    else -> nextLocation
-                }
+                val normalizedUrl = normalizeRedirectUrl(
+                    rawLocation = nextLocation,
+                    baseHostUrl = HautAcademicEndpoints.BASE_URL
+                )
+                val targetJar = if (normalizedUrl.contains("://mapp.haut.edu.cn")) casCookies else jwCookies
                 val hop = request(
                     url = normalizedUrl,
                     method = "GET",
-                    cookieJar = jwCookies
+                    cookieJar = targetJar
                 )
-                if (hop.statusCode !in listOf(301, 302, 303, 307)) {
+                if (hop.statusCode !in listOf(301, 302, 303, 307, 308)) {
                     break
                 }
                 nextLocation = hop.location
             }
 
-            // 5. 拉取个人课表 JSON
-            val kbForm = buildFormBody(
-                "xnm" to xnm,
-                "xqm" to xqm,
-                "kzlx" to "ck",
-                "xsdm" to ""
-            )
-            val kbResponse = request(
-                url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.TIMETABLE_API_PATH,
-                method = "POST",
-                cookieJar = jwCookies,
-                formBody = kbForm,
-                extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
-            )
-            if (kbResponse.statusCode != 200 || !kbResponse.body.contains("\"kbList\"")) {
-                error("课表接口响应异常（HTTP ${kbResponse.statusCode}）")
-            }
-
-            val timetableCandidates = HautZfsoftParser.parseTimetableJson(kbResponse.body)
+            // 5. 拉取当前选定学期个人课表 JSON 与官方周次校历
+            val primaryBody = fetchTermTimetableJsonText(xnm = xnm, xqm = xqm, cookieJar = jwCookies)
+                ?: error("课表接口响应异常，请确认教务系统服务可用")
+            val primaryBreakdown = HautZfsoftParser.parseTimetableWithBreakdown(primaryBody)
+            val primaryCalendar = fetchTermCalendarPair(xnm = xnm, xqm = xqm, cookieJar = jwCookies)
             val studentProfile = HautZfsoftParser.parseStudentProfileFromTimetableJson(
-                jsonText = kbResponse.body,
+                jsonText = primaryBody,
                 fallbackSchoolId = studentId.trim()
             )
+
+            // 5.1 同会话顺带拉取常用相邻学期（2026-2027-1、2025-2026-2、2025-2026-1），使切换学期时立即可看
+            val additionalTimetables = linkedMapOf<String, List<ImportCourseCandidate>>()
+            val additionalCalendars = linkedMapOf<String, Pair<LocalDate, Int>>()
+            val siblingSemesters = listOf("2026" to "3", "2025" to "12", "2025" to "3")
+            for ((sibXnm, sibXqm) in siblingSemesters) {
+                if (sibXnm == xnm && sibXqm == xqm) continue
+                val sibTermId = HautAcademicEndpoints.toTermId(sibXnm, sibXqm)
+                runCatching {
+                    val sibJson = fetchTermTimetableJsonText(sibXnm, sibXqm, jwCookies)
+                    if (sibJson != null) {
+                        val sibCandidates = HautZfsoftParser.parseTimetableJson(sibJson)
+                        if (sibCandidates.isNotEmpty()) {
+                            additionalTimetables[sibTermId] = sibCandidates
+                        }
+                    }
+                    val sibCal = fetchTermCalendarPair(sibXnm, sibXqm, jwCookies)
+                    if (sibCal != null) {
+                        additionalCalendars[sibTermId] = sibCal
+                    }
+                }
+            }
 
             // 6. 拉取个人全部成绩 JSON
             val cjForm = buildFormBody(
@@ -225,15 +266,83 @@ object HautLiveAcademicClient {
                 emptyList()
             }
 
-            val termNo = if (xqm == "12" || xqm == "2") 2 else 1
-            val academicYear = "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
             HautLiveSyncResult(
-                termId = "$academicYear-$termNo",
+                termId = HautAcademicEndpoints.toTermId(xnm, xqm),
                 studentProfile = studentProfile,
-                timetableCandidates = timetableCandidates,
+                timetableCandidates = primaryBreakdown.allCandidates,
                 gradeAttempts = gradeAttempts,
-                examItems = examItems
+                examItems = examItems,
+                semesterStart = primaryCalendar?.first,
+                totalWeeks = primaryCalendar?.second,
+                regularCourseCount = primaryBreakdown.regularCount,
+                practiceCourseCount = primaryBreakdown.practiceCount,
+                additionalTermTimetables = additionalTimetables,
+                additionalTermCalendars = additionalCalendars
             )
+        }
+    }
+
+    private fun fetchTermTimetableJsonText(
+        xnm: String,
+        xqm: String,
+        cookieJar: MutableMap<String, String>
+    ): String? {
+        val kbForm = buildFormBody(
+            "xnm" to xnm,
+            "xqm" to xqm,
+            "kzlx" to "ck",
+            "xsdm" to ""
+        )
+        val primaryResp = request(
+            url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.TIMETABLE_API_PATH,
+            method = "POST",
+            cookieJar = cookieJar,
+            formBody = kbForm,
+            extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
+        )
+        if (primaryResp.statusCode == 200 && primaryResp.body.contains("\"kbList\"")) {
+            return primaryResp.body
+        }
+        val altResp = request(
+            url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.TIMETABLE_ALT_API_PATH,
+            method = "POST",
+            cookieJar = cookieJar,
+            formBody = buildFormBody("xnm" to xnm, "xqm" to xqm),
+            extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
+        )
+        return if (altResp.statusCode == 200 && altResp.body.contains("\"kbList\"")) {
+            altResp.body
+        } else {
+            null
+        }
+    }
+
+    private fun fetchTermCalendarPair(
+        xnm: String,
+        xqm: String,
+        cookieJar: MutableMap<String, String>
+    ): Pair<LocalDate, Int>? = runCatching {
+        val zcResp = request(
+            url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.TERM_WEEKS_API_PATH,
+            method = "POST",
+            cookieJar = cookieJar,
+            formBody = buildFormBody("xnm" to xnm, "xqm" to xqm),
+            extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
+        )
+        if (zcResp.statusCode == 200) {
+            HautZfsoftParser.parseTermCalendarJson(zcResp.body)
+        } else {
+            null
+        }
+    }.getOrNull()
+
+    private fun normalizeRedirectUrl(rawLocation: String, baseHostUrl: String): String {
+        val trimmed = rawLocation.trim()
+        return when {
+            trimmed.startsWith("http://") -> "https://" + trimmed.removePrefix("http://")
+            trimmed.startsWith("https://") -> trimmed
+            trimmed.startsWith("/") -> baseHostUrl.trimEnd('/') + trimmed
+            else -> "${baseHostUrl.trimEnd('/')}/$trimmed"
         }
     }
 
@@ -273,7 +382,9 @@ object HautLiveAcademicClient {
         }
 
         val status = conn.responseCode
-        val setCookies = conn.headerFields["Set-Cookie"] ?: conn.headerFields["set-cookie"] ?: emptyList()
+        val setCookies = conn.headerFields.entries
+            .filter { (k, _) -> k != null && k.equals("Set-Cookie", ignoreCase = true) }
+            .flatMap { (_, v) -> v.orEmpty() }
         for (sc in setCookies) {
             val firstPart = sc.substringBefore(";").trim()
             val eqIdx = firstPart.indexOf('=')
@@ -286,7 +397,10 @@ object HautLiveAcademicClient {
             }
         }
 
-        val location = conn.getHeaderField("Location") ?: conn.getHeaderField("location")
+        val location = conn.headerFields.entries
+            .firstOrNull { (k, _) -> k != null && k.equals("Location", ignoreCase = true) }
+            ?.value?.firstOrNull()
+            ?: conn.getHeaderField("Location")
         val stream = if (status in 200..399) conn.inputStream else conn.errorStream
         val bodyText = stream?.let { s ->
             BufferedReader(InputStreamReader(s, StandardCharsets.UTF_8)).use { it.readText() }
@@ -306,18 +420,30 @@ object HautLiveAcademicClient {
     }
 }
 
+data class TimetableParseBreakdown(
+    val allCandidates: List<ImportCourseCandidate>,
+    val regularCount: Int,
+    val practiceCount: Int
+)
+
 /**
  * 独立编写的正方教务 JSON 与 CSV 解析器（基于河南工业大学真实教务接口报文核验）。
  */
 object HautZfsoftParser {
 
     /**
-     * 解析正方教务 `kbList` 格式的课表 JSON。
+     * 解析正方教务 `kbList` 与 `sjkList` 格式的课表 JSON。
      */
-    fun parseTimetableJson(jsonText: String): List<ImportCourseCandidate> {
+    fun parseTimetableJson(jsonText: String): List<ImportCourseCandidate> =
+        parseTimetableWithBreakdown(jsonText).allCandidates
+
+    fun parseTimetableWithBreakdown(jsonText: String): TimetableParseBreakdown {
         val root = JSONObject(jsonText)
         val kbList = root.optJSONArray("kbList") ?: JSONArray()
+        val sjkList = root.optJSONArray("sjkList") ?: JSONArray()
         val result = mutableListOf<ImportCourseCandidate>()
+        var regularCount = 0
+        var practiceCount = 0
 
         for (i in 0 until kbList.length()) {
             val item = kbList.optJSONObject(i) ?: continue
@@ -365,8 +491,93 @@ object HautZfsoftParser {
                     rawRoom = rawRoom
                 )
             )
+            regularCount++
         }
-        return result
+
+        // 解析 sjkList（实践环节 / 集中课程 / 无固定节次课程，如综合项目实践、形势与政策等）
+        val existingCourseNames = result.map { it.courseName }.toMutableSet()
+        val practiceSlots = if (regularCount == 0) {
+            listOf(
+                Triple(DayOfWeek.MONDAY, 1, 2),
+                Triple(DayOfWeek.TUESDAY, 1, 2),
+                Triple(DayOfWeek.WEDNESDAY, 1, 2),
+                Triple(DayOfWeek.THURSDAY, 1, 2),
+                Triple(DayOfWeek.FRIDAY, 1, 2)
+            )
+        } else {
+            listOf(
+                Triple(DayOfWeek.SATURDAY, 9, 10),
+                Triple(DayOfWeek.SUNDAY, 9, 10),
+                Triple(DayOfWeek.SATURDAY, 7, 8),
+                Triple(DayOfWeek.SUNDAY, 7, 8)
+            )
+        }
+
+        for (i in 0 until sjkList.length()) {
+            val item = sjkList.optJSONObject(i) ?: continue
+            val courseName = item.optString("kcmc").trim()
+            if (courseName.isEmpty() || courseName in existingCourseNames) continue
+            val courseId = item.optString("kch_id").takeIf { it.isNotBlank() }
+                ?: item.optString("kch").takeIf { it.isNotBlank() }
+            val teacher = item.optString("jsxm").trim()
+                .ifBlank { item.optString("xm").trim() }
+                .takeIf { it.isNotBlank() }
+            val credit = item.optString("xf").trim().toBigDecimalOrNull()
+            val qsjsz = item.optString("qsjsz").trim()
+            val weeks = WeeksSetParser.parse(qsjsz).ifEmpty { (1..16).toSet() }
+            val kclb = item.optString("kclb", "实践/集中课").trim().ifBlank { "实践/集中课" }
+            val rawRoom = if (qsjsz.isNotBlank()) "$kclb（$qsjsz）" else kclb
+
+            // 选择不与已添加实践课在相同周次冲突的时段
+            val chosenSlot = practiceSlots.firstOrNull { (day, s, e) ->
+                result.none {
+                    it.weekday == day &&
+                        it.startPeriod == s &&
+                        it.endPeriod == e &&
+                        it.weeks.intersect(weeks).isNotEmpty()
+                }
+            } ?: practiceSlots[practiceCount % practiceSlots.size]
+
+            result.add(
+                ImportCourseCandidate(
+                    externalId = courseId,
+                    courseName = courseName,
+                    teacher = teacher,
+                    credit = credit,
+                    weekday = chosenSlot.first,
+                    startPeriod = chosenSlot.second,
+                    endPeriod = chosenSlot.third,
+                    weeks = weeks,
+                    rawRoom = rawRoom
+                )
+            )
+            existingCourseNames.add(courseName)
+            practiceCount++
+        }
+
+        return TimetableParseBreakdown(
+            allCandidates = result,
+            regularCount = regularCount,
+            practiceCount = practiceCount
+        )
+    }
+
+    /**
+     * 解析 `/jwglxt/kbcx/xskbcxZccx_cxZcByXnxq.html` 返回的学期周次列表 JSON，
+     * 提取第 1 周周一日期与学期总周数。
+     */
+    fun parseTermCalendarJson(jsonText: String): Pair<LocalDate, Int>? {
+        val arr = runCatching { JSONArray(jsonText.trim()) }.getOrNull() ?: return null
+        if (arr.length() == 0) return null
+        val firstObj = arr.optJSONObject(0) ?: return null
+        val rq = firstObj.optString("rq", "").trim()
+        val startIso = Regex("""(\d{4}-\d{2}-\d{2})""").find(rq)?.groupValues?.getOrNull(1) ?: return null
+        val startDate = runCatching { LocalDate.parse(startIso) }.getOrNull() ?: return null
+        val maxZc = (0 until arr.length()).maxOfOrNull { idx ->
+            arr.optJSONObject(idx)?.optInt("zc", 0) ?: 0
+        } ?: 0
+        val totalWeeks = maxOf(arr.length(), maxZc).coerceIn(10, 30)
+        return startDate to totalWeeks
     }
 
     /**

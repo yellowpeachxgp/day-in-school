@@ -487,6 +487,38 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "当前学期",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    for (t in terms) {
+                        val count = rules.count { it.termId == t.id }
+                        XPeachFilterPill(
+                            label = "${t.displayName} ($count)",
+                            selected = t.id == currentTerm?.id,
+                            onClick = {
+                                scope.launch {
+                                    repository.selectCurrentTerm(t.id)
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    feedbackText = "已切换至 ${t.displayName}（共 $count 门排课）"
+                                }
+                            }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 LinearProgressIndicator(
                     progress = { weekProgress },
                     modifier = Modifier

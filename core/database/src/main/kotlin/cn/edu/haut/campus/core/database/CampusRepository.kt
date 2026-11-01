@@ -12,6 +12,7 @@ import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
+import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
@@ -133,6 +134,7 @@ class CampusRepository private constructor(
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
         val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
+        val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
         val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")
@@ -334,20 +336,61 @@ class CampusRepository private constructor(
      */
     suspend fun ensureInitialSeedIfNeeded() {
         val prefs = appContext.appDataStore.data.first()
-        if (prefs[PrefKeys.CLEAN_BASE_V2] == true) return
-        database.withTransaction {
-            if (prefs[PrefKeys.ONBOARDING_COMPLETED] != true) {
-                dao.clearStudentProfile()
-                dao.clearCourses()
-                dao.clearRules()
-                dao.clearOccurrenceOverrides()
-                dao.clearGradeAttempts()
+        if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
+            database.withTransaction {
+                if (prefs[PrefKeys.ONBOARDING_COMPLETED] != true) {
+                    dao.clearStudentProfile()
+                    dao.clearCourses()
+                    dao.clearRules()
+                    dao.clearOccurrenceOverrides()
+                    dao.clearGradeAttempts()
+                }
+                seedBaseCampusDictionaryInternal()
             }
-            seedBaseCampusDictionaryInternal()
+            appContext.appDataStore.edit {
+                it[PrefKeys.SEEDED] = true
+                it[PrefKeys.CLEAN_BASE_V2] = true
+            }
         }
-        appContext.appDataStore.edit {
-            it[PrefKeys.SEEDED] = true
-            it[PrefKeys.CLEAN_BASE_V2] = true
+        if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
+            database.withTransaction {
+                val existingTerms = dao.observeTerms().first().map { it.toDomain() }
+                val existingById = existingTerms.associateBy { it.id }
+                val hasCurrent = existingTerms.any { it.current }
+                val mergedTerms = HautMockSeedData.defaultTerms.map { seedTerm ->
+                    val prev = existingById[seedTerm.id]
+                    if (prev != null) {
+                        val repairedStart = if (
+                            prev.id == "2026-2027-1" &&
+                            prev.startDate == LocalDate.of(2026, 9, 7)
+                        ) {
+                            LocalDate.of(2026, 8, 31)
+                        } else {
+                            prev.startDate
+                        }
+                        prev.copy(startDate = repairedStart).toEntity()
+                    } else {
+                        seedTerm.copy(current = if (hasCurrent) false else seedTerm.current).toEntity()
+                    }
+                }
+                dao.upsertTerms(mergedTerms)
+
+                // 修复旧版本因 currentTerm 写死 2026-2027-1 导致 2025-2026-2 同步课表被错存到 2026-2027-1 的问题
+                val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
+                val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
+                val expectedTermId = HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
+                val allRules = dao.getRulesSnapshot()
+                val rulesIn26 = allRules.filter { it.termId == "2026-2027-1" && it.id.startsWith("r_imp_") }
+                val rulesInExpected = allRules.filter { it.termId == expectedTermId }
+                if (expectedTermId != "2026-2027-1" && rulesIn26.isNotEmpty() && rulesInExpected.isEmpty()) {
+                    dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                    dao.setCurrentTerm(expectedTermId)
+                }
+            }
+            appContext.appDataStore.edit {
+                it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
+                it.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+            }
         }
     }
 
@@ -399,8 +442,46 @@ class CampusRepository private constructor(
         dao.upsertGradeAttempts(HautMockSeedData.defaultGradeAttempts.map { it.toEntity() })
     }
 
+    suspend fun ensureTermExistsAndUpdateCalendar(
+        termId: String,
+        semesterStart: LocalDate? = null,
+        totalWeeks: Int? = null,
+        setCurrent: Boolean = false
+    ) {
+        val existingTerms = dao.observeTerms().first().map { it.toDomain() }
+        val existing = existingTerms.firstOrNull { it.id == termId }
+        val seedDefault = HautMockSeedData.defaultTerms.firstOrNull { it.id == termId }
+        val parts = termId.split("-")
+        val academicYear = if (parts.size >= 2) "${parts[0]}-${parts[1]}" else "2026-2027"
+        val termNumber = parts.getOrNull(2)?.toIntOrNull() ?: 1
+        val defaultStart = seedDefault?.startDate ?: if (termNumber == 1) {
+            LocalDate.of(parts.firstOrNull()?.toIntOrNull() ?: 2026, 9, 1)
+        } else {
+            LocalDate.of(parts.getOrNull(1)?.toIntOrNull() ?: 2026, 3, 2)
+        }
+        val updatedTerm = Term(
+            id = termId,
+            academicYear = existing?.academicYear ?: academicYear,
+            termNumber = existing?.termNumber ?: termNumber,
+            startDate = semesterStart ?: existing?.startDate ?: defaultStart,
+            weekStartDay = existing?.weekStartDay ?: DayOfWeek.MONDAY,
+            weekCount = (totalWeeks ?: existing?.weekCount ?: seedDefault?.weekCount ?: 20).coerceIn(1, 30),
+            timeTableId = existing?.timeTableId ?: HautMockSeedData.DEFAULT_TIMETABLE_ID,
+            current = if (setCurrent) true else (existing?.current ?: false)
+        )
+        dao.upsertTerms(listOf(updatedTerm.toEntity()))
+        if (setCurrent) {
+            dao.setCurrentTerm(termId)
+        }
+    }
+
     suspend fun selectCurrentTerm(termId: String) {
-        dao.setCurrentTerm(termId)
+        ensureTermExistsAndUpdateCalendar(termId = termId, setCurrent = true)
+        val (xnm, xqm) = HautAcademicEndpoints.fromTermId(termId)
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
+            prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
+        }
         notifyScheduleOrPolicyChanged("TERM_CHANGED")
     }
 
@@ -534,10 +615,12 @@ class CampusRepository private constructor(
     /**
      * 确认提交课表导入结果。
      * @param overwriteUserConflicts 若为 false（默认），所有 CONFLICT_USER_MODIFIED 项均保留用户本地修改。
+     * @param setAsCurrentTerm 若为 true（默认），同时将目标学期切换为当前激活学期。
      */
     suspend fun commitCourseImportDiff(
         preview: ImportDiffPreview,
-        overwriteUserConflicts: Boolean = false
+        overwriteUserConflicts: Boolean = false,
+        setAsCurrentTerm: Boolean = true
     ) {
         val palette = listOf(
             0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,
@@ -546,6 +629,11 @@ class CampusRepository private constructor(
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val now = Instant.now()
+
+        ensureTermExistsAndUpdateCalendar(
+            termId = preview.termId,
+            setCurrent = setAsCurrentTerm
+        )
 
         database.withTransaction {
             var colorIdx = 0
@@ -630,10 +718,17 @@ class CampusRepository private constructor(
                         }
                         // 默认保留用户本地修改，不做覆盖
                     }
-                    ImportChangeType.REMOVED_FROM_REMOTE, ImportChangeType.UNCHANGED -> Unit
+                    ImportChangeType.REMOVED_FROM_REMOTE -> {
+                        val existingRule = entry.existingRule
+                        if (existingRule != null && (!existingRule.userModified || overwriteUserConflicts)) {
+                            dao.deleteRuleById(existingRule.id)
+                        }
+                    }
+                    ImportChangeType.UNCHANGED -> Unit
                 }
             }
 
+            val removedCount = preview.entries.count { it.changeType == ImportChangeType.REMOVED_FROM_REMOTE }
             dao.insertImportAudit(
                 ImportAudit(
                     id = "aud_${UUID.randomUUID().toString().take(8)}",
@@ -642,13 +737,18 @@ class CampusRepository private constructor(
                     importedAt = now,
                     rowCount = preview.entries.size,
                     conflictCount = preview.conflictUserEditCount,
-                    outcome = "新增${preview.addedCount}/更新${preview.modifiedCount}/保留用户修改${preview.conflictUserEditCount}"
+                    outcome = "新增${preview.addedCount}/更新${preview.modifiedCount}/移除${removedCount}/保留用户修改${preview.conflictUserEditCount}"
                 ).toEntity()
             )
         }
         appContext.appDataStore.edit {
             it[PrefKeys.ONBOARDING_COMPLETED] = true
             it[PrefKeys.CLEAN_BASE_V2] = true
+            if (setAsCurrentTerm) {
+                val (xnm, xqm) = HautAcademicEndpoints.fromTermId(preview.termId)
+                it[PrefKeys.SAVED_SYNC_XNM] = xnm
+                it[PrefKeys.SAVED_SYNC_XQM] = xqm
+            }
         }
         notifyScheduleOrPolicyChanged("COURSE_IMPORT_COMMITTED")
     }
@@ -739,7 +839,33 @@ class CampusRepository private constructor(
                 replaceExisting = true
             )
         }
-        val targetTermId = dao.getCurrentTerm()?.id ?: syncData.termId
+        for ((sibTermId, sibCandidates) in syncData.additionalTermTimetables) {
+            if (sibTermId == syncData.termId) continue
+            val sibCal = syncData.additionalTermCalendars[sibTermId]
+            ensureTermExistsAndUpdateCalendar(
+                termId = sibTermId,
+                semesterStart = sibCal?.first,
+                totalWeeks = sibCal?.second,
+                setCurrent = false
+            )
+            val sibDiff = previewCourseImportDiff(
+                termId = sibTermId,
+                source = CourseSource.OFFICIAL_JW,
+                candidates = sibCandidates
+            )
+            commitCourseImportDiff(
+                preview = sibDiff,
+                overwriteUserConflicts = overwriteUserConflicts,
+                setAsCurrentTerm = false
+            )
+        }
+        val targetTermId = syncData.termId
+        ensureTermExistsAndUpdateCalendar(
+            termId = targetTermId,
+            semesterStart = syncData.semesterStart,
+            totalWeeks = syncData.totalWeeks,
+            setCurrent = true
+        )
         val diff = previewCourseImportDiff(
             termId = targetTermId,
             source = CourseSource.OFFICIAL_JW,
@@ -747,9 +873,13 @@ class CampusRepository private constructor(
         )
         commitCourseImportDiff(
             preview = diff,
-            overwriteUserConflicts = overwriteUserConflicts
+            overwriteUserConflicts = overwriteUserConflicts,
+            setAsCurrentTerm = true
         )
+        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
         appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.SAVED_SYNC_XNM] = syncXnm
+            prefs[PrefKeys.SAVED_SYNC_XQM] = syncXqm
             prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
         }
     }

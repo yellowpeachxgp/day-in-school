@@ -728,7 +728,7 @@ private fun OnboardingWelcomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                    for (yr in listOf("2025", "2024", "2023")) {
+                    for (yr in listOf("2026", "2025", "2024", "2023")) {
                         XPeachFilterPill(
                             label = "$yr-${yr.toInt() + 1}",
                             selected = selectedXnm == yr,
@@ -794,29 +794,8 @@ private fun OnboardingWelcomeScreen(
                                     xqm = selectedXqm
                                 )
                                 repository.setAutoSyncEnabled(true)
-                                syncData.studentProfile?.let { profile ->
-                                    repository.saveStudentProfile(profile)
-                                }
-                                if (syncData.gradeAttempts.isNotEmpty()) {
-                                    repository.saveImportedGrades(
-                                        attempts = syncData.gradeAttempts,
-                                        replaceExisting = true
-                                    )
-                                }
-                                if (syncData.examItems.isNotEmpty()) {
-                                    repository.saveImportedExams(
-                                        exams = syncData.examItems,
-                                        replaceExisting = true
-                                    )
-                                }
-                                val targetTermId = currentTerm?.id ?: syncData.termId
-                                val diff = repository.previewCourseImportDiff(
-                                    termId = targetTermId,
-                                    source = CourseSource.OFFICIAL_JW,
-                                    candidates = syncData.timetableCandidates
-                                )
-                                repository.commitCourseImportDiff(
-                                    preview = diff,
+                                repository.applyLiveSyncData(
+                                    syncData = syncData,
                                     overwriteUserConflicts = true
                                 )
                                 repository.completeOnboarding()

@@ -265,6 +265,7 @@ fun XPeachTopBar(
     title: String,
     subtitle: String? = null,
     badgeText: String? = null,
+    onSubtitleClick: (() -> Unit)? = null,
     navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
@@ -310,14 +311,30 @@ fun XPeachTopBar(
                     }
                     if (!subtitle.isNullOrBlank()) {
                         Spacer(modifier = Modifier.padding(top = 1.dp))
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        if (onSubtitleClick != null) {
+                            Text(
+                                text = "$subtitle ▾",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(onClick = onSubtitleClick)
+                                    .padding(vertical = 2.dp)
+                            )
+                        } else {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }

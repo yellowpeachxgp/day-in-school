@@ -135,14 +135,29 @@ object SafeWebNavigationPolicy {
 
     /**
      * 校验主框架或子框架导航请求是否允许在 WebView 内部继续加载。
-     * @return `true` 表示拦截（阻断加载），`false` 表示放行。
+     * 对于学校官方域名 (`*.haut.edu.cn`) 在统一身份认证跳回时产生的历史 HTTP GET 重定向，
+     * 自动升级为 HTTPS 并在当前 WebView 中继续加载。
+     * @return `true` 表示拦截（阻断原请求或已接管升级加载），`false` 表示直接放行。
      */
-    fun shouldBlockNavigation(request: WebResourceRequest?): Boolean {
+    fun shouldBlockNavigation(request: WebResourceRequest?, view: WebView? = null): Boolean {
         val url = request?.url?.toString().orEmpty()
         if (url.isBlank()) return true
         val isMainFrame = request?.isForMainFrame != false
         return if (isMainFrame) {
-            !OfficialServiceRoutePolicy.isAllowedMainFrameUrl(url)
+            if (OfficialServiceRoutePolicy.isAllowedMainFrameUrl(url)) {
+                false
+            } else {
+                val upgraded = OfficialServiceRoutePolicy.maybeUpgradeLegacyTeachingGetUrl(
+                    rawUrl = url,
+                    method = request?.method ?: "GET"
+                )
+                if (upgraded != null && view != null) {
+                    view.post { view.loadUrl(upgraded) }
+                    true
+                } else {
+                    true
+                }
+            }
         } else {
             !OfficialServiceRoutePolicy.isAllowedSubFrameUrl(url)
         }
@@ -150,17 +165,23 @@ object SafeWebNavigationPolicy {
 
     /**
      * 拦截非白名单子资源请求（返回 403 空响应）。
+     * 主框架请求交由 [shouldBlockNavigation] 处理，避免阻断 CAS 302 跳转。
      */
     fun interceptSubresourceIfBlocked(
         request: WebResourceRequest?,
         allowCatalogCovers: Boolean = false
     ): WebResourceResponse? {
+        if (request?.isForMainFrame == true) return null
         val url = request?.url?.toString().orEmpty()
         if (url.isBlank()) return blockedResponse()
+        val trimmed = url.trim()
+        if (trimmed.startsWith("data:", ignoreCase = true) || trimmed.startsWith("blob:", ignoreCase = true)) {
+            return null
+        }
         val allowed = if (allowCatalogCovers) {
-            OfficialServiceRoutePolicy.isAllowedCatalogResourceUrl(url)
+            OfficialServiceRoutePolicy.isAllowedCatalogResourceUrl(trimmed)
         } else {
-            OfficialServiceRoutePolicy.isAllowedSubFrameUrl(url)
+            OfficialServiceRoutePolicy.isAllowedSubFrameUrl(trimmed)
         }
         return if (allowed) null else blockedResponse()
     }
