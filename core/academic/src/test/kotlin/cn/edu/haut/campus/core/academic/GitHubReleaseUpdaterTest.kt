@@ -1,10 +1,16 @@
 package cn.edu.haut.campus.core.academic
 
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.PresetMirrorNode
+import cn.edu.haut.campus.core.model.ProxyMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.Proxy
 
 class GitHubReleaseUpdaterTest {
 
@@ -56,5 +62,64 @@ class GitHubReleaseUpdaterTest {
         assertTrue(PresetCampusCommunityCatalog.defaultQqChannels.size >= 4)
         assertTrue(PresetCampusCommunityCatalog.defaultCampusClubs.size >= 15)
         assertTrue(PresetCampusCommunityCatalog.defaultCampusClubs.all { it.qqGroupNumber.isNotBlank() })
+    }
+
+    @Test
+    fun `network proxy config rewrites github urls and builds fallback chain`() {
+        val rawApkUrl = "https://github.com/yellowpeachxgp/day-in-school/releases/download/v0.11.2/day-in-school-v0.11.2-release.apk"
+        val presetCfg = NetworkProxyConfig(
+            mode = ProxyMode.PRESET_MIRROR,
+            presetMirrorKey = PresetMirrorNode.GHFAST_TOP.key,
+            autoFallbackMirror = true
+        )
+        val candidates = presetCfg.buildGitHubDownloadCandidateUrls(rawApkUrl)
+        assertEquals("https://ghfast.top/$rawApkUrl", candidates.first())
+        assertTrue(candidates.contains("https://gh-proxy.com/$rawApkUrl"))
+        assertTrue(candidates.contains(rawApkUrl))
+
+        val customCfg = NetworkProxyConfig(
+            mode = ProxyMode.CUSTOM_REVERSE_PROXY,
+            customReverseProxyPrefix = "gh.mycampus.cn",
+            autoFallbackMirror = false
+        )
+        val customCandidates = customCfg.buildGitHubDownloadCandidateUrls(rawApkUrl)
+        assertEquals("https://gh.mycampus.cn/$rawApkUrl", customCandidates.first())
+        assertEquals(2, customCandidates.size)
+    }
+
+    @Test
+    fun `network proxy config resolves http and socks java net proxies and cloud urls`() {
+        val httpCfg = NetworkProxyConfig(
+            mode = ProxyMode.HTTP_PROXY,
+            proxyHost = "127.0.0.1",
+            proxyPort = 7890
+        )
+        val httpProxy = httpCfg.resolveJavaNetProxy()
+        assertNotNull(httpProxy)
+        assertEquals(Proxy.Type.HTTP, httpProxy?.type())
+
+        val socksCfg = NetworkProxyConfig(
+            mode = ProxyMode.SOCKS_PROXY,
+            proxyHost = "127.0.0.1",
+            proxyPort = 10808
+        )
+        val socksProxy = socksCfg.resolveJavaNetProxy()
+        assertNotNull(socksProxy)
+        assertEquals(Proxy.Type.SOCKS, socksProxy?.type())
+
+        val directCfg = NetworkProxyConfig(mode = ProxyMode.DIRECT)
+        assertNull(directCfg.resolveJavaNetProxy())
+
+        val cloudCfg = NetworkProxyConfig(customCloudApiBaseUrl = "https://api.haut-cloud.cn/")
+        assertEquals(
+            "https://api.haut-cloud.cn/v1/timetable/sync",
+            cloudCfg.resolveCloudServiceUrl("/v1/timetable/sync")
+        )
+    }
+
+    @Test
+    fun `extractTagFromReleaseUrl parses github latest 302 redirect tag`() {
+        val location = "https://github.com/yellowpeachxgp/day-in-school/releases/tag/v0.11.2"
+        assertEquals("v0.11.2", GitHubReleaseUpdater.extractTagFromReleaseUrl(location))
     }
 }

@@ -6,6 +6,9 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
+import cn.edu.haut.campus.core.model.PresetMirrorNode
+import cn.edu.haut.campus.core.model.ProxyMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -25,24 +28,33 @@ data class GitHubReleaseInfo(
     val apkFileName: String,
     val apkSizeBytes: Long,
     val hasNewerVersion: Boolean,
-    val currentVersionNormalized: String
+    val currentVersionNormalized: String,
+    val resolvedViaRoute: String = "GitHub API"
+)
+
+data class ProxyConnectivityReport(
+    val reachable: Boolean,
+    val latencyMillis: Long,
+    val routeSummary: String,
+    val detailMessage: String
 )
 
 /**
- * GitHub Release 自动版本检测与 APK 在线直装更新引擎：
- * - 自动查询 `https://api.github.com/repos/yellowpeachxgp/day-in-school/releases/latest`
- * - 语义化版本号比对（支持识别 `v0.9.0` vs 本地 `0.8.0` / `0.8.0-debug`）
- * - 支持应用内直接流式拉取最新 Release APK（自动跟随 GitHub 302 CDN 重定向并回调实时下载进度）
- * - 下载完成后通过 FileProvider 直接唤起 Android 系统软件包安装程序完成覆盖升级
+ * GitHub Release 自动版本检测、多路代理加速更新与云服务统一网络引擎：
+ * - 支持 5 种代理模式：预置加速镜像 (`GHFast` / `GH-Proxy` / `GHProxy.net` / `Moeyy`)、自定义反向代理前缀、HTTP 代理、SOCKS5 代理、直连模式
+ * - 自动查询 `https://api.github.com/repos/yellowpeachxgp/day-in-school/releases/latest`，当 GitHub API 受阻或限流时自动回退解析 `/releases/latest` 302 标签重定向
+ * - 下载 Release APK 时支持按用户首选代理线路拉取，并在开启自动回退时无缝切换备选镜像节点
+ * - 为后续云服务（云端课表同步、社区云服务等）提供统一的代理连接工厂 `openCloudServiceConnection`
  */
 object GitHubReleaseUpdater {
 
     const val REPO_OWNER = "yellowpeachxgp"
     const val REPO_NAME = "day-in-school"
     const val LATEST_RELEASE_API = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    const val LATEST_RELEASE_WEB_URL = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest"
     const val RELEASES_PAGE_URL = "https://github.com/$REPO_OWNER/$REPO_NAME/releases"
 
-    private const val USER_AGENT = "HAUT-DayInSchool-Android-Updater/1.0"
+    private const val USER_AGENT = "HAUT-DayInSchool-Android-Updater/1.1"
 
     fun normalizeVersion(rawVersion: String): String {
         return rawVersion
@@ -75,30 +87,243 @@ object GitHubReleaseUpdater {
     }
 
     /**
-     * 从 GitHub Releases API 检测最新发布版本与 APK 资产。
+     * 打开统一代理配置的 HttpURLConnection（同时支持 HTTP/SOCKS 底层代理与超时配置）。
      */
-    suspend fun checkLatestRelease(currentVersionName: String): Result<GitHubReleaseInfo> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val url = URL(LATEST_RELEASE_API)
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 10_000
-                    readTimeout = 12_000
-                    setRequestProperty("Accept", "application/vnd.github+json")
-                    setRequestProperty("User-Agent", USER_AGENT)
-                }
+    fun openProxiedConnection(
+        targetUrl: String,
+        proxyConfig: NetworkProxyConfig,
+        connectTimeoutMs: Int = 10_000,
+        readTimeoutMs: Int = 15_000
+    ): HttpURLConnection {
+        val url = URL(targetUrl)
+        val javaProxy = proxyConfig.resolveJavaNetProxy()
+        val conn = if (javaProxy != null) {
+            url.openConnection(javaProxy) as HttpURLConnection
+        } else {
+            url.openConnection() as HttpURLConnection
+        }
+        conn.connectTimeout = connectTimeoutMs
+        conn.readTimeout = readTimeoutMs
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        return conn
+    }
 
+    /**
+     * 面向后续云服务模块的统一连接入口：
+     * 自动根据 `proxyConfig.customCloudApiBaseUrl` 拼接端点路径并挂载当前代理配置。
+     */
+    fun openCloudServiceConnection(
+        endpointPath: String,
+        proxyConfig: NetworkProxyConfig,
+        connectTimeoutMs: Int = 10_000,
+        readTimeoutMs: Int = 15_000
+    ): HttpURLConnection {
+        val resolvedUrl = proxyConfig.resolveCloudServiceUrl(endpointPath)
+        return openProxiedConnection(
+            targetUrl = resolvedUrl,
+            proxyConfig = proxyConfig,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs
+        )
+    }
+
+    /**
+     * 从 GitHub Releases API 或镜像重定向通道检测最新发布版本与 APK 资产。
+     */
+    suspend fun checkLatestRelease(
+        currentVersionName: String,
+        proxyConfig: NetworkProxyConfig = NetworkProxyConfig()
+    ): Result<GitHubReleaseInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val apiCandidates = buildApiCandidateUrls(proxyConfig)
+            var lastError: Throwable? = null
+
+            for ((candidateUrl, routeLabel) in apiCandidates) {
+                val attempt = runCatching {
+                    val conn = openProxiedConnection(
+                        targetUrl = candidateUrl,
+                        proxyConfig = proxyConfig,
+                        connectTimeoutMs = 8_000,
+                        readTimeoutMs = 10_000
+                    ).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("Accept", "application/vnd.github+json")
+                    }
+                    try {
+                        val code = conn.responseCode
+                        if (code !in 200..299) {
+                            throw IllegalStateException("GitHub API 响应 HTTP $code")
+                        }
+                        val bodyText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        parseReleaseJson(bodyText, currentVersionName).copy(resolvedViaRoute = routeLabel)
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+                if (attempt.isSuccess) {
+                    return@runCatching attempt.getOrThrow()
+                } else {
+                    lastError = attempt.exceptionOrNull()
+                }
+            }
+
+            // 当 api.github.com 在当前网络环境下超时或受限时，自动回退通过 /releases/latest 302 Location 提取最新版本号
+            val fallbackAttempt = runCatching {
+                resolveReleaseViaWebRedirectFallback(currentVersionName, proxyConfig)
+            }
+            if (fallbackAttempt.isSuccess) {
+                return@runCatching fallbackAttempt.getOrThrow()
+            }
+
+            throw (lastError ?: fallbackAttempt.exceptionOrNull() ?: IllegalStateException("无法连接更新服务器"))
+        }
+    }
+
+    private fun buildApiCandidateUrls(proxyConfig: NetworkProxyConfig): List<Pair<String, String>> {
+        val list = mutableListOf<Pair<String, String>>()
+        when (proxyConfig.mode) {
+            ProxyMode.CUSTOM_REVERSE_PROXY -> {
+                val prefix = proxyConfig.activeReverseProxyPrefix()
+                if (!prefix.isNullOrBlank()) {
+                    list.add(proxyConfig.applyReverseProxyPrefix(LATEST_RELEASE_API, prefix) to "自定义反代")
+                }
+                list.add(LATEST_RELEASE_API to "GitHub API")
+            }
+            ProxyMode.HTTP_PROXY -> {
+                list.add(LATEST_RELEASE_API to "HTTP 代理 (${proxyConfig.proxyHost}:${proxyConfig.proxyPort})")
+            }
+            ProxyMode.SOCKS_PROXY -> {
+                list.add(LATEST_RELEASE_API to "SOCKS5 代理 (${proxyConfig.proxyHost}:${proxyConfig.proxyPort})")
+            }
+            ProxyMode.PRESET_MIRROR, ProxyMode.DIRECT -> {
+                list.add(LATEST_RELEASE_API to "GitHub API")
+            }
+        }
+        return list.distinctBy { it.first }
+    }
+
+    private fun resolveReleaseViaWebRedirectFallback(
+        currentVersionName: String,
+        proxyConfig: NetworkProxyConfig
+    ): GitHubReleaseInfo {
+        val probeUrls = mutableListOf<Pair<String, String>>()
+        val activePrefix = proxyConfig.activeReverseProxyPrefix()
+        if (!activePrefix.isNullOrBlank()) {
+            probeUrls.add(proxyConfig.applyReverseProxyPrefix(LATEST_RELEASE_WEB_URL, activePrefix) to proxyConfig.statusSummaryLabel())
+        }
+        probeUrls.add(LATEST_RELEASE_WEB_URL to "GitHub Releases 重定向")
+
+        for ((probeUrl, label) in probeUrls.distinctBy { it.first }) {
+            val conn = openProxiedConnection(
+                targetUrl = probeUrl,
+                proxyConfig = proxyConfig,
+                connectTimeoutMs = 8_000,
+                readTimeoutMs = 8_000
+            ).apply {
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+            }
+            try {
+                val code = conn.responseCode
+                val location = conn.getHeaderField("Location").orEmpty()
+                val extractedTag = extractTagFromReleaseUrl(location)
+                    ?: if (code in 200..299) extractTagFromReleaseUrl(conn.url?.toString().orEmpty()) else null
+                if (!extractedTag.isNullOrBlank()) {
+                    val apkName = "day-in-school-$extractedTag-release.apk"
+                    val rawApkUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$extractedTag/$apkName"
+                    return GitHubReleaseInfo(
+                        tagName = extractedTag,
+                        versionNormalized = normalizeVersion(extractedTag),
+                        releaseTitle = "日在校园 $extractedTag",
+                        changelog = "检测到新版本 $extractedTag（通过 $label 通道发版解析）。",
+                        publishedAt = "",
+                        htmlUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$extractedTag",
+                        apkDownloadUrl = rawApkUrl,
+                        apkFileName = apkName,
+                        apkSizeBytes = 0L,
+                        hasNewerVersion = isRemoteVersionNewer(currentVersionName, extractedTag),
+                        currentVersionNormalized = normalizeVersion(currentVersionName),
+                        resolvedViaRoute = label
+                    )
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+        throw IllegalStateException("未能从镜像或重定向通道解析最新版本号")
+    }
+
+    internal fun extractTagFromReleaseUrl(urlOrLocation: String): String? {
+        val marker = "/releases/tag/"
+        val idx = urlOrLocation.indexOf(marker, ignoreCase = true)
+        if (idx < 0) return null
+        val tail = urlOrLocation.substring(idx + marker.length)
+            .substringBefore("?")
+            .substringBefore("#")
+            .substringBefore("/")
+            .trim()
+        return tail.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * 测试当前代理配置连通性与响应延迟（毫秒）。
+     */
+    suspend fun testProxyConnectivity(proxyConfig: NetworkProxyConfig): ProxyConnectivityReport =
+        withContext(Dispatchers.IO) {
+            val startMs = System.currentTimeMillis()
+            val summary = proxyConfig.statusSummaryLabel()
+            val sampleGitHubAssetUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases"
+            val testTargetUrl = when (proxyConfig.mode) {
+                ProxyMode.PRESET_MIRROR, ProxyMode.CUSTOM_REVERSE_PROXY -> {
+                    val prefix = proxyConfig.activeReverseProxyPrefix()
+                    if (prefix.isNullOrBlank()) {
+                        return@withContext ProxyConnectivityReport(
+                            reachable = false,
+                            latencyMillis = 0L,
+                            routeSummary = summary,
+                            detailMessage = "请先填写有效的自定义反向代理 URL 前缀"
+                        )
+                    }
+                    proxyConfig.applyReverseProxyPrefix(sampleGitHubAssetUrl, prefix)
+                }
+                ProxyMode.HTTP_PROXY, ProxyMode.SOCKS_PROXY, ProxyMode.DIRECT -> LATEST_RELEASE_API
+            }
+
+            runCatching {
+                val conn = openProxiedConnection(
+                    targetUrl = testTargetUrl,
+                    proxyConfig = proxyConfig,
+                    connectTimeoutMs = 6_000,
+                    readTimeoutMs = 6_000
+                ).apply {
+                    requestMethod = "GET"
+                    instanceFollowRedirects = false
+                }
                 try {
                     val code = conn.responseCode
-                    if (code !in 200..299) {
-                        throw IllegalStateException("GitHub API 响应异常 (HTTP $code)")
-                    }
-                    val bodyText = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    parseReleaseJson(bodyText, currentVersionName)
+                    val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                    val ok = code in 200..399
+                    ProxyConnectivityReport(
+                        reachable = ok,
+                        latencyMillis = elapsed,
+                        routeSummary = summary,
+                        detailMessage = if (ok) {
+                            "连通正常 · 响应耗时 ${elapsed}ms ($summary)"
+                        } else {
+                            "连接返回 HTTP $code · 耗时 ${elapsed}ms ($summary)"
+                        }
+                    )
                 } finally {
                     conn.disconnect()
                 }
+            }.getOrElse { err ->
+                val elapsed = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                ProxyConnectivityReport(
+                    reachable = false,
+                    latencyMillis = elapsed,
+                    routeSummary = summary,
+                    detailMessage = "连接失败 (${err.javaClass.simpleName}: ${err.message ?: "超时"})"
+                )
             }
         }
 
@@ -156,11 +381,12 @@ object GitHubReleaseUpdater {
     }
 
     /**
-     * 直接拉取 GitHub Release APK 到本地缓存目录，并实时回调下载进度。
+     * 直接拉取 GitHub Release APK 到本地缓存目录（支持多路镜像代理与自动回退），并实时回调下载进度。
      */
     suspend fun downloadReleaseApk(
         context: Context,
         releaseInfo: GitHubReleaseInfo,
+        proxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
@@ -173,58 +399,79 @@ object GitHubReleaseUpdater {
             val targetFile = File(updatesDir, safeFileName)
             val tempFile = File(updatesDir, "$safeFileName.part")
 
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
+            val candidateUrls = proxyConfig.buildGitHubDownloadCandidateUrls(rawUrl)
+            var lastDownloadError: Throwable? = null
 
-            val conn = openConnectionFollowingRedirects(rawUrl)
-            try {
-                val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: releaseInfo.apkSizeBytes
-                conn.inputStream.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(16 * 1024)
-                        var downloaded = 0L
-                        var lastCallbackTime = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read <= 0) break
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            val now = System.currentTimeMillis()
-                            if (now - lastCallbackTime >= 80L || downloaded == totalBytes) {
-                                lastCallbackTime = now
-                                onProgress(downloaded, totalBytes)
+            for (candidateUrl in candidateUrls) {
+                val routeAttempt = runCatching {
+                    if (tempFile.exists()) {
+                        tempFile.delete()
+                    }
+                    val conn = openConnectionFollowingRedirects(candidateUrl, proxyConfig)
+                    try {
+                        val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: releaseInfo.apkSizeBytes
+                        conn.inputStream.use { input ->
+                            FileOutputStream(tempFile).use { output ->
+                                val buffer = ByteArray(16 * 1024)
+                                var downloaded = 0L
+                                var lastCallbackTime = 0L
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read <= 0) break
+                                    output.write(buffer, 0, read)
+                                    downloaded += read
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastCallbackTime >= 80L || downloaded == totalBytes) {
+                                        lastCallbackTime = now
+                                        onProgress(downloaded, totalBytes)
+                                    }
+                                }
+                                output.flush()
+                                onProgress(downloaded, maxOf(totalBytes, downloaded))
                             }
                         }
-                        output.flush()
-                        onProgress(downloaded, maxOf(totalBytes, downloaded))
+                    } finally {
+                        conn.disconnect()
+                    }
+
+                    if (!tempFile.exists() || tempFile.length() < 64 * 1024L) {
+                        throw IllegalStateException("下载内容不完整，自动切换备用线路")
                     }
                 }
-            } finally {
-                conn.disconnect()
+
+                if (routeAttempt.isSuccess) {
+                    if (targetFile.exists()) {
+                        targetFile.delete()
+                    }
+                    if (!tempFile.renameTo(targetFile)) {
+                        tempFile.copyTo(targetFile, overwrite = true)
+                        tempFile.delete()
+                    }
+                    return@runCatching targetFile
+                } else {
+                    lastDownloadError = routeAttempt.exceptionOrNull()
+                }
             }
 
-            if (targetFile.exists()) {
-                targetFile.delete()
-            }
-            if (!tempFile.renameTo(targetFile)) {
-                tempFile.copyTo(targetFile, overwrite = true)
-                tempFile.delete()
-            }
-            targetFile
+            throw (lastDownloadError ?: IllegalStateException("所有代理与镜像线路均下载失败"))
         }
     }
 
-    private fun openConnectionFollowingRedirects(initialUrl: String): HttpURLConnection {
+    private fun openConnectionFollowingRedirects(
+        initialUrl: String,
+        proxyConfig: NetworkProxyConfig
+    ): HttpURLConnection {
         var currentUrl = initialUrl
         var redirects = 0
         while (redirects < 6) {
-            val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+            val conn = openProxiedConnection(
+                targetUrl = currentUrl,
+                proxyConfig = proxyConfig,
+                connectTimeoutMs = 12_000,
+                readTimeoutMs = 25_000
+            ).apply {
                 requestMethod = "GET"
                 instanceFollowRedirects = false
-                connectTimeout = 15_000
-                readTimeout = 30_000
-                setRequestProperty("User-Agent", USER_AGENT)
                 setRequestProperty("Accept", "application/octet-stream, */*")
             }
             val code = conn.responseCode

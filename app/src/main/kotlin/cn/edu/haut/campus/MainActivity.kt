@@ -299,7 +299,10 @@ fun HautCampusRootApp(
             val currentVer = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.9.0"
             }.getOrDefault("0.9.0")
-            GitHubReleaseUpdater.checkLatestRelease(currentVer).onSuccess { release ->
+            GitHubReleaseUpdater.checkLatestRelease(
+                currentVersionName = currentVer,
+                proxyConfig = prefs.networkProxyConfig
+            ).onSuccess { release ->
                 if (release.hasNewerVersion) {
                     detectedUpdateRelease = release
                 }
@@ -555,6 +558,7 @@ fun HautCampusRootApp(
                                 val dlRes = GitHubReleaseUpdater.downloadReleaseApk(
                                     context = context,
                                     releaseInfo = releaseToPrompt,
+                                    proxyConfig = prefs.networkProxyConfig,
                                     onProgress = { dl, total ->
                                         if (total > 0L) {
                                             startupDownloadProgress = dl.toFloat() / total.toFloat()

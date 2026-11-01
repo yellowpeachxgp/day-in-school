@@ -107,10 +107,14 @@ import cn.edu.haut.campus.core.model.CampusClubCategory
 import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.PresetLocalProxyClient
+import cn.edu.haut.campus.core.model.PresetMirrorNode
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
+import cn.edu.haut.campus.core.model.ProxyMode
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetThemeStyle
@@ -1710,6 +1714,23 @@ fun SettingsScreen(
                 }
             }
 
+            // 8.5 网络代理与云服务加速配置
+            NetworkProxyAndCloudConfigSection(
+                proxyConfig = prefs.networkProxyConfig,
+                onSaveProxyConfig = { updatedConfig ->
+                    scope.launch {
+                        repository.updateNetworkProxyConfig(updatedConfig)
+                        feedbackText = "已更新代理与云服务配置：${updatedConfig.statusSummaryLabel()}"
+                    }
+                },
+                onResetProxyConfig = {
+                    scope.launch {
+                        repository.resetNetworkProxyConfig()
+                        feedbackText = "已恢复默认加速镜像配置"
+                    }
+                }
+            )
+
             // 9. 版本更新
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -1723,7 +1744,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "检查新版本并下载安装包",
+                            text = "检查新版本并下载安装包 · 当前线路：${prefs.networkProxyConfig.statusSummaryLabel()}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1775,7 +1796,7 @@ fun SettingsScreen(
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = releaseStatusMessage
-                            ?: if (isCheckingRelease) "正在检查新版本..."
+                            ?: if (isCheckingRelease) "正在通过「${prefs.networkProxyConfig.statusSummaryLabel()}」检查新版本..."
                             else "当前版本：v$currentInstalledVersion · Android ${Build.VERSION.RELEASE}",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
@@ -1789,7 +1810,7 @@ fun SettingsScreen(
                     releaseInfoState?.let { info ->
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "最新版本：${info.releaseTitle} (${info.tagName}) · ${info.publishedAt.ifBlank { "最新" }}",
+                            text = "最新版本：${info.releaseTitle} (${info.tagName}) · 通道：${info.resolvedViaRoute}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1830,18 +1851,21 @@ fun SettingsScreen(
                         onClick = {
                             scope.launch {
                                 isCheckingRelease = true
-                                releaseStatusMessage = "正在检查更新..."
-                                val res = GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion)
+                                releaseStatusMessage = "正在通过「${prefs.networkProxyConfig.statusSummaryLabel()}」检查更新..."
+                                val res = GitHubReleaseUpdater.checkLatestRelease(
+                                    currentVersionName = currentInstalledVersion,
+                                    proxyConfig = prefs.networkProxyConfig
+                                )
                                 isCheckingRelease = false
                                 res.onSuccess { info ->
                                     releaseInfoState = info
                                     releaseStatusMessage = if (info.hasNewerVersion) {
-                                        "发现新版本 ${info.tagName}，点击右侧按钮下载安装。"
+                                        "发现新版本 ${info.tagName}（${info.resolvedViaRoute}），点击右侧按钮下载安装。"
                                     } else {
-                                        "当前 v$currentInstalledVersion 已是最新版本。"
+                                        "当前 v$currentInstalledVersion 已是最新版本（${info.resolvedViaRoute}）。"
                                     }
                                 }.onFailure { err ->
-                                    releaseStatusMessage = "检查失败：${err.message ?: "请检查网络连接"}"
+                                    releaseStatusMessage = "检查失败：${err.message ?: "请尝试在上方切换加速镜像或代理"}"
                                 }
                             }
                         },
@@ -1875,25 +1899,29 @@ fun SettingsScreen(
                                 scope.launch {
                                     isDownloadingApk = true
                                     apkDownloadProgress = 0f
-                                    releaseStatusMessage = "正在获取下载地址..."
+                                    releaseStatusMessage = "正在通过「${prefs.networkProxyConfig.statusSummaryLabel()}」获取下载地址..."
                                     val targetInfo = releaseInfoState
-                                        ?: GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion).getOrNull()
+                                        ?: GitHubReleaseUpdater.checkLatestRelease(
+                                            currentVersionName = currentInstalledVersion,
+                                            proxyConfig = prefs.networkProxyConfig
+                                        ).getOrNull()
                                     if (targetInfo == null) {
                                         isDownloadingApk = false
-                                        releaseStatusMessage = "获取版本信息失败，请检查网络后重试。"
+                                        releaseStatusMessage = "获取版本信息失败，请在上方切换代理线路后重试。"
                                         return@launch
                                     }
                                     releaseInfoState = targetInfo
                                     val dlRes = GitHubReleaseUpdater.downloadReleaseApk(
                                         context = context,
                                         releaseInfo = targetInfo,
+                                        proxyConfig = prefs.networkProxyConfig,
                                         onProgress = { dl, total ->
                                             if (total > 0L) {
                                                 apkDownloadProgress = dl.toFloat() / total.toFloat()
                                                 val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
                                                 val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
                                                 releaseStatusMessage =
-                                                    "正在下载 ${targetInfo.tagName}：${(apkDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
+                                                    "正在加速下载 ${targetInfo.tagName}：${(apkDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
                                             }
                                         }
                                     )
@@ -1912,7 +1940,7 @@ fun SettingsScreen(
                                                 releaseStatusMessage = "打开安装失败：${err.message}"
                                             }
                                     }.onFailure { err ->
-                                        releaseStatusMessage = "下载失败：${err.message ?: "请检查网络"}"
+                                        releaseStatusMessage = "下载失败：${err.message ?: "请检查网络或切换代理线路"}"
                                     }
                                 }
                             }
@@ -2969,6 +2997,413 @@ private fun ThemePaletteAndCardLayoutSection(
                 ) {
                     Text("恢复默认卡片布局")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NetworkProxyAndCloudConfigSection(
+    proxyConfig: NetworkProxyConfig,
+    onSaveProxyConfig: (NetworkProxyConfig) -> Unit,
+    onResetProxyConfig: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var customPrefixInput by remember(proxyConfig.customReverseProxyPrefix) {
+        mutableStateOf(proxyConfig.customReverseProxyPrefix)
+    }
+    var hostInput by remember(proxyConfig.proxyHost) {
+        mutableStateOf(proxyConfig.proxyHost)
+    }
+    var portInput by remember(proxyConfig.proxyPort) {
+        mutableStateOf(proxyConfig.proxyPort.toString())
+    }
+    var cloudEndpointInput by remember(proxyConfig.customCloudApiBaseUrl) {
+        mutableStateOf(proxyConfig.customCloudApiBaseUrl)
+    }
+    var expandCloudEndpoint by remember { mutableStateOf(false) }
+    var isTestingConnectivity by remember { mutableStateOf(false) }
+    var connectivityMessage by remember { mutableStateOf<String?>(null) }
+    var connectivityOk by remember { mutableStateOf<Boolean?>(null) }
+
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = "网络代理与云服务加速",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "预置镜像加速、自定义反代、HTTP/SOCKS5 代理与云服务端点",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            XPeachStatusBadge(
+                text = proxyConfig.statusSummaryLabel(),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 1. 代理类型横向胶囊切换
+        Text(
+            text = "代理类型",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            for (mode in ProxyMode.entries) {
+                XPeachFilterPill(
+                    label = mode.label,
+                    selected = proxyConfig.mode == mode,
+                    onClick = {
+                        connectivityMessage = null
+                        onSaveProxyConfig(proxyConfig.copy(mode = mode))
+                    }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = proxyConfig.mode.subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 2. 根据代理类型展示对应配置面板
+        when (proxyConfig.mode) {
+            ProxyMode.PRESET_MIRROR -> {
+                Text(
+                    text = "预置加速镜像线路",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (rowNodes in PresetMirrorNode.entries.chunked(2)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (node in rowNodes) {
+                                val selected = proxyConfig.presetMirrorKey == node.key
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                        )
+                                        .border(
+                                            width = if (selected) 1.5.dp else 0.6.dp,
+                                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable {
+                                            connectivityMessage = null
+                                            onSaveProxyConfig(proxyConfig.copy(presetMirrorKey = node.key))
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = node.label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                    Text(
+                                        text = node.prefixUrl.removePrefix("https://").trimEnd('/'),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            ProxyMode.CUSTOM_REVERSE_PROXY -> {
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "自定义反向代理 URL 前缀（支持 Cloudflare Worker / 自建 Nginx 反代）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = customPrefixInput,
+                            onValueChange = { customPrefixInput = it },
+                            label = { Text("反代前缀 (如 https://gh.example.com/)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                val normalized = NetworkProxyConfig.normalizePrefixUrl(customPrefixInput)
+                                customPrefixInput = normalized
+                                connectivityMessage = null
+                                onSaveProxyConfig(proxyConfig.copy(customReverseProxyPrefix = normalized))
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("保存", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
+
+            ProxyMode.HTTP_PROXY, ProxyMode.SOCKS_PROXY -> {
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "常用代理客户端快捷填入",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (preset in PresetLocalProxyClient.entries) {
+                            val isCurrent = proxyConfig.mode == preset.mode &&
+                                proxyConfig.proxyHost == preset.host &&
+                                proxyConfig.proxyPort == preset.port
+                            XPeachFilterPill(
+                                label = preset.label,
+                                selected = isCurrent,
+                                onClick = {
+                                    hostInput = preset.host
+                                    portInput = preset.port.toString()
+                                    connectivityMessage = null
+                                    onSaveProxyConfig(
+                                        proxyConfig.copy(
+                                            mode = preset.mode,
+                                            proxyHost = preset.host,
+                                            proxyPort = preset.port
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = hostInput,
+                            onValueChange = { hostInput = it },
+                            label = { Text("主机 Host") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.4f)
+                        )
+                        OutlinedTextField(
+                            value = portInput,
+                            onValueChange = { portInput = it.filter { ch -> ch.isDigit() } },
+                            label = { Text("端口 Port") },
+                            singleLine = true,
+                            modifier = Modifier.weight(0.9f)
+                        )
+                        Button(
+                            onClick = {
+                                val validPort = (portInput.toIntOrNull() ?: 7890).coerceIn(1, 65535)
+                                val cleanHost = hostInput.trim().ifBlank { "127.0.0.1" }
+                                hostInput = cleanHost
+                                portInput = validPort.toString()
+                                connectivityMessage = null
+                                onSaveProxyConfig(
+                                    proxyConfig.copy(
+                                        proxyHost = cleanHost,
+                                        proxyPort = validPort
+                                    )
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("应用", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
+
+            ProxyMode.DIRECT -> {
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "当前使用直连模式访问 GitHub 与云服务；建议保持下方「主线路异常时自动切换备用镜像」开启以确保无代理环境下仍可正常下载更新。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 3. 自动回退镜像开关
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("主线路异常时自动切换备用镜像", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "首选节点连接超时或失败时，自动轮询其余预置镜像线路",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = proxyConfig.autoFallbackMirror,
+                onCheckedChange = { enabled ->
+                    onSaveProxyConfig(proxyConfig.copy(autoFallbackMirror = enabled))
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // 4. 云服务 API 网关端点配置（支持后续云同步与自建云服务）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("云服务 API 网关地址", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = proxyConfig.customCloudApiBaseUrl,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            XPeachFilterPill(
+                label = if (expandCloudEndpoint) "收起" else "自定义网关",
+                selected = expandCloudEndpoint,
+                onClick = { expandCloudEndpoint = !expandCloudEndpoint }
+            )
+        }
+
+        AnimatedVisibility(visible = expandCloudEndpoint) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = cloudEndpointInput,
+                    onValueChange = { cloudEndpointInput = it },
+                    label = { Text("云服务 Base URL") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        val cleaned = cloudEndpointInput.trim().ifBlank { NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL }
+                        cloudEndpointInput = cleaned
+                        onSaveProxyConfig(proxyConfig.copy(customCloudApiBaseUrl = cleaned))
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("保存", maxLines = 1, softWrap = false)
+                }
+            }
+        }
+
+        if (connectivityMessage != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = connectivityMessage.orEmpty(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (connectivityOk == true) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 5. 连通性测速与恢复默认按钮
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                enabled = !isTestingConnectivity,
+                onClick = {
+                    scope.launch {
+                        isTestingConnectivity = true
+                        connectivityMessage = "正在测试「${proxyConfig.statusSummaryLabel()}」连通性..."
+                        connectivityOk = true
+                        val report = GitHubReleaseUpdater.testProxyConnectivity(proxyConfig)
+                        isTestingConnectivity = false
+                        connectivityOk = report.reachable
+                        connectivityMessage = report.detailMessage
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = if (isTestingConnectivity) "正在测速..." else "测试代理连通性",
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+
+            TextButton(
+                onClick = {
+                    connectivityMessage = null
+                    onResetProxyConfig()
+                }
+            ) {
+                Text("恢复默认", maxLines = 1, softWrap = false)
             }
         }
     }

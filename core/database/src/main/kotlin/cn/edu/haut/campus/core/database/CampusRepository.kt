@@ -39,9 +39,12 @@ import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.ImportDiffPreview
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PresetMirrorNode
+import cn.edu.haut.campus.core.model.ProxyMode
 import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ReminderGlobalConfig
 import cn.edu.haut.campus.core.model.ReminderTaskDomain
@@ -114,7 +117,8 @@ data class AppPreferencesState(
     val timetableInterchangeEnabled: Boolean = true,
     val allowUnverifiedUtilityTransport: Boolean = false,
     val lastUtilitySampleEpochMillis: Long? = null,
-    val selectedFocusMinutes: Int = 25
+    val selectedFocusMinutes: Int = 25,
+    val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig()
 )
 
 class CampusRepository private constructor(
@@ -196,6 +200,13 @@ class CampusRepository private constructor(
         val HOME_CARD_ORDER = stringPreferencesKey("home_card_order_v1")
         val HIDDEN_HOME_CARDS = stringPreferencesKey("hidden_home_cards_v1")
         val FULL_WIDTH_HOME_CARDS = stringPreferencesKey("full_width_home_cards_v1")
+        val PROXY_MODE = stringPreferencesKey("network_proxy_mode_v1")
+        val PROXY_PRESET_MIRROR_KEY = stringPreferencesKey("network_proxy_preset_mirror_key_v1")
+        val PROXY_CUSTOM_PREFIX = stringPreferencesKey("network_proxy_custom_prefix_v1")
+        val PROXY_HOST = stringPreferencesKey("network_proxy_host_v1")
+        val PROXY_PORT = intPreferencesKey("network_proxy_port_v1")
+        val PROXY_AUTO_FALLBACK = booleanPreferencesKey("network_proxy_auto_fallback_v1")
+        val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
     }
 
     init {
@@ -277,7 +288,21 @@ class CampusRepository private constructor(
             timetableInterchangeEnabled = prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
             allowUnverifiedUtilityTransport = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
             lastUtilitySampleEpochMillis = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS],
-            selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180)
+            selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
+            networkProxyConfig = extractNetworkProxyConfig(prefs)
+        )
+    }
+
+    private fun extractNetworkProxyConfig(prefs: androidx.datastore.preferences.core.Preferences): NetworkProxyConfig {
+        return NetworkProxyConfig(
+            mode = ProxyMode.fromKey(prefs[PrefKeys.PROXY_MODE]),
+            presetMirrorKey = prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] ?: PresetMirrorNode.GHFAST_TOP.key,
+            customReverseProxyPrefix = prefs[PrefKeys.PROXY_CUSTOM_PREFIX] ?: "",
+            proxyHost = prefs[PrefKeys.PROXY_HOST]?.takeIf { it.isNotBlank() } ?: "127.0.0.1",
+            proxyPort = (prefs[PrefKeys.PROXY_PORT] ?: 7890).coerceIn(1, 65535),
+            autoFallbackMirror = prefs[PrefKeys.PROXY_AUTO_FALLBACK] ?: true,
+            customCloudApiBaseUrl = prefs[PrefKeys.CLOUD_API_BASE_URL]?.takeIf { it.isNotBlank() }
+                ?: NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
         )
     }
 
@@ -1031,6 +1056,36 @@ class CampusRepository private constructor(
 
     suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {
         appContext.appDataStore.edit { it[PrefKeys.AUTO_CHECK_UPDATE] = enabled }
+    }
+
+    suspend fun getNetworkProxyConfigSnapshot(): NetworkProxyConfig {
+        val prefs = appContext.appDataStore.data.first()
+        return extractNetworkProxyConfig(prefs)
+    }
+
+    suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.PROXY_MODE] = config.mode.key
+            prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
+            prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
+            prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
+            prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
+            prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
+            prefs[PrefKeys.CLOUD_API_BASE_URL] = config.customCloudApiBaseUrl.trim()
+                .ifBlank { NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL }
+        }
+    }
+
+    suspend fun resetNetworkProxyConfig() {
+        appContext.appDataStore.edit { prefs ->
+            prefs.remove(PrefKeys.PROXY_MODE)
+            prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
+            prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
+            prefs.remove(PrefKeys.PROXY_HOST)
+            prefs.remove(PrefKeys.PROXY_PORT)
+            prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
+            prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+        }
     }
 
     suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
