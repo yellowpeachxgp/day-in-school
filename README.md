@@ -8,10 +8,9 @@
 
 ## 1. 主要功能
 
-- **今日日程与比例时间轴**：
-  - 展示当前或下一节课、上课教室、连堂小课间、跨课大课间及换楼提示。
-  - 临近考试自动置顶显示考场、座位号与倒计时。
-  - 顶部提供「自习专注」快捷状态条，支持单节课程临时改教室、改时间或标记停课，支持按日查看课表。
+- **今日首页（当天课表 + Bento 卡片板块模块）**：
+  - 上半部分仅保留「7 日周历条 + 当天课表卡片」，在课程行内直接高亮「正在上课 / 下一节课」并提供行内一键「去教室」导航按钮与课间换楼提示，支持顶栏一键切换学期。
+  - 下半部分采用 Bento 混合卡片布局：顶部通栏窄卡展示最临近的 1 场考试倒计时与学业入口，下方 2×3 双列网格汇聚「自习专注」「宿舍水电」「座位预约」「馆藏检索」「空教室查询」「社团与频道」六大板块实时摘要，点击进入对应独立二级页。
 - **周课表**：
   - 周一至周日 1–10 节网格视图，支持周次切换、回本周、手动添加课程与颜色修改。
 - **学业与考试**：
@@ -57,11 +56,11 @@
 | `:core:designsystem` | Android Library (Compose) | Material 3 主题配色（工大蓝默认主题与 Android 12+ 壁纸动态取色）、通用组件及 `CampusMetricChart` 趋势图组件 |
 | `:core:academic` | Android Library | 教务 CAS 登录、课表/考试/成绩抓取、CSV 解析及 `univ-timetable/v1` 双向课表适配器 (`TimetableInterchangeAdapter`) |
 | `:core:location` | Android Library | 多源实时定位、手机朝向角监听、校内步行路网 A* 规划与外部地图调用 |
-| `:feature:today` | Android Library (Compose) | 今日页：当前/下节课卡片、自习专注快捷条、近期考试、日时间轴、单门课程提醒与临时调课弹窗 |
-| `:feature:timetable` | Android Library (Compose) | 课表页：周视图网格、周次切换、手动加课与课程编辑 |
+| `:feature:today` | Android Library (Compose) | 今日首页：7 日周历条、当天课表流式卡片（行内高亮与一键去教室）、Bento 混合卡片板块模块（通栏考试窄卡 + 双列六大校园服务卡片） |
+| `:feature:timetable` | Android Library (Compose) | 课表页：周视图网格、周次切换、学期切换、手动加课与课程编辑 |
 | `:feature:grades` | Android Library (Compose) | 学业页：绩点统计、绩点测算、学期趋势、成绩明细与考试安排列表 |
 | `:feature:map` | Android Library (Compose) | 地图页：校区交互地图、实时定位跟随、教室搜索、校内步行路线与转向提示 |
-| `:feature:settings` | Android Library (Compose) | 我的页：校园服务 2×2 矩阵（宿舍水电 / 馆藏检索 / 座位预约 / 自习专注）、空教室查询、调休设置、社团名录、提醒设置、小组件固定与在线更新 |
+| `:feature:settings` | Android Library (Compose) | 我的页与校园二级页：宿舍水电、馆藏检索、座位预约、自习专注、空教室查询、社团与频道、调休设置、提醒设置、小组件固定与在线更新 |
 | `:feature:importer` | Android Library (Compose) | 导入页：教务账号同步、网页登录导入、`univ-timetable/v1` (`.md`/`.json`) 导入与导出、CSV 导入与差异预览 |
 | `:widget:common` | Android Library | 小组件数据快照加载与定时刷新调度 |
 | `:widget:nextclass` | Android Library | `2×2` 下一节课桌面小组件 |

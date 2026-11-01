@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -73,9 +74,11 @@ import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.domain.ReminderPolicyEngine
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.model.ClassStatus
+import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ReminderKind
 import cn.edu.haut.campus.core.model.ReminderTaskDomain
@@ -91,6 +94,7 @@ import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -107,6 +111,12 @@ fun TodayScreen(
     onNavigateToImporter: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToFocus: () -> Unit = {},
+    onNavigateToElectricity: () -> Unit = {},
+    onNavigateToLibraryCatalog: () -> Unit = {},
+    onNavigateToLibrarySeats: () -> Unit = {},
+    onNavigateToEmptyClassrooms: () -> Unit = {},
+    onNavigateToCommunity: () -> Unit = {},
+    onNavigateToGrades: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -126,6 +136,9 @@ fun TodayScreen(
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
     val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
+    val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
+    val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
+    val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
     val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
     val reminderOverrides by repository.reminderEventOverridesFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
@@ -337,126 +350,10 @@ fun TodayScreen(
                 }
             }
 
-            // 2. 焦点卡片（当前/下一节课 或 同步引导）
-            if (courses.isEmpty()) {
-                XPeachCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "还没有课表",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "登录教务系统即可导入本学期课表",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Button(
-                            onClick = onNavigateToImporter,
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text("去同步", maxLines = 1, softWrap = false)
-                        }
-                    }
-                }
-            } else {
-                NextClassHeroCard(
-                    activeOrNext = snapshot.activeOrNextClass,
-                    activeBreak = snapshot.activeBreakInterval,
-                    nextDayHint = snapshot.nextClassDayHint,
-                    totalTodayClasses = snapshot.items.size,
-                    termId = term?.id ?: "default",
-                    globalReminderEnabled = prefs.reminderConfig.enabled,
-                    defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
-                    tasksByEventKey = tasksByEventKey,
-                    overridesByScope = overridesByScope,
-                    onNavigateBuilding = onNavigateToMapWithRoom,
-                    onCardClick = { selectedOccurrenceForDetail = it }
-                )
-            }
-
-            if (prefs.focusEnabled && prefs.showTodayFocusQuickPill) {
-                val runningFocus = activeFocusSession
-                val todayDoneMins = remember(completedFocusSessions, todayDate) {
-                    completedFocusSessions.sumOf { s ->
-                        val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
-                        val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
-                        if (d == todayDate) s.durationMinutes else 0
-                    }
-                }
-                XPeachCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onNavigateToFocus),
-                    containerColor = if (runningFocus != null) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (runningFocus != null) {
-                            val remMin = ((runningFocus.remainingMillis(System.currentTimeMillis()) + 59_999L) / 60_000L)
-                                .coerceAtLeast(1L)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "自习专注进行中 · 约剩 $remMin 分钟",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                                Text(
-                                    text = "点击查看实时倒计时或结束专注",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                )
-                            }
-                            XPeachFilterPill(
-                                label = "查看",
-                                selected = true,
-                                onClick = onNavigateToFocus
-                            )
-                        } else {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "自习专注",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = if (todayDoneMins > 0) "今日已专注 $todayDoneMins 分钟"
-                                    else "设定 15 / 25 / 45 分钟倒计时，到点通知提醒",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            XPeachFilterPill(
-                                label = "去专注",
-                                selected = false,
-                                onClick = onNavigateToFocus
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 3. 流式日程列表（清新呼吸感卡片流，彻底告别生硬网格线与挤字）
+            // 2. 上半部分：唯一「当天课表卡片」（合并当前/下一节课状态与行内一键去教室，移除顶部重复大卡）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                val heroItem = snapshot.activeOrNextClass
+                val activeBreak = snapshot.activeBreakInterval
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -466,11 +363,51 @@ fun TodayScreen(
                         text = if (selectedDate == todayDate) "今日课程" else "当日课程",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    Text(
-                        text = if (snapshot.items.isEmpty()) "无排课" else "共 ${snapshot.items.size} 节",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (heroItem != null) {
+                        val isOngoing = heroItem.status == ClassStatus.IN_PROGRESS
+                        val badgeLabel = if (isOngoing) {
+                            "上课中 · ${heroItem.statusText}"
+                        } else {
+                            "下一节 ${heroItem.occurrence.startTime.format(TIME_FMT)}"
+                        }
+                        XPeachStatusBadge(
+                            text = badgeLabel,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = when {
+                                courses.isEmpty() -> "未导入"
+                                snapshot.items.isEmpty() -> "今日无课"
+                                else -> "共 ${snapshot.items.size} 节已结束"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (activeBreak != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = "${activeBreak.label} · ${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
+                                (activeBreak.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        activeBreak.roomTransferText?.let { transfer ->
+                            Text(
+                                text = transfer,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -486,6 +423,7 @@ fun TodayScreen(
                     MinimalistDayScheduleFlow(
                         items = snapshot.items,
                         breakIntervals = snapshot.breakIntervals,
+                        highlightedOccurrenceId = heroItem?.occurrence?.occurrenceId,
                         termId = term?.id ?: "default",
                         globalReminderEnabled = prefs.reminderConfig.enabled,
                         defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
@@ -497,151 +435,29 @@ fun TodayScreen(
                 }
             }
 
-            // 4. 教务考试动态提醒卡片（涵盖期初补缓考、期中分散/随堂考、期末集中考）
-            val relevantExams = remember(examSchedules, term, selectedDate, todayDate) {
-                val activeTermId = term?.id
-                val sameDateExams = examSchedules.filter { it.examDate == selectedDate }
-                if (sameDateExams.isNotEmpty()) {
-                    sameDateExams
-                } else {
-                    val termMatches = if (activeTermId != null) {
-                        examSchedules.filter { it.termId == activeTermId }
-                    } else {
-                        emptyList()
-                    }
-                    (termMatches.ifEmpty { examSchedules })
-                        .sortedWith(
-                            compareBy<ExamScheduleItem> {
-                                val d = it.examDate
-                                when {
-                                    d == null -> 2
-                                    !d.isBefore(todayDate) -> 0 // 未开始/进行中优先
-                                    else -> 1
-                                }
-                            }.thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
-                        )
-                        .take(6)
-                }
-            }
-
-            if (relevantExams.isNotEmpty()) {
-                XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (examSchedules.any { it.examDate == selectedDate }) "今日考试" else "考试安排",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        XPeachStatusBadge(
-                            text = "共 ${relevantExams.size} 场",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (exam in relevantExams) {
-                            val daysLeft = exam.examDate?.let { ChronoUnit.DAYS.between(todayDate, it) }
-                            val countdownBadge = when {
-                                daysLeft == null -> "待定"
-                                daysLeft == 0L -> "今天考试"
-                                daysLeft == 1L -> "明天考试"
-                                daysLeft > 1L -> "还有 ${daysLeft} 天"
-                                else -> "已结束"
-                            }
-                            val isUpcoming = daysLeft != null && daysLeft >= 0L
-
-                            XPeachWell(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(end = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = exam.courseName,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f, fill = false)
-                                            )
-                                            XPeachStatusBadge(
-                                                text = exam.examStageLabel,
-                                                containerColor = if (isUpcoming) {
-                                                    MaterialTheme.colorScheme.primaryContainer
-                                                } else {
-                                                    MaterialTheme.colorScheme.surface
-                                                },
-                                                contentColor = if (isUpcoming) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
-                                            )
-                                            XPeachStatusBadge(
-                                                text = countdownBadge,
-                                                containerColor = if (daysLeft == 0L || daysLeft == 1L) {
-                                                    Color(0xFFFEF3C7)
-                                                } else {
-                                                    MaterialTheme.colorScheme.surface
-                                                },
-                                                contentColor = if (daysLeft == 0L || daysLeft == 1L) {
-                                                    Color(0xFFB45309)
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
-                                            )
-                                        }
-                                        Text(
-                                            text = exam.rawTimeText,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = buildString {
-                                                append(exam.rawRoom)
-                                                if (!exam.seatNumber.isNullOrBlank()) {
-                                                    append(" · 座位 ${exam.seatNumber}号")
-                                                }
-                                                append(" · ${exam.examFormat}")
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-
-                                    XPeachFilterPill(
-                                        label = "去考场",
-                                        selected = isUpcoming,
-                                        onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // 3. 下半部分：Bento 混合卡片式板块模块（通栏考试窄卡 + 双列高频校园模块）
+            TodayCampusBentoSection(
+                examSchedules = examSchedules,
+                activeTermId = term?.id,
+                selectedDate = selectedDate,
+                todayDate = todayDate,
+                currentNow = currentNow,
+                teachingWeek = snapshot.teachingWeek ?: 1,
+                rules = rules,
+                activeFocusSession = activeFocusSession,
+                completedFocusSessions = completedFocusSessions,
+                onlineRooms = onlineRooms,
+                utilityMeters = utilityMeters,
+                utilityReadings = utilityReadings,
+                onNavigateToGrades = onNavigateToGrades,
+                onNavigateToMapWithRoom = onNavigateToMapWithRoom,
+                onNavigateToFocus = onNavigateToFocus,
+                onNavigateToElectricity = onNavigateToElectricity,
+                onNavigateToLibrarySeats = onNavigateToLibrarySeats,
+                onNavigateToLibraryCatalog = onNavigateToLibraryCatalog,
+                onNavigateToEmptyClassrooms = onNavigateToEmptyClassrooms,
+                onNavigateToCommunity = onNavigateToCommunity
+            )
 
             Spacer(modifier = Modifier.height(92.dp))
         }
@@ -1228,175 +1044,343 @@ private fun WeekDaySelectorStrip(
 }
 
 @Composable
-private fun NextClassHeroCard(
-    activeOrNext: TimelineOccurrenceState?,
-    activeBreak: ScheduleBreakInterval?,
-    nextDayHint: cn.edu.haut.campus.core.model.NextClassDayHint?,
-    totalTodayClasses: Int,
-    termId: String,
-    globalReminderEnabled: Boolean,
-    defaultLeadMinutes: Int,
-    tasksByEventKey: Map<String, ReminderTaskDomain>,
-    overridesByScope: Map<String, ReminderEventOverride>,
-    onNavigateBuilding: (String) -> Unit,
-    onCardClick: (TimelineOccurrenceState) -> Unit
+private fun TodayCampusBentoSection(
+    examSchedules: List<ExamScheduleItem>,
+    activeTermId: String?,
+    selectedDate: LocalDate,
+    todayDate: LocalDate,
+    currentNow: ZonedDateTime,
+    teachingWeek: Int,
+    rules: List<CourseScheduleRule>,
+    activeFocusSession: cn.edu.haut.campus.core.model.FocusSessionDomain?,
+    completedFocusSessions: List<cn.edu.haut.campus.core.model.FocusSessionDomain>,
+    onlineRooms: List<cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain>,
+    utilityMeters: List<cn.edu.haut.campus.core.model.UtilityMeterDomain>,
+    utilityReadings: List<cn.edu.haut.campus.core.model.UtilityReadingDomain>,
+    onNavigateToGrades: () -> Unit,
+    onNavigateToMapWithRoom: (String) -> Unit,
+    onNavigateToFocus: () -> Unit,
+    onNavigateToElectricity: () -> Unit,
+    onNavigateToLibrarySeats: () -> Unit,
+    onNavigateToLibraryCatalog: () -> Unit,
+    onNavigateToEmptyClassrooms: () -> Unit,
+    onNavigateToCommunity: () -> Unit
 ) {
+    // 1. 通栏窄卡：近期考试 / 学业摘要（仅展示最临近的 1 场考试，绝不铺开长列表）
+    val nearestExam = remember(examSchedules, activeTermId, selectedDate, todayDate) {
+        val sameDate = examSchedules.firstOrNull { it.examDate == selectedDate }
+        if (sameDate != null) {
+            sameDate
+        } else {
+            val pool = if (activeTermId != null) {
+                examSchedules.filter { it.termId == activeTermId }.ifEmpty { examSchedules }
+            } else {
+                examSchedules
+            }
+            pool.filter { it.examDate == null || !it.examDate!!.isBefore(todayDate) }
+                .minByOrNull { it.examDate ?: LocalDate.of(2099, 12, 31) }
+        }
+    }
+
     XPeachCard(
         modifier = Modifier.fillMaxWidth(),
-        containerColor = if (activeOrNext != null) {
-            MaterialTheme.colorScheme.surface
+        onClick = onNavigateToGrades,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        if (nearestExam != null) {
+            val daysLeft = nearestExam.examDate?.let { ChronoUnit.DAYS.between(todayDate, it) }
+            val countdownBadge = when {
+                daysLeft == null -> "待定"
+                daysLeft == 0L -> "今天考试"
+                daysLeft == 1L -> "明天考试"
+                daysLeft > 1L -> "还有 ${daysLeft} 天"
+                else -> "考试安排"
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachStatusBadge(
+                            text = countdownBadge,
+                            containerColor = if (daysLeft == 0L || daysLeft == 1L) {
+                                Color(0xFFFEF3C7)
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                            contentColor = if (daysLeft == 0L || daysLeft == 1L) {
+                                Color(0xFFB45309)
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        )
+                        Text(
+                            text = nearestExam.courseName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = "${nearestExam.rawTimeText} · ${nearestExam.rawRoom}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                XPeachFilterPill(
+                    label = "去考场",
+                    selected = daysLeft == 0L || daysLeft == 1L,
+                    onClick = { onNavigateToMapWithRoom(nearestExam.rawRoom) }
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "考试与学业成绩",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (examSchedules.isNotEmpty()) {
+                            "本学期共记录 ${examSchedules.size} 场考试 · 查看成绩与 GPA"
+                        } else {
+                            "查看学期成绩、GPA 测算与考试安排"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                XPeachStatusBadge(
+                    text = "学业",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+
+    // 2. 双列 Bento 网格：第 1 行（自习专注 + 宿舍水电）
+    val todayDoneMins = remember(completedFocusSessions, todayDate) {
+        completedFocusSessions.sumOf { s ->
+            val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
+            val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
+            if (d == todayDate) s.durationMinutes else 0
+        }
+    }
+    val runningFocus = activeFocusSession
+    val focusBadge = if (runningFocus != null) "进行中" else "番茄钟"
+    val focusSub = if (runningFocus != null) {
+        val remMin = ((runningFocus.remainingMillis(System.currentTimeMillis()) + 59_999L) / 60_000L)
+            .coerceAtLeast(1L)
+        "剩余约 $remMin 分钟"
+    } else if (todayDoneMins > 0) {
+        "今日已专注 $todayDoneMins 分钟"
+    } else {
+        "15 / 25 / 45 分钟倒计时"
+    }
+
+    val (elecBadge, elecSub) = remember(onlineRooms, utilityMeters, utilityReadings) {
+        if (onlineRooms.isNotEmpty()) {
+            val room = onlineRooms.first()
+            val firstDev = decodeOnlineDevicesJson(room.devicesJson).firstOrNull()
+            val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑寝室"
+            b to room.roomName
+        } else if (utilityMeters.isNotEmpty()) {
+            val meter = utilityMeters.first()
+            val latest = utilityReadings.filter { it.meterId == meter.id }
+                .maxByOrNull { it.recordedAtEpochMs }
+            val b = if (latest != null) "${latest.value}${meter.unit}" else "台账"
+            b to "${meter.roomName} · ${meter.name}"
+        } else {
+            "水电" to "寝室电费余量与趋势"
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "自习专注",
+            badgeText = focusBadge,
+            subtitle = focusSub,
+            highlighted = runningFocus != null,
+            onClick = onNavigateToFocus
+        )
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "宿舍水电",
+            badgeText = elecBadge,
+            subtitle = elecSub,
+            onClick = onNavigateToElectricity
+        )
+    }
+
+    // 3. 双列 Bento 网格：第 2 行（座位预约 + 馆藏检索）
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "座位预约",
+            badgeText = "图书馆",
+            subtitle = "实时余位与在线选座",
+            onClick = onNavigateToLibrarySeats
+        )
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "馆藏检索",
+            badgeText = "OPAC",
+            subtitle = "书目搜索与在馆状态",
+            onClick = onNavigateToLibraryCatalog
+        )
+    }
+
+    // 4. 双列 Bento 网格：第 3 行（空教室查询 + 社团与频道）
+    val (currentSlotLabel, freeRoomsCount) = remember(currentNow, selectedDate, teachingWeek, activeTermId, rules) {
+        val nowTime = currentNow.toLocalTime()
+        val (slotStart, slotEnd, label) = when {
+            nowTime < LocalTime.of(9, 50) -> Triple(1, 2, "1-2节")
+            nowTime < LocalTime.of(12, 0) -> Triple(3, 4, "3-4节")
+            nowTime < LocalTime.of(15, 50) -> Triple(5, 6, "5-6节")
+            nowTime < LocalTime.of(17, 50) -> Triple(7, 8, "7-8节")
+            else -> Triple(9, 10, "9-10节")
+        }
+        val activeRules = rules.filter { r ->
+            (activeTermId == null || r.termId == activeTermId) &&
+                r.weekday == selectedDate.dayOfWeek &&
+                (r.weeks.isEmpty() || teachingWeek in r.weeks) &&
+                r.startPeriod <= slotEnd &&
+                r.endPeriod >= slotStart
+        }
+        val candidateRooms = listOf(
+            "5101", "5103", "5105", "5201", "5202", "5204", "5301", "5303", "5402",
+            "6101", "6102", "6201", "6203", "6205", "6301", "6304", "6401",
+            "7102", "7104", "7201", "7203", "7302", "7305", "7401",
+            "8101", "8103", "8201", "8202", "8301", "8303", "8402",
+            "9101", "9102", "9201", "9204", "9301", "9303",
+            "11101", "11102", "11201", "11203", "11301", "11302"
+        )
+        val freeCount = candidateRooms.count { roomCode ->
+            activeRules.none { r -> r.rawRoom.contains(roomCode) }
+        }
+        label to freeCount
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "空教室查询",
+            badgeText = currentSlotLabel,
+            subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查空闲教室",
+            onClick = onNavigateToEmptyClassrooms
+        )
+        BentoModuleTile(
+            modifier = Modifier.weight(1f),
+            title = "社团与频道",
+            badgeText = "${PresetCampusCommunityCatalog.defaultCampusClubs.size} 社团",
+            subtitle = "社团招新群与校园频道",
+            onClick = onNavigateToCommunity
+        )
+    }
+}
+
+@Composable
+private fun BentoModuleTile(
+    modifier: Modifier = Modifier,
+    title: String,
+    badgeText: String,
+    subtitle: String,
+    highlighted: Boolean = false,
+    onClick: () -> Unit
+) {
+    XPeachCard(
+        modifier = modifier,
+        containerColor = if (highlighted) {
+            MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surface
         },
-        borderColor = if (activeOrNext != null) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+        borderColor = if (highlighted) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
-        onClick = if (activeOrNext != null) {
-            { onCardClick(activeOrNext) }
-        } else null
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        onClick = onClick
     ) {
-        if (activeBreak != null) {
-            XPeachWell(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-            ) {
-                Text(
-                    text = "${activeBreak.label} · ${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
-                        (activeBreak.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                activeBreak.roomTransferText?.let { transfer ->
-                    Text(
-                        text = transfer,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        if (activeOrNext != null) {
-            val occ = activeOrNext.occurrence
-            val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
-            val reminderBadge = formatOccurrenceReminderBadge(
-                termId = termId,
-                item = activeOrNext,
-                globalReminderEnabled = globalReminderEnabled,
-                defaultLeadMinutes = defaultLeadMinutes,
-                tasksByEventKey = tasksByEventKey,
-                overridesByScope = overridesByScope
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    XPeachStatusBadge(
-                        text = if (isOngoing) "上课中" else "下一节"
-                    )
-                    Text(
-                        text = activeOrNext.statusText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    if (!reminderBadge.isNullOrBlank()) {
-                        XPeachStatusBadge(
-                            text = reminderBadge,
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-                Text(
-                    text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                text = occ.courseName,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = if (highlighted) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 6.dp)
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${occ.rawRoom}${occ.teacher?.let { " · $it" } ?: ""} (${occ.periodRangeText})",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 10.dp)
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (!isOngoing) {
-                        XPeachFilterPill(
-                            label = "稍后提醒",
-                            selected = false,
-                            onClick = { onCardClick(activeOrNext) }
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = { onNavigateBuilding(occ.rawRoom) },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("导航", maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-        } else {
-            Text(
-                text = if (totalTodayClasses == 0) "今日无课，好好休息" else "今日 $totalTodayClasses 节课已全部结束",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
+            XPeachStatusBadge(
+                text = badgeText,
+                containerColor = if (highlighted) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
+                },
+                contentColor = MaterialTheme.colorScheme.primary
             )
-            if (nextDayHint != null) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "下次课：${nextDayHint.nextDate.format(DATE_TITLE_FMT)} ${nextDayHint.firstCourseStartTime.format(TIME_FMT)} · ${nextDayHint.firstCourseName}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (highlighted) {
+                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1416,7 +1400,7 @@ private fun EmptyDayTimelineBox(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = if (hasAnyCourses) "当日没有安排课程" else "暂无课程数据",
+                text = if (hasAnyCourses) "当日没有安排课程" else "还没有课表，登录教务系统即可导入本学期课表",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1438,7 +1422,7 @@ private fun EmptyDayTimelineBox(
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text("导入课表", maxLines = 1, softWrap = false)
+                    Text("去同步课表", maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -1446,12 +1430,13 @@ private fun EmptyDayTimelineBox(
 }
 
 /**
- * 极简流式日程列表：左列展示起止时间与节次，中列圆角彩条，右列呼吸感课程卡片，课间休息作为轻量连接条自然穿插。
+ * 极简流式日程列表：左列展示起止时间与节次，中列圆角彩条，右列呼吸感课程卡片，行内高亮正在上课/下一节课并提供一键去教室。
  */
 @Composable
 private fun MinimalistDayScheduleFlow(
     items: List<TimelineOccurrenceState>,
     breakIntervals: List<ScheduleBreakInterval>,
+    highlightedOccurrenceId: String?,
     termId: String,
     globalReminderEnabled: Boolean,
     defaultLeadMinutes: Int,
@@ -1472,6 +1457,7 @@ private fun MinimalistDayScheduleFlow(
             val occ = item.occurrence
             val isFinished = item.status == ClassStatus.FINISHED
             val isOngoing = item.status == ClassStatus.IN_PROGRESS
+            val isHighlighted = isOngoing || (highlightedOccurrenceId != null && occ.occurrenceId == highlightedOccurrenceId)
             val baseColor = Color(occ.colorArgb)
             val reminderBadge = formatOccurrenceReminderBadge(
                 termId = termId,
@@ -1543,13 +1529,16 @@ private fun MinimalistDayScheduleFlow(
                         .clip(RoundedCornerShape(14.dp))
                         .clickable { onItemClick(item) },
                     shape = RoundedCornerShape(14.dp),
-                    color = if (isOngoing) {
-                        baseColor.copy(alpha = 0.12f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                    color = when {
+                        isOngoing -> baseColor.copy(alpha = 0.14f)
+                        isHighlighted -> baseColor.copy(alpha = 0.08f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
                     },
-                    border = if (isOngoing) {
-                        androidx.compose.foundation.BorderStroke(1.dp, baseColor.copy(alpha = 0.45f))
+                    border = if (isHighlighted) {
+                        androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            baseColor.copy(alpha = if (isOngoing) 0.5f else 0.35f)
+                        )
                     } else null
                 ) {
                     Column(
@@ -1575,20 +1564,36 @@ private fun MinimalistDayScheduleFlow(
                             Text(
                                 text = item.statusText,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isOngoing) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isOngoing) baseColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isHighlighted) baseColor else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 softWrap = false
                             )
                         }
 
-                        Text(
-                            text = "${occ.rawRoom}${occ.teacher?.let { " · $it" } ?: ""}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${occ.rawRoom}${occ.teacher?.let { " · $it" } ?: ""}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp)
+                            )
+                            if (isHighlighted && occ.rawRoom.isNotBlank()) {
+                                XPeachFilterPill(
+                                    label = "去教室",
+                                    selected = isOngoing,
+                                    onClick = { onNavigateRoom(occ.rawRoom) }
+                                )
+                            }
+                        }
 
                         if (!reminderBadge.isNullOrBlank()) {
                             Text(

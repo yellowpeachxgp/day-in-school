@@ -120,7 +120,9 @@ import cn.edu.haut.campus.core.reminder.focus.FocusNotificationFactory
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
+import cn.edu.haut.campus.feature.settings.CampusCommunityScreen
 import cn.edu.haut.campus.feature.settings.DormElectricityScreen
+import cn.edu.haut.campus.feature.settings.EmptyClassroomScreen
 import cn.edu.haut.campus.feature.settings.LibraryCatalogScreen
 import cn.edu.haut.campus.feature.settings.LibrarySeatBookingScreen
 import cn.edu.haut.campus.feature.settings.SettingsScreen
@@ -352,6 +354,23 @@ fun HautCampusRootApp(
                 onBack = { overlayScreen = null }
             )
         }
+        overlayScreen == "empty_classrooms" -> {
+            EmptyClassroomScreen(
+                repository = repository,
+                onNavigateToMapWithRoom = { room ->
+                    overlayScreen = null
+                    mapRoomQuery = room
+                    currentTab = PrimaryBottomTab.CAMPUS
+                },
+                onBack = { overlayScreen = null }
+            )
+        }
+        overlayScreen == "community" -> {
+            CampusCommunityScreen(
+                repository = repository,
+                onBack = { overlayScreen = null }
+            )
+        }
         !prefs.hasCompletedOnboarding -> {
             OnboardingWelcomeScreen(
                 repository = repository,
@@ -382,6 +401,12 @@ fun HautCampusRootApp(
                             onNavigateToImporter = { overlayScreen = "importer" },
                             onNavigateToSettings = { currentTab = PrimaryBottomTab.PROFILE },
                             onNavigateToFocus = { overlayScreen = "focus" },
+                            onNavigateToElectricity = { overlayScreen = "electricity" },
+                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                            onNavigateToCommunity = { overlayScreen = "community" },
+                            onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
                             resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
                         )
                         PrimaryBottomTab.TIMETABLE -> TimetableScreen(
@@ -419,6 +444,8 @@ fun HautCampusRootApp(
                             onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                             onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
                             onNavigateToFocus = { overlayScreen = "focus" },
+                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                            onNavigateToCommunity = { overlayScreen = "community" },
                             resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
                         )
                     }
