@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按超星智慧教务公开的表单/JSON/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/course/table?termId=2026-2027-1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"courseTable\" class=\"grid\">\n<tr><th>课程编号</th><th>课程名称</th><th>教师</th><th>上课时间</th><th>上课地点</th></tr>\n<tr><td>CX1001</td><td>线性代数</td><td>赵老师</td><td>星期一 第1-2节 1-16周<br/>星期三 第3-4节 1-16周</td><td>C301</td></tr>\n<tr><td>CX1002</td><td>概率论</td><td>钱老师</td><td>星期二 第5-6节 1-8周</td><td>C305</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

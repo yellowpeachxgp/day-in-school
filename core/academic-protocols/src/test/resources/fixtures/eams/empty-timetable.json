@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/timetable?termId=2026-2027-1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"timetable\" class=\"grid\">\n<tr><th>课程号</th><th>课程名</th><th>学分</th><th>教师</th><th>星期</th><th>节次</th><th>周次</th><th>地点</th></tr>\n</table>\n<div class=\"empty\">本学期暂无排课</div>\n</body></html>"
+  }
+ ]
+}

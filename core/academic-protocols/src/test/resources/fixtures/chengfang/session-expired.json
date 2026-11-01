@@ -1,0 +1,22 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/score/list.jsp?page=1",
+   "status": 302,
+   "headers": {
+    "Location": "/academic/login.jsp"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/login.jsp",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>乘方教务系统 - 登录</title></head>\n<body>\n<div class=\"login-box\">\n<form id=\"loginForm\" name=\"loginForm\" method=\"post\" action=\"/academic/login.jsp\">\n<input type=\"hidden\" name=\"csrfToken\" value=\"synthetic-cf-token-001\">\n<input type=\"hidden\" name=\"loginType\" value=\"student\">\n<label>学号 <input type=\"text\" name=\"userName\" id=\"userName\" value=\"\"></label>\n<label>密码 <input type=\"password\" name=\"userPassword\" id=\"userPassword\" value=\"\"></label>\n<input type=\"submit\" name=\"loginButton\" value=\"登录\">\n</form>\n</div>\n</body></html>"
+  }
+ ]
+}

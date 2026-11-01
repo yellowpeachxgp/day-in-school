@@ -1,0 +1,13 @@
+{
+ "exchanges": [
+  {
+   "method": "POST",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xscj/xscjcx_query",
+   "status": 302,
+   "headers": {
+    "Location": "https://evil.example.net/steal"
+   },
+   "body": ""
+  }
+ ]
+}

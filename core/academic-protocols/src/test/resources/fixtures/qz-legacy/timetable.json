@@ -1,0 +1,22 @@
+{
+ "exchanges": [
+  {
+   "method": "POST",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xskb/xskb_query",
+   "status": 302,
+   "headers": {
+    "Location": "/jsxsd/xskb/xskb_list.do?xnxq=2024-2025-1"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xskb/xskb_list.do?xnxq=2024-2025-1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=GBK"
+   },
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>\u00bd\u00cc\u00ce\u00f1\u00cf\u00b5\u00cd\u00b3</title></head><body>\n<table id=\"kbgrid\" class=\"Nsb_r_list\">\n<tr><th>\u00bd\u00da\u00b4\u00ce</th><th>\u00d0\u00c7\u00c6\u00da\u00d2\u00bb</th><th>\u00d0\u00c7\u00c6\u00da\u00b6\u00fe</th><th>\u00d0\u00c7\u00c6\u00da\u00c8\u00fd</th><th>\u00d0\u00c7\u00c6\u00da\u00cb\u00c4</th><th>\u00d0\u00c7\u00c6\u00da\u00ce\u00e5</th><th>\u00d0\u00c7\u00c6\u00da\u00c1\u00f9</th><th>\u00d0\u00c7\u00c6\u00da\u00c8\u00d5</th></tr>\n<tr><td>1</td><td rowspan=\"2\">\u00b8\u00df\u00b5\u00c8\u00ca\u00fd\u00d1\u00a7<br>\u00d5\u00c5\u00c0\u00cf\u00ca\u00a6<br>1-16\u00d6\u00dc<br>A101</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>2</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>3</td><td></td><td></td><td rowspan=\"2\">\u00b4\u00f3\u00d1\u00a7\u00ce\u00ef\u00c0\u00ed<br>\u00c0\u00ee\u00c0\u00cf\u00ca\u00a6<br>1-8\u00d6\u00dc<br>B203</td><td></td><td></td><td></td><td></td></tr>\n<tr><td>4</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>5</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>6</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>7</td><td></td><td rowspan=\"2\">\u00b4\u00f3\u00d1\u00a7\u00d3\u00a2\u00d3\u00ef<br>\u00cd\u00f5\u00c0\u00cf\u00ca\u00a6<br>1-16\u00d6\u00dc<br>C305</td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>8</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>9</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>10</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>11</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>12</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

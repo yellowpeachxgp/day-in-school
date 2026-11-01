@@ -1,0 +1,22 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xs_main.aspx",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/xskbcx.aspx?gnmkdm=N121603\">学生个人课表</a><a href=\"/xscjcx.aspx?gnmkdm=N121605\">成绩查询</a><a href=\"/xskscx.aspx?gnmkdm=N121604\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xskscx.aspx?gnmkdm=N121604",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><form action=\"/xskscx.aspx?gnmkdm=N121604\" method=\"post\"><input type=\"hidden\" name=\"__VIEWSTATE\" value=\"v1\"/></form></body></html>"
+    },
+    {
+      "method": "POST",
+      "url": "https://jw.zf-legacy.example.edu/xskscx.aspx?gnmkdm=N121604",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><table><tr><th>考试课程</th><th>考试时间</th><th>考试地点</th><th>座位号</th><th>考试性质</th></tr><tr><td>操作系统</td><td>2026-01-15 09:00-11:00</td><td>A201</td><td>12</td><td>正常考试</td></tr><tr><td>编译原理</td><td>2026-01-17 14:00-16:00</td><td>B102</td><td>25</td><td>正常考试</td></tr></table></body></html>"
+    }
+  ]
+}

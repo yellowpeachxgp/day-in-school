@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/grade/list.json?page=1",
+   "status": 302,
+   "headers": {
+    "Location": "https://evil.example.net/steal"
+   },
+   "body": ""
+  }
+ ]
+}

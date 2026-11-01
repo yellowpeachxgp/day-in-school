@@ -1,0 +1,20 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按青果教务公开的 ASP.NET 表单/网格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xscjcx.aspx?gnmkdm=N121605&page=1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"Datagrid1\" class=\"Nsb_r_list\">\n<tr><th>序号</th><th>课程代码</th><th>课程名称</th><th>课程性质</th><th>学分</th><th>成绩</th><th>绩点</th></tr>\n\n<tr><td>1</td><td>QG101</td><td>高等数学</td><td>必修</td><td>4.0</td><td>88</td><td>3.6</td></tr>\n<tr><td>2</td><td>QG202</td><td>大学物理</td><td>必修</td><td>3.5</td><td>91</td><td>3.9</td></tr>\n</table>\n<span id=\"lblPage\">共 2 页，当前第 1 页</span>\n</body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xscjcx.aspx?gnmkdm=N121605&page=2",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"Datagrid1\" class=\"Nsb_r_list\">\n<tr><th>序号</th><th>课程代码</th><th>课程名称</th><th>课程性质</th><th>学分</th><th>成绩</th><th>绩点</th></tr>\n\n<tr><td>3</td><td>QG303</td><td>大学英语</td><td>选修</td><td>2.0</td><td>77</td><td>2.7</td></tr>\n</table>\n<span id=\"lblPage\">共 2 页，当前第 2 页</span>\n</body></html>"
+  }
+ ]
+}

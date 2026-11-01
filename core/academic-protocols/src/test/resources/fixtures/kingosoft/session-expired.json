@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按青果教务公开的 ASP.NET 表单/网格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xscjcx.aspx?gnmkdm=N121605&page=1",
+   "status": 401,
+   "headers": {},
+   "body": ""
+  }
+ ]
+}

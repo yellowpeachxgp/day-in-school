@@ -1,0 +1,13 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/grades",
+   "status": 302,
+   "headers": {
+    "Location": "https://evil.example.net/steal"
+   },
+   "body": ""
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/course/table.jsp?termId=2026-1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"courseTable\" class=\"grid\">\n<tr><th>课程代码</th><th>课程名称</th><th>学分</th><th>任课教师</th><th>星期</th><th>节次</th><th>周次</th><th>上课地点</th></tr>\n</table>\n<div class=\"hint\">本学期没有排课记录</div>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,28 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"items\": [{\"kch\": \"B0800010\", \"kcmc\": \"高等数学\", \"cj\": \"88\"}], \"total\": 3, \"totalPage\": 3, \"currentPage\": 1, \"pageSize\": 1}"
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=2",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"items\": [{\"kch\": \"B0800020\", \"kcmc\": \"大学物理\", \"cj\": \"91\"}], \"total\": 3, \"totalPage\": 3, \"currentPage\": 2, \"pageSize\": 1}"
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=3",
+   "status": 500,
+   "body": ""
+  }
+ ]
+}

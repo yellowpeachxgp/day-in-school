@@ -1,0 +1,13 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/xtgl/index_initMenu.html",
+      "status": 302,
+      "headers": {
+        "Location": "https://evil.example.com/phish"
+      },
+      "body": ""
+    }
+  ]
+}

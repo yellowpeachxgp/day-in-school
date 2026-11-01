@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按超星智慧教务公开的表单/JSON/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/exam/table",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"examTable\" class=\"grid\">\n<tr><th>序号</th><th>课程编号</th><th>课程名称</th><th>考试日期</th><th>开始时间</th><th>结束时间</th><th>考场</th><th>座位号</th><th>考核方式</th></tr>\n<tr><td>1</td><td>CX1001</td><td>线性代数</td><td>2027-01-11</td><td>09:00</td><td>11:00</td><td>C301</td><td>15</td><td>闭卷</td></tr>\n<tr><td>2</td><td>CX1002</td><td>概率论</td><td>2027-01-14</td><td>14:00</td><td>16:00</td><td>C305</td><td>03</td><td>闭卷</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

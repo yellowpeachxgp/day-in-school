@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按超星智慧教务公开的表单/JSON/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/api/terms",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"success\":true,\"result\":{\"list\":[{\"code\":\"2026-2027-1\",\"title\":\"2026-2027学年第一学期\",\"startDate\":\"2026-09-01\",\"endDate\":\"2027-01-15\"},{\"code\":\"2025-2026-2\",\"title\":\"2025-2026学年第二学期\",\"startDate\":\"2026-02-20\",\"endDate\":\"2026-07-10\"}]}}"
+  }
+ ]
+}

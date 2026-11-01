@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/term/list.jsp",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+   },
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"termList\" class=\"grid\">\n<tr><th>学期代码</th><th>学期名称</th><th>开始日期</th><th>结束日期</th></tr>\n<tr><td>2026-1</td><td>2026-2027学年第一学期</td><td>2026-09-01</td><td>2027-01-15</td></tr>\n<tr><td>2025-2</td><td>2025-2026学年第二学期</td><td>2026-02-20</td><td>2026-07-10</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

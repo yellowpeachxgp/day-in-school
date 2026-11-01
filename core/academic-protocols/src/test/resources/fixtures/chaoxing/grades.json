@@ -1,0 +1,20 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按超星智慧教务公开的表单/JSON/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/score/table?page=1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"gradeTable\" class=\"grid\">\n<tr><th>序号</th><th>课程编号</th><th>课程名称</th><th>修读性质</th><th>学分</th><th>成绩</th><th>绩点</th></tr>\n\n<tr><td>1</td><td>CX1001</td><td>线性代数</td><td>必修</td><td>3.0</td><td>86</td><td>3.4</td></tr>\n<tr><td>2</td><td>CX1002</td><td>概率论</td><td>必修</td><td>2.5</td><td>92</td><td>3.9</td></tr>\n</table>\n<div class=\"pager\">每页 2 条，第 1 页</div>\n</body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/score/table?page=2",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"gradeTable\" class=\"grid\">\n<tr><th>序号</th><th>课程编号</th><th>课程名称</th><th>修读性质</th><th>学分</th><th>成绩</th><th>绩点</th></tr>\n\n<tr><td>3</td><td>CX1003</td><td>大学物理</td><td>选修</td><td>2.0</td><td>78</td><td>2.8</td></tr>\n</table>\n<div class=\"pager\">每页 2 条，第 2 页</div>\n</body></html>"
+  }
+ ]
+}

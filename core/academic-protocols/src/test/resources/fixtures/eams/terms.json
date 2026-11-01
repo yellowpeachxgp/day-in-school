@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/term/list.json",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"code\":0,\"message\":\"ok\",\"data\":{\"terms\":[{\"id\":\"2026-2027-1\",\"name\":\"2026-2027学年第一学期\",\"startDate\":\"2026-09-01\",\"endDate\":\"2027-01-15\"},{\"id\":\"2025-2026-2\",\"name\":\"2025-2026学年第二学期\",\"startDate\":\"2026-02-20\",\"endDate\":\"2026-07-10\"}]}}"
+  }
+ ]
+}

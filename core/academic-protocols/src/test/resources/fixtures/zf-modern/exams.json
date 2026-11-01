@@ -1,0 +1,16 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/xtgl/index_initMenu.html",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/jwglxt/xtgl/cxxnxq_cxXnxq.html\">学年学期</a><a href=\"/jwglxt/kbcx/xskbcx_cxXsKb.html\">学生课表查询</a><a href=\"/jwglxt/cjcx/cjcx_cxDgXscj.html\">学生成绩查询</a><a href=\"/jwglxt/kwgl/kscx_cxXsksxxIndex.html\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/kwgl/kscx_cxXsksxxIndex.html?doType=query",
+      "status": 200,
+      "body": "{\"items\":[{\"kch\":\"CS101\",\"kcmc\":\"数据结构\",\"kssj\":\"2026-01-12 09:00-11:00\",\"cdmc\":\"6201\",\"zwh\":\"18\",\"ksxz\":\"期末考试\"},{\"kch\":\"MA102\",\"kcmc\":\"离散数学\",\"kssj\":\"2026-01-14 14:00-16:00\",\"cdmc\":\"5103\",\"zwh\":\"07\",\"ksxz\":\"期末考试\"}]}"
+    }
+  ]
+}

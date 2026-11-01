@@ -1,0 +1,16 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/xtgl/index_initMenu.html",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/jwglxt/xtgl/cxxnxq_cxXnxq.html\">学年学期</a><a href=\"/jwglxt/kbcx/xskbcx_cxXsKb.html\">学生课表查询</a><a href=\"/jwglxt/cjcx/cjcx_cxDgXscj.html\">学生成绩查询</a><a href=\"/jwglxt/kwgl/kscx_cxXsksxxIndex.html\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/kbcx/xskbcx_cxXsKb.html?xnm=2025&xqm=3",
+      "status": 200,
+      "body": "{\"kbList\":[{\"jxb_id\":\"JXB01\",\"kch\":\"CS101\",\"kcmc\":\"数据结构\",\"xm\":\"王教授\",\"xf\":\"4.0\",\"xqj\":1,\"jcs\":\"1-2\",\"zcd\":\"1-16周\",\"cdmc\":\"6201\"},{\"jxb_id\":\"JXB01\",\"kch\":\"CS101\",\"kcmc\":\"数据结构\",\"xm\":\"王教授\",\"xf\":\"4.0\",\"xqj\":3,\"jcs\":\"3-4\",\"zcd\":\"1-16周(双)\",\"cdmc\":\"6201\"},{\"jxb_id\":\"JXB02\",\"kch\":\"MA102\",\"kcmc\":\"离散数学\",\"xm\":\"赵老师\",\"xf\":\"3.0\",\"xqj\":2,\"jcs\":\"5-6\",\"zcd\":\"1-16周\",\"cdmc\":\"5103\"}]}"
+    }
+  ]
+}

@@ -81,7 +81,7 @@ class GatewayUrlPolicy(
     }
 
     fun resolve(currentUrl: String, location: String, purpose: RequestPurpose = RequestPurpose.READ): String {
-        val base = validate(currentUrl, purpose)
+        val base = validate(currentUrl, RequestPurpose.READ)
         val target = try {
             val relative = URI(location.trim())
             if (relative.rawFragment != null) throw refuse()

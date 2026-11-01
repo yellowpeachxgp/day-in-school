@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xskb/xskb_list.do?xnm=2024&xqm=3",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<table id=\"kbgrid\" class=\"Nsb_r_list\">\n<tr><th>节次</th><th>星期一</th><th>星期二</th><th>星期三</th><th>星期四</th><th>星期五</th><th>星期六</th><th>星期日</th></tr>\n<tr><td>1</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>2</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>3</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>4</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>5</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>6</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>7</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>8</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>9</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>10</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>11</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n<tr><td>12</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

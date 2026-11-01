@@ -1,0 +1,31 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/grade/list.json?page=1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"code\":0,\"data\":{\"pageNo\":1,\"pageSize\":2,\"total\":3,\"records\":[{\"id\":\"g-1\",\"courseCode\":\"E1001\",\"courseName\":\"数据结构\",\"credit\":\"4\",\"score\":\"88\",\"point\":\"3.6\",\"category\":\"必修\"}]}}"
+  },
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/grade/list.json?page=2",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"code\":0,\"data\":{\"pageNo\":2,\"pageSize\":2,\"total\":3,\"records\":[{\"id\":\"g-2\",\"courseCode\":\"E1002\",\"courseName\":\"操作系统\",\"credit\":\"3.5\",\"score\":\"91\",\"point\":\"3.9\",\"category\":\"必修\"}]}}"
+  },
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/grade/list.json?page=3",
+   "status": 500,
+   "headers": {},
+   "body": ""
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xs_main.aspx",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/xskbcx.aspx?gnmkdm=N121603\">学生个人课表</a><a href=\"/xscjcx.aspx?gnmkdm=N121605\">成绩查询</a><a href=\"/xskscx.aspx?gnmkdm=N121604\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xskbcx.aspx?gnmkdm=N121603",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><form action=\"/xskbcx.aspx?gnmkdm=N121603\" method=\"post\"><input type=\"hidden\" name=\"__VIEWSTATE\" value=\"v1\"/><select name=\"ddlXN\"><option value=\"2025-2026\" selected=\"selected\">2025-2026</option></select><select name=\"ddlXQ\"><option value=\"1\" selected=\"selected\">1</option></select></form></body></html>"
+    },
+    {
+      "method": "POST",
+      "url": "https://jw.zf-legacy.example.edu/xskbcx.aspx?gnmkdm=N121603",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><table><tr><th>节次</th><th>星期一</th><th>星期二</th><th>星期三</th><th>星期四</th><th>星期五</th></tr><tr><td>第1-2节</td><td>操作系统<br>1-16周<br>教室:A201<br>教师:陈教授</td><td></td><td>编译原理<br>1-16周<br>教室:B102<br>教师:周老师</td><td></td><td></td></tr><tr><td>第3-4节</td><td></td><td>计算机网络<br>1-16周<br>教室:C303<br>教师:林教授</td><td></td><td></td><td></td></tr></table></body></html>"
+    }
+  ]
+}

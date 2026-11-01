@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/grades",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<table id=\"grades\">\n<tr><th>科目</th><th>成绩</th><th>学分</th><th>绩点</th></tr>\n<tr><td>高等数学</td><td>88</td><td>4.0</td><td>3.7</td></tr>\n<tr><td>大学物理</td><td>91</td><td>3.5</td><td>4.0</td></tr>\n<tr><td>大学英语</td><td>77</td><td>2.0</td><td>2.7</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/course/table.jsp?termId=2026-1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+   },
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"courseTable\" class=\"grid\">\n<tr><th>课程代码</th><th>课程名称</th><th>学分</th><th>任课教师</th><th>星期</th><th>节次</th><th>周次</th><th>上课地点</th></tr>\n<tr><td>CF101</td><td>高等数学</td><td>4.0</td><td>张老师</td><td>星期一</td><td>1-2</td><td>1-16周</td><td>A101</td></tr>\n<tr><td>CF101</td><td>高等数学</td><td>4.0</td><td>张老师</td><td>星期三</td><td>3-4</td><td>1-16周</td><td>A101</td></tr>\n<tr><td>CF202</td><td>大学物理</td><td>3.5</td><td>李老师</td><td>周二</td><td>5-6</td><td>1-8周</td><td>B203</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

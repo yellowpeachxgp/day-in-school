@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按青果教务公开的 ASP.NET 表单/网格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xskbcx.aspx?gnmkdm=N121603",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<form name=\"Form1\" method=\"post\" action=\"./xskbcx.aspx?gnmkdm=N121603\" id=\"Form1\">\n<div>学年 <select name=\"ddlXN\" id=\"ddlXN\">\n<option selected=\"selected\" value=\"2026-2027\">2026-2027</option>\n</select></div>\n<div>学期 <select name=\"ddlXQ\" id=\"ddlXQ\">\n<option selected=\"selected\" value=\"1\">第一学期</option>\n<option value=\"2\">第二学期</option>\n</select></div>\n</form>\n</body></html>"
+  }
+ ]
+}

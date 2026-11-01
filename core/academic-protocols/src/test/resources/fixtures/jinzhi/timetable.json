@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/timetable?term=2024-2025-1",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<table id=\"timetable\">\n<tr><th>课程名称</th><th>上课时间</th><th>上课地点</th><th>任课教师</th><th>学分</th></tr>\n<tr><td>高等数学</td><td>星期一 第1-2节 1-16周</td><td>A101</td><td>张老师</td><td>4.0</td></tr>\n<tr><td>高等数学</td><td>星期三 第3-4节 1-16周</td><td>A101</td><td>张老师</td><td>4.0</td></tr>\n<tr><td>大学物理</td><td>星期二 第5-6节 1-8周</td><td>B203</td><td>李老师</td><td>3.5</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

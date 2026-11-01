@@ -1,0 +1,22 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xs_main.aspx",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/xskbcx.aspx?gnmkdm=N121603\">学生个人课表</a><a href=\"/xscjcx.aspx?gnmkdm=N121605\">成绩查询</a><a href=\"/xskscx.aspx?gnmkdm=N121604\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xscjcx.aspx?gnmkdm=N121605",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><form action=\"/xscjcx.aspx?gnmkdm=N121605\" method=\"post\"><input type=\"hidden\" name=\"__VIEWSTATE\" value=\"v1\"/><input type=\"submit\" name=\"btnCx\" value=\"查询\"/></form></body></html>"
+    },
+    {
+      "method": "POST",
+      "url": "https://jw.zf-legacy.example.edu/xscjcx.aspx?gnmkdm=N121605",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><table><tr><th>课程代码</th><th>课程名称</th><th>课程性质</th><th>学分</th><th>成绩</th><th>绩点</th></tr><tr><td>CS201</td><td>操作系统</td><td>必修</td><td>4.0</td><td>91</td><td>4.1</td></tr><tr><td>CS202</td><td>编译原理</td><td>必修</td><td>3.5</td><td>86</td><td>3.6</td></tr></table></body></html>"
+    }
+  ]
+}

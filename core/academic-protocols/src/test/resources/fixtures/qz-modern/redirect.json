@@ -1,0 +1,13 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=1",
+   "status": 302,
+   "headers": {
+    "Location": "https://evil.example.net/steal"
+   },
+   "body": ""
+  }
+ ]
+}

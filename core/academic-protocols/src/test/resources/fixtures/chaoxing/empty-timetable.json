@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按超星智慧教务公开的表单/JSON/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cx-synthetic.example.edu/academic/course/table?termId=2026-2027-1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"courseTable\" class=\"grid\">\n<tr><th>课程编号</th><th>课程名称</th><th>教师</th><th>上课时间</th><th>上课地点</th></tr>\n</table>\n<div class=\"empty\">本学期没有课程安排</div>\n</body></html>"
+  }
+ ]
+}

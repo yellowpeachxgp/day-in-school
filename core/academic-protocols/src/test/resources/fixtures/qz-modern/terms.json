@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/framework/xsMain.jsp",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<div class=\"term-switch\">\n<a href=\"/jsxsd/xskb/xskb_list.do?xnm=2024&xqm=3\">2024-2025学年第一学期</a>\n<a href=\"/jsxsd/xskb/xskb_list.do?xnm=2024&xqm=12\">2024-2025学年第二学期</a>\n<a href=\"/jsxsd/xscj/xscjcx?xnm=2024&xqm=3&page=1\">成绩查询</a>\n</div>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/training/plan?programId=CP-2026",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<h2>2026级计算机科学与技术专业培养方案</h2>\n<div class=\"summary\">毕业要求总学分：160</div>\n<table id=\"planTable\" class=\"grid\">\n<tr><th>课程代码</th><th>课程名称</th><th>课程性质</th><th>学分</th><th>建议学期</th></tr>\n<tr><td>E1001</td><td>数据结构</td><td>专业必修</td><td>4</td><td>第3学期</td></tr>\n<tr><td>E1002</td><td>操作系统</td><td>专业必修</td><td>3.5</td><td>第4学期</td></tr>\n<tr><td>E2001</td><td>人工智能导论</td><td>专业选修</td><td>2</td><td>第6学期</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

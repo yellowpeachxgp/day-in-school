@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按青果教务公开的 ASP.NET 表单/网格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xskscx.aspx?gnmkdm=N121604",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"Datagrid1\" class=\"Nsb_r_list\">\n<tr><th>序号</th><th>课程代码</th><th>课程名称</th><th>考试时间</th><th>考试地点</th><th>座位号</th><th>考试形式</th></tr>\n<tr><td>1</td><td>QG101</td><td>高等数学</td><td>2027-01-12 09:00-11:00</td><td>A101</td><td>12</td><td>闭卷</td></tr>\n<tr><td>2</td><td>QG202</td><td>大学物理</td><td>2027-01-15 14:00-16:00</td><td>B203</td><td>08</td><td>闭卷</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

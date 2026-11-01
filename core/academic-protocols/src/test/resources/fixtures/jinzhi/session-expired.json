@@ -1,0 +1,19 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/grades",
+   "status": 302,
+   "headers": {
+    "Location": "/academic/auth/login"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/auth/login",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<form id=\"fm1\" method=\"post\" action=\"https://sso.jinzhi.example.edu/cas/login\">\n  <input id=\"username\" name=\"username\" type=\"text\" value=\"\">\n  <input id=\"password\" name=\"password\" type=\"password\" value=\"\">\n  <input type=\"submit\" value=\"登录\">\n</form>\n</body></html>"
+  }
+ ]
+}

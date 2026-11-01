@@ -1,0 +1,22 @@
+{
+ "exchanges": [
+  {
+   "method": "POST",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xscj/xscjcx_query",
+   "status": 302,
+   "headers": {
+    "Location": "https://jw.qz-legacy.example.edu/jsxsd/"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=GBK"
+   },
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<form name=\"loginForm\" id=\"loginForm\" method=\"post\" action=\"/jsxsd/xk/LoginToXk\">\n  <input type=\"text\" name=\"j_username\" id=\"j_username\" value=\"\">\n  <input type=\"password\" name=\"j_password\" id=\"j_password\" value=\"\">\n  <input type=\"hidden\" name=\"encoded\" value=\"\">\n  <input type=\"submit\" value=\"登录\">\n</form>\n</body></html>"
+  }
+ ]
+}

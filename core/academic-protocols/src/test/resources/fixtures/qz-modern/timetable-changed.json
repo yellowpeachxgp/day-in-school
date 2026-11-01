@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xskb/xskb_list.do?xnm=2024&xqm=3",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<div class=\"notice\">系统维护中，请稍后访问</div>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,31 @@
+{
+ "exchanges": [
+  {
+   "method": "POST",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xscj/xscjcx_query",
+   "status": 302,
+   "headers": {
+    "Location": "/jsxsd/xscj/xscj_list.do?page=1"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xscj/xscj_list.do?page=1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=GBK"
+   },
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>\u00bd\u00cc\u00ce\u00f1\u00cf\u00b5\u00cd\u00b3</title></head><body>\n<table id=\"cjlist\" class=\"Nsb_r_list\">\n<tr><th>\u00d0\u00f2\u00ba\u00c5</th><th>\u00bf\u00ce\u00b3\u00cc\u00c3\u00fb\u00b3\u00c6</th><th>\u00d1\u00a7\u00b7\u00d6</th><th>\u00b3\u00c9\u00bc\u00a8</th><th>\u00bc\u00a8\u00b5\u00e3</th><th>\u00bf\u00bc\u00ca\u00d4\u00d0\u00d4\u00d6\u00ca</th></tr>\n<tr><td>1</td><td>\u00b8\u00df\u00b5\u00c8\u00ca\u00fd\u00d1\u00a7</td><td>4.0</td><td>88</td><td>3.7</td><td>\u00d5\u00fd\u00b3\u00a3\u00bf\u00bc\u00ca\u00d4</td></tr>\n<tr><td>2</td><td>\u00b4\u00f3\u00d1\u00a7\u00ce\u00ef\u00c0\u00ed</td><td>3.5</td><td>91</td><td>4.0</td><td>\u00d5\u00fd\u00b3\u00a3\u00bf\u00bc\u00ca\u00d4</td></tr>\n</table>\n<div class=\"pager\"><a href=\"/jsxsd/xscj/xscj_list.do?page=1\">1</a><a href=\"/jsxsd/xscj/xscj_list.do?page=2\">2</a></div>\n</body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/xscj/xscj_list.do?page=2",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=GBK"
+   },
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>\u00bd\u00cc\u00ce\u00f1\u00cf\u00b5\u00cd\u00b3</title></head><body>\n<table id=\"cjlist\" class=\"Nsb_r_list\">\n<tr><th>\u00d0\u00f2\u00ba\u00c5</th><th>\u00bf\u00ce\u00b3\u00cc\u00c3\u00fb\u00b3\u00c6</th><th>\u00d1\u00a7\u00b7\u00d6</th><th>\u00b3\u00c9\u00bc\u00a8</th><th>\u00bc\u00a8\u00b5\u00e3</th><th>\u00bf\u00bc\u00ca\u00d4\u00d0\u00d4\u00d6\u00ca</th></tr>\n<tr><td>1</td><td>\u00b4\u00f3\u00d1\u00a7\u00d3\u00a2\u00d3\u00ef</td><td>2.0</td><td>77</td><td>2.7</td><td>\u00d5\u00fd\u00b3\u00a3\u00bf\u00bc\u00ca\u00d4</td></tr>\n</table>\n<div class=\"pager\"><a href=\"/jsxsd/xscj/xscj_list.do?page=1\">1</a><a href=\"/jsxsd/xscj/xscj_list.do?page=2\">2</a></div>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按青果教务公开的 ASP.NET 表单/网格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://qg-synthetic.example.edu/xskbcx.aspx?gnmkdm=N121603&xn=2026-2027&xq=1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<form name=\"Form1\" method=\"post\" action=\"./xskbcx.aspx?gnmkdm=N121603\" id=\"Form1\">\n<table id=\"Table1\" class=\"Nsb_r_list\">\n<tr><th>节次</th><th>星期一</th><th>星期二</th><th>星期三</th><th>星期四</th><th>星期五</th><th>星期六</th><th>星期日</th></tr>\n<tr><td>第一大节<br/>第1-2节</td><td>高等数学<br/>张老师<br/>A101<br/>1-16周</td><td>&nbsp;</td><td>大学物理<br/>李老师<br/>B203<br/>1-8周</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>\n<tr><td>第二大节<br/>第3-4节</td><td>&nbsp;</td><td>大学英语<br/>王老师<br/>C305<br/>1-16周</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>\n</table>\n</form>\n</body></html>"
+  }
+ ]
+}

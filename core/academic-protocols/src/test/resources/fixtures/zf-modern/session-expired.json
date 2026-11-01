@@ -1,0 +1,10 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/xtgl/index_initMenu.html",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><form action=\"/jwglxt/xtgl/login_slogin.html\" method=\"post\"><input type=\"text\" name=\"username\"/><input type=\"password\" name=\"password\"/></form></body></html>"
+    }
+  ]
+}

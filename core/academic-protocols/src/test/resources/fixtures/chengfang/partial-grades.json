@@ -1,0 +1,27 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/score/list.jsp?page=1",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"gradeTable\" class=\"grid\">\n<tr><th>序号</th><th>课程代码</th><th>课程名称</th><th>学分</th><th>成绩</th><th>绩点</th><th>考核方式</th></tr>\n<tr><td>1</td><td>CF101</td><td>高等数学</td><td>4.0</td><td>88</td><td>3.6</td><td>考试</td></tr>\n</table>\n<div class=\"pager\">共 3 条记录，第 1/3 页</div>\n</body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/score/list.jsp?page=2",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"gradeTable\" class=\"grid\">\n<tr><th>序号</th><th>课程代码</th><th>课程名称</th><th>学分</th><th>成绩</th><th>绩点</th><th>考核方式</th></tr>\n<tr><td>2</td><td>CF202</td><td>大学物理</td><td>3.5</td><td>91</td><td>3.9</td><td>考试</td></tr>\n</table>\n<div class=\"pager\">共 3 条记录，第 2/3 页</div>\n</body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/score/list.jsp?page=3",
+   "status": 500,
+   "headers": {},
+   "body": ""
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/kwgl/kscx",
+   "status": 200,
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>教务系统</title></head><body>\n<table id=\"kslist\">\n<tr><th>课程名称</th><th>考试日期</th><th>考试时间</th><th>考场</th><th>座位号</th><th>考试方式</th></tr>\n<tr><td>高等数学</td><td>2026-01-12</td><td>09:00-11:00</td><td>A101</td><td>12</td><td>闭卷</td></tr>\n<tr><td>大学物理</td><td>2026-01-14</td><td>14:00-16:00</td><td>B203</td><td>7</td><td>闭卷</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/xtgl/index_initMenu.html",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><a href=\"/jwglxt/xtgl/cxxnxq_cxXnxq.html\">学年学期</a><a href=\"/jwglxt/kbcx/xskbcx_cxXsKb.html\">学生课表查询</a><a href=\"/jwglxt/cjcx/cjcx_cxDgXscj.html\">学生成绩查询</a><a href=\"/jwglxt/kwgl/kscx_cxXsksxxIndex.html\">学生考试查询</a></body></html>"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/cjcx/cjcx_cxDgXscj.html?doType=query&page=1",
+      "status": 200,
+      "body": "{\"totalResult\":3,\"currentPage\":1,\"showCount\":2,\"items\":[{\"kch\":\"CS101\",\"kcmc\":\"数据结构\",\"xf\":\"4.0\",\"cj\":\"92\",\"jd\":\"4.2\",\"ksxz\":\"正常考试\",\"xnm\":2025,\"xqm\":\"3\",\"kclb\":\"专业必修\"},{\"kch\":\"MA102\",\"kcmc\":\"离散数学\",\"xf\":\"3.0\",\"cj\":\"85\",\"jd\":\"3.5\",\"ksxz\":\"正常考试\",\"xnm\":2025,\"xqm\":\"3\",\"kclb\":\"学科基础\"}]}"
+    },
+    {
+      "method": "GET",
+      "url": "https://jw.zf-modern.example.edu/jwglxt/cjcx/cjcx_cxDgXscj.html?doType=query&page=2",
+      "status": 200,
+      "body": "{\"totalResult\":3,\"currentPage\":2,\"showCount\":2,\"items\":[{\"kch\":\"EN101\",\"kcmc\":\"大学英语\",\"xf\":\"2.0\",\"cj\":\"88\",\"jd\":\"3.8\",\"ksxz\":\"正常考试\",\"xnm\":2025,\"xqm\":\"3\",\"kclb\":\"通识必修\"}]}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/term/list.json",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+   },
+   "body": "<html><body><div>接口已下线</div></body></html>"
+  },
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/term/list.html",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+   },
+   "body": "<!DOCTYPE html>\n<html><body>\n<table id=\"termTable\" class=\"grid\">\n<tr><th>学期代码</th><th>学期名称</th><th>开始日期</th><th>结束日期</th></tr>\n<tr><td>2026-2027-1</td><td>2026-2027学年第一学期</td><td>2026-09-01</td><td>2027-01-15</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}

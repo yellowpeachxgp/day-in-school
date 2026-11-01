@@ -1,0 +1,10 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xs_main.aspx",
+      "status": 200,
+      "body": "<!DOCTYPE html><html><body><form action=\"/default2.aspx\" method=\"post\"><input type=\"text\" name=\"TextBox1\"/><input type=\"password\" name=\"TextBox2\"/></form></body></html>"
+    }
+  ]
+}

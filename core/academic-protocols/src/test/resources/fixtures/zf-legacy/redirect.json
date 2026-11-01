@@ -1,0 +1,13 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "url": "https://jw.zf-legacy.example.edu/xs_main.aspx",
+      "status": 302,
+      "headers": {
+        "Location": "https://evil.example.com/phish"
+      },
+      "body": ""
+    }
+  ]
+}

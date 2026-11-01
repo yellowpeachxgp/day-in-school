@@ -1,0 +1,10 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.jinzhi.example.edu/academic/terms",
+   "status": 200,
+   "body": "{\"terms\": [{\"id\": \"2024-2025-1\", \"name\": \"2024-2025学年第一学期\"}, {\"id\": \"2024-2025-2\", \"name\": \"2024-2025学年第二学期\"}]}"
+  }
+ ]
+}

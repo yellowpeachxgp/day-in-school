@@ -1,0 +1,22 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按树维 EAMS 公开的动态登录/JSON 接口形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/grade/list.json?page=1",
+   "status": 302,
+   "headers": {
+    "Location": "/eams/login"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://eams-synthetic.example.edu/eams/login",
+   "status": 200,
+   "headers": {},
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>EAMS 统一身份认证</title></head>\n<body>\n<form id=\"loginForm\" name=\"loginForm\" method=\"post\" action=\"/eams/login.do?method=login&random=0.8471\">\n<input type=\"hidden\" name=\"lt\" value=\"LT-synthetic-0001\" />\n<input type=\"hidden\" name=\"service\" value=\"/eams/index\" />\n<label>账号 <input type=\"text\" name=\"username\" id=\"username\" /></label>\n<label>密码 <input type=\"password\" name=\"password\" id=\"password\" /></label>\n<input type=\"submit\" value=\"登录\" />\n</form>\n</body></html>"
+  }
+ ]
+}

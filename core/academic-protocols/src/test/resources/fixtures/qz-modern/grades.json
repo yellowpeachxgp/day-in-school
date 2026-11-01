@@ -1,0 +1,22 @@
+{
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=1",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"items\": [{\"kch\": \"B0800010\", \"kcmc\": \"高等数学\", \"xf\": \"4.0\", \"cj\": \"88\", \"jd\": \"3.7\", \"ksxz\": \"正常考试\"}, {\"kch\": \"B0800020\", \"kcmc\": \"大学物理\", \"xf\": \"3.5\", \"cj\": \"91\", \"jd\": \"4.0\", \"ksxz\": \"正常考试\"}], \"total\": 3, \"totalPage\": 2, \"currentPage\": 1, \"pageSize\": 2}"
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-modern.example.edu/jsxsd/xscj/xscjcx?page=2",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"items\": [{\"kch\": \"B0800030\", \"kcmc\": \"大学英语\", \"xf\": \"2.0\", \"cj\": \"77\", \"jd\": \"2.7\", \"ksxz\": \"正常考试\"}], \"total\": 3, \"totalPage\": 2, \"currentPage\": 2, \"pageSize\": 2}"
+  }
+ ]
+}

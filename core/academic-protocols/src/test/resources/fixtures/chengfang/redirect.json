@@ -1,0 +1,15 @@
+{
+ "synthetic": true,
+ "note": "UNVERIFIED 合成夹具：按乘方教务公开的表单/表格形态推导，不代表任何真实学校，也不代表已验证某校可用。",
+ "exchanges": [
+  {
+   "method": "GET",
+   "url": "https://cf-synthetic.example.edu/academic/score/list.jsp?page=1",
+   "status": 302,
+   "headers": {
+    "Location": "https://evil.example.net/steal"
+   },
+   "body": ""
+  }
+ ]
+}

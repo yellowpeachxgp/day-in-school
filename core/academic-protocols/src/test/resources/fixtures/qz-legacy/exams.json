@@ -1,0 +1,22 @@
+{
+ "exchanges": [
+  {
+   "method": "POST",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/kwgl/kscx_query",
+   "status": 302,
+   "headers": {
+    "Location": "/jsxsd/kwgl/kscx_list.do"
+   },
+   "body": ""
+  },
+  {
+   "method": "GET",
+   "url": "https://jw.qz-legacy.example.edu/jsxsd/kwgl/kscx_list.do",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=GBK"
+   },
+   "body": "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>\u00bd\u00cc\u00ce\u00f1\u00cf\u00b5\u00cd\u00b3</title></head><body>\n<table id=\"kslist\">\n<tr><th>\u00bf\u00ce\u00b3\u00cc\u00c3\u00fb\u00b3\u00c6</th><th>\u00bf\u00bc\u00ca\u00d4\u00ca\u00b1\u00bc\u00e4</th><th>\u00bf\u00bc\u00b3\u00a1</th><th>\u00d7\u00f9\u00ce\u00bb\u00ba\u00c5</th></tr>\n<tr><td>\u00b8\u00df\u00b5\u00c8\u00ca\u00fd\u00d1\u00a7</td><td>2026-01-12 09:00-11:00</td><td>A101</td><td>12</td></tr>\n</table>\n</body></html>"
+  }
+ ]
+}
