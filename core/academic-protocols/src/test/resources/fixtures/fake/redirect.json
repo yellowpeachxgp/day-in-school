@@ -1,0 +1,3 @@
+{"exchanges":[
+ {"method":"GET","url":"https://fake.example.edu/grades?page=1","status":302,"headers":{"Location":"https://evil.example.net/steal"},"body":""}
+]}

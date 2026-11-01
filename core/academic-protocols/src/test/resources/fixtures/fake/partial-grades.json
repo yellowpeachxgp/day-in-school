@@ -1,0 +1,5 @@
+{"exchanges":[
+ {"method":"GET","url":"https://fake.example.edu/grades?page=1","status":200,"headers":{},"body":"{\"items\":[{\"id\":\"g1\",\"course\":\"高等数学\",\"score\":\"88\"}],\"total\":3,\"totalPage\":3,\"pageSize\":1,\"currentPage\":1}"},
+ {"method":"GET","url":"https://fake.example.edu/grades?page=2","status":200,"headers":{},"body":"{\"items\":[{\"id\":\"g2\",\"course\":\"大学物理\",\"score\":\"91\"}],\"total\":3,\"totalPage\":3,\"pageSize\":1,\"currentPage\":2}"},
+ {"method":"GET","url":"https://fake.example.edu/grades?page=3","status":500,"headers":{},"body":""}
+]}

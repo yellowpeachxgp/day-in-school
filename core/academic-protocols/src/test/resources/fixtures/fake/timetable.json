@@ -1,0 +1,3 @@
+{"exchanges":[
+ {"method":"GET","url":"https://fake.example.edu/timetable?term=2026-1","status":200,"headers":{},"body":"{\"courses\":[{\"id\":\"c1\",\"name\":\"高等数学\",\"teacher\":\"张老师\",\"meetings\":[{\"weekday\":1,\"start\":1,\"end\":2,\"weeks\":\"1-16\",\"location\":\"A101\"}]},{\"id\":\"c2\",\"name\":\"大学物理\",\"meetings\":[{\"weekday\":3,\"start\":3,\"end\":4,\"weeks\":\"1-8\",\"location\":\"B203\"}]}]}"}
+]}
