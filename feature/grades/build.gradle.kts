@@ -29,6 +29,8 @@ android {
 dependencies {
     api(project(":core:model"))
     api(project(":core:domain"))
+    api(project(":core:academic-plan"))
+    api(project(":core:selection"))
     api(project(":core:database"))
     api(project(":core:designsystem"))
     implementation(libs.androidx.core.ktx)

@@ -513,6 +513,8 @@ fun HautCampusRootApp(
         !prefs.hasCompletedOnboarding -> {
             OnboardingWelcomeScreen(
                 repository = repository,
+                activeSchool = activeSession.school,
+                onOpenSchoolCenter = { overlayScreen = "school_center" },
                 onOpenAdvancedImporter = { overlayScreen = "importer" }
             )
         }
@@ -576,6 +578,8 @@ fun HautCampusRootApp(
                             onNavigateToElectricity = { overlayScreen = "electricity" },
                             onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                             onNavigateToCommunity = { overlayScreen = "community" },
+                            onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                            activeSchool = activeSession.school,
                             resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
                         )
                         PrimaryBottomTab.PROFILE -> SettingsScreen(
@@ -751,12 +755,15 @@ fun HautCampusRootApp(
 @Composable
 private fun OnboardingWelcomeScreen(
     repository: CampusRepository,
+    activeSchool: cn.edu.haut.campus.core.model.SchoolProfile = SchoolDirectory.hautProfile(),
+    onOpenSchoolCenter: () -> Unit = {},
     onOpenAdvancedImporter: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
+    val isHautSchool = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID
 
     var hasLocationPermission by remember {
         mutableStateOf(CampusMapNavigator.hasLocationPermission(context))
@@ -805,10 +812,42 @@ private fun OnboardingWelcomeScreen(
                     style = MaterialTheme.typography.headlineMedium
                 )
                 Text(
-                    text = "河南工业大学 · 莲花街校区",
+                    text = "${activeSchool.displayName} · ${activeSchool.primaryCampus?.name ?: "离线模式"}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            // 0. 学校与身份选择（支持多校目录浏览与离线建档）
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
+                        Text(
+                            text = "当前学校：${activeSchool.displayName}",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "可切换学校、查看各校能力核验边界，或创建非工大离线身份",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onOpenSchoolCenter,
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("切换学校", maxLines = 1, softWrap = false)
+                    }
+                }
             }
 
             // 1. 定位权限
@@ -858,7 +897,7 @@ private fun OnboardingWelcomeScreen(
                 }
             }
 
-            // 2. 教务同步
+            // 2. 教务同步 / 离线建档
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -866,148 +905,157 @@ private fun OnboardingWelcomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "同步课表与成绩",
+                        text = if (isHautSchool) "同步课表与成绩" else "导入或手工录入课表",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    XPeachStatusBadge(text = "统一身份认证")
+                    XPeachStatusBadge(text = if (isHautSchool) "统一身份认证" else "离线模式")
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                OutlinedTextField(
-                    value = studentIdInput,
-                    onValueChange = { studentIdInput = it },
-                    label = { Text("学号") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = passwordInput,
-                    onValueChange = { passwordInput = it },
-                    label = { Text("密码") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                    for (yr in listOf("2026", "2025", "2024", "2023")) {
-                        XPeachFilterPill(
-                            label = "$yr-${yr.toInt() + 1}",
-                            selected = selectedXnm == yr,
-                            onClick = { selectedXnm = yr }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                    XPeachFilterPill(
-                        label = "第 1 学期",
-                        selected = selectedXqm == "3",
-                        onClick = { selectedXqm = "3" }
+                if (isHautSchool) {
+                    OutlinedTextField(
+                        value = studentIdInput,
+                        onValueChange = { studentIdInput = it },
+                        label = { Text("学号") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    XPeachFilterPill(
-                        label = "第 2 学期",
-                        selected = selectedXqm == "12",
-                        onClick = { selectedXqm = "12" }
-                    )
-                }
 
-                if (syncStatusMessage != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     Spacer(modifier = Modifier.height(10.dp))
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = syncStatusMessage!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (isErrorStatus) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Button(
-                    enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
-                    onClick = {
-                        scope.launch {
-                            val plainPwd = passwordInput
-                            isSyncing = true
-                            isErrorStatus = false
-                            syncStatusMessage = "正在获取课表、考试和成绩..."
-                            val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                                studentId = studentIdInput,
-                                passwordPlain = plainPwd,
-                                xnm = selectedXnm,
-                                xqm = selectedXqm
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                        for (yr in listOf("2026", "2025", "2024", "2023")) {
+                            XPeachFilterPill(
+                                label = "$yr-${yr.toInt() + 1}",
+                                selected = selectedXnm == yr,
+                                onClick = { selectedXnm = yr }
                             )
-                            passwordInput = ""
-                            isSyncing = false
-
-                            result.onSuccess { syncData ->
-                                val applied = runCatching {
-                                    repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
-                                }
-                                if (applied.isFailure) {
-                                    isErrorStatus = true
-                                    syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
-                                    return@onSuccess
-                                }
-                                val saved = runCatching {
-                                    repository.saveAuthorizedSyncCredentials(
-                                        studentIdInput, plainPwd, selectedXnm, selectedXqm
-                                    )
-                                }
-                                repository.setAutoSyncEnabled(saved.isSuccess)
-                                if (saved.isFailure || syncData.syncWarnings.isNotEmpty()) {
-                                    syncStatusMessage = syncData.syncSummaryText() +
-                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
-                                    return@onSuccess
-                                }
-                                repository.completeOnboarding()
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                            }.onFailure { err ->
-                                isErrorStatus = true
-                                syncStatusMessage = err.message ?: "登录或同步失败"
-                            }
                         }
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("正在同步...", maxLines = 1, softWrap = false)
-                    } else {
-                        Text("登录并同步", maxLines = 1, softWrap = false)
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                        XPeachFilterPill(
+                            label = "第 1 学期",
+                            selected = selectedXqm == "3",
+                            onClick = { selectedXqm = "3" }
+                        )
+                        XPeachFilterPill(
+                            label = "第 2 学期",
+                            selected = selectedXqm == "12",
+                            onClick = { selectedXqm = "12" }
+                        )
+                    }
+
+                    if (syncStatusMessage != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = syncStatusMessage!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isErrorStatus) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
+                        onClick = {
+                            scope.launch {
+                                val plainPwd = passwordInput
+                                isSyncing = true
+                                isErrorStatus = false
+                                syncStatusMessage = "正在获取课表、考试和成绩..."
+                                val result = HautLiveAcademicClient.fetchLiveAcademicData(
+                                    studentId = studentIdInput,
+                                    passwordPlain = plainPwd,
+                                    xnm = selectedXnm,
+                                    xqm = selectedXqm
+                                )
+                                passwordInput = ""
+                                isSyncing = false
+
+                                result.onSuccess { syncData ->
+                                    val applied = runCatching {
+                                        repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
+                                    }
+                                    if (applied.isFailure) {
+                                        isErrorStatus = true
+                                        syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
+                                        return@onSuccess
+                                    }
+                                    val saved = runCatching {
+                                        repository.saveAuthorizedSyncCredentials(
+                                            studentIdInput, plainPwd, selectedXnm, selectedXqm
+                                        )
+                                    }
+                                    repository.setAutoSyncEnabled(saved.isSuccess)
+                                    if (saved.isFailure || syncData.syncWarnings.isNotEmpty()) {
+                                        syncStatusMessage = syncData.syncSummaryText() +
+                                            if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
+                                        return@onSuccess
+                                    }
+                                    repository.completeOnboarding()
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                }.onFailure { err ->
+                                    isErrorStatus = true
+                                    syncStatusMessage = err.message ?: "登录或同步失败"
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("正在同步...", maxLines = 1, softWrap = false)
+                        } else {
+                            Text("登录并同步", maxLines = 1, softWrap = false)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                } else {
+                    Text(
+                        text = "当前学校尚未启用线上教务直连核验。可先使用网页/CSV 导入或直接进入离线课表手工录入，数据保存在当前身份的独立本地空间。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1029,7 +1077,7 @@ private fun OnboardingWelcomeScreen(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("先去看看", maxLines = 1, softWrap = false)
+                        Text(if (isHautSchool) "先去看看" else "进入离线课表", maxLines = 1, softWrap = false)
                     }
                 }
             }

@@ -26,8 +26,10 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -58,11 +60,35 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.GpaCalculator
+import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.TermGpaTrendPoint
+import cn.edu.haut.campus.core.plan.AttemptAggregator
+import cn.edu.haut.campus.core.plan.CompletedCourse
+import cn.edu.haut.campus.core.plan.DegreeProgressCalculator
+import cn.edu.haut.campus.core.plan.PlanCourseRef
+import cn.edu.haut.campus.core.plan.PlanSource
+import cn.edu.haut.campus.core.plan.Provenance
+import cn.edu.haut.campus.core.plan.RequirementGroup
+import cn.edu.haut.campus.core.plan.RequirementKind
+import cn.edu.haut.campus.core.plan.TrainingPlan
+import cn.edu.haut.campus.core.selection.ClassSlot
+import cn.edu.haut.campus.core.selection.DraftEntry
+import cn.edu.haut.campus.core.selection.SelectionCandidate
+import cn.edu.haut.campus.core.selection.SelectionConflictAnalyzer
+import cn.edu.haut.campus.core.selection.SelectionDraft
+import cn.edu.haut.campus.core.selection.SelectionRequest
+import cn.edu.haut.campus.core.selection.SelectionRound
+import cn.edu.haut.campus.core.selection.SelectionScope
+import cn.edu.haut.campus.core.selection.SelectionSubmission
+import cn.edu.haut.campus.core.selection.SelectionTransition
+import cn.edu.haut.campus.core.selection.TeachingWeeks
+import cn.edu.haut.campus.core.selection.TimetableOccupancy
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZonedDateTime
 
@@ -83,6 +109,8 @@ fun GradesScreen(
 
     val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
+    val courses by repository.coursesFlow.collectAsState(initial = emptyList())
+    val scheduleRules by repository.rulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
     val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
@@ -90,7 +118,7 @@ fun GradesScreen(
 
     var selectedTermFilter by remember { mutableStateOf<String?>(null) }
     var selectedCategoryFilter by remember { mutableStateOf<CourseCategory?>(null) }
-    var activeSubTab by remember { mutableIntStateOf(0) } // 0: 成绩明细, 1: 考试安排
+    var activeSubTab by remember { mutableIntStateOf(0) } // 0: 成绩明细, 1: 考试安排, 2: 培养进度, 3: 选课草稿
     var trendMetricIndex by remember { mutableIntStateOf(0) }
     var showTrendSection by remember { mutableStateOf(false) }
     var showSimulatorSection by remember { mutableStateOf(false) }
@@ -496,9 +524,14 @@ fun GradesScreen(
                 }
             }
 
-            // 2. 成绩明细 / 考试安排 分段切换 + 学期筛选条
+            // 2. 成绩明细 / 考试安排 / 培养进度 / 选课草稿 分段切换 + 学期筛选条
             XPeachSegmentedTabs(
-                items = listOf("成绩明细 (${gpaReport.auditItems.size})", "考试安排 (${examSchedules.size})"),
+                items = listOf(
+                    "成绩 (${gpaReport.auditItems.size})",
+                    "考试 (${examSchedules.size})",
+                    "培养进度",
+                    "选课草稿"
+                ),
                 selectedIndex = activeSubTab,
                 onSelect = { activeSubTab = it }
             )
@@ -623,7 +656,7 @@ fun GradesScreen(
                         }
                     }
                 }
-            } else {
+            } else if (activeSubTab == 1) {
                 // 3B. 考试安排列表（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
                 val filteredExams = remember(examSchedules, selectedTermFilter) {
                     examSchedules.filter { selectedTermFilter == null || it.termId == selectedTermFilter }
@@ -711,6 +744,19 @@ fun GradesScreen(
                         }
                     }
                 }
+            } else if (activeSubTab == 2) {
+                AcademicPlanProgressSection(
+                    attempts = attempts,
+                    retakeStrategy = cn.edu.haut.campus.core.model.RetakeInclusionStrategy.HIGHEST_ATTEMPT,
+                    officialSnapshot = officialSnapshot,
+                    privacyMasked = privacyMasked
+                )
+            } else {
+                SelectionDraftSection(
+                    termId = latestTermId ?: "2025-2026-2",
+                    courses = courses,
+                    scheduleRules = scheduleRules
+                )
             }
 
             Spacer(modifier = Modifier.height(92.dp))
@@ -843,4 +889,416 @@ private fun buildGradesCsv(attempts: List<cn.edu.haut.campus.core.model.GradeAtt
         )
     }
     return sb.toString()
+}
+
+@Composable
+private fun AcademicPlanProgressSection(
+    attempts: List<cn.edu.haut.campus.core.model.GradeAttempt>,
+    retakeStrategy: cn.edu.haut.campus.core.model.RetakeInclusionStrategy,
+    officialSnapshot: OfficialGpaSnapshot?,
+    privacyMasked: Boolean
+) {
+    val aggregation = remember(attempts, retakeStrategy) {
+        AttemptAggregator.aggregate(attempts, retakeStrategy)
+    }
+    val completedCourses = remember(aggregation) {
+        aggregation.decisions.mapNotNull { decision ->
+            if (decision.creditedCredits > BigDecimal.ZERO) {
+                CompletedCourse(
+                    courseKey = decision.courseKey,
+                    courseName = decision.courseName,
+                    credits = decision.creditedCredits
+                )
+            } else null
+        }
+    }
+    val estimatedPlan = remember(attempts) {
+        val groups = CourseCategory.entries.map { cat ->
+            val refs = attempts.filter { it.category == cat }
+                .distinctBy { it.courseKey }
+                .map { PlanCourseRef(code = it.courseKey, name = it.name) }
+            val kind = when (cat) {
+                CourseCategory.COMPULSORY -> RequirementKind.REQUIRED
+                CourseCategory.ELECTIVE -> RequirementKind.ELECTIVE
+                CourseCategory.PUBLIC_ELECTIVE -> RequirementKind.GENERAL
+                CourseCategory.PRACTICE -> RequirementKind.PRACTICE
+            }
+            val defaultTarget = when (cat) {
+                CourseCategory.COMPULSORY -> BigDecimal("90.0")
+                CourseCategory.ELECTIVE -> BigDecimal("30.0")
+                CourseCategory.PRACTICE -> BigDecimal("24.0")
+                CourseCategory.PUBLIC_ELECTIVE -> BigDecimal("14.0")
+            }
+            RequirementGroup(
+                id = "group-${cat.name.lowercase()}",
+                title = cat.label,
+                kind = kind,
+                requiredCredits = defaultTarget,
+                courses = refs
+            )
+        }
+        TrainingPlan(
+            id = "local-reference-plan",
+            title = "本科参考培养方案（待导入本专业官方方案）",
+            version = "UNVERIFIED",
+            applicableGradeYears = setOf(1, 2, 3, 4),
+            source = PlanSource.UNKNOWN,
+            confirmedForStudent = false,
+            groups = groups
+        )
+    }
+    val degreeProgress = remember(estimatedPlan, completedCourses) {
+        DegreeProgressCalculator.evaluate(estimatedPlan, completedCourses)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "成绩与学分可信分级",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                XPeachStatusBadge(
+                    text = if (officialSnapshot != null) "含官方汇总" else "本地推导 · DERIVED"
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = buildString {
+                    append("• 已入账总学分（按课程去重）：")
+                    append(if (privacyMasked) "∗∗.∗" else "${aggregation.totalCreditedCredits.toPlainString()} 学分")
+                    append("（DERIVED · 同门重修/补考只计一次）\n")
+                    append("• 多次修读课程数：${aggregation.multiAttemptCourseCount} 门\n")
+                    append("• 成绩分项明细（平时/实验/期末）：仅在教务接口真实返回分项字段时展示，绝不按比例伪造。")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            aggregation.notes.forEach { note ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "注：$note",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "毕业学分分组进度",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = degreeProgress.basis,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                XPeachStatusBadge(
+                    text = when (degreeProgress.provenance) {
+                        Provenance.OFFICIAL -> "OFFICIAL"
+                        Provenance.DERIVED -> "DERIVED"
+                        Provenance.ESTIMATED -> "估算 · UNVERIFIED"
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            degreeProgress.groups.forEach { grp ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "${grp.title}（${grp.kind.label}）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "已修 ${if (privacyMasked) "∗∗" else grp.earnedCredits.toPlainString()} / 参考目标 ${grp.requiredCredits.toPlainString()} 学分",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = if (privacyMasked) "缺 ∗∗" else "差 ${grp.remainingCredits.toPlainString()} 学分",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            degreeProgress.notes.take(2).forEach { note ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "• $note",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionDraftSection(
+    termId: String,
+    courses: List<cn.edu.haut.campus.core.model.Course>,
+    scheduleRules: List<cn.edu.haut.campus.core.model.CourseScheduleRule>
+) {
+    val scope = remember(termId) {
+        SelectionScope(
+            schoolId = SchoolDirectory.HAUT_SCHOOL_ID,
+            accountId = AccountId("active-local-profile"),
+            termId = termId.ifBlank { "current" }
+        )
+    }
+    var draft by remember(scope) { mutableStateOf(SelectionDraft.empty(scope)) }
+    var courseNameInput by remember { mutableStateOf("") }
+    var classIdInput by remember { mutableStateOf("01班") }
+    var selectedWeekday by remember { mutableIntStateOf(1) }
+    var startSection by remember { mutableIntStateOf(3) }
+    var endSection by remember { mutableIntStateOf(4) }
+    var submissionNotice by remember { mutableStateOf<String?>(null) }
+
+    val timetableOccupied = remember(scope.termId, courses, scheduleRules) {
+        TimetableOccupancy.fromScheduleRules(scope.termId, courses, scheduleRules)
+    }
+
+    val previewCandidate = remember(courseNameInput, classIdInput, selectedWeekday, startSection, endSection, scope.termId) {
+        val name = courseNameInput.trim().ifBlank { "候选课程" }
+        val cls = classIdInput.trim().ifBlank { "01班" }
+        SelectionCandidate(
+            offeringId = "draft-$name",
+            courseName = name,
+            teachingClassId = cls,
+            termId = scope.termId,
+            slots = listOf(
+                ClassSlot(
+                    weekday = selectedWeekday,
+                    startSection = minOf(startSection, endSection),
+                    endSection = maxOf(startSection, endSection),
+                    weeks = TeachingWeeks.range(1, 16)
+                )
+            )
+        )
+    }
+
+    val conflictReport = remember(previewCandidate, timetableOccupied, draft) {
+        val otherDraftSlots = draft.occupiedSlots()
+            .filterNot { it.courseName == previewCandidate.courseName }
+        SelectionConflictAnalyzer.analyze(previewCandidate, timetableOccupied + otherDraftSlots)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "离线选课草稿与冲突检测",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                XPeachStatusBadge(text = "只读沙盒 · UNVERIFIED")
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "按半开区间 [start, end+1) 与当前学期已排课表 (${timetableOccupied.size} 个时段) 及草稿实时比对冲突。在线选退课写接口未经学校实测授权，默认禁用。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(
+                value = courseNameInput,
+                onValueChange = { courseNameInput = it.take(40) },
+                label = { Text("候选课程名称") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = classIdInput,
+                onValueChange = { classIdInput = it.take(24) },
+                label = { Text("教学班号") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (day in 1..7) {
+                    XPeachFilterPill(
+                        label = ClassSlot.weekdayLabelOf(day),
+                        selected = selectedWeekday == day,
+                        onClick = { selectedWeekday = day }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val pairs = listOf(1 to 2, 3 to 4, 5 to 6, 7 to 8, 9 to 10)
+                for ((s, e) in pairs) {
+                    XPeachFilterPill(
+                        label = "第${s}-${e}节",
+                        selected = startSection == s && endSection == e,
+                        onClick = {
+                            startSection = s
+                            endSection = e
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = conflictReport.summary,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (conflictReport.hasConflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                )
+                conflictReport.details.forEach { detail ->
+                    Text(
+                        text = "• ${detail.message}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    enabled = courseNameInput.isNotBlank(),
+                    onClick = {
+                        val name = courseNameInput.trim()
+                        val cls = classIdInput.trim().ifBlank { "01班" }
+                        draft = draft.add(
+                            DraftEntry(
+                                offeringId = "draft-$name",
+                                courseName = name,
+                                teachingClassId = cls,
+                                slots = previewCandidate.slots
+                            )
+                        ).draft
+                        courseNameInput = ""
+                        submissionNotice = null
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("加入离线草稿")
+                }
+                TextButton(
+                    enabled = !draft.isEmpty,
+                    onClick = {
+                        val first = draft.entries.firstOrNull() ?: return@TextButton
+                        val unverifiedRound = SelectionRound(
+                            id = "round-unverified",
+                            termId = scope.termId,
+                            label = "未核验选课轮次",
+                            declaredWritable = false
+                        )
+                        val submission = SelectionSubmission.begin(
+                            scope = scope,
+                            round = unverifiedRound,
+                            request = SelectionRequest(
+                                offeringId = first.offeringId,
+                                courseName = first.courseName,
+                                teachingClassId = first.teachingClassId
+                            )
+                        )
+                        when (val transition = submission.confirm(Instant.now())) {
+                            is SelectionTransition.Blocked -> {
+                                submissionNotice = "受控提交拦截（${transition.reason.name}）：${transition.detail}"
+                            }
+                            is SelectionTransition.Applied -> {
+                                submissionNotice = transition.submission.stateLabel
+                            }
+                        }
+                    }
+                ) {
+                    Text("模拟提交校验")
+                }
+            }
+            submissionNotice?.let { notice ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = notice,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (!draft.isEmpty) {
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "当前草稿 (${draft.entries.size} 门 · 版本 v${draft.revision})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = { draft = draft.clear().draft }) {
+                        Text("清空")
+                    }
+                }
+                draft.entries.forEach { entry ->
+                    val slotText = entry.slots.joinToString("；") { "${it.weekdayLabel} ${it.sectionText}" }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(entry.courseName, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "${entry.teachingClassId} · $slotText",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = { draft = draft.remove(entry.offeringId).draft }) {
+                            Text("移除")
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import cn.edu.haut.campus.core.campusservices.CampusServiceProviderRegistry
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.ActiveSession
@@ -44,6 +45,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
 import cn.edu.haut.campus.core.model.AcademicProtocolFamily
 import cn.edu.haut.campus.core.model.AcademicSystemProfile
 import cn.edu.haut.campus.core.model.CapabilityEvidence
@@ -53,6 +55,8 @@ import cn.edu.haut.campus.core.model.CapabilityStatus
 import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.packages.manifest.PackageManifest
+import cn.edu.haut.campus.core.protocol.ProtocolGatewayRegistry
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -167,6 +171,37 @@ fun SchoolCenterScreen(
                             )
                         }
                     }
+                    item(key = "campus-services-header") {
+                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                            Text("校园服务独立提供方", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "地图路网、图书馆检索、座位预约和宿舍水电均作为独立 Provider 按学校核验，未提供适配时不会借用其他学校的楼宇或接口。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    val campusServiceStatuses = buildList {
+                        add(
+                            CampusMapProviderRegistry.Default.capabilityStatus(
+                                selectedSchool.id,
+                                selectedSchool.primaryCampus?.id ?: SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID
+                            )
+                        )
+                        listOf(
+                            CapabilityKind.LIBRARY_CATALOG,
+                            CapabilityKind.LIBRARY_SEATS,
+                            CapabilityKind.UTILITIES
+                        ).forEach { kind ->
+                            add(CampusServiceProviderRegistry.Default.capabilityStatus(selectedSchool.id, kind))
+                        }
+                    }
+                    items(campusServiceStatuses, key = { "service-${it.kind.name}" }) { status ->
+                        SchoolCapabilityCard(
+                            status = status,
+                            timeZone = selectedSchool.primaryCampus?.timeZone ?: ZoneId.of("Asia/Shanghai")
+                        )
+                    }
                     if (onSelectSchool != null) {
                         item(key = "select") {
                             Button(
@@ -274,11 +309,24 @@ fun SchoolCenterScreen(
                         }
                     }
                     item(key = "protocol-note") {
+                        val protocolDescriptors = remember { ProtocolGatewayRegistry.descriptors() }
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Text("适配范围", style = MaterialTheme.typography.titleMedium)
+                            Text("九类教务协议网关（合成夹具合同核验）", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "目前保留河南工业大学的正方教务实现。其他教务家族正在建设；目录中的协议类型不表示已经完成相应适配。",
+                                "已内置 ${protocolDescriptors.size} 类通用教务协议只读网关（认证、学期、课表、成绩、考试、安全传输与错误映射），均标注 UNVERIFIED，需结合具体学校授权样本与真机验证后才在对应学校启用：",
                                 style = MaterialTheme.typography.bodyMedium
+                            )
+                            protocolDescriptors.values.forEach { descriptor ->
+                                Text(
+                                    text = "• ${protocolLabel(descriptor.protocol)} (${descriptor.id})：支持 ${descriptor.readCapabilities.size} 项只读能力 · UNVERIFIED",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "学校配置包格式：dis-campus-plugin/v1（包标识规则 ${PackageManifest.PACKAGE_ID.pattern}），安装前强制校验 Ed25519 签名、文件 SHA-256 摘要与 HTTPS 来源/路径前缀授权。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             TextButton(onClick = { showContribution = true }) { Text("了解学校适配贡献方式") }
                         }

@@ -104,13 +104,16 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
+import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusMapNavigator
+import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
 import cn.edu.haut.campus.core.location.InAppNavigationPlan
 import cn.edu.haut.campus.core.location.UserGeoLocation
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusCategory
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.SchoolProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -206,11 +209,19 @@ fun CampusMapScreen(
     onNavigateToElectricity: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToSchoolCenter: () -> Unit = {},
+    activeSchool: SchoolProfile = remember { SchoolDirectory.hautProfile() },
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val mapProvider = remember(activeSchool.id, activeSchool.primaryCampus?.id) {
+        CampusMapProviderRegistry.Default.resolve(
+            activeSchool.id,
+            activeSchool.primaryCampus?.id ?: SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID
+        )
+    }
 
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val aliases by repository.buildingAliasesFlow.collectAsState(initial = emptyList())
@@ -389,14 +400,20 @@ fun CampusMapScreen(
         ) {
             XPeachTopBar(
                 title = "校园",
-                subtitle = "河南工业大学 · 莲花街校区",
-                badgeText = if (userLocation?.isInsideLianhuajieCampus == true) "校内实时定位" else "校园服务",
+                subtitle = "${activeSchool.displayName} · ${activeSchool.primaryCampus?.name ?: "主校区"}",
+                badgeText = when {
+                    mapProvider == null -> "待安装地图包"
+                    userLocation?.isInsideLianhuajieCampus == true -> "校内实时定位"
+                    else -> "校园服务"
+                },
                 actions = {
-                    XPeachIconButton(
-                        icon = Icons.Default.ZoomOutMap,
-                        contentDescription = "展开全屏地图",
-                        onClick = { isFullScreenMap = true }
-                    )
+                    if (mapProvider != null) {
+                        XPeachIconButton(
+                            icon = Icons.Default.ZoomOutMap,
+                            contentDescription = "展开全屏地图",
+                            onClick = { isFullScreenMap = true }
+                        )
+                    }
                 }
             )
 
@@ -407,6 +424,25 @@ fun CampusMapScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                if (mapProvider == null) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "当前学校暂未安装校区地图与服务包",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "「${activeSchool.displayName}」尚未启用经校验的校区 GIS 路网、图书馆或宿舍水电 Provider。应用不会将其他学校的楼宇坐标或服务接口混入当前身份。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(onClick = onNavigateToSchoolCenter) {
+                            Text("查看学校与能力状态")
+                        }
+                    }
+                }
                 // 1. 4×4 交互式校园地图小预览模块
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
