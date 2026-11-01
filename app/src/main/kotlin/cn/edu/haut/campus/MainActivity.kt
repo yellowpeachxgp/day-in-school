@@ -112,6 +112,8 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.reminder.ReminderCoordinator
+import cn.edu.haut.campus.core.reminder.ReminderNotificationFactory
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
@@ -187,6 +189,36 @@ class MainActivity : ComponentActivity() {
         }
         if (!room.isNullOrBlank()) {
             deepLinkRoomQuery = room
+        }
+
+        val reminderNavAction = intent?.getStringExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION)
+        if (!reminderNavAction.isNullOrBlank()) {
+            val reminderRoom = intent.getStringExtra(ReminderNotificationFactory.EXTRA_REMINDER_ROOM_TEXT)
+                ?.takeIf { it.isNotBlank() }
+                ?: intent.getStringExtra(ReminderNotificationFactory.EXTRA_REMINDER_BUILDING_ID)
+            when (reminderNavAction) {
+                ReminderNotificationFactory.NAV_ACTION_OPEN_MAP -> {
+                    deepLinkTab = PrimaryBottomTab.CAMPUS.route
+                    if (!reminderRoom.isNullOrBlank()) {
+                        deepLinkRoomQuery = reminderRoom
+                    }
+                }
+                ReminderNotificationFactory.NAV_ACTION_OPEN_EXAMS -> {
+                    deepLinkTab = PrimaryBottomTab.GRADES.route
+                }
+                ReminderNotificationFactory.NAV_ACTION_OPEN_TODAY -> {
+                    deepLinkTab = PrimaryBottomTab.TODAY.route
+                }
+            }
+            val reminderTaskId = intent.getStringExtra(ReminderNotificationFactory.EXTRA_REMINDER_TASK_ID)
+            if (!reminderTaskId.isNullOrBlank()) {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    ReminderCoordinator.getInstance(applicationContext).dismissTask(
+                        taskId = reminderTaskId,
+                        expectedGeneration = null
+                    )
+                }
+            }
         }
     }
 }

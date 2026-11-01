@@ -21,6 +21,7 @@ include(
     ":core:model",
     ":core:domain",
     ":core:database",
+    ":core:reminder",
     ":core:designsystem",
     ":core:academic",
     ":core:location",

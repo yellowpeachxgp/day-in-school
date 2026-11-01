@@ -26,6 +26,9 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Snooze
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,17 +69,27 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
+import cn.edu.haut.campus.core.domain.ReminderPlanner
+import cn.edu.haut.campus.core.domain.ReminderPolicyEngine
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.ReminderEventOverride
+import cn.edu.haut.campus.core.model.ReminderKind
+import cn.edu.haut.campus.core.model.ReminderTaskDomain
+import cn.edu.haut.campus.core.model.ReminderTaskStatus
 import cn.edu.haut.campus.core.model.ScheduleBreakInterval
+import cn.edu.haut.campus.core.model.SnoozeOptionEvaluation
+import cn.edu.haut.campus.core.model.SnoozeOutcome
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
+import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -109,6 +122,16 @@ fun TodayScreen(
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
+    val reminderOverrides by repository.reminderEventOverridesFlow.collectAsState(initial = emptyList())
+    val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
+
+    val tasksByEventKey = remember(activeReminderTasks) {
+        activeReminderTasks.associateBy { it.eventKey }
+    }
+    val overridesByScope = remember(reminderOverrides) {
+        reminderOverrides.associateBy { it.eventScopeKey }
+    }
 
     var currentNow by remember { mutableStateOf(ZonedDateTime.now(HAUT_ZONE_ID)) }
     var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
@@ -347,6 +370,11 @@ fun TodayScreen(
                     activeBreak = snapshot.activeBreakInterval,
                     nextDayHint = snapshot.nextClassDayHint,
                     totalTodayClasses = snapshot.items.size,
+                    termId = term?.id ?: "default",
+                    globalReminderEnabled = prefs.reminderConfig.enabled,
+                    defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
+                    tasksByEventKey = tasksByEventKey,
+                    overridesByScope = overridesByScope,
                     onNavigateBuilding = onNavigateToMapWithRoom,
                     onCardClick = { selectedOccurrenceForDetail = it }
                 )
@@ -383,6 +411,11 @@ fun TodayScreen(
                     MinimalistDayScheduleFlow(
                         items = snapshot.items,
                         breakIntervals = snapshot.breakIntervals,
+                        termId = term?.id ?: "default",
+                        globalReminderEnabled = prefs.reminderConfig.enabled,
+                        defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
+                        tasksByEventKey = tasksByEventKey,
+                        overridesByScope = overridesByScope,
                         onItemClick = { selectedOccurrenceForDetail = it },
                         onNavigateRoom = onNavigateToMapWithRoom
                     )
@@ -548,71 +581,401 @@ fun TodayScreen(
 
     val detailState = selectedOccurrenceForDetail
     if (detailState != null) {
-        val occ = detailState.occurrence
-        AlertDialog(
-            onDismissRequest = { selectedOccurrenceForDetail = null },
-            title = { Text(occ.courseName) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("状态：${detailState.statusText}", fontWeight = FontWeight.Medium)
-                    Text("时间：${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} (${occ.periodRangeText})")
-                    occ.internalBreaksSummary?.let { brkSummary ->
-                        Text(
-                            text = "课间：$brkSummary",
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Text("教室：${occ.rawRoom}")
-                    if (!occ.teacher.isNullOrBlank()) {
-                        Text("教师：${occ.teacher}")
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = {
-                                selectedOccurrenceForDetail = null
-                                onNavigateToMapWithRoom(occ.rawRoom)
-                            },
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("路线导航", maxLines = 1, softWrap = false)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    if (term != null) {
-                                        repository.saveOccurrenceOverride(
-                                            OccurrenceOverride(
-                                                id = "ov_cancel_${occ.date}_${occ.ruleId ?: UUID.randomUUID()}",
-                                                termId = term!!.id,
-                                                courseRuleId = occ.ruleId,
-                                                courseId = occ.courseId,
-                                                date = occ.date,
-                                                canceled = true,
-                                                reason = "单次停课"
-                                            )
-                                        )
-                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    }
-                                    selectedOccurrenceForDetail = null
-                                }
-                            },
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("今日停课", maxLines = 1, softWrap = false)
-                        }
-                    }
-                }
+        CourseDetailAndSnoozeDialog(
+            detailState = detailState,
+            termId = term?.id ?: "default",
+            repository = repository,
+            reminderCoordinator = reminderCoordinator,
+            globalConfig = prefs.reminderConfig,
+            activeTask = tasksByEventKey["CLASS:${term?.id ?: "default"}:${detailState.occurrence.occurrenceId}"],
+            overridesByScope = overridesByScope,
+            onNavigateToMapWithRoom = { room ->
+                selectedOccurrenceForDetail = null
+                onNavigateToMapWithRoom(room)
             },
-            confirmButton = {
-                TextButton(onClick = { selectedOccurrenceForDetail = null }) {
-                    Text("关闭")
-                }
-            }
+            onDismiss = { selectedOccurrenceForDetail = null }
         )
     }
+}
+
+private fun formatOccurrenceReminderBadge(
+    termId: String,
+    item: TimelineOccurrenceState,
+    globalReminderEnabled: Boolean,
+    defaultLeadMinutes: Int,
+    tasksByEventKey: Map<String, ReminderTaskDomain>,
+    overridesByScope: Map<String, ReminderEventOverride>
+): String? {
+    if (item.status == ClassStatus.FINISHED) return null
+    val occ = item.occurrence
+    val eventKey = "CLASS:$termId:${occ.occurrenceId}"
+    val occOverride = overridesByScope["OCCURRENCE:$eventKey"]
+    val courseOverride = overridesByScope["COURSE:${occ.courseId}"]
+    val enabled = occOverride?.enabledOverride
+        ?: courseOverride?.enabledOverride
+        ?: globalReminderEnabled
+    if (!enabled) return "已静音"
+
+    val activeTask = tasksByEventKey[eventKey]
+    if (activeTask != null) {
+        val triggerTime = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
+            .atZone(HAUT_ZONE_ID)
+            .toLocalTime()
+            .format(TIME_FMT)
+        return when (activeTask.status) {
+            ReminderTaskStatus.SNOOZED -> "将于 $triggerTime 再次提醒 (${activeTask.snoozeCount}/${activeTask.maxSnoozes})"
+            ReminderTaskStatus.FIRED -> "已提醒 · 可延后"
+            ReminderTaskStatus.PENDING -> "$triggerTime 提醒"
+            else -> null
+        }
+    }
+
+    if (item.status == ClassStatus.UPCOMING) {
+        val leadMinutes = occOverride?.leadMinutesOverride
+            ?: courseOverride?.leadMinutesOverride
+            ?: defaultLeadMinutes
+        return "课前${leadMinutes}分钟提醒"
+    }
+    return null
+}
+
+@Composable
+private fun CourseDetailAndSnoozeDialog(
+    detailState: TimelineOccurrenceState,
+    termId: String,
+    repository: CampusRepository,
+    reminderCoordinator: ReminderCoordinator,
+    globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig,
+    activeTask: ReminderTaskDomain?,
+    overridesByScope: Map<String, ReminderEventOverride>,
+    onNavigateToMapWithRoom: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val occ = detailState.occurrence
+    val event = remember(termId, occ) {
+        ReminderPlanner.projectClassOccurrenceToEvent(termId, occ)
+    }
+    val courseScopeKey = "COURSE:${occ.courseId}"
+    val courseOverride = overridesByScope[courseScopeKey]
+    val effectivePolicy = remember(event, globalConfig, overridesByScope) {
+        ReminderPolicyEngine.resolveEffectivePolicy(event, globalConfig, overridesByScope)
+    }
+
+    var snoozeOptions by remember { mutableStateOf<List<SnoozeOptionEvaluation>>(emptyList()) }
+    var actionFeedback by remember { mutableStateOf<String?>(null) }
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    LaunchedEffect(event, activeTask, effectivePolicy, refreshTrigger) {
+        snoozeOptions = reminderCoordinator.evaluateSnoozeOptionsForEvent(
+            event = event,
+            kind = ReminderKind.CLASS_BEFORE,
+            now = Instant.now()
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(occ.courseName, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("状态：${detailState.statusText}", fontWeight = FontWeight.Medium)
+                        Text("教室：${occ.rawRoom}")
+                        if (!occ.teacher.isNullOrBlank()) {
+                            Text("教师：${occ.teacher}")
+                        }
+                        occ.internalBreaksSummary?.let { brkSummary ->
+                            Text(
+                                text = "课间：$brkSummary",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
+
+                // 智能提醒与「稍后提醒」控制区
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (effectivePolicy.enabled) {
+                                        Icons.Default.NotificationsActive
+                                    } else {
+                                        Icons.Default.NotificationsOff
+                                    },
+                                    contentDescription = null,
+                                    tint = if (effectivePolicy.enabled) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "课程提醒与稍后提醒",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            XPeachFilterPill(
+                                label = if (effectivePolicy.enabled) "已开启" else "已静音",
+                                selected = effectivePolicy.enabled,
+                                onClick = {
+                                    scope.launch {
+                                        val nextEnabled = !effectivePolicy.enabled
+                                        if (nextEnabled && !globalConfig.enabled) {
+                                            repository.updateReminderGlobalConfig { it.copy(enabled = true) }
+                                        }
+                                        repository.upsertReminderEventOverride(
+                                            ReminderEventOverride(
+                                                eventScopeKey = courseScopeKey,
+                                                enabledOverride = nextEnabled,
+                                                leadMinutesOverride = courseOverride?.leadMinutesOverride,
+                                                maxSnoozesOverride = courseOverride?.maxSnoozesOverride,
+                                                updatedAtEpochMs = System.currentTimeMillis()
+                                            )
+                                        )
+                                        actionFeedback = if (nextEnabled) "已开启本课程提醒" else "已静音本课程提醒"
+                                        refreshTrigger++
+                                    }
+                                }
+                            )
+                        }
+
+                        val statusSummary = when {
+                            !effectivePolicy.enabled -> "本课程当前已关闭课前通知"
+                            activeTask?.status == ReminderTaskStatus.SNOOZED -> {
+                                val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
+                                    .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
+                                "已延后至 $t 再次提醒（已延后 ${activeTask.snoozeCount}/${activeTask.maxSnoozes} 次）"
+                            }
+                            activeTask?.status == ReminderTaskStatus.FIRED -> {
+                                "本次课前提醒已送达，可选择下方稍后再次提醒"
+                            }
+                            activeTask?.status == ReminderTaskStatus.PENDING -> {
+                                val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
+                                    .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
+                                "计划于 $t 发送提醒（课前 ${effectivePolicy.classLeadMinutes} 分钟）"
+                            }
+                            else -> "默认课前 ${effectivePolicy.classLeadMinutes} 分钟提醒（最多可延后 ${effectivePolicy.maxSnoozes} 次）"
+                        }
+                        Text(
+                            text = statusSummary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // 本门课提前分钟数快捷切换
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "提前量：",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            for (lead in listOf(10, 15, 20, 30)) {
+                                XPeachFilterPill(
+                                    label = "${lead}分",
+                                    selected = effectivePolicy.classLeadMinutes == lead,
+                                    onClick = {
+                                        scope.launch {
+                                            repository.upsertReminderEventOverride(
+                                                ReminderEventOverride(
+                                                    eventScopeKey = courseScopeKey,
+                                                    enabledOverride = true,
+                                                    leadMinutesOverride = lead,
+                                                    maxSnoozesOverride = courseOverride?.maxSnoozesOverride,
+                                                    updatedAtEpochMs = System.currentTimeMillis()
+                                                )
+                                            )
+                                            actionFeedback = "已设为课前 $lead 分钟提醒"
+                                            refreshTrigger++
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        if (detailState.status != ClassStatus.FINISHED && snoozeOptions.isNotEmpty()) {
+                            Text(
+                                text = "稍后提醒（上课前 2 分钟自动截止）：",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                for (opt in snoozeOptions) {
+                                    val targetText = opt.targetInstant.atZone(HAUT_ZONE_ID)
+                                        .toLocalTime()
+                                        .format(TIME_FMT)
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable(enabled = opt.available) {
+                                                scope.launch {
+                                                    val outcome = reminderCoordinator.snoozeEventFromUi(
+                                                        event = event,
+                                                        kind = ReminderKind.CLASS_BEFORE,
+                                                        choice = opt.choice,
+                                                        now = Instant.now()
+                                                    )
+                                                    actionFeedback = when (outcome) {
+                                                        is SnoozeOutcome.Accepted -> {
+                                                            val t = outcome.triggerAt.atZone(HAUT_ZONE_ID)
+                                                                .toLocalTime().format(TIME_FMT)
+                                                            "已设定于 $t 再次提醒（剩余可延后 ${outcome.remainingSnoozes} 次）"
+                                                        }
+                                                        is SnoozeOutcome.AcceptedPendingRepair -> {
+                                                            "已记录延后请求，正在后台重排闹钟"
+                                                        }
+                                                        is SnoozeOutcome.Rejected -> outcome.reason.userMessage
+                                                        SnoozeOutcome.EventChanged -> "课程安排已变更，请刷新后重试"
+                                                        SnoozeOutcome.ConcurrentlyHandled -> "提醒状态已更新"
+                                                        SnoozeOutcome.NotFound -> "未找到对应提醒任务"
+                                                        SnoozeOutcome.InternalError -> "设置延后提醒失败"
+                                                    }
+                                                    refreshTrigger++
+                                                }
+                                            },
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (opt.available) {
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surface
+                                        }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Snooze,
+                                                    contentDescription = null,
+                                                    tint = if (opt.available) {
+                                                        MaterialTheme.colorScheme.primary
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                                    },
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = "${opt.label} ($targetText)",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = if (opt.available) {
+                                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                                    }
+                                                )
+                                            }
+                                            Text(
+                                                text = if (opt.available) "点击延后" else (opt.disabledReason?.userMessage ?: "不可用"),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (opt.available) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        actionFeedback?.let { feedback ->
+                            Text(
+                                text = feedback,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = { onNavigateToMapWithRoom(occ.rawRoom) },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("路线导航", maxLines = 1, softWrap = false)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                repository.saveOccurrenceOverride(
+                                    OccurrenceOverride(
+                                        id = "ov_cancel_${occ.date}_${occ.ruleId ?: UUID.randomUUID()}",
+                                        termId = termId,
+                                        courseRuleId = occ.ruleId,
+                                        courseId = occ.courseId,
+                                        date = occ.date,
+                                        canceled = true,
+                                        reason = "单次停课"
+                                    )
+                                )
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                onDismiss()
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("今日停课", maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
 }
 
 @Composable
@@ -730,6 +1093,11 @@ private fun NextClassHeroCard(
     activeBreak: ScheduleBreakInterval?,
     nextDayHint: cn.edu.haut.campus.core.model.NextClassDayHint?,
     totalTodayClasses: Int,
+    termId: String,
+    globalReminderEnabled: Boolean,
+    defaultLeadMinutes: Int,
+    tasksByEventKey: Map<String, ReminderTaskDomain>,
+    overridesByScope: Map<String, ReminderEventOverride>,
     onNavigateBuilding: (String) -> Unit,
     onCardClick: (TimelineOccurrenceState) -> Unit
 ) {
@@ -775,6 +1143,14 @@ private fun NextClassHeroCard(
         if (activeOrNext != null) {
             val occ = activeOrNext.occurrence
             val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
+            val reminderBadge = formatOccurrenceReminderBadge(
+                termId = termId,
+                item = activeOrNext,
+                globalReminderEnabled = globalReminderEnabled,
+                defaultLeadMinutes = defaultLeadMinutes,
+                tasksByEventKey = tasksByEventKey,
+                overridesByScope = overridesByScope
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -795,6 +1171,13 @@ private fun NextClassHeroCard(
                         maxLines = 1,
                         softWrap = false
                     )
+                    if (!reminderBadge.isNullOrBlank()) {
+                        XPeachStatusBadge(
+                            text = reminderBadge,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 Text(
                     text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}",
@@ -833,18 +1216,30 @@ private fun NextClassHeroCard(
                         .padding(end = 10.dp)
                 )
 
-                FilledTonalButton(
-                    onClick = { onNavigateBuilding(occ.rawRoom) },
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Navigation,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("导航", maxLines = 1, softWrap = false)
+                    if (!isOngoing) {
+                        XPeachFilterPill(
+                            label = "稍后提醒",
+                            selected = false,
+                            onClick = { onCardClick(activeOrNext) }
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = { onNavigateBuilding(occ.rawRoom) },
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("导航", maxLines = 1, softWrap = false)
+                    }
                 }
             }
         } else {
@@ -917,6 +1312,11 @@ private fun EmptyDayTimelineBox(
 private fun MinimalistDayScheduleFlow(
     items: List<TimelineOccurrenceState>,
     breakIntervals: List<ScheduleBreakInterval>,
+    termId: String,
+    globalReminderEnabled: Boolean,
+    defaultLeadMinutes: Int,
+    tasksByEventKey: Map<String, ReminderTaskDomain>,
+    overridesByScope: Map<String, ReminderEventOverride>,
     onItemClick: (TimelineOccurrenceState) -> Unit,
     onNavigateRoom: (String) -> Unit
 ) {
@@ -933,6 +1333,14 @@ private fun MinimalistDayScheduleFlow(
             val isFinished = item.status == ClassStatus.FINISHED
             val isOngoing = item.status == ClassStatus.IN_PROGRESS
             val baseColor = Color(occ.colorArgb)
+            val reminderBadge = formatOccurrenceReminderBadge(
+                termId = termId,
+                item = item,
+                globalReminderEnabled = globalReminderEnabled,
+                defaultLeadMinutes = defaultLeadMinutes,
+                tasksByEventKey = tasksByEventKey,
+                overridesByScope = overridesByScope
+            )
 
             Row(
                 modifier = Modifier
@@ -1041,6 +1449,16 @@ private fun MinimalistDayScheduleFlow(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+
+                        if (!reminderBadge.isNullOrBlank()) {
+                            Text(
+                                text = "提醒：$reminderBadge · 点击可设稍后提醒",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
 
                         occ.internalBreaksSummary?.let { brkText ->
                             Text(

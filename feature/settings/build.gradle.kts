@@ -30,10 +30,12 @@ dependencies {
     api(project(":core:model"))
     api(project(":core:domain"))
     api(project(":core:database"))
+    api(project(":core:reminder"))
     api(project(":core:academic"))
     api(project(":core:designsystem"))
     api(project(":widget:common"))
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
 }

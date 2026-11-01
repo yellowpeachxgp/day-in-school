@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,6 +16,7 @@ import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
+import cn.edu.haut.campus.core.domain.ReminderRevision
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -23,6 +25,7 @@ import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.GradeAttempt
+import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
@@ -30,6 +33,9 @@ import cn.edu.haut.campus.core.model.ImportDiffPreview
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.ReminderEventOverride
+import cn.edu.haut.campus.core.model.ReminderGlobalConfig
+import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
@@ -65,7 +71,12 @@ data class AppPreferencesState(
     val syncXqm: String = "12",
     val lastAutoSyncEpochMillis: Long? = null,
     val customChannelUrls: Map<String, String> = emptyMap(),
-    val customClubGroupNumbers: Map<String, String> = emptyMap()
+    val customClubGroupNumbers: Map<String, String> = emptyMap(),
+    val reminderConfig: ReminderGlobalConfig = ReminderGlobalConfig(),
+    val reminderPolicyRevision: String = "v1",
+    val lastReminderReconcileEpochMillis: Long? = null,
+    val lastReminderReconcileSummary: String? = null,
+    val reminderDiagnosticLogs: List<String> = emptyList()
 )
 
 class CampusRepository private constructor(
@@ -73,7 +84,14 @@ class CampusRepository private constructor(
     private val database: HautDatabase
 ) {
     private val dao = database.campusDao()
+    private val reminderDao = database.reminderDao()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
+
+    @Volatile
+    var onBeforeWipePersonalDataHook: (suspend () -> Unit)? = null
 
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
@@ -93,6 +111,21 @@ class CampusRepository private constructor(
         val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
         val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
         val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
+        val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
+        val CLASS_LEAD_MINUTES = intPreferencesKey("class_lead_minutes")
+        val CLASS_SNOOZE_DEFAULT_MINUTES = intPreferencesKey("class_snooze_default_minutes")
+        val CLASS_SNOOZE_MAX_COUNT = intPreferencesKey("class_snooze_max_count")
+        val CLASS_SNOOZE_CUTOFF_MINUTES = intPreferencesKey("class_snooze_cutoff_minutes")
+        val EXAM_DAY_BEFORE_ENABLED = booleanPreferencesKey("exam_day_before_enabled")
+        val EXAM_HOUR_BEFORE_ENABLED = booleanPreferencesKey("exam_hour_before_enabled")
+        val EXAM_SNOOZE_MAX_COUNT = intPreferencesKey("exam_snooze_max_count")
+        val PRECISE_REMINDER_PREFERRED = booleanPreferencesKey("precise_reminder_preferred")
+        val REMINDER_LOCKSCREEN_PRIVATE = booleanPreferencesKey("reminder_lockscreen_private")
+        val REMINDER_QUIET_MODE = stringPreferencesKey("reminder_quiet_mode")
+        val REMINDER_POLICY_REVISION = stringPreferencesKey("reminder_policy_revision")
+        val LAST_REMINDER_RECONCILE_MS = longPreferencesKey("last_reminder_reconcile_ms")
+        val LAST_REMINDER_RECONCILE_SUMMARY = stringPreferencesKey("last_reminder_reconcile_summary")
+        val REMINDER_DIAGNOSTIC_LOGS = stringPreferencesKey("reminder_diagnostic_logs_v1")
     }
 
     init {
@@ -102,6 +135,7 @@ class CampusRepository private constructor(
     }
 
     val preferencesFlow: Flow<AppPreferencesState> = appContext.appDataStore.data.map { prefs ->
+        val reminderConfig = extractReminderConfig(prefs)
         AppPreferencesState(
             gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
             useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
@@ -119,7 +153,40 @@ class CampusRepository private constructor(
             syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12",
             lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
             customChannelUrls = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]),
-            customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS])
+            customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]),
+            reminderConfig = reminderConfig,
+            reminderPolicyRevision = prefs[PrefKeys.REMINDER_POLICY_REVISION]
+                ?: ReminderRevision.computePolicyRevision(
+                    enabled = reminderConfig.enabled,
+                    classLeadMinutes = reminderConfig.classLeadMinutes,
+                    maxSnoozes = reminderConfig.classSnoozeMaxCount,
+                    cutoffMinutesBeforeStart = reminderConfig.classSnoozeCutoffMinutes,
+                    examDayEnabled = reminderConfig.examDayBeforeEnabled,
+                    examHourEnabled = reminderConfig.examHourBeforeEnabled
+                ),
+            lastReminderReconcileEpochMillis = prefs[PrefKeys.LAST_REMINDER_RECONCILE_MS],
+            lastReminderReconcileSummary = prefs[PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY],
+            reminderDiagnosticLogs = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
+                ?.split("\n")
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+        )
+    }
+
+    private fun extractReminderConfig(prefs: androidx.datastore.preferences.core.Preferences): ReminderGlobalConfig {
+        val quietMode = prefs[PrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
+        return ReminderGlobalConfig(
+            enabled = prefs[PrefKeys.REMINDERS_ENABLED] ?: true,
+            classLeadMinutes = (prefs[PrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 60),
+            classSnoozeDefaultMinutes = (prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
+            classSnoozeMaxCount = (prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
+            classSnoozeCutoffMinutes = (prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
+            examDayBeforeEnabled = prefs[PrefKeys.EXAM_DAY_BEFORE_ENABLED] ?: true,
+            examHourBeforeEnabled = prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
+            examSnoozeMaxCount = (prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
+            preciseReminderPreferred = prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
+            lockscreenPrivate = prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
+            quietMode = quietMode
         )
     }
 
@@ -164,6 +231,23 @@ class CampusRepository private constructor(
 
     val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
         dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
+
+    val activeReminderTasksFlow: Flow<List<ReminderTaskDomain>> =
+        reminderDao.observeActiveTasks().map { list -> list.map { it.toDomain() } }
+
+    val reminderEventOverridesFlow: Flow<List<ReminderEventOverride>> =
+        reminderDao.observeEventPrefs().map { list -> list.map { it.toDomain() } }
+
+    fun observeReminderTasksInWindow(windowStartMs: Long, windowEndMs: Long): Flow<List<ReminderTaskDomain>> =
+        reminderDao.observeTasksInEventWindow(windowStartMs, windowEndMs).map { list ->
+            list.map { it.toDomain() }
+        }
+
+    fun reminderDao(): ReminderDao = reminderDao
+
+    private suspend fun notifyScheduleOrPolicyChanged(reason: String) {
+        runCatching { onScheduleOrPolicyChangedListener?.invoke(reason) }
+    }
 
     /**
      * 首次启动仅初始化公开的校历学期、1–10 节作息时间表与莲花街校区楼宇字典，
@@ -216,6 +300,7 @@ class CampusRepository private constructor(
             it.remove(PrefKeys.OFFICIAL_GPA)
             it.remove(PrefKeys.OFFICIAL_GPA_NOTE)
         }
+        notifyScheduleOrPolicyChanged("RESET_DEMO_SEED_DATA")
     }
 
     private suspend fun seedBaseCampusDictionaryInternal() {
@@ -237,16 +322,19 @@ class CampusRepository private constructor(
 
     suspend fun selectCurrentTerm(termId: String) {
         dao.setCurrentTerm(termId)
+        notifyScheduleOrPolicyChanged("TERM_CHANGED")
     }
 
     suspend fun updateTermStartDate(termId: String, newStartDate: LocalDate) {
         val terms = dao.observeTerms().first().map { it.toDomain() }
         val target = terms.firstOrNull { it.id == termId } ?: return
         dao.upsertTerms(listOf(target.copy(startDate = newStartDate).toEntity()))
+        notifyScheduleOrPolicyChanged("TERM_START_DATE_CHANGED")
     }
 
     suspend fun updatePeriodTime(periodTime: PeriodTime) {
         dao.upsertPeriodTimes(listOf(periodTime.toEntity()))
+        notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
     }
 
     /**
@@ -274,6 +362,7 @@ class CampusRepository private constructor(
                 ).toEntity()
             )
         }
+        notifyScheduleOrPolicyChanged("USER_COURSE_EDIT")
     }
 
     suspend fun addManualCourseWithRule(
@@ -318,18 +407,22 @@ class CampusRepository private constructor(
             dao.upsertCourse(course.toEntity())
             dao.upsertRule(rule.toEntity())
         }
+        notifyScheduleOrPolicyChanged("MANUAL_COURSE_ADDED")
     }
 
     suspend fun saveOccurrenceOverride(override: OccurrenceOverride) {
         dao.upsertOccurrenceOverride(override.toEntity())
+        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
     }
 
     suspend fun saveCalendarOverride(override: CalendarOverride) {
         dao.upsertCalendarOverrides(listOf(override.toEntity()))
+        notifyScheduleOrPolicyChanged("CALENDAR_OVERRIDE_SAVED")
     }
 
     suspend fun deleteCalendarOverride(id: String) {
         dao.deleteCalendarOverrideById(id)
+        notifyScheduleOrPolicyChanged("CALENDAR_OVERRIDE_DELETED")
     }
 
     suspend fun confirmBuildingAliasForRoom(rawRoom: String, buildingId: String) {
@@ -478,6 +571,7 @@ class CampusRepository private constructor(
             it[PrefKeys.ONBOARDING_COMPLETED] = true
             it[PrefKeys.CLEAN_BASE_V2] = true
         }
+        notifyScheduleOrPolicyChanged("COURSE_IMPORT_COMMITTED")
     }
 
     suspend fun saveImportedGrades(
@@ -519,6 +613,7 @@ class CampusRepository private constructor(
             }
             dao.upsertExamSchedules(exams.map { it.toEntity() })
         }
+        notifyScheduleOrPolicyChanged("EXAMS_IMPORTED")
     }
 
     suspend fun setAutoSyncEnabled(enabled: Boolean) {
@@ -679,10 +774,86 @@ class CampusRepository private constructor(
             ?: WidgetInstanceConfig(appWidgetId = appWidgetId, widgetType = defaultType)
     }
 
+    suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig {
+        val prefs = appContext.appDataStore.data.first()
+        return extractReminderConfig(prefs)
+    }
+
+    suspend fun getExamSchedulesSnapshot(): List<ExamScheduleItem> {
+        return dao.getExamSchedulesSnapshot().map { it.toDomain() }
+    }
+
+    suspend fun getReminderEventOverridesSnapshot(): List<ReminderEventOverride> {
+        return reminderDao.getEventPrefsSnapshot().map { it.toDomain() }
+    }
+
+    suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) {
+        appContext.appDataStore.edit { prefs ->
+            val current = extractReminderConfig(prefs)
+            val updated = transform(current)
+            prefs[PrefKeys.REMINDERS_ENABLED] = updated.enabled
+            prefs[PrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 60)
+            prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
+            prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
+            prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
+            prefs[PrefKeys.EXAM_DAY_BEFORE_ENABLED] = updated.examDayBeforeEnabled
+            prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
+            prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
+            prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
+            prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
+            prefs[PrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
+            prefs[PrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(
+                enabled = updated.enabled,
+                classLeadMinutes = updated.classLeadMinutes,
+                maxSnoozes = updated.classSnoozeMaxCount,
+                cutoffMinutesBeforeStart = updated.classSnoozeCutoffMinutes,
+                examDayEnabled = updated.examDayBeforeEnabled,
+                examHourEnabled = updated.examHourBeforeEnabled
+            )
+        }
+        notifyScheduleOrPolicyChanged("REMINDER_GLOBAL_CONFIG_UPDATED")
+    }
+
+    suspend fun upsertReminderEventOverride(override: ReminderEventOverride) {
+        reminderDao.upsertEventPref(override.toEntity())
+        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_UPSERTED:${override.eventScopeKey}")
+    }
+
+    suspend fun removeReminderEventOverride(scopeKey: String) {
+        reminderDao.deleteEventPref(scopeKey)
+        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_REMOVED:$scopeKey")
+    }
+
+    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) {
+        val nowMs = System.currentTimeMillis()
+        val timeText = java.time.Instant.ofEpochMilli(nowMs)
+            .atZone(HAUT_ZONE_ID)
+            .toLocalTime()
+            .withNano(0)
+            .toString()
+        val formatted = "[$timeText] $message"
+        appContext.appDataStore.edit { prefs ->
+            val existing = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
+                ?.split("\n")
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+            val updated = (listOf(formatted) + existing).take(30)
+            prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS] = updated.joinToString("\n")
+            if (reconcileSummary != null) {
+                prefs[PrefKeys.LAST_REMINDER_RECONCILE_MS] = nowMs
+                prefs[PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY] = reconcileSummary
+            }
+        }
+    }
+
     /**
      * 完全清除本地个人课程、成绩、导入审计与小组件个性化缓存（保留公开的校区建筑字典与节次模板）。
+     * 采用两阶段清理：
+     * 阶段 1：通过 onBeforeWipePersonalDataHook 先取消所有活跃 AlarmManager 闹钟与系统通知；
+     * 阶段 2：在 Room 事务内清空个人数据表及 reminder_tasks / reminder_event_prefs。
      */
     suspend fun wipeAllPersonalData() {
+        runCatching { onBeforeWipePersonalDataHook?.invoke() }
         database.withTransaction {
             dao.clearStudentProfile()
             dao.clearCourses()
@@ -692,6 +863,8 @@ class CampusRepository private constructor(
             dao.clearExamSchedules()
             dao.clearImportAudits()
             dao.clearWidgetConfigs()
+            reminderDao.clearAllTasks()
+            reminderDao.clearAllEventPrefs()
         }
         appContext.appDataStore.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
@@ -699,6 +872,9 @@ class CampusRepository private constructor(
             prefs.remove(PrefKeys.SAVED_STUDENT_ID)
             prefs.remove(PrefKeys.SAVED_PASSWORD_OBF)
             prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+            prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
+            prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
+            prefs.remove(PrefKeys.REMINDER_DIAGNOSTIC_LOGS)
             prefs[PrefKeys.SEEDED] = true
             prefs[PrefKeys.CLEAN_BASE_V2] = true
             prefs[PrefKeys.ONBOARDING_COMPLETED] = false
@@ -729,7 +905,7 @@ class CampusRepository private constructor(
         @Volatile
         private var INSTANCE: CampusRepository? = null
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     """
@@ -757,6 +933,64 @@ class CampusRepository private constructor(
             }
         }
 
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `reminder_tasks` (
+                        `id` TEXT NOT NULL,
+                        `taskKey` TEXT NOT NULL,
+                        `eventKey` TEXT NOT NULL,
+                        `eventType` TEXT NOT NULL,
+                        `reminderKind` TEXT NOT NULL,
+                        `eventRevision` TEXT NOT NULL,
+                        `policyRevision` TEXT NOT NULL,
+                        `eventStartAtEpochMs` INTEGER NOT NULL,
+                        `originalScheduledAtEpochMs` INTEGER NOT NULL,
+                        `scheduledAtEpochMs` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `schedulerState` TEXT NOT NULL,
+                        `generation` INTEGER NOT NULL,
+                        `snoozeCount` INTEGER NOT NULL,
+                        `maxSnoozes` INTEGER NOT NULL,
+                        `claimedAtEpochMs` INTEGER,
+                        `deliveredAtEpochMs` INTEGER,
+                        `lastActionAtEpochMs` INTEGER,
+                        `scheduleMode` TEXT NOT NULL,
+                        `lastErrorCode` TEXT,
+                        `createdAtEpochMs` INTEGER NOT NULL,
+                        `updatedAtEpochMs` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_reminder_tasks_taskKey` ON `reminder_tasks` (`taskKey`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_status_scheduledAtEpochMs` ON `reminder_tasks` (`status`, `scheduledAtEpochMs`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_eventKey_status` ON `reminder_tasks` (`eventKey`, `status`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_schedulerState_scheduledAtEpochMs` ON `reminder_tasks` (`schedulerState`, `scheduledAtEpochMs`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `reminder_event_prefs` (
+                        `eventScopeKey` TEXT NOT NULL,
+                        `enabledOverride` INTEGER,
+                        `leadMinutesOverride` INTEGER,
+                        `maxSnoozesOverride` INTEGER,
+                        `updatedAtEpochMs` INTEGER NOT NULL,
+                        PRIMARY KEY(`eventScopeKey`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getInstance(context: Context): CampusRepository {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
@@ -766,8 +1000,7 @@ class CampusRepository private constructor(
                         HautDatabase::class.java,
                         "haut_campus_assistant.db"
                     )
-                        .addMigrations(MIGRATION_1_2)
-                        .fallbackToDestructiveMigration()
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                         .build()
                     CampusRepository(appCtx, db).also { INSTANCE = it }
                 }

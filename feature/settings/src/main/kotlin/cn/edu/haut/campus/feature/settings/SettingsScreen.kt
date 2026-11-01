@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.feature.settings
 
+import android.Manifest
 import android.appwidget.AppWidgetManager
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -8,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,6 +57,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -71,6 +75,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
 import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
@@ -100,6 +107,8 @@ import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetThemeStyle
 import cn.edu.haut.campus.core.model.WidgetType
+import cn.edu.haut.campus.core.reminder.ReminderCoordinator
+import cn.edu.haut.campus.core.reminder.ReminderPermissions
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
 import java.io.File
@@ -174,6 +183,35 @@ fun SettingsScreen(
     val importAudits by repository.importAuditsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
+    val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var reminderPermSnapshot by remember(context) {
+        mutableStateOf(ReminderPermissions.inspect(context))
+    }
+    var expandReminderDiagnostics by remember { mutableStateOf(false) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        reminderPermSnapshot = ReminderPermissions.inspect(context)
+        scope.launch {
+            if (granted) {
+                reminderCoordinator.reconcileNow("NOTIFICATION_PERMISSION_GRANTED", forceRescheduleAlarms = true)
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                reminderPermSnapshot = ReminderPermissions.inspect(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     var isDynamicSyncing by remember { mutableStateOf(false) }
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
@@ -1240,6 +1278,388 @@ fun SettingsScreen(
                                         text = "${pt.startLocalTime}–${pt.endLocalTime}",
                                         maxLines = 1,
                                         softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 7.5 课程与考试智能提醒（含「稍后提醒」Snooze 系统）
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                val rCfg = prefs.reminderConfig
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("课程与考试智能提醒", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "课前提醒 · 通知栏稍后提醒 · 考前1天/1小时自动提醒",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = when {
+                            !rCfg.enabled -> "已关闭"
+                            !reminderPermSnapshot.canPostNotifications -> "需通知权限"
+                            reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred -> "准时优先"
+                            else -> "省电提醒"
+                        },
+                        containerColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("开启课程与考试智能提醒", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "基于莲花街作息表自动计算课前与考前提醒，支持调休补课与一键延后",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rCfg.enabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !reminderPermSnapshot.notificationPermissionGranted
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            scope.launch {
+                                repository.updateReminderGlobalConfig { it.copy(enabled = enabled) }
+                                reminderPermSnapshot = ReminderPermissions.inspect(context)
+                            }
+                        }
+                    )
+                }
+
+                // 权限状态提示与引导
+                if (rCfg.enabled && (!reminderPermSnapshot.canPostNotifications || (!reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred))) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        if (!reminderPermSnapshot.canPostNotifications) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "系统通知权限未开启，提醒将无法弹出",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                ReminderPermissions.buildNotificationSettingsIntent(context)
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text("去开启", maxLines = 1, softWrap = false)
+                                }
+                            }
+                        }
+                        if (!reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "未开启「闹钟和提醒」精确权限，当前自动降级为省电非精确模式",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                ReminderPermissions.buildExactAlarmSettingsIntent(context)
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text("授权准时", maxLines = 1, softWrap = false)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "默认课前提前时间（当前：提前 ${rCfg.classLeadMinutes} 分钟）",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    for (lead in listOf(5, 10, 15, 20, 30, 45, 60)) {
+                        XPeachFilterPill(
+                            label = "${lead}分钟",
+                            selected = rCfg.classLeadMinutes == lead,
+                            onClick = {
+                                scope.launch {
+                                    repository.updateReminderGlobalConfig {
+                                        it.copy(classLeadMinutes = lead)
+                                    }
+                                    feedbackText = "已设置默认课前提前 $lead 分钟提醒"
+                                }
+                            }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "「稍后提醒」单次最大延后次数（上课前 2 分钟截止）",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (maxCount in listOf(1, 2, 3)) {
+                            XPeachFilterPill(
+                                label = "${maxCount}次",
+                                selected = rCfg.classSnoozeMaxCount == maxCount,
+                                onClick = {
+                                    scope.launch {
+                                        repository.updateReminderGlobalConfig {
+                                            it.copy(
+                                                classSnoozeMaxCount = maxCount,
+                                                examSnoozeMaxCount = maxCount
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("考试提前 1 天提醒", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "开考前 24 小时发送复习与考场准备提醒",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rCfg.examDayBeforeEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                repository.updateReminderGlobalConfig { it.copy(examDayBeforeEnabled = enabled) }
+                            }
+                        }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("考试提前 1 小时提醒", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "开考前 60 分钟提醒考场、座位号与一键路线导航",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rCfg.examHourBeforeEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                repository.updateReminderGlobalConfig { it.copy(examHourBeforeEnabled = enabled) }
+                            }
+                        }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("准时优先模式 (Exact Alarm)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "使用系统精确闹钟确保课前与稍后提醒准点送达",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rCfg.preciseReminderPreferred,
+                        onCheckedChange = { preferred ->
+                            scope.launch {
+                                repository.updateReminderGlobalConfig { it.copy(preciseReminderPreferred = preferred) }
+                            }
+                        }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("锁屏通知隐藏具体课程与教室", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "锁屏状态下仅显示「有一门课程即将开始」，解锁后显示教室详情",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = rCfg.lockscreenPrivate,
+                        onCheckedChange = { priv ->
+                            scope.launch {
+                                repository.updateReminderGlobalConfig { it.copy(lockscreenPrivate = priv) }
+                            }
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = prefs.lastReminderReconcileSummary
+                            ?: "当前活跃计划：${activeReminderTasks.size} 项",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (activeReminderTasks.isNotEmpty()) {
+                        val nextTask = activeReminderTasks.first()
+                        val nextTimeStr = Instant.ofEpochMilli(nextTask.scheduledAtEpochMs)
+                            .atZone(HAUT_ZONE_ID)
+                            .format(AUDIT_TIME_FMT)
+                        Text(
+                            text = "最近计划触发：$nextTimeStr · 状态 ${nextTask.status.name} (延后 ${nextTask.snoozeCount}/${nextTask.maxSnoozes})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val report = reminderCoordinator.reconcileNow(
+                                    reason = "USER_MANUAL_REBUILD",
+                                    forceRescheduleAlarms = true
+                                )
+                                feedbackText = "已重建未来 7 天提醒计划：共排程 ${report.activeScheduledCount} 项"
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("重排提醒计划", maxLines = 1, softWrap = false)
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                !reminderPermSnapshot.notificationPermissionGranted
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                scope.launch {
+                                    val sent = reminderCoordinator.triggerTestReminder()
+                                    feedbackText = if (sent) {
+                                        "已发送测试提醒通知，请下拉通知栏体验「去教室」操作"
+                                    } else {
+                                        "发送失败：请先在系统设置中开启通知权限"
+                                    }
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("发送测试提醒", maxLines = 1, softWrap = false)
+                    }
+                }
+
+                if (prefs.reminderDiagnosticLogs.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "提醒调度自检摘要 (${prefs.reminderDiagnosticLogs.size})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(onClick = { expandReminderDiagnostics = !expandReminderDiagnostics }) {
+                            Text(if (expandReminderDiagnostics) "收起日志" else "展开日志")
+                        }
+                    }
+                    AnimatedVisibility(visible = expandReminderDiagnostics) {
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                for (logLine in prefs.reminderDiagnosticLogs.take(8)) {
+                                    Text(
+                                        text = logLine,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
