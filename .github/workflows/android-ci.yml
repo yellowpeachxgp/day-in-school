@@ -40,7 +40,11 @@ jobs:
           grep '^VERSION_CODE=' version-output.txt >> "$GITHUB_OUTPUT"
 
       - name: 运行全部 JVM 与 Android 单元测试
-        run: ./gradlew --no-daemon :core:model:test :core:domain:test testDebugUnitTest --stacktrace
+        run: ./gradlew --no-daemon \
+          :core:model:test :core:domain:test \
+          :core:academic-protocols:test :core:school-packages:test \
+          :core:academic-plan:test :core:selection:test \
+          testDebugUnitTest --stacktrace
 
       - name: 检查 Debug 和 Release 的 Android Lint
         run: ./gradlew --no-daemon lintDebug lintRelease --stacktrace
