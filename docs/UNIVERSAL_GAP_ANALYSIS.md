@@ -98,4 +98,8 @@
 - “我的 → 学校与能力”接入 `SchoolCenterScreen`，可浏览目录、搜索、查看校区、逐项能力与证据、创建独立离线身份并切换 Profile。目录浏览和第二阶段的学校请求分离；未知学校提供既有导入中心入口，不伪造教务适配。
 - 新增 `SchoolDirectoryTest` 和 `UniversalCampusModelsTest`，覆盖检索、重名区分、本地覆盖、协议边界、能力授权门控和标识校验。执行 `./gradlew --no-daemon :core:model:test :core:domain:test` 通过；UI 的编译与设备验收分别记录，JVM 成功不能替代设备路径验证。
 - Global Profile Registry 与每 Profile 独立 Room/DataStore 已连接到主界面；旧库以 adoption journal 原位采用。提醒、专注、水电 Worker 和四款小组件均使用 `profileId + generation` 验证，切换时先冻结旧状态再重绑。WebView 仍是全局单会话，因此切换会等待 Cookie、WebStorage 和缓存清空后才开放新身份。
-- 这些契约与源码测试不等于真机验收。账号切换中的 UI 无闪屏、旧通知/闹钟取消、两组件并排、Keystore 失效、进程被杀恢复和 Android 12–16 厂商 ROM 行为仍需设备级证据。
+- `:core:academic-protocols`（`bdbf023`）已完成九类教务协议只读网关（`ZF_MODERN`、`ZF_LEGACY`、`QZ_MODERN`、`QZ_LEGACY`、`JINZHI`、`CHENGFANG`、`KINGOSOFT`、`EAMS`、`CHAOXING_ACADEMIC`）、90+ 合成夹具、`ProtocolGatewayRegistry` 与 `NineProtocolMatrixContractTest`（11 套件 42 项测试，含 9×9=81 项合同检查全部通过）。所有通用网关均标注 `UNVERIFIED`（`MOCK_TESTED`），不冒充真实学校实测。
+- `:core:school-packages`（`3fe9064`）已完成 `dis-campus-plugin/v1` 清单编解码、Ed25519 纯算法验签、ZIP 路径安全校验、原子安装与回滚、HTTPS 来源/路径前缀授权域 `PermissionScope` 与通用学校目录检索（8 套件 83 项测试全部通过）。
+- `:core:academic-plan`（`60320a5`）与 `:core:selection`（`5cf0dd2`）已完成重修去重、分项成绩、培养方案树、毕业学分分组进度、`OFFICIAL`/`DERIVED`/`ESTIMATED` 可信分级（72 项测试），以及选课轮次、三态容量、半开区间冲突检测、离线草稿与受控提交状态机（88 项测试），并在 `055e40d` 接入 `GradesScreen`（“培养进度”与“选课草稿”标签页）。
+- `:core:campusservices` 与 `:core:location`（`21bd2ac`、`055e40d`）已完成 `CampusServiceProviderRegistry` 与 `CampusMapProviderRegistry` 解耦，工大莲花街 GIS 路网、馆藏、选座、水电均封装为按 `SchoolId` 解析的独立 Provider，并在 `SchoolCenterScreen`、`CampusMapScreen` 与首启 `OnboardingWelcomeScreen` 接入。
+- 全仓库 52 个测试套件共 393 项单测、`:app:lintDebug`、`:app:lintRelease`、`:app:assembleDebug` 与 `:app:assembleRelease` 全部通过。这些契约与源码测试不等于真机验收：账号切换中的 UI 无闪屏、旧通知/闹钟取消、两组件并排、Keystore 失效、进程被杀恢复和 Android 12–16 厂商 ROM 行为仍需设备级证据（`DEVICE_TESTED` 待实测）。
