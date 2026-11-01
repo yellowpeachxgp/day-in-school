@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +76,8 @@ import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.domain.ReminderPolicyEngine
 import cn.edu.haut.campus.core.domain.ScheduleEngine
+import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
+import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.ExamScheduleItem
@@ -86,6 +91,8 @@ import cn.edu.haut.campus.core.model.ReminderTaskStatus
 import cn.edu.haut.campus.core.model.ScheduleBreakInterval
 import cn.edu.haut.campus.core.model.SnoozeOptionEvaluation
 import cn.edu.haut.campus.core.model.SnoozeOutcome
+import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.model.TermDateStatus
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -208,41 +215,9 @@ fun TodayScreen(
         )
     }
 
-    // 计算当前选中日期所在周的周一至周日，以及每天是否有课
-    val weekStartMonday = remember(selectedDate) {
-        selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-    }
-    val weekDays = remember(weekStartMonday) {
-        (0L..6L).map { weekStartMonday.plusDays(it) }
-    }
-    val weekHasClassesMap = remember(
-        weekStartMonday,
-         snapshot.teachingWeek,
-        term,
-        courses,
-        rules,
-        periodTimes,
-        calendarOverrides,
-        occurrenceOverrides,
-        buildings
-    ) {
-        val activeTerm = term
-        val weekNo = snapshot.teachingWeek
-        if (activeTerm != null && weekNo != null) {
-            val map = ScheduleEngine.resolveOccurrencesForTeachingWeek(
-                teachingWeek = weekNo,
-                term = activeTerm,
-                courses = courses,
-                rules = rules,
-                periodTimes = periodTimes,
-                calendarOverrides = calendarOverrides,
-                occurrenceOverrides = occurrenceOverrides,
-                buildings = buildings
-            )
-            map.mapValues { it.value.isNotEmpty() }
-        } else {
-            emptyMap()
-        }
+    val termRules = remember(rules, term?.id) {
+        val activeTermId = term?.id
+        if (activeTermId != null) rules.filter { it.termId == activeTermId } else rules
     }
 
     Column(
@@ -326,12 +301,14 @@ fun TodayScreen(
                     }
                 }
             }
-            // 1. 轻量化 7 日横向周历条（取代繁琐的前一天/后一天/缩放按钮群）
+            // 1. 支持左右无极连续滑动的日期选择条（同时支持左右箭头快速翻周）
             WeekDaySelectorStrip(
-                weekDays = weekDays,
                 selectedDate = selectedDate,
                 todayDate = todayDate,
-                hasClassesByDate = weekHasClassesMap,
+                term = term,
+                termRules = termRules,
+                calendarOverrides = calendarOverrides,
+                occurrenceOverrides = occurrenceOverrides,
                 onSelectDate = { selectedDate = it },
                 onPreviousWeek = { selectedDate = selectedDate.minusWeeks(1) },
                 onNextWeek = { selectedDate = selectedDate.plusWeeks(1) }
@@ -934,16 +911,64 @@ private fun CourseDetailAndSnoozeDialog(
     )
 }
 
+private const val STRIP_TOTAL_DAYS = 2001
+private const val STRIP_CENTER_INDEX = 1000
+
+private fun doesDateHaveClasses(
+    date: LocalDate,
+    term: Term?,
+    termRules: List<CourseScheduleRule>,
+    calendarOverrides: List<CalendarOverride>,
+    occurrenceOverrides: List<OccurrenceOverride>
+): Boolean {
+    if (term == null || termRules.isEmpty()) return false
+    val resolved = TeachingWeekCalculator.resolveDate(date, term, calendarOverrides)
+    if (resolved.status == TermDateStatus.HOLIDAY_NO_CLASS) return false
+    val weekNo = resolved.teachingWeek ?: return false
+    val canceledRulesOnDate = occurrenceOverrides
+        .filter { it.date == date && it.canceled }
+        .mapNotNull { it.courseRuleId }
+        .toSet()
+    return termRules.any { rule ->
+        rule.id !in canceledRulesOnDate &&
+            rule.weekday == resolved.weekdayUsed &&
+            (rule.weeks.isEmpty() || weekNo in rule.weeks)
+    }
+}
+
 @Composable
 private fun WeekDaySelectorStrip(
-    weekDays: List<LocalDate>,
     selectedDate: LocalDate,
     todayDate: LocalDate,
-    hasClassesByDate: Map<LocalDate, Boolean>,
+    term: Term?,
+    termRules: List<CourseScheduleRule>,
+    calendarOverrides: List<CalendarOverride>,
+    occurrenceOverrides: List<OccurrenceOverride>,
     onSelectDate: (LocalDate) -> Unit,
     onPreviousWeek: () -> Unit,
     onNextWeek: () -> Unit
 ) {
+    val initialMonday = remember {
+        selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    }
+    val initialFirstIndex = remember(todayDate) {
+        (STRIP_CENTER_INDEX + ChronoUnit.DAYS.between(todayDate, initialMonday).toInt())
+            .coerceIn(0, STRIP_TOTAL_DAYS - 7)
+    }
+    val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = initialFirstIndex)
+
+    LaunchedEffect(selectedDate, todayDate) {
+        val selectedIndex = (STRIP_CENTER_INDEX + ChronoUnit.DAYS.between(todayDate, selectedDate).toInt())
+            .coerceIn(0, STRIP_TOTAL_DAYS - 1)
+        val visibleIndices = lazyListState.layoutInfo.visibleItemsInfo.map { it.index }
+        if (visibleIndices.isNotEmpty() && selectedIndex !in visibleIndices) {
+            val targetMonday = selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            val targetStart = (STRIP_CENTER_INDEX + ChronoUnit.DAYS.between(todayDate, targetMonday).toInt())
+                .coerceIn(0, STRIP_TOTAL_DAYS - 7)
+            lazyListState.animateScrollToItem(targetStart)
+        }
+    }
+
     XPeachCard(
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
     ) {
@@ -966,62 +991,89 @@ private fun WeekDaySelectorStrip(
                 )
             }
 
-            for (date in weekDays) {
-                val isSelected = date == selectedDate
-                val isToday = date == todayDate
-                val hasClasses = hasClassesByDate[date] == true
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            when {
-                                isSelected -> MaterialTheme.colorScheme.primary
-                                isToday -> MaterialTheme.colorScheme.primaryContainer
-                                else -> Color.Transparent
-                            }
-                        )
-                        .clickable { onSelectDate(date) }
-                        .padding(vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+            BoxWithConstraints(
+                modifier = Modifier.weight(1f)
+            ) {
+                val itemWidth = maxWidth / 7
+                LazyRow(
+                    state = lazyListState,
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = date.dayOfWeek.ChineseLabel.replace("周", ""),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when {
-                            isSelected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                            isToday -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Text(
-                        text = "${date.dayOfMonth}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (isSelected || isToday) FontWeight.SemiBold else FontWeight.Medium,
-                        color = when {
-                            isSelected -> MaterialTheme.colorScheme.onPrimary
-                            isToday -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurface
-                        },
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(4.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    !hasClasses -> Color.Transparent
-                                    isSelected -> MaterialTheme.colorScheme.onPrimary
-                                    else -> MaterialTheme.colorScheme.primary
-                                }
+                    items(
+                        count = STRIP_TOTAL_DAYS,
+                        key = { index -> index }
+                    ) { index ->
+                        val date = remember(todayDate, index) {
+                            todayDate.plusDays((index - STRIP_CENTER_INDEX).toLong())
+                        }
+                        val isSelected = date == selectedDate
+                        val isToday = date == todayDate
+                        val hasClasses = remember(date, term, termRules, calendarOverrides, occurrenceOverrides) {
+                            doesDateHaveClasses(date, term, termRules, calendarOverrides, occurrenceOverrides)
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .width(itemWidth)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    when {
+                                        isSelected -> MaterialTheme.colorScheme.primary
+                                        isToday -> MaterialTheme.colorScheme.primaryContainer
+                                        else -> Color.Transparent
+                                    }
+                                )
+                                .clickable { onSelectDate(date) }
+                                .padding(vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = date.dayOfWeek.ChineseLabel.replace("周", ""),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = when {
+                                    isSelected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                                    isToday -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                softWrap = false
                             )
-                    )
+                            Text(
+                                text = if (date.dayOfMonth == 1) "${date.monthValue}月" else "${date.dayOfMonth}",
+                                style = if (date.dayOfMonth == 1) {
+                                    MaterialTheme.typography.labelMedium
+                                } else {
+                                    MaterialTheme.typography.titleMedium
+                                },
+                                fontWeight = if (isSelected || isToday || date.dayOfMonth == 1) {
+                                    FontWeight.SemiBold
+                                } else {
+                                    FontWeight.Medium
+                                },
+                                color = when {
+                                    isSelected -> MaterialTheme.colorScheme.onPrimary
+                                    isToday || date.dayOfMonth == 1 -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                },
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when {
+                                            !hasClasses -> Color.Transparent
+                                            isSelected -> MaterialTheme.colorScheme.onPrimary
+                                            else -> MaterialTheme.colorScheme.primary
+                                        }
+                                    )
+                            )
+                        }
+                    }
                 }
             }
 
