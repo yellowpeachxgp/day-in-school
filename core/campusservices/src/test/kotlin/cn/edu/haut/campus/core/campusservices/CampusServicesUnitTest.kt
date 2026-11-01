@@ -245,4 +245,40 @@ class CampusServicesUnitTest {
         assertTrue(noticesText.contains("aa83d6f7200ebde4a816e91191f19d9990563362"))
         assertTrue(noticesText.contains("MIT"))
     }
+
+    @Test
+    fun campusServiceProviderRegistry_isolatesHautProvidersAndRejectsUnknownSchools() {
+        val registry = CampusServiceProviderRegistry.Default
+        val hautId = cn.edu.haut.campus.core.domain.SchoolDirectory.HAUT_SCHOOL_ID
+        val otherSchool = cn.edu.haut.campus.core.model.SchoolId("other-university")
+
+        assertNotNull(registry.libraryCatalog(hautId))
+        assertNotNull(registry.librarySeats(hautId))
+        assertNotNull(registry.utilities(hautId))
+        assertEquals(null, registry.libraryCatalog(otherSchool))
+        assertEquals(null, registry.librarySeats(otherSchool))
+        assertEquals(null, registry.utilities(otherSchool))
+
+        val unsupportedStatus = registry.capabilityStatus(
+            otherSchool,
+            cn.edu.haut.campus.core.model.CapabilityKind.UTILITIES
+        )
+        assertFalse(unsupportedStatus.providerSupports)
+        assertFalse(unsupportedStatus.isAvailable)
+        assertEquals(
+            cn.edu.haut.campus.core.model.CapabilityState.UNSUPPORTED,
+            unsupportedStatus.state
+        )
+
+        val hautDefaultStatus = registry.capabilityStatus(
+            hautId,
+            cn.edu.haut.campus.core.model.CapabilityKind.LIBRARY_CATALOG
+        )
+        assertTrue(hautDefaultStatus.providerSupports)
+        assertFalse(hautDefaultStatus.isAvailable)
+        assertEquals(
+            cn.edu.haut.campus.core.model.CapabilityState.NEEDS_VERIFICATION,
+            hautDefaultStatus.state
+        )
+    }
 }

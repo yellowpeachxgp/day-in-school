@@ -111,7 +111,13 @@ class SchoolDirectory(
                 CapabilityKind.TIMETABLE_READ,
                 CapabilityKind.GRADES_READ,
                 CapabilityKind.EXAMS_READ,
-                CapabilityKind.ACADEMIC_CALENDAR_READ
+                CapabilityKind.ACADEMIC_CALENDAR_READ,
+                CapabilityKind.CAMPUS_MAP,
+                CapabilityKind.CAMPUS_BUILDINGS,
+                CapabilityKind.ROOM_FINDER,
+                CapabilityKind.LIBRARY_CATALOG,
+                CapabilityKind.LIBRARY_SEATS,
+                CapabilityKind.UTILITIES
             ).associateWith { CapabilityStatus(kind = it, providerSupports = true, evidence = evidence) }
             return SchoolProfile(
                 id = HAUT_SCHOOL_ID,
