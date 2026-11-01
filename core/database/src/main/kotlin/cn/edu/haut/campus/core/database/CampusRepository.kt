@@ -87,6 +87,11 @@ data class AppPreferencesState(
     val themeMode: String = "SYSTEM",
     val themePaletteKey: String = "HAUT_BLUE",
     val customThemeSeedArgb: Long = 0xFF0066CC,
+    val customWallpaperPath: String? = null,
+    val wallpaperAlpha: Float = 0.48f,
+    val wallpaperBlurDp: Float = 10f,
+    val wallpaperCardAlpha: Float = 0.82f,
+    val extractedWallpaperColors: List<Long> = emptyList(),
     val homeCardOrder: List<String> = DEFAULT_HOME_CARD_ORDER,
     val hiddenHomeCards: Set<String> = emptySet(),
     val fullWidthHomeCards: Set<String> = setOf("EXAM_SUMMARY"),
@@ -197,6 +202,11 @@ class CampusRepository private constructor(
         val THEME_MODE = stringPreferencesKey("theme_mode_v1")
         val THEME_PALETTE_KEY = stringPreferencesKey("theme_palette_key_v1")
         val CUSTOM_THEME_SEED_ARGB = longPreferencesKey("custom_theme_seed_argb_v1")
+        val CUSTOM_WALLPAPER_PATH = stringPreferencesKey("custom_wallpaper_path_v1")
+        val WALLPAPER_ALPHA = floatPreferencesKey("wallpaper_alpha_v1")
+        val WALLPAPER_BLUR_DP = floatPreferencesKey("wallpaper_blur_dp_v1")
+        val WALLPAPER_CARD_ALPHA = floatPreferencesKey("wallpaper_card_alpha_v1")
+        val EXTRACTED_WALLPAPER_COLORS = stringPreferencesKey("extracted_wallpaper_colors_v1")
         val HOME_CARD_ORDER = stringPreferencesKey("home_card_order_v1")
         val HIDDEN_HOME_CARDS = stringPreferencesKey("hidden_home_cards_v1")
         val FULL_WIDTH_HOME_CARDS = stringPreferencesKey("full_width_home_cards_v1")
@@ -246,6 +256,14 @@ class CampusRepository private constructor(
             themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
             themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
             customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC,
+            customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
+            wallpaperAlpha = (prefs[PrefKeys.WALLPAPER_ALPHA] ?: 0.48f).coerceIn(0.10f, 1.0f),
+            wallpaperBlurDp = (prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: 10f).coerceIn(0f, 30f),
+            wallpaperCardAlpha = (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: 0.82f).coerceIn(0.50f, 0.98f),
+            extractedWallpaperColors = prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS]
+                ?.split(",")
+                ?.mapNotNull { it.trim().toLongOrNull() }
+                .orEmpty(),
             homeCardOrder = normalizedOrder,
             hiddenHomeCards = hiddenSet,
             fullWidthHomeCards = fullWidthSet,
@@ -1011,6 +1029,43 @@ class CampusRepository private constructor(
             if (customSeedArgb != null) {
                 prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
             }
+        }
+    }
+
+    suspend fun saveCustomWallpaperTheme(
+        localPath: String,
+        primarySeedArgb: Long,
+        extractedSwatches: List<Long>
+    ) {
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
+            prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
+            prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
+            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
+        }
+    }
+
+    suspend fun updateWallpaperVisualParams(
+        alpha: Float? = null,
+        blurDp: Float? = null,
+        cardAlpha: Float? = null
+    ) {
+        appContext.appDataStore.edit { prefs ->
+            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = it.coerceIn(0.10f, 1.0f) }
+            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = it.coerceIn(0f, 30f) }
+            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = it.coerceIn(0.50f, 0.98f) }
+        }
+    }
+
+    suspend fun clearCustomWallpaperTheme() {
+        appContext.appDataStore.edit { prefs ->
+            val oldPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]
+            if (!oldPath.isNullOrBlank()) {
+                runCatching { java.io.File(oldPath).delete() }
+            }
+            prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
+            prefs.remove(PrefKeys.EXTRACTED_WALLPAPER_COLORS)
         }
     }
 

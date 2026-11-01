@@ -1,7 +1,12 @@
 package cn.edu.haut.campus.core.designsystem
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +19,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,11 +36,21 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -43,6 +59,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 val XPeachBrandLight = Color(0xFF0066CC)
 val XPeachBrandHoverLight = Color(0xFF0052A3)
@@ -206,7 +228,169 @@ enum class PresetThemePalette(
     }
 }
 
-fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.material3.ColorScheme {
+data class WallpaperImportResult(
+    val localFilePath: String,
+    val primarySeedArgb: Long,
+    val extractedSwatches: List<Long>
+)
+
+/**
+ * 自定义背景图导入、内存缓存与多簇 HSV 智能取色引擎：
+ * - 将用户上传的图片安全采样压缩保存至应用私有目录，避免 URI 权限失效与大图 OOM
+ * - 通过 18 色相桶加权聚类提取图片中最具代表性的 5 款主题色，自动赋色给按钮、菜单、导航栏与卡片背景模板
+ */
+object WallpaperThemeEngine {
+
+    private val bitmapMemoryCache = ConcurrentHashMap<String, ImageBitmap>()
+
+    fun getCachedBitmap(path: String): ImageBitmap? = bitmapMemoryCache[path]
+
+    suspend fun loadOrDecodeBitmap(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        bitmapMemoryCache[path]?.let { return@withContext it }
+        runCatching {
+            val file = File(path)
+            if (!file.exists()) return@runCatching null
+            val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: return@runCatching null
+            val imageBitmap = bmp.asImageBitmap()
+            bitmapMemoryCache[path] = imageBitmap
+            imageBitmap
+        }.getOrNull()
+    }
+
+    suspend fun importWallpaperAndExtractPalette(
+        context: Context,
+        sourceUri: Uri
+    ): Result<WallpaperImportResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, boundsOpts)
+            }
+            val rawW = boundsOpts.outWidth.coerceAtLeast(1)
+            val rawH = boundsOpts.outHeight.coerceAtLeast(1)
+            var sampleSize = 1
+            val maxEdge = maxOf(rawW, rawH)
+            while (maxEdge / sampleSize > 1600) {
+                sampleSize *= 2
+            }
+
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val decodedBitmap = context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, decodeOpts)
+            } ?: throw IllegalStateException("无法读取所选图片内容")
+
+            val wallpapersDir = File(context.filesDir, "wallpapers").apply { mkdirs() }
+            wallpapersDir.listFiles()?.forEach { oldFile ->
+                runCatching { oldFile.delete() }
+            }
+            val targetFile = File(wallpapersDir, "custom_theme_wallpaper_${System.currentTimeMillis()}.jpg")
+            FileOutputStream(targetFile).use { out ->
+                decodedBitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                out.flush()
+            }
+
+            bitmapMemoryCache.clear()
+            bitmapMemoryCache[targetFile.absolutePath] = decodedBitmap.asImageBitmap()
+
+            val swatches = extractPaletteSwatchesFromBitmap(decodedBitmap)
+            val primarySeed = swatches.firstOrNull() ?: 0xFF0066CCL
+
+            WallpaperImportResult(
+                localFilePath = targetFile.absolutePath,
+                primarySeedArgb = primarySeed,
+                extractedSwatches = swatches
+            )
+        }
+    }
+
+    /**
+     * 基于 18 色相桶与饱和度/明度视觉显著性权重的智能取色算法：
+     * 自动过滤过暗、过曝与死灰噪点，提取最多 5 款适合作为按钮、菜单与卡片模板的主色调。
+     */
+    fun extractPaletteSwatchesFromBitmap(bitmap: Bitmap): List<Long> {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return listOf(0xFF0066CCL)
+
+        val stepX = (w / 48).coerceAtLeast(1)
+        val stepY = (h / 48).coerceAtLeast(1)
+
+        val bucketCount = 18
+        val bucketWeight = FloatArray(bucketCount)
+        val bucketHueSum = FloatArray(bucketCount)
+        val bucketSatSum = FloatArray(bucketCount)
+        val bucketValSum = FloatArray(bucketCount)
+
+        val hsv = FloatArray(3)
+        var x = 0
+        while (x < w) {
+            var y = 0
+            while (y < h) {
+                val pixel = bitmap.getPixel(x, y)
+                val alpha = (pixel ushr 24) and 0xFF
+                if (alpha >= 128) {
+                    android.graphics.Color.colorToHSV(pixel, hsv)
+                    val hue = hsv[0]
+                    val sat = hsv[1]
+                    val value = hsv[2]
+                    if (sat >= 0.12f && value in 0.16f..0.96f) {
+                        val idx = ((hue / 20f).toInt()).coerceIn(0, bucketCount - 1)
+                        val vibrancyWeight = (sat * 1.5f + 0.15f) * (1.05f - abs(value - 0.62f))
+                        bucketWeight[idx] += vibrancyWeight
+                        bucketHueSum[idx] += hue * vibrancyWeight
+                        bucketSatSum[idx] += sat * vibrancyWeight
+                        bucketValSum[idx] += value * vibrancyWeight
+                    }
+                }
+                y += stepY
+            }
+            x += stepX
+        }
+
+        val rankedBuckets = (0 until bucketCount)
+            .filter { bucketWeight[it] > 0.1f }
+            .sortedByDescending { bucketWeight[it] }
+
+        val extracted = mutableListOf<Long>()
+        val chosenHues = mutableListOf<Float>()
+
+        for (idx in rankedBuckets) {
+            val weight = bucketWeight[idx]
+            val avgHue = (bucketHueSum[idx] / weight).coerceIn(0f, 360f)
+            val avgSat = (bucketSatSum[idx] / weight).coerceIn(0.45f, 0.85f)
+            val avgVal = (bucketValSum[idx] / weight).coerceIn(0.52f, 0.82f)
+
+            val tooClose = chosenHues.any { existingHue ->
+                val diff = abs(existingHue - avgHue)
+                minOf(diff, 360f - diff) < 28f
+            }
+            if (!tooClose) {
+                chosenHues.add(avgHue)
+                val colorInt = android.graphics.Color.HSVToColor(floatArrayOf(avgHue, avgSat, avgVal))
+                val argbLong = 0xFF000000L or (colorInt.toLong() and 0xFFFFFFL)
+                extracted.add(argbLong)
+                if (extracted.size >= 5) break
+            }
+        }
+
+        if (extracted.isEmpty()) {
+            extracted.add(0xFF0066CCL)
+            extracted.add(0xFF334155L)
+            extracted.add(0xFF0D9488L)
+        }
+        return extracted
+    }
+}
+
+fun buildSeedColorScheme(
+    seedArgb: Long,
+    darkTheme: Boolean,
+    hasCustomWallpaper: Boolean = false,
+    cardTemplateAlpha: Float = 0.82f
+): androidx.compose.material3.ColorScheme {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(seedArgb.toInt(), hsv)
     val hue = hsv[0]
@@ -218,17 +402,38 @@ fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.m
         return Color(android.graphics.Color.HSVToColor(floatArrayOf(normH, s.coerceIn(0f, 1f), v.coerceIn(0f, 1f))))
     }
 
+    val safeCardAlpha = if (hasCustomWallpaper) cardTemplateAlpha.coerceIn(0.50f, 0.98f) else 1f
+    val safeWellAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.88f).coerceIn(0.42f, 0.94f) else 1f
+    val safeContainerAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.92f).coerceIn(0.55f, 0.96f) else 1f
+
     return if (!darkTheme) {
         val primary = hsvColor(hue, sat, value.coerceIn(0.42f, 0.82f))
-        val primaryContainer = hsvColor(hue, (sat * 0.22f).coerceIn(0.06f, 0.22f), 0.98f)
-        val onPrimaryContainer = hsvColor(hue, (sat * 0.95f).coerceIn(0.45f, 0.95f), 0.42f)
+        val primaryContainer = hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.26f), 0.97f)
+            .copy(alpha = safeContainerAlpha)
+        val onPrimaryContainer = hsvColor(hue, (sat * 0.95f).coerceIn(0.45f, 0.95f), 0.40f)
         val secondary = hsvColor(hue + 18f, (sat * 0.75f).coerceIn(0.25f, 0.78f), 0.68f)
-        val secondaryContainer = hsvColor(hue + 18f, (sat * 0.18f).coerceIn(0.05f, 0.18f), 0.97f)
+        val secondaryContainer = hsvColor(hue + 18f, (sat * 0.20f).coerceIn(0.06f, 0.20f), 0.96f)
+            .copy(alpha = safeContainerAlpha)
         val onSecondaryContainer = hsvColor(hue + 18f, (sat * 0.85f).coerceIn(0.4f, 0.85f), 0.38f)
-        val bgTint = hsvColor(hue, (sat * 0.05f).coerceIn(0.01f, 0.045f), 0.975f)
-        val wellTint = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.07f), 0.955f)
-        val borderTint = hsvColor(hue, (sat * 0.11f).coerceIn(0.03f, 0.09f), 0.915f)
-        val borderStrong = hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.12f), 0.86f)
+
+        // 当启用自定义背景图时，卡片与菜单表面自动染上微弱主题色并应用毛玻璃透明度
+        val surfaceTint = if (hasCustomWallpaper) {
+            hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.99f).copy(alpha = safeCardAlpha)
+        } else {
+            XPeachCardLight
+        }
+        val wellTint = hsvColor(
+            hue,
+            if (hasCustomWallpaper) (sat * 0.14f).coerceIn(0.04f, 0.13f) else (sat * 0.08f).coerceIn(0.02f, 0.07f),
+            0.955f
+        ).copy(alpha = safeWellAlpha)
+        val bgTint = if (hasCustomWallpaper) {
+            Color.Transparent
+        } else {
+            hsvColor(hue, (sat * 0.05f).coerceIn(0.01f, 0.045f), 0.975f)
+        }
+        val borderTint = hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.12f), 0.90f)
+        val borderStrong = hsvColor(hue, (sat * 0.18f).coerceIn(0.05f, 0.15f), 0.84f)
 
         lightColorScheme(
             primary = primary,
@@ -241,7 +446,7 @@ fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.m
             onSecondaryContainer = onSecondaryContainer,
             tertiary = XPeachOk,
             onTertiary = Color.White,
-            tertiaryContainer = XPeachOkSoft,
+            tertiaryContainer = XPeachOkSoft.copy(alpha = safeContainerAlpha),
             onTertiaryContainer = Color(0xFF15803D),
             error = XPeachDanger,
             onError = Color.White,
@@ -249,20 +454,36 @@ fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.m
             onErrorContainer = Color(0xFFB91C1C),
             background = bgTint,
             onBackground = XPeachTextLight,
-            surface = XPeachCardLight,
+            surface = surfaceTint,
             onSurface = XPeachTextLight,
             surfaceVariant = wellTint,
             onSurfaceVariant = XPeachMutedLight,
+            surfaceContainerHigh = hsvColor(hue, (sat * 0.06f).coerceIn(0.01f, 0.06f), 0.98f),
+            surfaceContainerHighest = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.96f),
             outline = borderStrong,
             outlineVariant = borderTint
         )
     } else {
         val primaryDark = hsvColor(hue, (sat * 0.68f).coerceIn(0.28f, 0.72f), 0.96f)
         val primaryContainerDark = hsvColor(hue, (sat * 0.62f).coerceIn(0.22f, 0.65f), 0.28f)
+            .copy(alpha = safeContainerAlpha)
         val onPrimaryContainerDark = hsvColor(hue, (sat * 0.48f).coerceIn(0.18f, 0.52f), 0.98f)
         val secondaryDark = hsvColor(hue + 18f, (sat * 0.58f).coerceIn(0.22f, 0.62f), 0.90f)
         val secondaryContainerDark = hsvColor(hue + 18f, (sat * 0.55f).coerceIn(0.2f, 0.58f), 0.26f)
+            .copy(alpha = safeContainerAlpha)
         val onSecondaryContainerDark = hsvColor(hue + 18f, (sat * 0.42f).coerceIn(0.16f, 0.48f), 0.95f)
+
+        val surfaceDarkTint = if (hasCustomWallpaper) {
+            hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.24f), 0.14f).copy(alpha = safeCardAlpha)
+        } else {
+            XPeachCardDark
+        }
+        val wellDarkTint = if (hasCustomWallpaper) {
+            hsvColor(hue, (sat * 0.28f).coerceIn(0.10f, 0.28f), 0.20f).copy(alpha = safeWellAlpha)
+        } else {
+            XPeachWellDark
+        }
+        val bgDarkTint = if (hasCustomWallpaper) Color.Transparent else XPeachBgDark
 
         darkColorScheme(
             primary = primaryDark,
@@ -275,18 +496,20 @@ fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.m
             onSecondaryContainer = onSecondaryContainerDark,
             tertiary = Color(0xFF22C55E),
             onTertiary = Color(0xFF052E16),
-            tertiaryContainer = Color(0xFF143823),
+            tertiaryContainer = Color(0xFF143823).copy(alpha = safeContainerAlpha),
             onTertiaryContainer = Color(0xFF4ADE80),
             error = Color(0xFFEF4444),
             onError = Color.White,
             errorContainer = Color(0xFF3F1D1D),
             onErrorContainer = Color(0xFFF87171),
-            background = XPeachBgDark,
+            background = bgDarkTint,
             onBackground = XPeachTextDark,
-            surface = XPeachCardDark,
+            surface = surfaceDarkTint,
             onSurface = XPeachTextDark,
-            surfaceVariant = XPeachWellDark,
+            surfaceVariant = wellDarkTint,
             onSurfaceVariant = XPeachMutedDark,
+            surfaceContainerHigh = Color(0xFF1E222B),
+            surfaceContainerHighest = Color(0xFF252A34),
             outline = XPeachBorderStrongDark,
             outlineVariant = XPeachBorderDark
         )
@@ -300,6 +523,10 @@ fun HautCampusTheme(
     dynamicColor: Boolean = false,
     themePaletteKey: String = "HAUT_BLUE",
     customSeedArgb: Long = 0xFF0066CC,
+    customWallpaperPath: String? = null,
+    wallpaperAlpha: Float = 0.48f,
+    wallpaperBlurDp: Float = 10f,
+    wallpaperCardAlpha: Float = 0.82f,
     content: @Composable () -> Unit
 ) {
     val effectiveDark = when (themeMode) {
@@ -311,22 +538,81 @@ fun HautCampusTheme(
         "CUSTOM" -> customSeedArgb
         else -> PresetThemePalette.fromKey(themePaletteKey)?.seedArgb ?: 0xFF0066CC
     }
+
+    var wallpaperBitmap by remember(customWallpaperPath) {
+        mutableStateOf(customWallpaperPath?.let { WallpaperThemeEngine.getCachedBitmap(it) })
+    }
+    LaunchedEffect(customWallpaperPath) {
+        if (!customWallpaperPath.isNullOrBlank()) {
+            wallpaperBitmap = WallpaperThemeEngine.loadOrDecodeBitmap(customWallpaperPath)
+        } else {
+            wallpaperBitmap = null
+        }
+    }
+
+    val hasActiveWallpaper = wallpaperBitmap != null
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasActiveWallpaper -> {
             val context = LocalContext.current
             if (effectiveDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        themePaletteKey == "HAUT_BLUE" -> {
+        themePaletteKey == "HAUT_BLUE" && !hasActiveWallpaper -> {
             if (effectiveDark) DarkColors else LightColors
         }
-        else -> buildSeedColorScheme(resolvedSeedArgb, effectiveDark)
+        else -> buildSeedColorScheme(
+            seedArgb = resolvedSeedArgb,
+            darkTheme = effectiveDark,
+            hasCustomWallpaper = hasActiveWallpaper,
+            cardTemplateAlpha = wallpaperCardAlpha
+        )
     }
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = HautTypography,
-        content = content
-    )
+        typography = HautTypography
+    ) {
+        val activeBmp = wallpaperBitmap
+        if (activeBmp != null) {
+            val baseBackdrop = if (effectiveDark) XPeachBgDark else XPeachBgLight
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(baseBackdrop)
+            ) {
+                Image(
+                    bitmap = activeBmp,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    alpha = wallpaperAlpha.coerceIn(0.10f, 1.0f),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (wallpaperBlurDp > 0.2f) {
+                                Modifier.blur(
+                                    radius = wallpaperBlurDp.dp,
+                                    edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                )
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+                // 自适应护眼柔光层，保证高饱和度壁纸下文字依然清晰易读
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            baseBackdrop.copy(
+                                alpha = (1f - wallpaperAlpha.coerceIn(0.10f, 1.0f)) * 0.45f
+                            )
+                        )
+                )
+                content()
+            }
+        } else {
+            content()
+        }
+    }
 }
 
 @Composable

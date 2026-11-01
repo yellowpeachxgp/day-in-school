@@ -91,6 +91,7 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.DEFAULT_HOME_CARD_ORDER
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.PresetThemePalette
+import cn.edu.haut.campus.core.designsystem.WallpaperThemeEngine
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -1514,7 +1515,31 @@ fun SettingsScreen(
                 }
             }
 
-            // 7.5 主题、自定义调色盘与模块化卡片布局
+            // 7.5 主题、自定义背景图取色、调色盘与模块化卡片布局
+            val wallpaperPickerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    scope.launch {
+                        feedbackText = "正在解析背景图片并提取专属主题配色..."
+                        WallpaperThemeEngine.importWallpaperAndExtractPalette(context, uri)
+                            .onSuccess { result ->
+                                repository.saveCustomWallpaperTheme(
+                                    localPath = result.localFilePath,
+                                    primarySeedArgb = result.primarySeedArgb,
+                                    extractedSwatches = result.extractedSwatches
+                                )
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                val hexStr = String.format("#%06X", 0xFFFFFF and result.primarySeedArgb.toInt())
+                                feedbackText = "已应用自定义背景图并自动取色 ($hexStr)"
+                            }
+                            .onFailure { err ->
+                                feedbackText = "导入背景图失败：${err.message ?: "请换一张图片重试"}"
+                            }
+                    }
+                }
+            }
+
             ThemePaletteAndCardLayoutSection(
                 prefs = prefs,
                 onSelectThemeMode = { mode ->
@@ -1528,6 +1553,24 @@ fun SettingsScreen(
                         repository.setThemePalette(key, seedArgb)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                         feedbackText = "已应用主题配色并同步刷新桌面小组件"
+                    }
+                },
+                onPickWallpaperImage = {
+                    wallpaperPickerLauncher.launch("image/*")
+                },
+                onUpdateWallpaperParams = { alpha, blurDp, cardAlpha ->
+                    scope.launch {
+                        repository.updateWallpaperVisualParams(
+                            alpha = alpha,
+                            blurDp = blurDp,
+                            cardAlpha = cardAlpha
+                        )
+                    }
+                },
+                onClearWallpaper = {
+                    scope.launch {
+                        repository.clearCustomWallpaperTheme()
+                        feedbackText = "已移除自定义背景图片"
                     }
                 },
                 onUpdateCardLayout = { order, hidden, fullWidth ->
@@ -2601,11 +2644,17 @@ private fun ThemePaletteAndCardLayoutSection(
     onSelectThemeMode: (String) -> Unit,
     onToggleDynamicColor: (Boolean) -> Unit,
     onSelectPalette: (String, Long?) -> Unit,
+    onPickWallpaperImage: () -> Unit,
+    onUpdateWallpaperParams: (alpha: Float?, blurDp: Float?, cardAlpha: Float?) -> Unit,
+    onClearWallpaper: () -> Unit,
     onUpdateCardLayout: (List<String>, Set<String>, Set<String>) -> Unit,
     onResetCardLayout: () -> Unit
 ) {
     var expandCustomPalette by remember { mutableStateOf(prefs.themePaletteKey == "CUSTOM") }
     var expandCardManager by remember { mutableStateOf(false) }
+    var localWallpaperAlpha by remember(prefs.wallpaperAlpha) { mutableFloatStateOf(prefs.wallpaperAlpha) }
+    var localWallpaperBlur by remember(prefs.wallpaperBlurDp) { mutableFloatStateOf(prefs.wallpaperBlurDp) }
+    var localCardAlpha by remember(prefs.wallpaperCardAlpha) { mutableFloatStateOf(prefs.wallpaperCardAlpha) }
 
     val initialHsv = remember(prefs.customThemeSeedArgb) {
         val arr = FloatArray(3)
@@ -2632,18 +2681,19 @@ private fun ThemePaletteAndCardLayoutSection(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "主题与调色盘",
+                    text = "主题、壁纸与调色盘",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "自定义深浅外观、8款精选主题色与自由HSV调色盘",
+                    text = "支持自定义背景图智能取色、模糊透明度调节与自由调色盘",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             val currentPaletteLabel = when {
-                prefs.useDynamicColor -> "壁纸取色"
+                !prefs.customWallpaperPath.isNullOrBlank() -> "自定义壁纸"
+                prefs.useDynamicColor -> "系统取色"
                 prefs.themePaletteKey == "CUSTOM" -> customHexText
                 else -> PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "工大蓝"
             }
@@ -2679,6 +2729,148 @@ private fun ThemePaletteAndCardLayoutSection(
                         onClick = { onSelectThemeMode(modeKey) }
                     )
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 1.5 自定义背景图片上传、自动取色与模糊度/透明度控制
+        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "自定义背景图片主题",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (prefs.customWallpaperPath.isNullOrBlank()) {
+                            "上传相册图片作为全局背景，按钮、菜单与卡片模板自动提取主题色"
+                        } else {
+                            "已启用自定义背景图 · 按钮、菜单与卡片模板已同步壁纸配色"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (!prefs.customWallpaperPath.isNullOrBlank()) {
+                        XPeachFilterPill(
+                            label = "移除",
+                            selected = false,
+                            onClick = onClearWallpaper
+                        )
+                    }
+                    XPeachFilterPill(
+                        label = if (prefs.customWallpaperPath.isNullOrBlank()) "上传背景图" else "更换图片",
+                        selected = !prefs.customWallpaperPath.isNullOrBlank(),
+                        onClick = onPickWallpaperImage
+                    )
+                }
+            }
+
+            if (!prefs.customWallpaperPath.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (prefs.extractedWallpaperColors.isNotEmpty()) {
+                    Text(
+                        text = "从背景图自动提取的配色（点击可切换按钮与菜单色调）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (swatchArgb in prefs.extractedWallpaperColors) {
+                            val isSelectedSwatch = prefs.themePaletteKey == "CUSTOM" &&
+                                (prefs.customThemeSeedArgb and 0xFFFFFFL) == (swatchArgb and 0xFFFFFFL)
+                            val swatchHex = String.format("#%06X", 0xFFFFFF and swatchArgb.toInt())
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (isSelectedSwatch) Color(swatchArgb).copy(alpha = 0.18f)
+                                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                                    )
+                                    .border(
+                                        width = if (isSelectedSwatch) 1.5.dp else 0.6.dp,
+                                        color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.outlineVariant,
+                                        shape = RoundedCornerShape(16.dp)
+                                    )
+                                    .clickable { onSelectPalette("CUSTOM", swatchArgb) }
+                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(swatchArgb))
+                                )
+                                Text(
+                                    text = swatchHex,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelectedSwatch) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Text(
+                    text = "背景模糊度 (${localWallpaperBlur.toInt()} dp)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = localWallpaperBlur,
+                    onValueChange = {
+                        localWallpaperBlur = it
+                        onUpdateWallpaperParams(null, it, null)
+                    },
+                    valueRange = 0f..30f
+                )
+
+                Text(
+                    text = "背景图片透明度 (${(localWallpaperAlpha * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = localWallpaperAlpha,
+                    onValueChange = {
+                        localWallpaperAlpha = it
+                        onUpdateWallpaperParams(it, null, null)
+                    },
+                    valueRange = 0.10f..1.0f
+                )
+
+                Text(
+                    text = "按钮菜单与卡片背景模板通透度 (${(localCardAlpha * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = localCardAlpha,
+                    onValueChange = {
+                        localCardAlpha = it
+                        onUpdateWallpaperParams(null, null, it)
+                    },
+                    valueRange = 0.50f..0.98f
+                )
             }
         }
 

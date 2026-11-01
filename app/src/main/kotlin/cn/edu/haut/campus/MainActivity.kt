@@ -176,7 +176,11 @@ class MainActivity : ComponentActivity() {
                 themeMode = prefs.themeMode,
                 dynamicColor = prefs.useDynamicColor,
                 themePaletteKey = prefs.themePaletteKey,
-                customSeedArgb = prefs.customThemeSeedArgb
+                customSeedArgb = prefs.customThemeSeedArgb,
+                customWallpaperPath = prefs.customWallpaperPath,
+                wallpaperAlpha = prefs.wallpaperAlpha,
+                wallpaperBlurDp = prefs.wallpaperBlurDp,
+                wallpaperCardAlpha = prefs.wallpaperCardAlpha
             ) {
                 HautCampusRootApp(
                     repository = repository,
@@ -953,14 +957,20 @@ private fun XPeachBottomDock(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        bgColor.copy(alpha = 0.58f),
-                        bgColor.copy(alpha = 0.88f)
+            .then(
+                if (bgColor.alpha >= 0.05f) {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                bgColor.copy(alpha = 0.58f),
+                                bgColor.copy(alpha = 0.88f)
+                            )
+                        )
                     )
-                )
+                } else {
+                    Modifier
+                }
             )
             .navigationBarsPadding()
             .padding(horizontal = 22.dp, vertical = 10.dp),
