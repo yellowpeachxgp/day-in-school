@@ -86,7 +86,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 context = context,
                 appWidgetId = appWidgetId,
                 defaultType = WidgetType.TODAY_4X2
-            )
+            ) ?: run { WidgetRefreshCoordinator.showSwitching(context, intArrayOf(appWidgetId)); return }
             val day = snapshot.daySnapshot
             val views = RemoteViews(context.packageName, R.layout.widget_today_4x2)
 
@@ -202,7 +202,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 )
                 views.setTextViewText(
                     R.id.tv_sub_1,
-                    hint?.firstCourseName ?: "查看完整学期课表"
+                    if (snapshot.config.privacyMode && hint != null) "课程已隐藏" else hint?.firstCourseName ?: "查看完整学期课表"
                 )
                 views.setTextViewText(
                     R.id.tv_sub_1_room,
@@ -214,6 +214,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
             }
             if (launchIntent != null) {
@@ -227,6 +228,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
             }
 
             val mapIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "map")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
                 putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, focus?.occurrence?.rawRoom)
             }
@@ -240,7 +242,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.tv_focus_meta, mapPi)
             }
 
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
         }
     }
 }

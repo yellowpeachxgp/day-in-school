@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,6 +99,8 @@ fun TimetableScreen(
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
+    val unscheduledCourses by repository.unscheduledCoursesFlow.collectAsState(initial = emptyList())
+    var showUnscheduled by remember { mutableStateOf(false) }
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val currentActualWeek = remember(term, today, calendarOverrides) {
@@ -193,6 +196,32 @@ fun TimetableScreen(
                 items = listOf("周网格", "周清单", "原始课表"),
                 selectedIndex = viewMode,
                 onSelect = { viewMode = it }
+            )
+        }
+
+        val pendingCourses = unscheduledCourses.filter { it.termId == term?.id }
+        if (pendingCourses.isNotEmpty()) {
+            androidx.compose.material3.TextButton(onClick = { showUnscheduled = true }) {
+                Text("${pendingCourses.size} 门课程时间待定 · 查看原始安排")
+            }
+        }
+        if (showUnscheduled) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showUnscheduled = false },
+                title = { Text("时间待定课程") },
+                text = {
+                    androidx.compose.foundation.lazy.LazyColumn {
+                        item { Text("学校尚未提供具体星期和节次，这些课程不会生成上课提醒。请以学校后续通知为准。") }
+                        items(pendingCourses.size) { index ->
+                            val course = pendingCourses[index]
+                            Column(Modifier.padding(vertical = 10.dp)) {
+                                Text(course.name, style = MaterialTheme.typography.titleSmall)
+                                Text(listOfNotNull(course.teacher, course.rawWeeks.takeIf { it.isNotBlank() }, course.category).joinToString(" · "))
+                            }
+                        }
+                    }
+                },
+                confirmButton = { androidx.compose.material3.TextButton(onClick = { showUnscheduled = false }) { Text("知道了") } }
             )
         }
 

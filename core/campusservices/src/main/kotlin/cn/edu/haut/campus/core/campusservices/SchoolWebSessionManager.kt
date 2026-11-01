@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
+import java.lang.ref.WeakReference
+import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 
 /**
@@ -32,6 +34,41 @@ import kotlin.coroutines.resume
  * 图书馆空间选座 (`wslib.haut.edu.cn`) 及学校统一身份认证 (`mapp.haut.edu.cn`) 的私有 WebView 会话。
  */
 object SchoolWebSessionManager {
+    private val activeViews = mutableListOf<WeakReference<WebView>>()
+    @Volatile private var switchingProfile = false
+
+    /** 全局 WebView Cookie 存储采用严格单会话；切换完成前禁止创建新认证页。 */
+    suspend fun clearForProfileSwitch() {
+        withContext(Dispatchers.Main.immediate) {
+            switchingProfile = true
+            try {
+                activeViews.mapNotNull { it.get() }.forEach { view ->
+                    view.stopLoading()
+                    view.settings.javaScriptEnabled = false
+                    view.loadUrl("about:blank")
+                    view.clearHistory()
+                    view.clearCache(true)
+                    view.clearFormData()
+                    (view.parent as? android.view.ViewGroup)?.removeView(view)
+                    view.destroy()
+                }
+                activeViews.clear()
+                WebStorage.getInstance().deleteAllData()
+                withTimeout(10_000) {
+                    suspendCancellableCoroutine<Unit> { continuation ->
+                        CookieManager.getInstance().removeAllCookies {
+                            if (continuation.isActive) continuation.resume(Unit)
+                        }
+                    }
+                }
+                CookieManager.getInstance().flush()
+                check(!CookieManager.getInstance().hasCookies()) { "学校网页会话尚未清除，请重试切换" }
+            } finally {
+                switchingProfile = false
+            }
+        }
+    }
+
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val cookieFlushScope = CoroutineScope(
@@ -52,6 +89,9 @@ object SchoolWebSessionManager {
         webView: WebView,
         supportZoom: Boolean = false
     ) {
+        check(!switchingProfile) { "正在切换学校账号，请稍候" }
+        activeViews.removeAll { it.get() == null }
+        activeViews.add(WeakReference(webView))
         val cookieManager = runCatching { CookieManager.getInstance() }.getOrNull()
         cookieManager?.setAcceptCookie(true)
         cookieManager?.setAcceptThirdPartyCookies(webView, false)

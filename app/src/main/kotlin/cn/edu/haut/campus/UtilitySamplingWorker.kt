@@ -8,12 +8,15 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import cn.edu.haut.campus.core.database.CampusRepository
+import androidx.work.workDataOf
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.database.ActiveSession
+import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * 宿舍水电后台低频周期采样任务（uniqueWorkName = dayinschool.utility.sampling.v1）。
+ * 宿舍水电后台低频周期采样任务，按账号 profile/generation 隔离。
  *
  * 采样窗口与幂等跳过规则由 [cn.edu.haut.campus.core.campusservices.UtilitySamplingPolicy] 严格控制：
  * - 每日 06:00 前不采样
@@ -26,27 +29,38 @@ class UtilitySamplingWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        return runCatching {
-            val repository = CampusRepository.getInstance(applicationContext)
-            repository.performPeriodicUtilitySampleIfEligible()
+        val profileId = inputData.getString(AccountBackgroundScope.EXTRA_PROFILE_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: return Result.success()
+        val epoch = inputData.getLong(AccountBackgroundScope.EXTRA_EPOCH, -1L)
+            .takeIf { it > 0L }
+            ?: return Result.success()
+        val sessions = AccountSessionCoordinator.getInstance(applicationContext)
+        return try {
+            sessions.initialize()
+            sessions.withActiveSession(profileId, epoch) { active ->
+                active.repository.performPeriodicUtilitySampleIfEligible()
+            }
             Result.success()
-        }.getOrElse {
-            Result.retry()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            if (runAttemptCount < MAX_RETRY_ATTEMPTS) Result.retry() else Result.failure()
         }
     }
 
     companion object {
-        const val UNIQUE_WORK_NAME = "dayinschool.utility.sampling.v1"
-        private val wipeHookRegistered = AtomicBoolean(false)
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val UNIQUE_WORK_NAME_PREFIX = "dayinschool.utility.sampling.v2"
+        private const val LEGACY_UNIQUE_WORK_NAME = "dayinschool.utility.sampling.v1"
 
-        fun schedulePeriodicWork(context: Context) {
+        private fun uniqueWorkName(accountScope: AccountBackgroundScope): String =
+            "$UNIQUE_WORK_NAME_PREFIX:${accountScope.profileId}:${accountScope.epoch}"
+
+        fun schedulePeriodicWork(context: Context, session: ActiveSession) {
             val appContext = context.applicationContext
-            if (wipeHookRegistered.compareAndSet(false, true)) {
-                CampusRepository.getInstance(appContext).registerBeforeWipeHook("utility_sampling_worker_hook") {
-                    runCatching {
-                        WorkManager.getInstance(appContext).cancelUniqueWork(UNIQUE_WORK_NAME)
-                    }
-                }
+            val accountScope = AccountBackgroundScope.from(session)
+            session.repository.registerBeforeWipeHook("utility_sampling_worker_hook") {
+                cancelPeriodicWork(appContext, accountScope)
             }
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -56,14 +70,32 @@ class UtilitySamplingWorker(
                 TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
+                .setInputData(
+                    workDataOf(
+                        AccountBackgroundScope.EXTRA_PROFILE_ID to accountScope.profileId,
+                        AccountBackgroundScope.EXTRA_EPOCH to accountScope.epoch
+                    )
+                )
                 .build()
             runCatching {
-                WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(
-                    UNIQUE_WORK_NAME,
-                    ExistingPeriodicWorkPolicy.KEEP,
+                val workManager = WorkManager.getInstance(appContext)
+                workManager.cancelUniqueWork(LEGACY_UNIQUE_WORK_NAME)
+                workManager.enqueueUniquePeriodicWork(
+                    uniqueWorkName(accountScope),
+                    ExistingPeriodicWorkPolicy.UPDATE,
                     request
                 )
             }
+        }
+
+        suspend fun cancelPeriodicWork(context: Context, session: ActiveSession) {
+            cancelPeriodicWork(context, AccountBackgroundScope.from(session))
+        }
+
+        private suspend fun cancelPeriodicWork(context: Context, accountScope: AccountBackgroundScope) {
+            val workManager = WorkManager.getInstance(context.applicationContext)
+            runCatching { workManager.cancelUniqueWork(uniqueWorkName(accountScope)) }
+            runCatching { workManager.cancelUniqueWork(LEGACY_UNIQUE_WORK_NAME) }
         }
     }
 }

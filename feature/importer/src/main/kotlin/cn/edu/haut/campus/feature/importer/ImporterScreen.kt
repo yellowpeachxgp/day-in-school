@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
+import cn.edu.haut.campus.core.academic.syncSummaryText
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.academic.HautZfsoftParser
@@ -255,6 +256,9 @@ fun ImporterScreen(
                             XPeachStatusBadge(text = "课表 + 考试 + 成绩")
                         }
 
+                        if (prefs.academicReauthenticationRequired) {
+                            Text("安全凭据已失效，请重新登录；本地数据已保留", color = MaterialTheme.colorScheme.error)
+                        }
                         if (prefs.hasSavedCredentials) {
                             Spacer(modifier = Modifier.height(8.dp))
                             XPeachWell(modifier = Modifier.fillMaxWidth()) {
@@ -286,11 +290,7 @@ fun ImporterScreen(
                                                 isSyncing = false
                                                 res?.onSuccess { syncData ->
                                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                    statusBanner = if (syncData.regularCourseCount == 0 && syncData.practiceCourseCount > 0) {
-                                                        "已同步并切换至 ${syncData.termId}：本学期含 ${syncData.practiceCourseCount} 门实践/集中课程（无固定教室排课），同时已预同步相邻学期课表。"
-                                                    } else {
-                                                        "更新完成（${syncData.termId}）：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
-                                                    }
+                                                    statusBanner = syncData.syncSummaryText()
                                                 }?.onFailure { err ->
                                                     statusBanner = "更新失败：${err.message ?: "请检查网络或重新输入密码"}"
                                                 }
@@ -415,28 +415,27 @@ fun ImporterScreen(
                                         isSyncing = false
 
                                         result.onSuccess { syncData ->
-                                            if (rememberForAutoSync) {
-                                                repository.saveAuthorizedSyncCredentials(
-                                                    studentId = studentIdInput,
-                                                    passwordPlain = plainPwd,
-                                                    xnm = selectedXnm,
-                                                    xqm = selectedXqm
-                                                )
-                                                repository.setAutoSyncEnabled(true)
+                                            val applied = runCatching {
+                                                repository.applyLiveSyncData(syncData, overwriteUserConflicts = overwriteUserEdits)
                                             }
-                                            repository.applyLiveSyncData(
-                                                syncData = syncData,
-                                                overwriteUserConflicts = overwriteUserEdits
-                                            )
+                                            if (applied.isFailure) {
+                                                statusBanner = "同步数据保存失败，请重试；原有数据未主动清除"
+                                                return@onSuccess
+                                            }
+                                            val credentialFailure = if (rememberForAutoSync) {
+                                                val saved = runCatching {
+                                                    repository.saveAuthorizedSyncCredentials(
+                                                        studentIdInput, plainPwd, selectedXnm, selectedXqm
+                                                    )
+                                                }
+                                                repository.setAutoSyncEnabled(saved.isSuccess)
+                                                saved.isFailure
+                                            } else false
                                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             diffPreview = null
-                                            statusBanner = if (syncData.regularCourseCount == 0 && syncData.practiceCourseCount > 0) {
-                                                "已同步并切换至 ${syncData.termId}：本学期无固定教室排课，已导入 ${syncData.practiceCourseCount} 门实践/集中课程；同时已自动预同步 2025-2026 课表，可点击上方学期或课表页顶部随时切换。"
-                                            } else if (syncData.timetableCandidates.isEmpty()) {
-                                                "已连接教务系统（${syncData.termId}），教务返回该学期暂无排课记录。已同步 ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
-                                            } else {
-                                                "已同步并生效（${syncData.termId}）：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
-                                            }
+                                            statusBanner = syncData.syncSummaryText() + if (credentialFailure) {
+                                                "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用"
+                                            } else ""
                                         }.onFailure { err ->
                                             statusBanner = "同步失败：${err.message ?: "请检查网络或账号密码"}"
                                         }

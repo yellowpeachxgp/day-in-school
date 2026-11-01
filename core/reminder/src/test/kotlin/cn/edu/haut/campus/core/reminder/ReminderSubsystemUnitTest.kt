@@ -8,10 +8,21 @@ import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.model.ReminderTaskStatus
 import cn.edu.haut.campus.core.model.SnoozeChoice
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReminderSubsystemUnitTest {
+
+    @Test
+    fun `background scope requires both profile and generation to remain current`() {
+        val scope = AccountBackgroundScope(profileId = "profile-a", epoch = 12L)
+
+        assertTrue(scope.matches("profile-a", 12L))
+        assertFalse(scope.matches("profile-b", 12L))
+        assertFalse(scope.matches("profile-a", 13L))
+    }
 
     @Test
     fun `snooze choice action codes round-trip cleanly for receiver intents`() {

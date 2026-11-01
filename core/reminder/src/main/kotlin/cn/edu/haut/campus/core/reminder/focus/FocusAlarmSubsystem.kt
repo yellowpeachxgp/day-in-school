@@ -7,6 +7,7 @@
 package cn.edu.haut.campus.core.reminder.focus
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -21,6 +22,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.ActiveSession
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.database.toDomain
 import cn.edu.haut.campus.core.database.toEntity
 import cn.edu.haut.campus.core.domain.FocusSessionEngine
@@ -32,6 +36,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -60,7 +66,9 @@ interface FocusAlarmScheduler {
  * - 独立 URI Scheme: `haut://focus/alarm/{sessionId}?gen={generation}`
  */
 class AndroidFocusAlarmScheduler(
-    private val context: Context
+    private val context: Context,
+    private val accountScope: AccountBackgroundScope? = null,
+    private val isActive: () -> Boolean = { true }
 ) : FocusAlarmScheduler {
 
     override fun canScheduleExactAlarms(): Boolean {
@@ -73,6 +81,7 @@ class AndroidFocusAlarmScheduler(
     }
 
     override fun scheduleSessionAlarm(session: FocusSessionDomain): FocusAlarmScheduleOutcome {
+        if (!isActive()) return FocusAlarmScheduleOutcome.Failed("ACCOUNT_SESSION_EXPIRED")
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             ?: return FocusAlarmScheduleOutcome.Failed("ALARM_MANAGER_NULL")
 
@@ -93,15 +102,26 @@ class AndroidFocusAlarmScheduler(
 
     override fun cancelSessionAlarm(sessionId: String, generation: Int) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val existing = buildSessionPendingIntent(
-            sessionId = sessionId,
-            generation = generation,
-            expectedEndAtEpochMs = 0L,
-            noCreate = true
-        ) ?: return
-        runCatching {
-            alarmManager.cancel(existing)
-            existing.cancel()
+        listOfNotNull(
+            buildSessionPendingIntent(
+                sessionId = sessionId,
+                generation = generation,
+                expectedEndAtEpochMs = 0L,
+                noCreate = true,
+                attachAccountScope = true
+            ),
+            buildSessionPendingIntent(
+                sessionId = sessionId,
+                generation = generation,
+                expectedEndAtEpochMs = 0L,
+                noCreate = true,
+                attachAccountScope = false
+            )
+        ).forEach { existing ->
+            runCatching {
+                alarmManager.cancel(existing)
+                existing.cancel()
+            }
         }
     }
 
@@ -118,6 +138,8 @@ class AndroidFocusAlarmScheduler(
             addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             putExtra(EXTRA_FOCUS_GENERATION, generation)
         }
+        if (!isActive()) return FocusAlarmScheduleOutcome.Failed("ACCOUNT_SESSION_EXPIRED")
+        accountScope?.attach(intent)
         val requestCode = ("focus_test:$generation".hashCode() and 0x7FFFFFFF)
         val pendingIntent = PendingIntent.getBroadcast(
             context,
@@ -183,7 +205,8 @@ class AndroidFocusAlarmScheduler(
         sessionId: String,
         generation: Int,
         expectedEndAtEpochMs: Long,
-        noCreate: Boolean
+        noCreate: Boolean,
+        attachAccountScope: Boolean = true
     ): PendingIntent? {
         val intent = Intent(context, FocusAlarmReceiver::class.java).apply {
             action = ACTION_FOCUS_ALARM_FIRE
@@ -193,6 +216,7 @@ class AndroidFocusAlarmScheduler(
             putExtra(EXTRA_FOCUS_GENERATION, generation)
             putExtra(EXTRA_FOCUS_EXPECTED_END_MS, expectedEndAtEpochMs)
         }
+        if (attachAccountScope) accountScope?.attach(intent)
         val flags = if (noCreate) {
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         } else {
@@ -378,6 +402,7 @@ object FocusNotificationFactory {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun postInternal(
         context: Context,
         notificationId: Int,
@@ -385,6 +410,7 @@ object FocusNotificationFactory {
         title: String,
         body: String
     ): Boolean {
+        val accountScope = AccountBackgroundScope.current(context) ?: return false
         ensureChannel(context)
         if (!hasNotificationPermission(context)) {
             FocusDeliveryTracker.recordSubmitted(context, deliveryKind, error = "通知权限或渠道未开启")
@@ -396,6 +422,7 @@ object FocusNotificationFactory {
             data = Uri.parse("hautcampus://focus/open/$notificationId")
             putExtra(EXTRA_OVERLAY_ROUTE, OVERLAY_ROUTE_FOCUS)
         }
+        launchIntent?.let(accountScope::attach)
         val contentPendingIntent = launchIntent?.let {
             PendingIntent.getActivity(
                 context,
@@ -453,8 +480,14 @@ object FocusNotificationFactory {
 class FocusCoordinator private constructor(
     private val appContext: Context,
     private val repository: CampusRepository,
-    private val alarmScheduler: FocusAlarmScheduler
+    private val alarmScheduler: FocusAlarmScheduler,
+    private val accountScope: AccountBackgroundScope
 ) {
+    @Volatile private var active = true
+    private fun requireActive() {
+        check(active && repository.isSessionActive) { "账号已切换，请返回当前账号重试" }
+    }
+
     private val dao = repository.utilityAndFocusDao()
     private val mutex = Mutex()
     private val coordinatorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -471,6 +504,7 @@ class FocusCoordinator private constructor(
         durationMinutes: Int,
         nowEpochMs: Long = System.currentTimeMillis()
     ): FocusSessionDomain = mutex.withLock {
+        requireActive()
         val currentRunning = dao.getActiveRunningFocusSessionSnapshot()?.toDomain()
         val transition = FocusSessionEngine.startSession(
             currentRunningSession = currentRunning,
@@ -501,6 +535,7 @@ class FocusCoordinator private constructor(
     suspend fun stopActiveFocusSession(
         nowEpochMs: Long = System.currentTimeMillis()
     ): Boolean = mutex.withLock {
+        if (!active || !repository.isSessionActive) return@withLock false
         val currentRunning = dao.getActiveRunningFocusSessionSnapshot()?.toDomain() ?: return false
         when (val res = FocusSessionEngine.cancelSession(currentRunning, nowEpochMs)) {
             is FocusSessionEngine.TransitionResult.Updated -> {
@@ -527,6 +562,7 @@ class FocusCoordinator private constructor(
         nowEpochMs: Long = System.currentTimeMillis(),
         isRestorePath: Boolean = false
     ): Boolean = mutex.withLock {
+        if (!active || !repository.isSessionActive) return@withLock false
         val current = dao.getFocusSessionById(sessionId)?.toDomain() ?: return false
         val transition = FocusSessionEngine.completeSession(
             session = current,
@@ -555,7 +591,7 @@ class FocusCoordinator private constructor(
         transition.alarmToCancel?.let { (id, gen) ->
             alarmScheduler.cancelSessionAlarm(id, gen)
         }
-        if (transition.shouldPostCompletionNotification) {
+        if (transition.shouldPostCompletionNotification && active && repository.isSessionActive) {
             FocusNotificationFactory.postFocusCompletedNotification(
                 context = appContext,
                 durationMinutes = current.durationMinutes
@@ -572,6 +608,7 @@ class FocusCoordinator private constructor(
     suspend fun restoreOrCompleteActiveSession(
         nowEpochMs: Long = System.currentTimeMillis()
     ): Unit = mutex.withLock {
+        if (!active || !repository.isSessionActive) return@withLock
         val running = dao.getActiveRunningFocusSessionSnapshot()?.toDomain() ?: return@withLock
         when (val decision = FocusSessionEngine.evaluateRestoreAction(running, nowEpochMs)) {
             is FocusSessionEngine.RestoreDecision.NoOp -> Unit
@@ -598,7 +635,7 @@ class FocusCoordinator private constructor(
                 decision.alarmToCancel?.let { (id, gen) ->
                     alarmScheduler.cancelSessionAlarm(id, gen)
                 }
-                if (updatedRows > 0 && decision.shouldNotify) {
+                if (updatedRows > 0 && decision.shouldNotify && active && repository.isSessionActive) {
                     FocusNotificationFactory.postFocusCompletedNotification(
                         context = appContext,
                         durationMinutes = running.durationMinutes
@@ -615,6 +652,7 @@ class FocusCoordinator private constructor(
     }
 
     fun triggerTenSecondTestAlarm(nowEpochMs: Long = System.currentTimeMillis()): FocusAlarmScheduleOutcome {
+        requireActive()
         val gen = testGenerationCounter.incrementAndGet()
         return alarmScheduler.scheduleTenSecondTestAlarm(
             generation = gen,
@@ -632,19 +670,37 @@ class FocusCoordinator private constructor(
         FocusDeliveryTracker.clearAll(appContext)
     }
 
+    suspend fun deactivate() {
+        active = false
+        coordinatorScope.cancel()
+        mutex.withLock {
+            dao.getActiveRunningFocusSessionSnapshot()?.toDomain()?.let { running ->
+                alarmScheduler.cancelSessionAlarm(running.id, running.generation)
+            }
+            FocusNotificationFactory.cancelFocusNotifications(appContext)
+            FocusDeliveryTracker.clearAll(appContext)
+        }
+    }
+
     companion object {
-        @Volatile
-        private var INSTANCE: FocusCoordinator? = null
+        @Volatile private var INSTANCE: FocusCoordinator? = null
+
+        fun bind(context: Context, session: ActiveSession): FocusCoordinator = synchronized(this) {
+            val scope = AccountBackgroundScope.from(session)
+            val scheduler = AndroidFocusAlarmScheduler(context.applicationContext, scope) { session.repository.isSessionActive }
+            FocusCoordinator(context.applicationContext, session.repository, scheduler, scope).also { INSTANCE = it }
+        }
+
+        suspend fun deactivateCurrent() {
+            val old = synchronized(this) { INSTANCE.also { INSTANCE = null } }
+            old?.deactivate()
+        }
 
         fun getInstance(context: Context): FocusCoordinator {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: run {
-                    val appCtx = context.applicationContext
-                    val repo = CampusRepository.getInstance(appCtx)
-                    val scheduler = AndroidFocusAlarmScheduler(appCtx)
-                    FocusCoordinator(appCtx, repo, scheduler).also { INSTANCE = it }
-                }
-            }
+            val session = AccountSessionCoordinator.getInstance(context).currentSnapshot()
+                ?: error("账号正在初始化或切换，请稍后重试")
+            return INSTANCE?.takeIf { it.active && it.accountScope.matches(session) }
+                ?: error("专注计时尚未绑定当前账号")
         }
     }
 }
@@ -655,37 +711,47 @@ class FocusCoordinator private constructor(
 class FocusAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
+        val accountScope = AccountBackgroundScope.read(intent) ?: return
         val appCtx = context.applicationContext
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 withTimeoutOrNull(8_000L) {
-                    when (action) {
-                        AndroidFocusAlarmScheduler.ACTION_FOCUS_ALARM_FIRE -> {
-                            FocusDeliveryTracker.recordReceived(appCtx, FocusDeliveryTracker.KIND_FOCUS)
-                            val sessionId = intent.getStringExtra(AndroidFocusAlarmScheduler.EXTRA_FOCUS_SESSION_ID)
-                                ?: return@withTimeoutOrNull
-                            val gen = intent.getIntExtra(AndroidFocusAlarmScheduler.EXTRA_FOCUS_GENERATION, -1)
-                                .takeIf { it > 0 }
-                            val expectedEnd = intent.getLongExtra(
-                                AndroidFocusAlarmScheduler.EXTRA_FOCUS_EXPECTED_END_MS,
-                                -1L
-                            ).takeIf { it > 0L }
-                            FocusCoordinator.getInstance(appCtx).completeFocusSessionIfDue(
-                                sessionId = sessionId,
-                                expectedGeneration = gen,
-                                expectedEndAtEpochMs = expectedEnd,
-                                nowEpochMs = System.currentTimeMillis(),
-                                isRestorePath = false
-                            )
-                        }
+                    val sessions = AccountSessionCoordinator.getInstance(appCtx)
+                    sessions.initialize()
+                    sessions.withActiveSession(accountScope.profileId, accountScope.epoch) {
+                        when (action) {
+                            AndroidFocusAlarmScheduler.ACTION_FOCUS_ALARM_FIRE -> {
+                                FocusDeliveryTracker.recordReceived(appCtx, FocusDeliveryTracker.KIND_FOCUS)
+                                val sessionId = intent.getStringExtra(
+                                    AndroidFocusAlarmScheduler.EXTRA_FOCUS_SESSION_ID
+                                ) ?: return@withActiveSession
+                                val gen = intent.getIntExtra(
+                                    AndroidFocusAlarmScheduler.EXTRA_FOCUS_GENERATION,
+                                    -1
+                                ).takeIf { it > 0 }
+                                val expectedEnd = intent.getLongExtra(
+                                    AndroidFocusAlarmScheduler.EXTRA_FOCUS_EXPECTED_END_MS,
+                                    -1L
+                                ).takeIf { it > 0L }
+                                FocusCoordinator.getInstance(appCtx).completeFocusSessionIfDue(
+                                    sessionId = sessionId,
+                                    expectedGeneration = gen,
+                                    expectedEndAtEpochMs = expectedEnd,
+                                    nowEpochMs = System.currentTimeMillis(),
+                                    isRestorePath = false
+                                )
+                            }
 
-                        AndroidFocusAlarmScheduler.ACTION_FOCUS_ALARM_TEST -> {
-                            FocusDeliveryTracker.recordReceived(appCtx, FocusDeliveryTracker.KIND_TEST)
-                            FocusNotificationFactory.postTenSecondTestNotification(appCtx)
+                            AndroidFocusAlarmScheduler.ACTION_FOCUS_ALARM_TEST -> {
+                                FocusDeliveryTracker.recordReceived(appCtx, FocusDeliveryTracker.KIND_TEST)
+                                FocusNotificationFactory.postTenSecondTestNotification(appCtx)
+                            }
                         }
                     }
                 }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
             } finally {
                 pendingResult.finish()
             }
@@ -705,8 +771,14 @@ class FocusRestoreReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 withTimeoutOrNull(8_000L) {
-                    FocusCoordinator.getInstance(appCtx).restoreOrCompleteActiveSession()
+                    val sessions = AccountSessionCoordinator.getInstance(appCtx)
+                    val active = sessions.initialize()
+                    sessions.withActiveSession(active.profileId, active.generation) {
+                        FocusCoordinator.getInstance(appCtx).restoreOrCompleteActiveSession()
+                    }
                 }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
             } finally {
                 pendingResult.finish()
             }

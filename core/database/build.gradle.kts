@@ -21,6 +21,19 @@ android {
     kotlinOptions {
         jvmTarget = "21"
     }
+
+    sourceSets.getByName("test").resources.srcDir("schemas")
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+        }
+    }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -35,4 +48,5 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     api(libs.androidx.datastore.preferences)
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.17")
 }

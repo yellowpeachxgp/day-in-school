@@ -2,6 +2,8 @@ package cn.edu.haut.campus.core.reminder
 
 import android.content.Context
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.ActiveSession
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.toDomain
 import cn.edu.haut.campus.core.database.toEntity
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
@@ -22,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Duration
@@ -41,8 +44,13 @@ data class ReconcileReport(
 class ReminderCoordinator internal constructor(
     private val appContext: Context,
     private val repository: CampusRepository,
-    private val alarmScheduler: AlarmScheduler
+    private val alarmScheduler: AlarmScheduler,
+    private val accountScope: AccountBackgroundScope
 ) {
+    @Volatile private var active = true
+    private fun requireActive() {
+        check(active && repository.isSessionActive) { "账号已切换，请返回当前账号重试" }
+    }
     private val coordinatorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val reconcileMutex = Mutex()
     private val timeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
@@ -52,7 +60,7 @@ class ReminderCoordinator internal constructor(
 
         repository.onScheduleOrPolicyChangedListener = { reason ->
             coordinatorScope.launch {
-                reconcileNow(reason = reason, forceRescheduleAlarms = false)
+                if (active && repository.isSessionActive) reconcileNow(reason = reason, forceRescheduleAlarms = false)
             }
         }
 
@@ -60,9 +68,9 @@ class ReminderCoordinator internal constructor(
             cancelAllActiveAlarmsAndNotifications()
         }
 
-        ReminderReconcileWorker.enqueuePeriodic(appContext)
+        ReminderReconcileWorker.enqueuePeriodic(appContext, accountScope)
         coordinatorScope.launch {
-            reconcileNow(reason = "APP_STARTUP", forceRescheduleAlarms = false)
+            if (active && repository.isSessionActive) reconcileNow(reason = "APP_STARTUP", forceRescheduleAlarms = true)
         }
     }
 
@@ -71,6 +79,7 @@ class ReminderCoordinator internal constructor(
         forceRescheduleAlarms: Boolean = false,
         now: Instant = Instant.now()
     ): ReconcileReport = reconcileMutex.withLock {
+        requireActive()
         val nowMs = now.toEpochMilli()
         val reminderDao = repository.reminderDao()
 
@@ -301,8 +310,10 @@ class ReminderCoordinator internal constructor(
             return
         }
 
+        if (!active || !repository.isSessionActive) return
         val posted = ReminderNotificationFactory.postReminderNotification(
             context = appContext,
+            accountScope = accountScope,
             task = task,
             event = currentEvent,
             policy = effectivePolicy,
@@ -441,7 +452,11 @@ class ReminderCoordinator internal constructor(
                     errorCode = scheduleOutcome.errorCode,
                     nowMs = nowMs
                 )
-                ReminderReconcileWorker.enqueueImmediate(appContext, "SNOOZE_SCHEDULE_REPAIR")
+                ReminderReconcileWorker.enqueueImmediate(
+                    context = appContext,
+                    accountScope = accountScope,
+                    reason = "SNOOZE_SCHEDULE_REPAIR"
+                )
                 SnoozeOutcome.AcceptedPendingRepair(
                     triggerAt = candidateTime,
                     reason = scheduleOutcome.errorCode
@@ -590,6 +605,7 @@ class ReminderCoordinator internal constructor(
         val config = repository.getReminderConfigSnapshot()
         val ok = ReminderNotificationFactory.postTestNotification(
             context = appContext,
+            accountScope = accountScope,
             lockscreenPrivate = config.lockscreenPrivate
         )
         repository.appendReminderDiagnosticLog(
@@ -646,19 +662,39 @@ class ReminderCoordinator internal constructor(
         return baseEvents + examEvents
     }
 
+    suspend fun deactivate() {
+        active = false
+        repository.onScheduleOrPolicyChangedListener = null
+        repository.onBeforeWipePersonalDataHook = null
+        coordinatorScope.cancel()
+        ReminderReconcileWorker.cancelPeriodicAndImmediate(appContext, accountScope)
+        reconcileMutex.withLock {
+            repository.reminderDao().getAllActiveTasksSnapshot().forEach { task ->
+                alarmScheduler.cancel(task.id, task.generation)
+            }
+            ReminderNotificationFactory.cancelAllNotifications(appContext)
+        }
+    }
+
     companion object {
-        @Volatile
-        private var INSTANCE: ReminderCoordinator? = null
+        @Volatile private var INSTANCE: ReminderCoordinator? = null
+
+        fun bind(context: Context, session: ActiveSession): ReminderCoordinator = synchronized(this) {
+            val scope = AccountBackgroundScope.from(session)
+            val scheduler = AndroidAlarmScheduler(context.applicationContext, scope) { session.repository.isSessionActive }
+            ReminderCoordinator(context.applicationContext, session.repository, scheduler, scope).also { INSTANCE = it }
+        }
+
+        suspend fun deactivateCurrent() {
+            val old = synchronized(this) { INSTANCE.also { INSTANCE = null } }
+            old?.deactivate()
+        }
 
         fun getInstance(context: Context): ReminderCoordinator {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: run {
-                    val appCtx = context.applicationContext
-                    val repo = CampusRepository.getInstance(appCtx)
-                    val scheduler = AndroidAlarmScheduler(appCtx)
-                    ReminderCoordinator(appCtx, repo, scheduler).also { INSTANCE = it }
-                }
-            }
+            val session = AccountSessionCoordinator.getInstance(context).currentSnapshot()
+                ?: error("账号正在初始化或切换，请稍后重试")
+            return INSTANCE?.takeIf { it.active && it.accountScope.matches(session) }
+                ?: error("提醒尚未绑定当前账号")
         }
     }
 }

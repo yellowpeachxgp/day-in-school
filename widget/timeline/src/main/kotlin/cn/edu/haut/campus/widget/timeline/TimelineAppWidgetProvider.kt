@@ -74,7 +74,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 context = context,
                 appWidgetId = appWidgetId,
                 defaultType = WidgetType.TIMELINE_4X4
-            )
+            ) ?: run { WidgetRefreshCoordinator.showSwitching(context, intArrayOf(appWidgetId)); return }
             val day = snapshot.daySnapshot
             val views = RemoteViews(context.packageName, R.layout.widget_timeline_4x4)
 
@@ -193,6 +193,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             )
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
             }
             if (launchIntent != null) {
@@ -205,7 +206,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.timeline_widget_root, pi)
             }
 
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
         }
     }
 }

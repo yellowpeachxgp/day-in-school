@@ -28,21 +28,22 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("SIGNING_STORE_FILE")
-                ?: (findProperty("SIGNING_STORE_FILE") as? String)
-                ?: rootProject.file("keystore/haut-release.jks").takeIf { it.exists() }?.absolutePath
+            fun configuredValue(name: String): String? =
+                (System.getenv(name) ?: findProperty(name)?.toString())?.takeIf { it.isNotBlank() }
 
-            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
-                storeFile = file(keystorePath)
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-                    ?: (findProperty("SIGNING_STORE_PASSWORD") as? String)
-                    ?: "HautCampus2026Release"
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
-                    ?: (findProperty("SIGNING_KEY_ALIAS") as? String)
-                    ?: "haut_campus_key"
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
-                    ?: (findProperty("SIGNING_KEY_PASSWORD") as? String)
-                    ?: "HautCampus2026Release"
+            val explicitPath = configuredValue("SIGNING_STORE_FILE")
+            val signingNames = listOf("SIGNING_STORE_PASSWORD", "SIGNING_KEY_ALIAS", "SIGNING_KEY_PASSWORD")
+            val requested = explicitPath != null || signingNames.any { configuredValue(it) != null }
+            if (requested) {
+                val keystoreFile = rootProject.file(explicitPath ?: "keystore/haut-release.jks")
+                require(keystoreFile.isFile) { "正式签名文件不存在，请检查 SIGNING_STORE_FILE" }
+                fun signingValue(name: String): String = configuredValue(name)
+                    ?: error("缺少正式签名配置：$name")
+
+                storeFile = keystoreFile
+                storePassword = signingValue("SIGNING_STORE_PASSWORD")
+                keyAlias = signingValue("SIGNING_KEY_ALIAS")
+                keyPassword = signingValue("SIGNING_KEY_PASSWORD")
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
@@ -58,11 +59,8 @@ android {
         release {
             isMinifyEnabled = false
             val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            // 本地未配置正式密钥时只产出未签名包，避免把调试证书误作发行证书。
+            signingConfig = releaseSigning.takeIf { it.storeFile?.isFile == true }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

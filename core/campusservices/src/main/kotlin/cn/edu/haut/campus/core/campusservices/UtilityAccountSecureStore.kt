@@ -49,8 +49,9 @@ data class AccountSwitchOutcome(
  */
 class UtilityAccountSecureStore(
     context: Context,
-    private val prefsName: String = PREFS_FILE_NAME,
-    private val keyAlias: String = DEFAULT_KEY_ALIAS
+    prefsName: String = PREFS_FILE_NAME,
+    keyAlias: String = DEFAULT_KEY_ALIAS,
+    scopeId: String? = null
 ) {
     companion object {
         private const val ANDROID_KEY_STORE = "AndroidKeyStore"
@@ -103,8 +104,14 @@ class UtilityAccountSecureStore(
     }
 
     private val lock = Any()
+    private val scopeSuffix = scopeId?.let {
+        require(it.isNotBlank()) { "校园服务账号作用域不能为空" }
+        "." + MessageDigest.getInstance("SHA-256").digest(it.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }.orEmpty()
+    private val keyAlias = keyAlias + scopeSuffix
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        context.applicationContext.getSharedPreferences(prefsName + scopeSuffix, Context.MODE_PRIVATE)
 
     private fun getOrCreateSecretKey(): SecretKey {
         val store = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }

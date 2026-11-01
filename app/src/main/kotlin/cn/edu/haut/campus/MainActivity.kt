@@ -70,8 +70,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,11 +101,16 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
 import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
+import cn.edu.haut.campus.core.academic.syncSummaryText
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import java.io.File
 import cn.edu.haut.campus.core.database.AppPreferencesState
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.database.AccountSessionState
+import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -111,9 +118,11 @@ import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.location.CampusMapNavigator
+import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderNotificationFactory
+import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
 import cn.edu.haut.campus.core.reminder.focus.FocusNotificationFactory
@@ -126,6 +135,7 @@ import cn.edu.haut.campus.feature.settings.EmptyClassroomScreen
 import cn.edu.haut.campus.feature.settings.LibraryCatalogScreen
 import cn.edu.haut.campus.feature.settings.LibrarySeatBookingScreen
 import cn.edu.haut.campus.feature.settings.SettingsScreen
+import cn.edu.haut.campus.feature.settings.SchoolCenterScreen
 import cn.edu.haut.campus.feature.settings.StudyFocusScreen
 import cn.edu.haut.campus.feature.timetable.TimetableScreen
 import cn.edu.haut.campus.feature.today.TodayScreen
@@ -151,48 +161,97 @@ class MainActivity : ComponentActivity() {
     private var deepLinkTab by mutableStateOf<String?>(null)
     private var deepLinkRoomQuery by mutableStateOf<String?>(null)
     private var deepLinkOverlayRoute by mutableStateOf<String?>(null)
+    private var pendingAccountIntent by mutableStateOf<Intent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        extractWidgetIntent(intent)
-        val repository = CampusRepository.getInstance(applicationContext)
+        pendingAccountIntent = intent?.let(::Intent)
+        val sessions = AccountSessionCoordinator.getInstance(applicationContext)
 
         setContent {
-            val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
-
-            LaunchedEffect(prefs.gpaPrivacyShieldEnabled) {
-                if (prefs.gpaPrivacyShieldEnabled) {
-                    window.setFlags(
-                        WindowManager.LayoutParams.FLAG_SECURE,
-                        WindowManager.LayoutParams.FLAG_SECURE
-                    )
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                }
+            val sessionState by sessions.states.collectAsState()
+            LaunchedEffect(sessions) {
+                runCatching { sessions.initialize() }
             }
-
-            HautCampusTheme(
-                themeMode = prefs.themeMode,
-                dynamicColor = prefs.useDynamicColor,
-                themePaletteKey = prefs.themePaletteKey,
-                customSeedArgb = prefs.customThemeSeedArgb,
-                customWallpaperPath = prefs.customWallpaperPath,
-                wallpaperAlpha = prefs.wallpaperAlpha,
-                wallpaperBlurDp = prefs.wallpaperBlurDp,
-                wallpaperCardAlpha = prefs.wallpaperCardAlpha
-            ) {
-                HautCampusRootApp(
-                    repository = repository,
-                    prefs = prefs,
-                    externalTabRequest = deepLinkTab,
-                    externalRoomQuery = deepLinkRoomQuery,
-                    externalOverlayRequest = deepLinkOverlayRoute,
-                    onConsumeExternalRequest = {
-                        deepLinkTab = null
-                        deepLinkOverlayRoute = null
+            when (val state = sessionState) {
+                is AccountSessionState.Ready -> key(state.active.profileId, state.active.generation) {
+                    val active = state.active
+                    val prefs by active.repository.preferencesFlow.collectAsState(initial = null)
+                    val readyPrefs = prefs
+                    SideEffect {
+                        if (readyPrefs?.gpaPrivacyShieldEnabled != false) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
                     }
-                )
+                    LaunchedEffect(active.profileId, active.generation) {
+                        pendingAccountIntent?.let { pending ->
+                            extractWidgetIntent(pending, active)
+                            pendingAccountIntent = null
+                        }
+                        FocusCoordinator.getInstance(applicationContext).restoreOrCompleteActiveSessionAsync()
+                    }
+                    if (readyPrefs == null) {
+                        HautCampusTheme { AccountSessionStatusScreen("正在读取当前身份的数据") }
+                    } else {
+                        HautCampusTheme(
+                            themeMode = readyPrefs.themeMode,
+                            dynamicColor = readyPrefs.useDynamicColor,
+                            themePaletteKey = readyPrefs.themePaletteKey,
+                            customSeedArgb = readyPrefs.customThemeSeedArgb,
+                            customWallpaperPath = readyPrefs.customWallpaperPath,
+                            wallpaperAlpha = readyPrefs.wallpaperAlpha,
+                            wallpaperBlurDp = readyPrefs.wallpaperBlurDp,
+                            wallpaperCardAlpha = readyPrefs.wallpaperCardAlpha
+                        ) {
+                            HautCampusRootApp(
+                                repository = active.repository,
+                                prefs = readyPrefs,
+                                activeSession = active,
+                                sessions = sessions,
+                                onSwitchProfile = { profileId ->
+                                    pendingAccountIntent = null
+                                    deepLinkTab = null
+                                    deepLinkRoomQuery = null
+                                    deepLinkOverlayRoute = null
+                                    lifecycleScope.launch { runCatching { sessions.switchProfile(profileId) } }
+                                },
+                                externalTabRequest = deepLinkTab,
+                                externalRoomQuery = deepLinkRoomQuery,
+                                externalOverlayRequest = deepLinkOverlayRoute,
+                                onConsumeExternalRequest = {
+                                    deepLinkTab = null
+                                    deepLinkRoomQuery = null
+                                    deepLinkOverlayRoute = null
+                                }
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    SideEffect {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        if (state is AccountSessionState.Switching) {
+                            deepLinkTab = null
+                            deepLinkRoomQuery = null
+                            deepLinkOverlayRoute = null
+                        }
+                    }
+                    HautCampusTheme {
+                        AccountSessionStatusScreen(
+                            message = when (state) {
+                                is AccountSessionState.Failure -> state.message
+                                is AccountSessionState.Switching -> "正在安全切换身份"
+                                else -> "正在准备本地数据"
+                            },
+                            onRetry = if (state is AccountSessionState.Failure) {
+                                { lifecycleScope.launch { runCatching { sessions.initialize() } }; Unit }
+                            } else null
+                        )
+                    }
+                }
             }
         }
     }
@@ -200,7 +259,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         FocusDeliveryTracker.isAppInForeground = true
-        FocusCoordinator.getInstance(applicationContext).restoreOrCompleteActiveSessionAsync()
+        if (AccountSessionCoordinator.getInstance(applicationContext).currentSnapshot() != null) {
+            FocusCoordinator.getInstance(applicationContext).restoreOrCompleteActiveSessionAsync()
+        }
     }
 
     override fun onPause() {
@@ -210,10 +271,34 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        extractWidgetIntent(intent)
+        setIntent(intent)
+        val active = AccountSessionCoordinator.getInstance(applicationContext).currentSnapshot()
+        if (active == null) pendingAccountIntent = Intent(intent) else extractWidgetIntent(intent, active)
     }
 
-    private fun extractWidgetIntent(intent: Intent?) {
+    private fun extractWidgetIntent(intent: Intent?, active: ActiveSession) {
+        if (intent == null) return
+        val hasAccountScopedAction = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_PROFILE_ID) ||
+            intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
+            intent.hasExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
+        if (!hasAccountScopedAction) {
+            pendingAccountIntent = null
+            return
+        }
+        val accountScope = AccountBackgroundScope.read(intent)
+        val widgetProfile = intent.getStringExtra(WidgetRefreshCoordinator.EXTRA_PROFILE_ID)
+        val widgetGeneration = intent.getLongExtra(WidgetRefreshCoordinator.EXTRA_GENERATION, -1L)
+        val widgetScopeValid = widgetProfile != null &&
+            widgetProfile == active.profileId && widgetGeneration == active.generation
+        val accountScopeValid = accountScope?.matches(active) == true
+        val hasWidgetScope = widgetProfile != null
+        val requiresAccountScope = intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
+            intent.hasExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
+        if ((hasWidgetScope && !widgetScopeValid) || (requiresAccountScope && !accountScopeValid)) {
+            pendingAccountIntent = null
+            return
+        }
+
         val overlayRoute = intent?.getStringExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
         if (!overlayRoute.isNullOrBlank()) {
             deepLinkOverlayRoute = overlayRoute
@@ -247,7 +332,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val reminderTaskId = intent.getStringExtra(ReminderNotificationFactory.EXTRA_REMINDER_TASK_ID)
-            if (!reminderTaskId.isNullOrBlank()) {
+            if (!reminderTaskId.isNullOrBlank() &&
+                accountScopeValid
+            ) {
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                     ReminderCoordinator.getInstance(applicationContext).dismissTask(
                         taskId = reminderTaskId,
@@ -260,9 +347,30 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun AccountSessionStatusScreen(message: String, onRetry: (() -> Unit)? = null) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding().navigationBarsPadding().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (onRetry == null) CircularProgressIndicator()
+        Spacer(Modifier.height(16.dp))
+        Text(message, style = MaterialTheme.typography.titleMedium)
+        if (onRetry != null) {
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onRetry) { Text("重试读取本地数据") }
+        }
+    }
+}
+
+@Composable
 fun HautCampusRootApp(
     repository: CampusRepository,
     prefs: AppPreferencesState,
+    activeSession: ActiveSession,
+    sessions: AccountSessionCoordinator,
+    onSwitchProfile: (String) -> Unit,
     externalTabRequest: String?,
     externalRoomQuery: String?,
     externalOverlayRequest: String? = null,
@@ -277,6 +385,7 @@ fun HautCampusRootApp(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+    val isHautCampus = activeSession.school.id == SchoolDirectory.HAUT_SCHOOL_ID
 
     // 启动自动检测 GitHub Release 最新版本状态
     var detectedUpdateRelease by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
@@ -288,7 +397,7 @@ fun HautCampusRootApp(
 
     // 打开应用时若已绑定教务凭据且开启了自动同步，后台自动静默更新最新课表、期初/期中/期末考试与成绩
     LaunchedEffect(prefs.hasCompletedOnboarding, prefs.autoSyncEnabled, prefs.hasSavedCredentials) {
-        if (prefs.hasCompletedOnboarding && prefs.autoSyncEnabled && prefs.hasSavedCredentials) {
+        if (isHautCampus && prefs.hasCompletedOnboarding && prefs.autoSyncEnabled && prefs.hasSavedCredentials) {
             val res = repository.performDynamicAcademicSync(force = false)
             res?.onSuccess {
                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
@@ -338,6 +447,24 @@ fun HautCampusRootApp(
     }
 
     when {
+        !isHautCampus && overlayScreen in setOf("electricity", "library_catalog", "library_seats", "empty_classrooms", "community") -> {
+            SchoolCenterScreen(
+                onBack = { overlayScreen = null },
+                onOpenOfflineImporter = { overlayScreen = "importer" },
+                sessions = sessions,
+                activeSession = activeSession,
+                onSwitchProfile = onSwitchProfile
+            )
+        }
+        overlayScreen == "school_center" -> {
+            SchoolCenterScreen(
+                onBack = { overlayScreen = null },
+                onOpenOfflineImporter = { overlayScreen = "importer" },
+                sessions = sessions,
+                activeSession = activeSession,
+                onSwitchProfile = onSwitchProfile
+            )
+        }
         overlayScreen == "importer" -> {
             ImporterScreen(
                 repository = repository,
@@ -465,6 +592,9 @@ fun HautCampusRootApp(
                             onNavigateToFocus = { overlayScreen = "focus" },
                             onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                             onNavigateToCommunity = { overlayScreen = "community" },
+                            onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                            activeSchool = activeSession.school,
+                            activeProfileLabel = activeSession.label,
                             resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
                         )
                     }
@@ -649,7 +779,7 @@ private fun OnboardingWelcomeScreen(
     }
 
     var studentIdInput by rememberSaveable { mutableStateOf("") }
-    var passwordInput by rememberSaveable { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
     var selectedXnm by rememberSaveable { mutableStateOf("2025") }
     var selectedXqm by rememberSaveable { mutableStateOf("12") }
     var isSyncing by remember { mutableStateOf(false) }
@@ -834,17 +964,25 @@ private fun OnboardingWelcomeScreen(
                             isSyncing = false
 
                             result.onSuccess { syncData ->
-                                repository.saveAuthorizedSyncCredentials(
-                                    studentId = studentIdInput,
-                                    passwordPlain = plainPwd,
-                                    xnm = selectedXnm,
-                                    xqm = selectedXqm
-                                )
-                                repository.setAutoSyncEnabled(true)
-                                repository.applyLiveSyncData(
-                                    syncData = syncData,
-                                    overwriteUserConflicts = true
-                                )
+                                val applied = runCatching {
+                                    repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
+                                }
+                                if (applied.isFailure) {
+                                    isErrorStatus = true
+                                    syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
+                                    return@onSuccess
+                                }
+                                val saved = runCatching {
+                                    repository.saveAuthorizedSyncCredentials(
+                                        studentIdInput, plainPwd, selectedXnm, selectedXqm
+                                    )
+                                }
+                                repository.setAutoSyncEnabled(saved.isSuccess)
+                                if (saved.isFailure || syncData.syncWarnings.isNotEmpty()) {
+                                    syncStatusMessage = syncData.syncSummaryText() +
+                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
+                                    return@onSuccess
+                                }
                                 repository.completeOnboarding()
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                             }.onFailure { err ->

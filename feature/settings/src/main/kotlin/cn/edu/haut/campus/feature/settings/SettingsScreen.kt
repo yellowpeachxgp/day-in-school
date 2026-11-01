@@ -101,6 +101,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.GpaCalculator
 import cn.edu.haut.campus.core.domain.ScheduleEngine
+import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.CalendarOverrideType
@@ -117,6 +118,7 @@ import cn.edu.haut.campus.core.model.PresetMirrorNode
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import cn.edu.haut.campus.core.model.ProxyMode
 import cn.edu.haut.campus.core.model.StudentProfile
+import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetThemeStyle
 import cn.edu.haut.campus.core.model.WidgetType
@@ -177,10 +179,14 @@ fun SettingsScreen(
     onNavigateToFocus: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToSchoolCenter: () -> Unit = {},
+    activeSchool: SchoolProfile = SchoolDirectory.hautProfile(),
+    activeProfileLabel: String = "原有身份",
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isHautCampus = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID
     val scrollState = rememberScrollState()
     var showSystemSettingsMenu by remember { mutableStateOf(onBack != null) }
 
@@ -364,7 +370,7 @@ fun SettingsScreen(
             subtitle = if (showSystemSettingsMenu) {
                 "提醒、作息、调休、小组件、隐私与版本更新"
             } else {
-                "河南工业大学 · 莲花街校区"
+                "${activeSchool.displayName} · $activeProfileLabel"
             },
             badgeText = if (showSystemSettingsMenu) {
                 "v$currentInstalledVersion"
@@ -453,13 +459,28 @@ fun SettingsScreen(
                 // =========================================================================
 
                 // 1. 数字学生证 / 个人学籍名片
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onNavigateToSchoolCenter
+                ) {
+                    Text("学校与能力", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "离线查找学校，查看各项功能的适配与核验状态",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 StudentDigitalIdCard(
                     profile = studentProfile,
+                    schoolLabel = activeSchool.displayName,
                     privacyMasked = prefs.gpaPrivacyShieldEnabled,
                     lastAudit = importAudits.firstOrNull(),
                     onEditProfile = { showEditProfileDialog = true },
                     onSyncNow = {
-                        if (prefs.hasSavedCredentials && !isDynamicSyncing) {
+                        if (!isHautCampus) {
+                            onNavigateToImporter()
+                        } else if (prefs.hasSavedCredentials && !isDynamicSyncing) {
                             scope.launch {
                                 isDynamicSyncing = true
                                 feedbackText = "正在同步课表、考试和成绩..."
@@ -681,7 +702,7 @@ fun SettingsScreen(
                     Text("个人状态摘要", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(10.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        XPeachWell(
+                        if (isHautCampus) XPeachWell(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable(onClick = onNavigateToElectricity)
@@ -1591,7 +1612,7 @@ fun SettingsScreen(
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text("外观、隐私与数据", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
-                Row(
+                if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1617,7 +1638,7 @@ fun SettingsScreen(
                         }
                     )
                 }
-                Row(
+                if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1630,7 +1651,7 @@ fun SettingsScreen(
                         }
                     )
                 }
-                Row(
+                if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1661,7 +1682,7 @@ fun SettingsScreen(
                     thickness = 0.6.dp,
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
                 )
-                Row(
+                if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -2464,6 +2485,7 @@ private fun jumpToPresetQqChannel(
 @Composable
 private fun StudentDigitalIdCard(
     profile: StudentProfile?,
+    schoolLabel: String,
     privacyMasked: Boolean,
     lastAudit: cn.edu.haut.campus.core.model.ImportAudit?,
     onEditProfile: () -> Unit,
@@ -2477,7 +2499,7 @@ private fun StudentDigitalIdCard(
         rawSchoolId
     }
     val majorText = buildString {
-        append(profile?.major?.takeIf { it.isNotBlank() } ?: "河南工业大学 · 莲花街校区")
+        append(profile?.major?.takeIf { it.isNotBlank() } ?: schoolLabel)
         profile?.enrollmentYear?.let { append(" · ${it}级") }
     }
 

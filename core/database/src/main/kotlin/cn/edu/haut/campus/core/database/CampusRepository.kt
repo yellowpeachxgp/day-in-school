@@ -1,20 +1,21 @@
 package cn.edu.haut.campus.core.database
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
-import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
+import cn.edu.haut.campus.core.academic.AcademicReadException
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
@@ -25,6 +26,7 @@ import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
+import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -60,16 +62,21 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-
-private val Context.appDataStore by preferencesDataStore(name = "haut_campus_prefs")
 
 val DEFAULT_HOME_CARD_ORDER = listOf(
     "EXAM_SUMMARY",
@@ -104,6 +111,7 @@ data class AppPreferencesState(
     val autoCheckUpdateEnabled: Boolean = true,
     val savedStudentId: String? = null,
     val hasSavedCredentials: Boolean = false,
+    val academicReauthenticationRequired: Boolean = false,
     val syncXnm: String = "2025",
     val syncXqm: String = "12",
     val lastAutoSyncEpochMillis: Long? = null,
@@ -126,16 +134,53 @@ data class AppPreferencesState(
     val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig()
 )
 
-class CampusRepository private constructor(
+class CampusRepository internal constructor(
     private val appContext: Context,
-    private val database: HautDatabase
+    private val database: HautDatabase,
+    private val preferences: DataStore<Preferences>,
+    private val accountProfile: AccountProfileEntity
 ) {
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
     private val utilityAndFocusDao = database.utilityAndFocusDao()
-    private val utilityAccountStore = UtilityAccountSecureStore(appContext)
+    private val utilityAccountStore = UtilityAccountSecureStore(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
+    private val academicCredentialVault = createAcademicCredentialVault(appContext)
+    private val academicCredentialMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var activeSessionGeneration: Long? = null
+
+    val isSessionActive: Boolean
+        get() = activeSessionGeneration != null
+
+    val profileId: String get() = accountProfile.id
+    val schoolId: String get() = accountProfile.schoolId
+    val school: cn.edu.haut.campus.core.model.SchoolProfile get() = accountProfile.school()
+    val timeZone: ZoneId get() = ZoneId.of(accountProfile.timeZoneId)
+    val supportsHautServices: Boolean get() = schoolId == SchoolDirectory.HAUT_SCHOOL_ID.value
+    val sessionGeneration: Long? get() = activeSessionGeneration
+
+    fun requireActiveSession() {
+        check(isSessionActive) { "账号已切换，请在当前账号重新操作" }
+    }
+
+    internal fun activateSession(generation: Long) {
+        require(generation > 0) { "账号会话世代无效" }
+        activeSessionGeneration = generation
+    }
+
+    internal fun deactivateSession() {
+        activeSessionGeneration = null
+    }
+
+    internal suspend fun initializeForSession() {
+        migrateLegacyAcademicCredentialsIfNeeded()
+        ensureInitialSeedIfNeeded()
+    }
+
+    internal fun databaseForAdoption(): HautDatabase = database
 
     @Volatile
     var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
@@ -168,8 +213,10 @@ class CampusRepository private constructor(
         val OFFICIAL_GPA_NOTE = stringPreferencesKey("official_gpa_note")
         val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_jw_enabled")
         val AUTO_CHECK_UPDATE = booleanPreferencesKey("auto_check_github_release_enabled")
-        val SAVED_STUDENT_ID = stringPreferencesKey("saved_jw_student_id")
-        val SAVED_PASSWORD_OBF = stringPreferencesKey("saved_jw_password_local")
+        val LEGACY_SAVED_STUDENT_ID = stringPreferencesKey("saved_jw_student_id")
+        val LEGACY_SAVED_PASSWORD_BASE64 = stringPreferencesKey("saved_jw_password_local")
+        val ACADEMIC_CREDENTIAL_ACCOUNT_ID = stringPreferencesKey("academic_credential_account_id_v1")
+        val ACADEMIC_REAUTH_REQUIRED = booleanPreferencesKey("academic_reauthentication_required_v1")
         val SAVED_SYNC_XNM = stringPreferencesKey("saved_jw_sync_xnm")
         val SAVED_SYNC_XQM = stringPreferencesKey("saved_jw_sync_xqm")
         val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
@@ -224,12 +271,19 @@ class CampusRepository private constructor(
             runCatching { utilityAccountStore.wipeAll() }
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
-        repoScope.launch {
-            ensureInitialSeedIfNeeded()
-        }
     }
 
-    val preferencesFlow: Flow<AppPreferencesState> = appContext.appDataStore.data.map { prefs ->
+    val preferencesFlow: Flow<AppPreferencesState> = preferences.data
+        .onStart { migrateLegacyAcademicCredentialsIfNeeded() }
+        .map { prefs ->
+        val credentialResult = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
+            academicCredentialVault.read(academicCredentialScope(accountId))
+        } ?: AcademicCredentialReadResult.Empty
+        val savedStudentId = (credentialResult as? AcademicCredentialReadResult.Available)
+            ?.credentials?.use { it.studentId }
+        val requiresReauthentication = prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] == true ||
+            credentialResult == AcademicCredentialReadResult.ReauthenticationRequired ||
+            (prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] != null && savedStudentId == null)
         val reminderConfig = extractReminderConfig(prefs)
         val rawOrder = prefs[PrefKeys.HOME_CARD_ORDER]
             ?.split(",")
@@ -274,9 +328,9 @@ class CampusRepository private constructor(
             hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false,
             autoSyncEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true,
             autoCheckUpdateEnabled = prefs[PrefKeys.AUTO_CHECK_UPDATE] ?: true,
-            savedStudentId = prefs[PrefKeys.SAVED_STUDENT_ID],
-            hasSavedCredentials = !prefs[PrefKeys.SAVED_STUDENT_ID].isNullOrBlank() &&
-                !prefs[PrefKeys.SAVED_PASSWORD_OBF].isNullOrBlank(),
+            savedStudentId = savedStudentId,
+            hasSavedCredentials = savedStudentId != null && !requiresReauthentication,
+            academicReauthenticationRequired = requiresReauthentication,
             syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025",
             syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12",
             lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
@@ -298,9 +352,9 @@ class CampusRepository private constructor(
                 ?.split("\n")
                 ?.filter { it.isNotBlank() }
                 .orEmpty(),
-            utilitiesEnabled = prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true,
-            libraryNativeEnabled = prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true,
-            librarySeatEnabled = prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true,
+            utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true),
+            libraryNativeEnabled = supportsHautServices && (prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true),
+            librarySeatEnabled = supportsHautServices && (prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true),
             focusEnabled = prefs[PrefKeys.FF_FOCUS_ENABLED] ?: true,
             showTodayFocusQuickPill = prefs[PrefKeys.FF_TODAY_FOCUS_PILL] ?: true,
             timetableInterchangeEnabled = prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
@@ -309,7 +363,7 @@ class CampusRepository private constructor(
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs)
         )
-    }
+    }.flowOn(Dispatchers.IO)
 
     private fun extractNetworkProxyConfig(prefs: androidx.datastore.preferences.core.Preferences): NetworkProxyConfig {
         return NetworkProxyConfig(
@@ -383,6 +437,9 @@ class CampusRepository private constructor(
     val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
         dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
 
+    val unscheduledCoursesFlow: Flow<List<UnscheduledAcademicCourseEntity>> =
+        dao.observeUnscheduledCourses()
+
     val activeReminderTasksFlow: Flow<List<ReminderTaskDomain>> =
         reminderDao.observeActiveTasks().map { list -> list.map { it.toDomain() } }
 
@@ -425,7 +482,22 @@ class CampusRepository private constructor(
      * 绝不自动塞入模拟课程或模拟成绩，确保用户首次打开直接进入干净的欢迎引导页。
      */
     suspend fun ensureInitialSeedIfNeeded() {
-        val prefs = appContext.appDataStore.data.first()
+        val prefs = preferences.data.first()
+        if (!accountProfile.isLegacy) {
+            if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
+                database.withTransaction {
+                    if (supportsHautServices) seedBaseCampusDictionaryInternal() else seedOfflineDefaultsInternal()
+                }
+                preferences.edit {
+                    it[PrefKeys.CLEAN_BASE_V2] = true
+                    it[PrefKeys.SEEDED] = true
+                    it[PrefKeys.ONBOARDING_COMPLETED] = true
+                    it[PrefKeys.AUTO_SYNC_ENABLED] = false
+                    it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
+                }
+            }
+            return
+        }
         if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
             database.withTransaction {
                 if (prefs[PrefKeys.ONBOARDING_COMPLETED] != true) {
@@ -437,7 +509,7 @@ class CampusRepository private constructor(
                 }
                 seedBaseCampusDictionaryInternal()
             }
-            appContext.appDataStore.edit {
+            preferences.edit {
                 it[PrefKeys.SEEDED] = true
                 it[PrefKeys.CLEAN_BASE_V2] = true
             }
@@ -477,7 +549,7 @@ class CampusRepository private constructor(
                     dao.setCurrentTerm(expectedTermId)
                 }
             }
-            appContext.appDataStore.edit {
+            preferences.edit {
                 it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
                 it.remove(PrefKeys.LAST_AUTO_SYNC_MS)
             }
@@ -485,19 +557,20 @@ class CampusRepository private constructor(
     }
 
     suspend fun completeOnboarding() {
-        appContext.appDataStore.edit {
+        preferences.edit {
             it[PrefKeys.ONBOARDING_COMPLETED] = true
             it[PrefKeys.CLEAN_BASE_V2] = true
         }
     }
 
     suspend fun resetOnboardingForGuide() {
-        appContext.appDataStore.edit {
+        preferences.edit {
             it[PrefKeys.ONBOARDING_COMPLETED] = false
         }
     }
 
     suspend fun resetToDemoSeedData() {
+        check(supportsHautServices) { "当前学校不提供工大示例数据" }
         database.withTransaction {
             dao.clearCourses()
             dao.clearRules()
@@ -505,7 +578,7 @@ class CampusRepository private constructor(
             dao.clearGradeAttempts()
             seedDemoDataInternal()
         }
-        appContext.appDataStore.edit {
+        preferences.edit {
             it[PrefKeys.SEEDED] = true
             it[PrefKeys.CLEAN_BASE_V2] = true
             it[PrefKeys.ONBOARDING_COMPLETED] = true
@@ -521,6 +594,24 @@ class CampusRepository private constructor(
         dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
         dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
         dao.upsertCalendarOverrides(HautMockSeedData.defaultCalendarOverrides.map { it.toEntity() })
+    }
+
+    /** 通用离线模式只提供可编辑作息，不推定学校建筑、调休或官方开学日期。 */
+    private suspend fun seedOfflineDefaultsInternal() {
+        val today = LocalDate.now(timeZone)
+        val monday = today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val year = if (today.monthValue >= 8) today.year else today.year - 1
+        val termNo = if (today.monthValue in 2..7) 2 else 1
+        val timetableId = "manual_default"
+        dao.upsertTerms(listOf(Term(
+            id = "$year-${year + 1}-$termNo", academicYear = "$year-${year + 1}", termNumber = termNo,
+            startDate = monday, weekCount = 20, timeTableId = timetableId, current = true
+        ).toEntity()))
+        val starts = listOf("08:00", "08:55", "10:00", "10:55", "14:00", "14:55", "16:00", "16:55", "19:00", "19:55")
+        dao.upsertPeriodTimes(starts.mapIndexed { index, raw ->
+            val start = LocalTime.parse(raw)
+            PeriodTime("manual_period_${index + 1}", timetableId, index + 1, start, start.plusMinutes(45)).toEntity()
+        })
     }
 
     private suspend fun seedDemoDataInternal() {
@@ -568,7 +659,7 @@ class CampusRepository private constructor(
     suspend fun selectCurrentTerm(termId: String) {
         ensureTermExistsAndUpdateCalendar(termId = termId, setCurrent = true)
         val (xnm, xqm) = HautAcademicEndpoints.fromTermId(termId)
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
             prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
         }
@@ -831,7 +922,7 @@ class CampusRepository private constructor(
                 ).toEntity()
             )
         }
-        appContext.appDataStore.edit {
+        preferences.edit {
             it[PrefKeys.ONBOARDING_COMPLETED] = true
             it[PrefKeys.CLEAN_BASE_V2] = true
             if (setAsCurrentTerm) {
@@ -855,7 +946,7 @@ class CampusRepository private constructor(
             }
             dao.upsertGradeAttempts(attempts.map { it.toEntity() })
         }
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.ONBOARDING_COMPLETED] = true
             prefs[PrefKeys.CLEAN_BASE_V2] = true
             if (officialGpa != null) {
@@ -886,7 +977,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun setAutoSyncEnabled(enabled: Boolean) {
-        appContext.appDataStore.edit { it[PrefKeys.AUTO_SYNC_ENABLED] = enabled }
+        preferences.edit { it[PrefKeys.AUTO_SYNC_ENABLED] = enabled }
     }
 
     suspend fun saveAuthorizedSyncCredentials(
@@ -894,16 +985,70 @@ class CampusRepository private constructor(
         passwordPlain: String,
         xnm: String,
         xqm: String
-    ) {
-        val encoded = java.util.Base64.getEncoder().encodeToString(
-            passwordPlain.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
-        )
-        appContext.appDataStore.edit { prefs ->
-            prefs[PrefKeys.SAVED_STUDENT_ID] = studentId.trim()
-            prefs[PrefKeys.SAVED_PASSWORD_OBF] = encoded
-            prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
-            prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
-            prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        requireActiveSession()
+        check(supportsHautServices) { "当前学校教务登录尚未适配，可使用离线导入" }
+        academicCredentialMutex.withLock {
+            val previousId = preferences.data.first()[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]
+            val accountId = UUID.randomUUID().toString()
+            val scope = academicCredentialScope(accountId)
+            try {
+                academicCredentialVault.save(scope, studentId, passwordPlain)
+                preferences.edit { prefs ->
+                    prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
+                    prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = false
+                    prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
+                    prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                    prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
+                    prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
+                    prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+                }
+            } catch (error: Exception) {
+                runCatching { academicCredentialVault.delete(scope) }
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                throw IllegalStateException("教务凭据无法安全保存，请重新登录；本地课表和成绩已保留")
+            }
+            previousId?.let { runCatching { academicCredentialVault.delete(academicCredentialScope(it)) } }
+        }
+    }
+
+    private fun academicCredentialScope(accountId: String) = AcademicCredentialScope(
+        schoolId = schoolId,
+        accountId = accountId,
+        providerId = if (supportsHautServices) "haut-zf-modern" else "offline"
+    )
+
+    /** 先保留稳定迁移引用；AES-GCM 密文回读成功后，在同一 DataStore 写入中删除旧学号和 Base64。 */
+    private suspend fun migrateLegacyAcademicCredentialsIfNeeded() = withContext(Dispatchers.IO) {
+        val current = preferences.data.first()
+        if (current[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
+            current[PrefKeys.LEGACY_SAVED_STUDENT_ID] == null
+        ) {
+            return@withContext
+        }
+        academicCredentialMutex.withLock {
+            val original = preferences.data.first()
+            if (original[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
+                original[PrefKeys.LEGACY_SAVED_STUDENT_ID] == null
+            ) {
+                return@withLock
+            }
+            val accountId = original[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: UUID.randomUUID().toString()
+            preferences.edit { prefs ->
+                prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
+            }
+            val migrated = migrateLegacyAcademicCredentials(
+                vault = academicCredentialVault,
+                scope = academicCredentialScope(accountId),
+                studentId = original[PrefKeys.LEGACY_SAVED_STUDENT_ID],
+                encodedPassword = original[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64]
+            )
+            preferences.edit { prefs ->
+                prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
+                prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = !migrated
+                if (!migrated) prefs[PrefKeys.AUTO_SYNC_ENABLED] = false
+            }
         }
     }
 
@@ -914,16 +1059,18 @@ class CampusRepository private constructor(
         syncData: HautLiveSyncResult,
         overwriteUserConflicts: Boolean = false
     ) {
+        requireActiveSession()
+        check(supportsHautServices) { "当前学校不接受工大教务同步数据" }
         syncData.studentProfile?.let { profile ->
             saveStudentProfile(profile)
         }
-        if (syncData.gradeAttempts.isNotEmpty()) {
+        if (syncData.gradesComplete) {
             saveImportedGrades(
                 attempts = syncData.gradeAttempts,
                 replaceExisting = true
             )
         }
-        if (syncData.examItems.isNotEmpty()) {
+        if (syncData.examsComplete) {
             saveImportedExams(
                 exams = syncData.examItems,
                 replaceExisting = true
@@ -950,6 +1097,10 @@ class CampusRepository private constructor(
             )
         }
         val targetTermId = syncData.termId
+        database.withTransaction {
+            dao.clearUnscheduledCoursesForTerm(targetTermId)
+            dao.upsertUnscheduledCourses(syncData.unscheduledCourses.toUnscheduledEntities(targetTermId))
+        }
         ensureTermExistsAndUpdateCalendar(
             termId = targetTermId,
             semesterStart = syncData.semesterStart,
@@ -967,7 +1118,7 @@ class CampusRepository private constructor(
             setAsCurrentTerm = true
         )
         val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.SAVED_SYNC_XNM] = syncXnm
             prefs[PrefKeys.SAVED_SYNC_XQM] = syncXqm
             prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
@@ -978,52 +1129,83 @@ class CampusRepository private constructor(
      * 后台或一键动态刷新：使用本地已授权保存的教务凭据，从正方教务系统拉取最新课表、期初/期中/期末考试安排与成绩。
      * @param force 若为 false，则距离上次自动同步不足 15 分钟时跳过，避免频繁请求。
      */
-    suspend fun performDynamicAcademicSync(force: Boolean = false): Result<HautLiveSyncResult>? {
-        val prefs = appContext.appDataStore.data.first()
+    suspend fun performDynamicAcademicSync(force: Boolean = false): Result<HautLiveSyncResult>? = withContext(Dispatchers.IO) {
+        requireActiveSession()
+        if (!supportsHautServices) return@withContext Result.failure(IllegalStateException("当前学校教务登录尚未适配，可使用离线导入"))
+        migrateLegacyAcademicCredentialsIfNeeded()
+        academicCredentialMutex.withLock {
+        val prefs = preferences.data.first()
         val autoEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true
-        if (!force && !autoEnabled) return null
-
-        val studentId = prefs[PrefKeys.SAVED_STUDENT_ID]?.takeIf { it.isNotBlank() } ?: return null
-        val encodedPwd = prefs[PrefKeys.SAVED_PASSWORD_OBF]?.takeIf { it.isNotBlank() } ?: return null
-        val passwordPlain = runCatching {
-            String(java.util.Base64.getDecoder().decode(encodedPwd), java.nio.charset.StandardCharsets.UTF_8)
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        if (!force && !autoEnabled) return@withLock null
 
         val lastSyncMs = prefs[PrefKeys.LAST_AUTO_SYNC_MS] ?: 0L
         val nowMs = System.currentTimeMillis()
         if (!force && (nowMs - lastSyncMs) < 15 * 60 * 1000L) {
-            return null
+            return@withLock null
+        }
+
+        val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
+        val credentialResult = academicCredentialVault.read(academicCredentialScope(accountId))
+        if (credentialResult !is AcademicCredentialReadResult.Available) {
+            preferences.edit {
+                it[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
+                it[PrefKeys.AUTO_SYNC_ENABLED] = false
+            }
+            return@withLock Result.failure(IllegalStateException("安全凭据已失效，请重新登录；本地课表和成绩已保留"))
         }
 
         val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
         val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
 
-        val result = HautLiveAcademicClient.fetchLiveAcademicData(
-            studentId = studentId,
-            passwordPlain = passwordPlain,
-            xnm = xnm,
-            xqm = xqm
-        )
-        result.onSuccess { syncData ->
-            applyLiveSyncData(syncData, overwriteUserConflicts = false)
+        credentialResult.credentials.use { credentials ->
+            val result = HautLiveAcademicClient.fetchLiveAcademicData(
+                studentId = credentials.studentId,
+                passwordPlain = credentials.passwordPlain,
+                xnm = xnm,
+                xqm = xqm
+            )
+            val failure = result.exceptionOrNull()
+            if (failure is AcademicReadException && failure.code in setOf(
+                    "AUTH_REJECTED", "CAPTCHA_REQUIRED", "SESSION_EXPIRED", "MANUAL_VERIFICATION"
+                )) {
+                preferences.edit {
+                    it[PrefKeys.AUTO_SYNC_ENABLED] = false
+                    it[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
+                }
+            }
+            result.fold(
+                onSuccess = { syncData ->
+                    try {
+                        applyLiveSyncData(syncData, overwriteUserConflicts = false)
+                        Result.success(syncData)
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        Result.failure(IllegalStateException("教务数据保存失败，请稍后重试；已保留尚未完成更新的数据"))
+                    }
+                },
+                onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    Result.failure(error)
+                }
+            )
         }
-        return result
+        }
     }
 
     suspend fun setGpaPrivacyShield(enabled: Boolean) {
-        appContext.appDataStore.edit { it[PrefKeys.GPA_PRIVACY] = enabled }
+        preferences.edit { it[PrefKeys.GPA_PRIVACY] = enabled }
     }
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
-        appContext.appDataStore.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
+        preferences.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
     }
 
     suspend fun setThemeMode(mode: String) {
-        appContext.appDataStore.edit { it[PrefKeys.THEME_MODE] = mode }
+        preferences.edit { it[PrefKeys.THEME_MODE] = mode }
     }
 
     suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
             prefs[PrefKeys.DYNAMIC_COLOR] = false
             if (customSeedArgb != null) {
@@ -1037,7 +1219,7 @@ class CampusRepository private constructor(
         primarySeedArgb: Long,
         extractedSwatches: List<Long>
     ) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
             prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
             prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
@@ -1051,7 +1233,7 @@ class CampusRepository private constructor(
         blurDp: Float? = null,
         cardAlpha: Float? = null
     ) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = it.coerceIn(0.10f, 1.0f) }
             blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = it.coerceIn(0f, 30f) }
             cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = it.coerceIn(0.50f, 0.98f) }
@@ -1059,7 +1241,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun clearCustomWallpaperTheme() {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             val oldPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]
             if (!oldPath.isNullOrBlank()) {
                 runCatching { java.io.File(oldPath).delete() }
@@ -1075,7 +1257,7 @@ class CampusRepository private constructor(
         fullWidth: Set<String>
     ) {
         val normalizedOrder = (order.filter { it in DEFAULT_HOME_CARD_ORDER } + DEFAULT_HOME_CARD_ORDER).distinct()
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
             prefs[PrefKeys.HIDDEN_HOME_CARDS] = hidden.joinToString(",")
             prefs[PrefKeys.FULL_WIDTH_HOME_CARDS] = if (fullWidth.isEmpty()) "_NONE_" else fullWidth.joinToString(",")
@@ -1083,7 +1265,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun resetHomeCardLayout() {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs.remove(PrefKeys.HOME_CARD_ORDER)
             prefs.remove(PrefKeys.HIDDEN_HOME_CARDS)
             prefs.remove(PrefKeys.FULL_WIDTH_HOME_CARDS)
@@ -1091,7 +1273,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun getActiveThemeAccentArgb(): Int {
-        val prefs = appContext.appDataStore.data.first()
+        val prefs = preferences.data.first()
         val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
         val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC
         val seedLong = when (key) {
@@ -1110,16 +1292,16 @@ class CampusRepository private constructor(
     }
 
     suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {
-        appContext.appDataStore.edit { it[PrefKeys.AUTO_CHECK_UPDATE] = enabled }
+        preferences.edit { it[PrefKeys.AUTO_CHECK_UPDATE] = enabled }
     }
 
     suspend fun getNetworkProxyConfigSnapshot(): NetworkProxyConfig {
-        val prefs = appContext.appDataStore.data.first()
+        val prefs = preferences.data.first()
         return extractNetworkProxyConfig(prefs)
     }
 
     suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.PROXY_MODE] = config.mode.key
             prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
             prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
@@ -1132,7 +1314,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun resetNetworkProxyConfig() {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs.remove(PrefKeys.PROXY_MODE)
             prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
             prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
@@ -1144,7 +1326,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
             if (inviteUrl.isBlank()) {
                 current.remove(channelId)
@@ -1156,7 +1338,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
             if (groupNumber.isBlank()) {
                 current.remove(clubId)
@@ -1182,7 +1364,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun setTimelineZoomScale(scale: Float) {
-        appContext.appDataStore.edit { it[PrefKeys.TIMELINE_SCALE] = scale.coerceIn(1.2f, 3.6f) }
+        preferences.edit { it[PrefKeys.TIMELINE_SCALE] = scale.coerceIn(1.2f, 3.6f) }
     }
 
     suspend fun saveWidgetConfig(config: WidgetInstanceConfig) {
@@ -1195,7 +1377,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig {
-        val prefs = appContext.appDataStore.data.first()
+        val prefs = preferences.data.first()
         return extractReminderConfig(prefs)
     }
 
@@ -1208,7 +1390,7 @@ class CampusRepository private constructor(
     }
 
     suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             val current = extractReminderConfig(prefs)
             val updated = transform(current)
             prefs[PrefKeys.REMINDERS_ENABLED] = updated.enabled
@@ -1252,7 +1434,7 @@ class CampusRepository private constructor(
             .withNano(0)
             .toString()
         val formatted = "[$timeText] $message"
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             val existing = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
                 ?.split("\n")
                 ?.filter { it.isNotBlank() }
@@ -1274,7 +1456,7 @@ class CampusRepository private constructor(
         showTodayFocusQuickPill: Boolean? = null,
         timetableInterchangeEnabled: Boolean? = null
     ) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             utilitiesEnabled?.let { prefs[PrefKeys.FF_UTILITIES_ENABLED] = it }
             libraryNativeEnabled?.let { prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] = it }
             librarySeatEnabled?.let { prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] = it }
@@ -1285,13 +1467,13 @@ class CampusRepository private constructor(
     }
 
     suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
         }
     }
 
     suspend fun setSelectedFocusMinutes(minutes: Int) {
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs[PrefKeys.SELECTED_FOCUS_MINUTES] = minutes.coerceIn(1, 180)
         }
     }
@@ -1368,7 +1550,7 @@ class CampusRepository private constructor(
         }
 
         if (snapshots.any { !it.failed }) {
-            appContext.appDataStore.edit { prefs ->
+            preferences.edit { prefs ->
                 prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
             }
         }
@@ -1382,8 +1564,8 @@ class CampusRepository private constructor(
     suspend fun performPeriodicUtilitySampleIfEligible(
         nowEpochMs: Long = System.currentTimeMillis()
     ): Boolean {
-        val prefs = appContext.appDataStore.data.first()
-        val utilitiesEnabled = prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true
+        val prefs = preferences.data.first()
+        val utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true)
         val allowUnverified = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
         if (!utilitiesEnabled || !allowUnverified) return false
 
@@ -1409,7 +1591,7 @@ class CampusRepository private constructor(
             utilityAndFocusDao.clearAllOnlineRooms()
             utilityAndFocusDao.clearAllDailySamples()
         }
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
         }
     }
@@ -1504,6 +1686,19 @@ class CampusRepository private constructor(
      * 完全清除本地个人课程、成绩、导入审计、水电账号与历史、自习专注及学校网页会话（保留公开的校区建筑字典与节次模板）。
      */
     suspend fun wipeAllPersonalData() {
+        academicCredentialMutex.withLock {
+            val prefs = preferences.data.first()
+            prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
+                withContext(Dispatchers.IO) { academicCredentialVault.delete(academicCredentialScope(accountId)) }
+            }
+            preferences.edit {
+                it.remove(PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
+                it.remove(PrefKeys.ACADEMIC_REAUTH_REQUIRED)
+                it.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
+                it.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                it[PrefKeys.AUTO_SYNC_ENABLED] = false
+            }
+        }
         for (hook in beforeWipeHooks.values) {
             runCatching { hook.invoke() }
         }
@@ -1514,6 +1709,7 @@ class CampusRepository private constructor(
             dao.clearOccurrenceOverrides()
             dao.clearGradeAttempts()
             dao.clearExamSchedules()
+            dao.clearUnscheduledCourses()
             dao.clearImportAudits()
             dao.clearWidgetConfigs()
             reminderDao.clearAllTasks()
@@ -1524,11 +1720,11 @@ class CampusRepository private constructor(
             utilityAndFocusDao.clearAllMeters()
             utilityAndFocusDao.clearAllFocusSessions()
         }
-        appContext.appDataStore.edit { prefs ->
+        preferences.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
             prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
-            prefs.remove(PrefKeys.SAVED_STUDENT_ID)
-            prefs.remove(PrefKeys.SAVED_PASSWORD_OBF)
+            prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
+            prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
             prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
             prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
             prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
@@ -1562,9 +1758,6 @@ class CampusRepository private constructor(
     }
 
     companion object {
-        @Volatile
-        private var INSTANCE: CampusRepository? = null
-
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -1651,21 +1844,11 @@ class CampusRepository private constructor(
             }
         }
 
-        fun getInstance(context: Context): CampusRepository {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: run {
-                    val appCtx = context.applicationContext
-                    val db = Room.databaseBuilder(
-                        appCtx,
-                        HautDatabase::class.java,
-                        "haut_campus_assistant.db"
-                    )
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
-                        .build()
-                    CampusRepository(appCtx, db).also { INSTANCE = it }
-                }
+        fun getInstance(context: Context): CampusRepository =
+            checkNotNull(AccountSessionCoordinator.getInstance(context).currentSnapshot()?.repository) {
+                "账号正在初始化或切换，请等待当前身份就绪"
             }
-        }
+
     }
 }
 

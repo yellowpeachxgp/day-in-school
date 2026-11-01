@@ -1,4 +1,4 @@
-name: Android Release APK
+name: Android 正式发行
 
 on:
   push:
@@ -7,79 +7,114 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v0.3.0)'
+        description: '已存在的正式版本标签，例如 v0.11.3'
         required: true
-        default: 'v0.3.0'
 
 permissions:
   contents: write
 
 jobs:
   release-apk:
-    name: Build & Publish Release APK
+    name: 质量门禁、正式签名与发行
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - name: Checkout Repository
+      - name: 检出标签对应源码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag_name || github.ref }}
 
-      - name: Set up JDK 21
+      - name: 配置 JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
 
-      - name: Setup Gradle Cache
+      - name: 配置 Gradle 缓存
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Resolve Semantic Version from Tag or version.properties
+      - name: 校验标签与版本配置一致
         id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
         run: |
-          RAW_TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
-          CLEAN_VER="${RAW_TAG#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CLEAN_VER"
-          MAJOR=${MAJOR:-0}
-          MINOR=${MINOR:-1}
-          PATCH=${PATCH%%-*}
-          PATCH=${PATCH:-0}
-          VER_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
-          echo "TAG_NAME=v${CLEAN_VER}" >> "$GITHUB_OUTPUT"
-          echo "VERSION_NAME=${CLEAN_VER}" >> "$GITHUB_OUTPUT"
-          echo "VERSION_CODE=${VER_CODE}" >> "$GITHUB_OUTPUT"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '发行标签必须是 v主版本.次版本.修订号'; exit 1; }
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          ./gradlew --no-daemon -q printVersion > version-output.txt
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=//p' version-output.txt)
+          test "$RELEASE_TAG" = "v$VERSION_NAME" || { echo '发行标签与 version.properties 不一致'; exit 1; }
+          echo "TAG_NAME=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          cat version-output.txt >> "$GITHUB_OUTPUT"
 
-      - name: Decode Release Keystore
+      - name: 检查正式签名配置
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-        run: |
-          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
-            mkdir -p keystore
-            echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > keystore/haut-release.jks
-          fi
-
-      - name: Run Unit Tests & Assemble Release APK
-        env:
-          APP_VERSION_NAME: ${{ steps.meta.outputs.VERSION_NAME }}
-          APP_VERSION_CODE: ${{ steps.meta.outputs.VERSION_CODE }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          chmod +x ./gradlew
-          ./gradlew :core:domain:test :core:academic:testDebugUnitTest :app:assembleRelease :app:assembleDebug --stacktrace
-          mkdir -p release-assets
-          REL_APK="release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk"
-          DBG_APK="release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk"
-          cp app/build/outputs/apk/release/app-release.apk "$REL_APK"
-          cp app/build/outputs/apk/debug/app-debug.apk "$DBG_APK"
-          cd release-assets
-          sha256sum *.apk > SHA256SUMS.txt
+          for name in SIGNING_KEYSTORE_BASE64 SIGNING_STORE_PASSWORD SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD; do
+            test -n "${!name}" || { echo "缺少正式签名配置：$name"; exit 1; }
+          done
+          mkdir -p keystore
+          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > keystore/haut-release.jks
+          chmod 600 keystore/haut-release.jks
+          keytool -exportcert -keystore keystore/haut-release.jks -storepass:env SIGNING_STORE_PASSWORD -alias "$SIGNING_KEY_ALIAS" -file keystore/release-cert.der
 
-      - name: Publish GitHub Release
+      - name: 执行完整质量门禁并构建发行包
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon :core:model:test :core:domain:test testDebugUnitTest lintDebug lintRelease :app:assembleRelease --stacktrace
+          git diff --exit-code -- core/database/schemas
+          test -z "$(git ls-files --others --exclude-standard core/database/schemas)"
+
+      - name: 校验 APK 签名并生成发行证据
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.VERSION_NAME }}
+        run: |
+          mkdir -p release-assets
+          REL_APK="release-assets/day-in-school-v${RELEASE_VERSION}-release.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$REL_APK"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$REL_APK" > release-assets/APK_SIGNATURE.txt
+          EXPECTED_CERT=$(sha256sum keystore/release-cert.der | cut -d' ' -f1)
+          ACTUAL_CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' release-assets/APK_SIGNATURE.txt)
+          test "$EXPECTED_CERT" = "$ACTUAL_CERT" || { echo 'APK 证书与正式签名证书不一致'; exit 1; }
+          if grep -qi 'CN=Android Debug' release-assets/APK_SIGNATURE.txt; then
+            echo '禁止发布使用调试证书签名的安装包'
+            exit 1
+          fi
+          git rev-parse HEAD > release-assets/SOURCE_COMMIT.txt
+          cp version-output.txt release-assets/VERSION.txt
+          cp LICENSE THIRD_PARTY_NOTICES.md release-assets/
+          tar -czf release-assets/LICENSES.tar.gz licenses
+          printf 'https://github.com/%s/archive/%s.tar.gz\n' "$GITHUB_REPOSITORY" "$(git rev-parse HEAD)" > release-assets/SOURCE_ARCHIVE_URL.txt
+          (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
+
+      - name: 保存测试与静态分析报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-quality-reports
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**
+            **/build/reports/lint-results-*
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 发布 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.TAG_NAME }}
-          name: "日在校园 (Day in School) ${{ steps.meta.outputs.TAG_NAME }} (Android 16 / API 36)"
+          name: "日在校园 ${{ steps.meta.outputs.TAG_NAME }}（Android 12–16）"
           generate_release_notes: true
-          files: |
-            release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-release.apk
-            release-assets/day-in-school-v${{ steps.meta.outputs.VERSION_NAME }}-debug.apk
-            release-assets/SHA256SUMS.txt
+          files: release-assets/*
+
+      - name: 清理临时签名材料
+        if: always()
+        run: rm -rf keystore

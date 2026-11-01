@@ -139,11 +139,13 @@ class TimetableInterchangeAdapterTest {
         val breakdown = HautZfsoftParser.parseTimetableWithBreakdown(zfJson2026)
         assertEquals(0, breakdown.regularCount)
         assertEquals(2, breakdown.practiceCount)
-        assertEquals(2, breakdown.allCandidates.size)
-        assertEquals("综合项目实践", breakdown.allCandidates[0].courseName)
-        assertEquals(setOf(1, 2, 3, 4, 5, 6), breakdown.allCandidates[0].weeks)
-        assertEquals("形势与政策（七）", breakdown.allCandidates[1].courseName)
-        assertEquals(setOf(7, 8, 9, 10), breakdown.allCandidates[1].weeks)
+        // 实践课只有周次，不能制造星期和节次进入日程或提醒。
+        assertEquals(0, breakdown.allCandidates.size)
+        assertEquals(2, breakdown.unscheduledCourses.size)
+        assertEquals("综合项目实践", breakdown.unscheduledCourses[0].name)
+        assertEquals("1-6周", breakdown.unscheduledCourses[0].rawWeeks)
+        assertEquals("形势与政策（七）", breakdown.unscheduledCourses[1].name)
+        assertEquals("7-10周", breakdown.unscheduledCourses[1].rawWeeks)
 
         val zcJson = """
             [

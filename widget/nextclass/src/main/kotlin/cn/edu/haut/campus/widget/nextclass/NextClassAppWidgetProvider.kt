@@ -87,7 +87,7 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                 context = context,
                 appWidgetId = appWidgetId,
                 defaultType = WidgetType.NEXT_CLASS_2X2
-            )
+            ) ?: run { WidgetRefreshCoordinator.showSwitching(context, intArrayOf(appWidgetId)); return }
             val minWidthDp = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 140) ?: 140
             val isNarrow = minWidthDp < 150 || snapshot.config.compact
 
@@ -155,7 +155,7 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                 views.setViewVisibility(R.id.chronometer_countdown, View.GONE)
                 val hint = day.nextClassDayHint
                 if (hint != null) {
-                    views.setTextViewText(R.id.tv_course_name, hint.firstCourseName)
+                    views.setTextViewText(R.id.tv_course_name, if (snapshot.config.privacyMode) "课程已隐藏" else hint.firstCourseName)
                     views.setTextViewText(
                         R.id.tv_time_range,
                         "下次课 ${hint.nextDate.format(DATE_FMT)} ${hint.nextDate.dayOfWeek.ChineseLabel} ${hint.firstCourseStartTime.format(TIME_FMT)}"
@@ -174,6 +174,7 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
             }
             if (launchIntent != null) {
@@ -187,6 +188,7 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
             }
 
             val mapIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "map")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
                 putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, activeOrNext?.occurrence?.rawRoom)
             }
@@ -201,7 +203,7 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.tv_room_and_teacher, mapPi)
             }
 
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
             WidgetRefreshCoordinator.scheduleNextBoundaryRefresh(
                 context = context,
                 daySnapshot = day,

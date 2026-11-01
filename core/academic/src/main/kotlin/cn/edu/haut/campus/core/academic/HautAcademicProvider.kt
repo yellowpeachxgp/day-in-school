@@ -11,13 +11,11 @@ import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.StudentProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.math.BigDecimal
 import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.DayOfWeek
@@ -76,8 +74,19 @@ data class HautLiveSyncResult(
     val regularCourseCount: Int = timetableCandidates.size,
     val practiceCourseCount: Int = 0,
     val additionalTermTimetables: Map<String, List<ImportCourseCandidate>> = emptyMap(),
-    val additionalTermCalendars: Map<String, Pair<LocalDate, Int>> = emptyMap()
+    val additionalTermCalendars: Map<String, Pair<LocalDate, Int>> = emptyMap(),
+    val gradesComplete: Boolean = false,
+    val examsComplete: Boolean = false,
+    val syncWarnings: List<String> = emptyList(),
+    val unscheduledCourses: List<UnscheduledAcademicCourse> = emptyList()
 )
+
+fun HautLiveSyncResult.syncSummaryText(): String = buildString {
+    append("课表已更新（$termId）：${timetableCandidates.size} 条排课")
+    if (unscheduledCourses.isNotEmpty()) append(" · ${unscheduledCourses.size} 门实践课程时间待定，不生成提醒")
+    append(if (gradesComplete) "\n成绩已完整读取：${gradeAttempts.size} 条" else "\n成绩同步未完成，已保留之前的数据")
+    append(if (examsComplete) "\n考试已完整读取：${examItems.size} 场" else "\n考试同步未完成，已保留之前的数据")
+}
 
 object HautSessionManager {
     fun clearAuthorizedSessionCookies() {
@@ -104,8 +113,8 @@ object HautLiveAcademicClient {
         xqm: String = "12"
     ): Result<HautLiveSyncResult> = withContext(Dispatchers.IO) {
         runCatching {
-            val jwCookies = linkedMapOf<String, String>()
-            val casCookies = linkedMapOf<String, String>()
+            val jwCookies = OfficialAcademicCookieJar(HautAcademicUrlPolicy.ACADEMIC_HOST)
+            val casCookies = OfficialAcademicCookieJar(HautAcademicUrlPolicy.CAS_HOST)
 
             // 1. 请求 https://jwglxt.haut.edu.cn/sso/jhlogin 获取 route Cookie 与 CAS 跳转地址
             val hop0 = request(
@@ -115,7 +124,7 @@ object HautLiveAcademicClient {
             )
             val casLoginUrl = normalizeRedirectUrl(
                 rawLocation = hop0.location ?: error("未获取到统一身份认证跳转地址"),
-                baseHostUrl = "https://mapp.haut.edu.cn"
+                baseHostUrl = HautAcademicEndpoints.CAS_SSO_ENTRY_URL
             )
 
             // 2. 请求 https://mapp.haut.edu.cn/cas/login 获取 lt 与 execution
@@ -133,15 +142,18 @@ object HautLiveAcademicClient {
                 ?.groupValues?.get(1)
                 ?.replace("&amp;", "&")
             val casPostUrl = if (!formActionRaw.isNullOrBlank()) {
-                normalizeRedirectUrl(formActionRaw, "https://mapp.haut.edu.cn")
+                normalizeRedirectUrl(formActionRaw, casLoginUrl)
             } else {
                 casLoginUrl
             }
 
+            HautAcademicUrlPolicy.validate(casPostUrl, credentialPost = true)
+
             // 3. 提交统一身份认证登录表单（密码格式为 {gilight}_ + Base64）
-            val encodedPwd = "{gilight}_" + Base64.getEncoder().encodeToString(
-                passwordPlain.toByteArray(StandardCharsets.UTF_8)
-            )
+            val passwordBytes = passwordPlain.toByteArray(StandardCharsets.UTF_8)
+            val encodedPwd = try {
+                "{gilight}_" + Base64.getEncoder().encodeToString(passwordBytes)
+            } finally { passwordBytes.fill(0) }
             val formBody = buildFormBody(
                 "username" to studentId.trim(),
                 "password" to encodedPwd,
@@ -157,32 +169,37 @@ object HautLiveAcademicClient {
             )
             var nextLocation = hop2.location
             if (nextLocation.isNullOrBlank()) {
-                val errMsg = Regex("""id="msg"[^>]*>([\s\S]*?)</div>""").find(hop2.body)
-                    ?.groupValues?.get(1)
-                    ?.replace(Regex("<[^>]+>"), "")
-                    ?.trim()
-                error(errMsg?.ifBlank { null } ?: "统一身份认证账号或密码不正确")
+                val needsChallenge = hop2.body.contains("验证码") || hop2.body.contains("captcha", ignoreCase = true)
+                throw AcademicReadException(
+                    if (needsChallenge) "CAPTCHA_REQUIRED" else "AUTH_REJECTED",
+                    if (needsChallenge) "学校要求人工验证，请使用官方网页登录完成验证" else "学校认证未完成，请核对账号后重新登录"
+                )
             }
 
             // 4. 跟随教务系统 SSO 票据验证重定向链（jhlogin?ticket=... -> ticketlogin -> index_initMenu.html）
             var redirectCount = 0
+            var currentRedirectUrl = casPostUrl
             while (!nextLocation.isNullOrBlank() && redirectCount < 12) {
                 redirectCount++
                 val normalizedUrl = normalizeRedirectUrl(
                     rawLocation = nextLocation,
-                    baseHostUrl = HautAcademicEndpoints.BASE_URL
+                    baseHostUrl = currentRedirectUrl
                 )
-                val targetJar = if (normalizedUrl.contains("://mapp.haut.edu.cn")) casCookies else jwCookies
+                val targetJar = if (HautAcademicUrlPolicy.validate(normalizedUrl).host == HautAcademicUrlPolicy.CAS_HOST) casCookies else jwCookies
                 val hop = request(
                     url = normalizedUrl,
                     method = "GET",
                     cookieJar = targetJar
                 )
+                currentRedirectUrl = normalizedUrl
                 if (hop.statusCode !in listOf(301, 302, 303, 307, 308)) {
+                    nextLocation = null
                     break
                 }
                 nextLocation = hop.location
             }
+
+            if (!nextLocation.isNullOrBlank()) throw AcademicReadException("UNTRUSTED_REDIRECT", "学校认证跳转次数过多，请重新登录")
 
             // 5. 拉取当前选定学期个人课表 JSON 与官方周次校历
             val primaryBody = fetchTermTimetableJsonText(xnm = xnm, xqm = xqm, cookieJar = jwCookies)
@@ -194,10 +211,15 @@ object HautLiveAcademicClient {
                 fallbackSchoolId = studentId.trim()
             )
 
-            // 5.1 同会话顺带拉取常用相邻学期（2026-2027-1、2025-2026-2、2025-2026-1），使切换学期时立即可看
+            // 5.1 按本次选择推导相邻学期，不固定某一学年。
             val additionalTimetables = linkedMapOf<String, List<ImportCourseCandidate>>()
             val additionalCalendars = linkedMapOf<String, Pair<LocalDate, Int>>()
-            val siblingSemesters = listOf("2026" to "3", "2025" to "12", "2025" to "3")
+            val selectedYear = xnm.toIntOrNull() ?: error("学年格式无效")
+            val siblingSemesters = if (xqm in setOf("12", "2")) {
+                listOf(selectedYear.toString() to "3", (selectedYear + 1).toString() to "3")
+            } else {
+                listOf((selectedYear - 1).toString() to "12", selectedYear.toString() to "12")
+            }
             for ((sibXnm, sibXqm) in siblingSemesters) {
                 if (sibXnm == xnm && sibXqm == xqm) continue
                 val sibTermId = HautAcademicEndpoints.toTermId(sibXnm, sibXqm)
@@ -216,55 +238,15 @@ object HautLiveAcademicClient {
                 }
             }
 
-            // 6. 拉取个人全部成绩 JSON
-            val cjForm = buildFormBody(
-                "xnm" to "",
-                "xqm" to "",
-                "_search" to "false",
-                "nd" to System.currentTimeMillis().toString(),
-                "queryModel.showCount" to "200",
-                "queryModel.currentPage" to "1",
-                "queryModel.sortName" to "",
-                "queryModel.sortOrder" to "asc",
-                "time" to "0"
-            )
-            val cjResponse = request(
-                url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.GRADES_API_PATH,
-                method = "POST",
-                cookieJar = jwCookies,
-                formBody = cjForm,
-                extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
-            )
-            val gradeAttempts = if (cjResponse.statusCode == 200 && cjResponse.body.contains("\"items\"")) {
-                HautZfsoftParser.parseGradesJson(cjResponse.body)
-            } else {
-                emptyList()
-            }
-
-            // 7. 拉取个人全部考试安排 JSON（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
-            val ksForm = buildFormBody(
-                "xnm" to "",
-                "xqm" to "",
-                "_search" to "false",
-                "nd" to System.currentTimeMillis().toString(),
-                "queryModel.showCount" to "200",
-                "queryModel.currentPage" to "1",
-                "queryModel.sortName" to "",
-                "queryModel.sortOrder" to "asc",
-                "time" to "0"
-            )
-            val ksResponse = request(
-                url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.EXAMS_API_PATH,
-                method = "POST",
-                cookieJar = jwCookies,
-                formBody = ksForm,
-                extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
-            )
-            val examItems = if (ksResponse.statusCode == 200 && ksResponse.body.contains("\"items\"")) {
-                HautZfsoftParser.parseExamsJson(ksResponse.body)
-            } else {
-                emptyList()
-            }
+            // 成绩与考试分别收集完整快照；失败项不发布空数据。
+            val gradesRead = runCatching {
+                HautZfsoftParser.parseGradesJson(fetchPagedItems(HautAcademicEndpoints.GRADES_API_PATH, jwCookies))
+            }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
+            val examsRead = runCatching {
+                HautZfsoftParser.parseExamsJson(fetchPagedItems(HautAcademicEndpoints.EXAMS_API_PATH, jwCookies))
+            }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
+            val gradeAttempts = gradesRead.getOrDefault(emptyList())
+            val examItems = examsRead.getOrDefault(emptyList())
 
             HautLiveSyncResult(
                 termId = HautAcademicEndpoints.toTermId(xnm, xqm),
@@ -277,15 +259,31 @@ object HautLiveAcademicClient {
                 regularCourseCount = primaryBreakdown.regularCount,
                 practiceCourseCount = primaryBreakdown.practiceCount,
                 additionalTermTimetables = additionalTimetables,
-                additionalTermCalendars = additionalCalendars
+                additionalTermCalendars = additionalCalendars,
+                gradesComplete = gradesRead.isSuccess,
+                examsComplete = examsRead.isSuccess,
+                syncWarnings = listOfNotNull(
+                    gradesRead.exceptionOrNull()?.let { "成绩同步未完成，已保留原数据" },
+                    examsRead.exceptionOrNull()?.let { "考试同步未完成，已保留原数据" }
+                ),
+                unscheduledCourses = primaryBreakdown.unscheduledCourses
             )
+        }.recoverCatching { error ->
+            when (error) {
+                is CancellationException -> throw error
+                is AcademicReadException -> throw error
+                is javax.net.ssl.SSLException -> throw AcademicReadException("TLS_ERROR", "学校安全连接验证失败，请稍后重试")
+                is java.net.SocketTimeoutException -> throw AcademicReadException("TIMEOUT", "学校响应超时，请稍后重试；已保留之前的数据")
+                is java.io.IOException -> throw AcademicReadException("NETWORK_OFFLINE", "无法连接学校，请检查网络；已保留之前的数据")
+                else -> throw AcademicReadException("PAGE_CHANGED", "学校数据读取未完成，请尝试官方网页登录；已保留之前的数据")
+            }
         }
     }
 
     private fun fetchTermTimetableJsonText(
         xnm: String,
         xqm: String,
-        cookieJar: MutableMap<String, String>
+        cookieJar: OfficialAcademicCookieJar
     ): String? {
         val kbForm = buildFormBody(
             "xnm" to xnm,
@@ -320,7 +318,7 @@ object HautLiveAcademicClient {
     private fun fetchTermCalendarPair(
         xnm: String,
         xqm: String,
-        cookieJar: MutableMap<String, String>
+        cookieJar: OfficialAcademicCookieJar
     ): Pair<LocalDate, Int>? = runCatching {
         val zcResp = request(
             url = HautAcademicEndpoints.BASE_URL + HautAcademicEndpoints.TERM_WEEKS_API_PATH,
@@ -336,81 +334,75 @@ object HautLiveAcademicClient {
         }
     }.getOrNull()
 
-    private fun normalizeRedirectUrl(rawLocation: String, baseHostUrl: String): String {
-        val trimmed = rawLocation.trim()
-        return when {
-            trimmed.startsWith("http://") -> "https://" + trimmed.removePrefix("http://")
-            trimmed.startsWith("https://") -> trimmed
-            trimmed.startsWith("/") -> baseHostUrl.trimEnd('/') + trimmed
-            else -> "${baseHostUrl.trimEnd('/')}/$trimmed"
+    private fun fetchPagedItems(path: String, cookieJar: OfficialAcademicCookieJar): String =
+        AcademicPageReader.readAll { page, size ->
+            val response = request(
+                url = HautAcademicEndpoints.BASE_URL + path,
+                method = "POST", cookieJar = cookieJar,
+                formBody = buildFormBody(
+                    "xnm" to "", "xqm" to "", "_search" to "false",
+                    "queryModel.showCount" to size.toString(),
+                    "queryModel.currentPage" to page.toString(),
+                    "queryModel.sortName" to "", "queryModel.sortOrder" to "asc", "time" to "0"
+                ),
+                extraHeaders = mapOf("X-Requested-With" to "XMLHttpRequest")
+            )
+            when (response.statusCode) {
+                200 -> Unit
+                401, 301, 302, 303, 307, 308 -> throw AcademicReadException("SESSION_EXPIRED", "学校会话已失效，请重新登录")
+                403 -> throw AcademicReadException("ACCESS_DENIED", "学校未允许本次查询，已保留之前的数据")
+                429 -> throw AcademicReadException("RATE_LIMITED", "学校要求降低请求频率，请稍后再试")
+                else -> throw AcademicReadException("PARTIAL_RESPONSE", "学校数据查询未完成，已保留之前的数据")
+            }
+            response.body
         }
-    }
 
-    private data class HttpResponseSnapshot(
-        val statusCode: Int,
-        val location: String?,
-        val body: String
-    )
+    private fun normalizeRedirectUrl(rawLocation: String, baseHostUrl: String): String =
+        HautAcademicUrlPolicy.resolve(rawLocation, baseHostUrl)
+
+    private data class HttpResponseSnapshot(val statusCode: Int, val location: String?, val body: String)
 
     private fun request(
         url: String,
         method: String,
-        cookieJar: MutableMap<String, String>,
+        cookieJar: OfficialAcademicCookieJar,
         formBody: String? = null,
         extraHeaders: Map<String, String> = emptyMap()
     ): HttpResponseSnapshot {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = false
-            requestMethod = method
-            connectTimeout = 12_000
-            readTimeout = 12_000
-            setRequestProperty("User-Agent", USER_AGENT)
-            if (cookieJar.isNotEmpty()) {
-                val cookieHeader = cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                setRequestProperty("Cookie", cookieHeader)
-            }
-            for ((k, v) in extraHeaders) {
-                setRequestProperty(k, v)
-            }
+        val uri = HautAcademicUrlPolicy.validate(url)
+        val cookieHeaders = cookieJar.headers(uri)
+        val conn = (uri.toURL().openConnection() as HttpURLConnection)
+        try {
+            conn.instanceFollowRedirects = false
+            conn.requestMethod = method
+            conn.connectTimeout = 12_000
+            conn.readTimeout = 12_000
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            cookieHeaders.forEach { (key, values) -> conn.setRequestProperty(key, values.joinToString("; ")) }
+            extraHeaders.forEach { (key, value) -> conn.setRequestProperty(key, value) }
             if (formBody != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                outputStream.use { out ->
-                    out.write(formBody.toByteArray(StandardCharsets.UTF_8))
-                }
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                val bytes = formBody.toByteArray(StandardCharsets.UTF_8)
+                try { conn.outputStream.use { it.write(bytes) } } finally { bytes.fill(0) }
             }
-        }
-
-        val status = conn.responseCode
-        val setCookies = conn.headerFields.entries
-            .filter { (k, _) -> k != null && k.equals("Set-Cookie", ignoreCase = true) }
-            .flatMap { (_, v) -> v.orEmpty() }
-        for (sc in setCookies) {
-            val firstPart = sc.substringBefore(";").trim()
-            val eqIdx = firstPart.indexOf('=')
-            if (eqIdx > 0) {
-                val key = firstPart.substring(0, eqIdx).trim()
-                val value = firstPart.substring(eqIdx + 1).trim()
-                if (value != "deleteMe" && value.isNotEmpty()) {
-                    cookieJar[key] = value
+            val status = conn.responseCode
+            val headers = conn.headerFields.filterKeys { it != null }
+            cookieJar.accept(uri, headers)
+            val stream = if (status in 200..399) conn.inputStream else conn.errorStream
+            val body = stream?.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (output.size() + count > 4 * 1024 * 1024) throw AcademicReadException("SOURCE_DATA_INVALID", "学校响应超过安全读取上限")
+                    output.write(buffer, 0, count)
                 }
-            }
-        }
-
-        val location = conn.headerFields.entries
-            .firstOrNull { (k, _) -> k != null && k.equals("Location", ignoreCase = true) }
-            ?.value?.firstOrNull()
-            ?: conn.getHeaderField("Location")
-        val stream = if (status in 200..399) conn.inputStream else conn.errorStream
-        val bodyText = stream?.let { s ->
-            BufferedReader(InputStreamReader(s, StandardCharsets.UTF_8)).use { it.readText() }
-        }.orEmpty()
-
-        return HttpResponseSnapshot(
-            statusCode = status,
-            location = location,
-            body = bodyText
-        )
+                output.toString(StandardCharsets.UTF_8.name())
+            }.orEmpty()
+            return HttpResponseSnapshot(status, conn.getHeaderField("Location"), body)
+        } finally { conn.disconnect() }
     }
 
     private fun buildFormBody(vararg pairs: Pair<String, String>): String {
@@ -423,7 +415,13 @@ object HautLiveAcademicClient {
 data class TimetableParseBreakdown(
     val allCandidates: List<ImportCourseCandidate>,
     val regularCount: Int,
-    val practiceCount: Int
+    val practiceCount: Int,
+    val unscheduledCourses: List<UnscheduledAcademicCourse> = emptyList()
+)
+
+data class UnscheduledAcademicCourse(
+    val sourceId: String?, val name: String, val teacher: String?,
+    val credit: BigDecimal?, val rawWeeks: String, val category: String
 )
 
 /**
@@ -439,16 +437,18 @@ object HautZfsoftParser {
 
     fun parseTimetableWithBreakdown(jsonText: String): TimetableParseBreakdown {
         val root = JSONObject(jsonText)
-        val kbList = root.optJSONArray("kbList") ?: JSONArray()
-        val sjkList = root.optJSONArray("sjkList") ?: JSONArray()
+        val kbList = root.optJSONArray("kbList") ?: throw AcademicReadException("PAGE_CHANGED", "课表结构发生变化，已保留之前的数据")
+        val sjkList = if (root.has("sjkList") && !root.isNull("sjkList")) {
+            root.optJSONArray("sjkList") ?: throw AcademicReadException("PAGE_CHANGED", "实践课结构发生变化，已保留之前的数据")
+        } else JSONArray()
         val result = mutableListOf<ImportCourseCandidate>()
         var regularCount = 0
-        var practiceCount = 0
+        var practiceCount: Int
 
         for (i in 0 until kbList.length()) {
-            val item = kbList.optJSONObject(i) ?: continue
+            val item = kbList.optJSONObject(i) ?: throw AcademicReadException("SOURCE_DATA_INVALID", "课表包含无效记录")
             val courseName = item.optString("kcmc").trim()
-            if (courseName.isEmpty()) continue
+            if (courseName.isEmpty()) throw AcademicReadException("SOURCE_DATA_INVALID", "课表课程名称缺失")
             val courseId = item.optString("kch_id").takeIf { it.isNotBlank() }
                 ?: item.optString("kch").takeIf { it.isNotBlank() }
             val teacher = item.optString("xm").trim().takeIf { it.isNotBlank() }
@@ -461,22 +461,29 @@ object HautZfsoftParser {
                 else -> "待定教室"
             }
             val credit = item.optString("xf").trim().toBigDecimalOrNull()
-            val weekdayInt = item.optString("xqj").toIntOrNull() ?: item.optInt("xqj", 1)
-            val weekday = DayOfWeek.of(weekdayInt.coerceIn(1, 7))
+            val weekdayInt = item.optString("xqj").toIntOrNull()?.takeIf { it in 1..7 }
+                ?: throw AcademicReadException("SOURCE_DATA_INVALID", "课表星期缺失或无效，无法安排提醒")
+            val weekday = DayOfWeek.of(weekdayInt)
 
             // 兼容 jcs ("1-2")、jcor ("1-2")、jc ("1-2节") 三种正方返回字段
             val jcsRaw = item.optString("jcs")
                 .ifBlank { item.optString("jcor") }
-                .ifBlank { item.optString("jc", "1-2") }
+                .ifBlank { item.optString("jc") }
                 .replace("节", "")
                 .trim()
             val jcParts = jcsRaw.split("-")
-            val startPeriod = jcParts.firstOrNull()?.toIntOrNull() ?: 1
-            val endPeriod = jcParts.lastOrNull()?.toIntOrNull() ?: startPeriod
+            val startPeriod = jcParts.firstOrNull()?.toIntOrNull()
+                ?: throw AcademicReadException("SOURCE_DATA_INVALID", "课表开始节次无效")
+            val endPeriod = jcParts.lastOrNull()?.toIntOrNull()
+                ?: throw AcademicReadException("SOURCE_DATA_INVALID", "课表结束节次无效")
+            if (jcParts.size !in 1..2 || startPeriod < 1 || endPeriod !in startPeriod..30) {
+                throw AcademicReadException("SOURCE_DATA_INVALID", "课表节次范围无效")
+            }
 
             // 周次如 "1-16周"、"1-3周(单),4-6周"、"第11周"
-            val zcd = item.optString("zcd", "1-16周")
-            val weeks = WeeksSetParser.parse(zcd).ifEmpty { (1..16).toSet() }
+            val zcd = item.optString("zcd")
+            val weeks = WeeksSetParser.parse(zcd)
+            if (weeks.isEmpty()) throw AcademicReadException("SOURCE_DATA_INVALID", "课表周次缺失或无效，无法安排提醒")
 
             result.add(
                 ImportCourseCandidate(
@@ -494,71 +501,28 @@ object HautZfsoftParser {
             regularCount++
         }
 
-        // 解析 sjkList（实践环节 / 集中课程 / 无固定节次课程，如综合项目实践、形势与政策等）
-        val existingCourseNames = result.map { it.courseName }.toMutableSet()
-        val practiceSlots = if (regularCount == 0) {
-            listOf(
-                Triple(DayOfWeek.MONDAY, 1, 2),
-                Triple(DayOfWeek.TUESDAY, 1, 2),
-                Triple(DayOfWeek.WEDNESDAY, 1, 2),
-                Triple(DayOfWeek.THURSDAY, 1, 2),
-                Triple(DayOfWeek.FRIDAY, 1, 2)
-            )
-        } else {
-            listOf(
-                Triple(DayOfWeek.SATURDAY, 9, 10),
-                Triple(DayOfWeek.SUNDAY, 9, 10),
-                Triple(DayOfWeek.SATURDAY, 7, 8),
-                Triple(DayOfWeek.SUNDAY, 7, 8)
-            )
-        }
-
+        // 没有时间证据的实践课单独保存，绝不分配虚构节次或触发提醒。
+        val unscheduled = mutableListOf<UnscheduledAcademicCourse>()
         for (i in 0 until sjkList.length()) {
-            val item = sjkList.optJSONObject(i) ?: continue
-            val courseName = item.optString("kcmc").trim()
-            if (courseName.isEmpty() || courseName in existingCourseNames) continue
-            val courseId = item.optString("kch_id").takeIf { it.isNotBlank() }
-                ?: item.optString("kch").takeIf { it.isNotBlank() }
-            val teacher = item.optString("jsxm").trim()
-                .ifBlank { item.optString("xm").trim() }
-                .takeIf { it.isNotBlank() }
-            val credit = item.optString("xf").trim().toBigDecimalOrNull()
-            val qsjsz = item.optString("qsjsz").trim()
-            val weeks = WeeksSetParser.parse(qsjsz).ifEmpty { (1..16).toSet() }
-            val kclb = item.optString("kclb", "实践/集中课").trim().ifBlank { "实践/集中课" }
-            val rawRoom = if (qsjsz.isNotBlank()) "$kclb（$qsjsz）" else kclb
-
-            // 选择不与已添加实践课在相同周次冲突的时段
-            val chosenSlot = practiceSlots.firstOrNull { (day, s, e) ->
-                result.none {
-                    it.weekday == day &&
-                        it.startPeriod == s &&
-                        it.endPeriod == e &&
-                        it.weeks.intersect(weeks).isNotEmpty()
-                }
-            } ?: practiceSlots[practiceCount % practiceSlots.size]
-
-            result.add(
-                ImportCourseCandidate(
-                    externalId = courseId,
-                    courseName = courseName,
-                    teacher = teacher,
-                    credit = credit,
-                    weekday = chosenSlot.first,
-                    startPeriod = chosenSlot.second,
-                    endPeriod = chosenSlot.third,
-                    weeks = weeks,
-                    rawRoom = rawRoom
-                )
+            val item = sjkList.optJSONObject(i) ?: throw AcademicReadException("SOURCE_DATA_INVALID", "实践课程记录无效")
+            val name = item.optString("kcmc").trim()
+            if (name.isEmpty()) throw AcademicReadException("SOURCE_DATA_INVALID", "实践课程缺少名称")
+            unscheduled += UnscheduledAcademicCourse(
+                sourceId = item.optString("kch_id").ifBlank { item.optString("kch") }.takeIf { it.isNotBlank() },
+                name = name,
+                teacher = item.optString("jsxm").ifBlank { item.optString("xm") }.takeIf { it.isNotBlank() },
+                credit = item.optString("xf").toBigDecimalOrNull(),
+                rawWeeks = item.optString("qsjsz"),
+                category = item.optString("kclb").ifBlank { "实践/集中课" }
             )
-            existingCourseNames.add(courseName)
-            practiceCount++
         }
+        practiceCount = unscheduled.size
 
         return TimetableParseBreakdown(
             allCandidates = result,
             regularCount = regularCount,
-            practiceCount = practiceCount
+            practiceCount = practiceCount,
+            unscheduledCourses = unscheduled
         )
     }
 
@@ -612,18 +576,18 @@ object HautZfsoftParser {
      */
     fun parseGradesJson(jsonText: String): List<GradeAttempt> {
         val root = JSONObject(jsonText)
-        val items = root.optJSONArray("items") ?: JSONArray()
+        val items = root.optJSONArray("items") ?: throw AcademicReadException("PAGE_CHANGED", "教务数据列表缺失")
         val now = Instant.now()
         val result = mutableListOf<GradeAttempt>()
 
         for (i in 0 until items.length()) {
-            val obj = items.optJSONObject(i) ?: continue
+            val obj = items.optJSONObject(i) ?: throw AcademicReadException("SOURCE_DATA_INVALID", "教务记录格式无效")
             val kcmc = obj.optString("kcmc").trim()
-            if (kcmc.isEmpty()) continue
+            if (kcmc.isEmpty()) throw AcademicReadException("SOURCE_DATA_INVALID", "教务记录缺少课程名称")
             val kchId = obj.optString("kch_id", kcmc).trim()
-            val xnm = obj.optString("xnm", "2025")
+            val xnm = requireAcademicYear(obj.optString("xnm"))
             val academicYear = if (xnm.contains("-")) xnm else "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
-            val xqm = obj.optString("xqm", "3")
+            val xqm = requireTermCode(obj.optString("xqm"))
             val termNo = when (xqm) {
                 "12", "2" -> 2
                 else -> 1
@@ -632,6 +596,7 @@ object HautZfsoftParser {
 
             val xf = obj.optString("xf", "0").toBigDecimalOrNull() ?: BigDecimal.ZERO
             val cjRaw = obj.optString("cj", "").trim()
+            if (cjRaw.isBlank()) throw AcademicReadException("SOURCE_DATA_INVALID", "学校成绩记录未提供结果，已保留之前的数据")
             val numericScore = cjRaw.toBigDecimalOrNull()
             val jdRaw = obj.optString("jd", "").trim()
             val gradePoint = jdRaw.toBigDecimalOrNull()
@@ -658,12 +623,15 @@ object HautZfsoftParser {
             val passed = when {
                 numericScore != null -> numericScore >= BigDecimal("60")
                 cjRaw.contains("不") || cjRaw.contains("差") || cjRaw.contains("未通过") || cjRaw.contains("缺考") -> false
-                else -> true
+                else -> cjRaw in setOf("通过", "合格", "优秀", "良好", "中等", "及格", "优", "良", "中")
             }
 
             result.add(
                 GradeAttempt(
-                    id = "jw_${termId}_${kchId}_${attemptType.name}_$i",
+                    id = "jw_" + stableAcademicId("zf-modern", "haut", termId,
+                        obj.optString("cjbh").ifBlank { obj.optString("cj_id") }.ifBlank {
+                            listOf(kchId, obj.optString("jxb_id"), ksxz, obj.optString("ksnd"), obj.optString("ksxq")).joinToString("|")
+                        }),
                     termId = termId,
                     academicYear = academicYear,
                     termNumber = termNo,
@@ -681,7 +649,30 @@ object HautZfsoftParser {
                 )
             )
         }
+        requireUniqueIds(result.map { it.id })
         return result
+    }
+
+    private fun requireAcademicYear(value: String): String {
+        val normalized = value.trim()
+        val year = normalized.take(4).toIntOrNull()
+        if (year == null || year !in 1900..2200 ||
+            normalized != year.toString() && normalized != "$year-${year + 1}") {
+            throw AcademicReadException("SOURCE_DATA_INVALID", "学校记录缺少有效学年，已保留之前的数据")
+        }
+        return normalized
+    }
+
+    private fun requireTermCode(value: String): String = value.trim().also {
+        if (it !in setOf("3", "1", "12", "2")) throw AcademicReadException(
+            "SOURCE_DATA_INVALID", "学校学期编码无法识别，已保留之前的数据"
+        )
+    }
+
+    private fun requireUniqueIds(ids: List<String>) {
+        if (ids.toSet().size != ids.size) throw AcademicReadException(
+            "AMBIGUOUS_IDENTITY", "学校记录身份存在歧义，已保留之前的数据，请核对官方记录"
+        )
     }
 
     private val EXAM_TIME_REGEX = Regex("""(\d{4}-\d{2}-\d{2})\s*\((\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\)""")
@@ -691,24 +682,24 @@ object HautZfsoftParser {
      * 自动识别期初补缓考、期中随堂/分散考试、期末集中考试，并提取考场、座位号与精确日期时间。
      */
     fun parseExamsJson(jsonText: String): List<ExamScheduleItem> {
-        val root = runCatching { JSONObject(jsonText) }.getOrNull() ?: return emptyList()
-        val items = root.optJSONArray("items") ?: JSONArray()
+        val root = JSONObject(jsonText)
+        val items = root.optJSONArray("items") ?: throw AcademicReadException("PAGE_CHANGED", "教务数据列表缺失")
         val now = Instant.now()
         val result = mutableListOf<ExamScheduleItem>()
 
         for (i in 0 until items.length()) {
-            val obj = items.optJSONObject(i) ?: continue
+            val obj = items.optJSONObject(i) ?: throw AcademicReadException("SOURCE_DATA_INVALID", "教务记录格式无效")
             val kcmc = obj.optString("kcmc").trim()
-            if (kcmc.isEmpty()) continue
+            if (kcmc.isEmpty()) throw AcademicReadException("SOURCE_DATA_INVALID", "教务记录缺少课程名称")
             val kch = obj.optString("kch", kcmc).trim()
-            val xnm = obj.optString("xnm", "2025").trim()
+            val xnm = requireAcademicYear(obj.optString("xnm")).trim()
             val xnmc = obj.optString("xnmc", "").trim()
             val academicYear = when {
                 xnmc.contains("-") -> xnmc
                 xnm.contains("-") -> xnm
                 else -> "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
             }
-            val xqm = obj.optString("xqm", "3").trim()
+            val xqm = requireTermCode(obj.optString("xqm")).trim()
             val xqmmc = obj.optString("xqmmc", "").trim()
             val termNo = when {
                 xqmmc == "2" || xqm == "12" || xqm == "2" -> 2
@@ -742,12 +733,15 @@ object HautZfsoftParser {
 
             val cdmc = obj.optString("cdmc", "待定考场").trim().ifBlank { "待定考场" }
             val zwh = obj.optString("zwh", "").trim().takeIf { it.isNotBlank() && it != "无" }
-            val xqmc = obj.optString("xqmc", "莲花街校区").trim().ifBlank { "莲花街校区" }
+            val xqmc = obj.optString("xqmc").trim()
             val isRetake = obj.optString("cxbj", "").trim() == "是"
 
             result.add(
                 ExamScheduleItem(
-                    id = "exam_${termId}_${kch}_${parsedDate ?: i}",
+                    id = "exam_" + stableAcademicId("zf-modern", "haut", termId,
+                        obj.optString("ksxx_id").ifBlank { obj.optString("ks_id") }.ifBlank {
+                            listOf(kch, obj.optString("jxb_id"), ksmc, sjbh, ksfs).joinToString("|")
+                        }),
                     termId = termId,
                     courseCode = kch,
                     courseName = kcmc,
@@ -767,6 +761,7 @@ object HautZfsoftParser {
             )
         }
 
+        requireUniqueIds(result.map { it.id })
         return result.sortedWith(
             compareByDescending<ExamScheduleItem> { it.termId }
                 .thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }

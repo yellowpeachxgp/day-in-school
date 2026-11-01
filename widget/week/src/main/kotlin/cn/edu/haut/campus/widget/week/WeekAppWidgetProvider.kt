@@ -63,7 +63,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 context = context,
                 appWidgetId = appWidgetId,
                 defaultType = WidgetType.WEEK_4X4
-            )
+            ) ?: run { WidgetRefreshCoordinator.showSwitching(context, intArrayOf(appWidgetId)); return }
             val day = snapshot.daySnapshot
             val views = RemoteViews(context.packageName, R.layout.widget_week_4x4)
 
@@ -121,6 +121,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "timetable")
             }
             if (launchIntent != null) {
@@ -133,7 +134,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 views.setOnClickPendingIntent(R.id.week_widget_root, pi)
             }
 
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
         }
     }
 }

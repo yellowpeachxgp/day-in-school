@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.reminder
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -77,15 +78,17 @@ object ReminderNotificationFactory {
         manager.createNotificationChannels(listOf(classChannel, examChannel, statusChannel))
     }
 
+    @SuppressLint("MissingPermission")
     fun postReminderNotification(
         context: Context,
+        accountScope: AccountBackgroundScope,
         task: ReminderTaskDomain,
         event: ReminderEvent,
         policy: EffectiveReminderPolicy,
         lockscreenPrivate: Boolean,
         now: Instant
     ): Boolean {
-        if (!hasPostNotificationPermission(context)) return false
+        if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
         ensureChannels(context)
 
         val channelId = when (task.eventType) {
@@ -129,6 +132,7 @@ object ReminderNotificationFactory {
         }
         val contentIntent = buildAppLaunchPendingIntent(
             context = context,
+            accountScope = accountScope,
             requestKey = "content:${task.id}:${task.generation}",
             navAction = contentAction,
             taskId = task.id,
@@ -139,6 +143,7 @@ object ReminderNotificationFactory {
 
         val deleteIntent = buildDismissPendingIntent(
             context = context,
+            accountScope = accountScope,
             taskId = task.id,
             generation = task.generation
         )
@@ -200,6 +205,7 @@ object ReminderNotificationFactory {
             if (evaluatedOptions.any { it.choice == choice }) {
                 val snoozePendingIntent = buildSnoozePendingIntent(
                     context = context,
+                    accountScope = accountScope,
                     taskId = task.id,
                     generation = task.generation,
                     choice = choice
@@ -217,6 +223,7 @@ object ReminderNotificationFactory {
         val mapActionLabel = if (task.eventType == ReminderEventType.EXAM) "去考场" else "去教室"
         val mapPendingIntent = buildAppLaunchPendingIntent(
             context = context,
+            accountScope = accountScope,
             requestKey = "map:${task.id}:${task.generation}",
             navAction = NAV_ACTION_OPEN_MAP,
             taskId = task.id,
@@ -234,15 +241,18 @@ object ReminderNotificationFactory {
         }.getOrDefault(false)
     }
 
+    @SuppressLint("MissingPermission")
     fun postTestNotification(
         context: Context,
+        accountScope: AccountBackgroundScope,
         lockscreenPrivate: Boolean
     ): Boolean {
-        if (!hasPostNotificationPermission(context)) return false
+        if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
         ensureChannels(context)
 
         val contentIntent = buildAppLaunchPendingIntent(
             context = context,
+            accountScope = accountScope,
             requestKey = "test_notification_tap",
             navAction = NAV_ACTION_OPEN_TODAY,
             taskId = null,
@@ -252,6 +262,7 @@ object ReminderNotificationFactory {
         )
         val mapIntent = buildAppLaunchPendingIntent(
             context = context,
+            accountScope = accountScope,
             requestKey = "test_notification_map",
             navAction = NAV_ACTION_OPEN_MAP,
             taskId = null,
@@ -325,6 +336,7 @@ object ReminderNotificationFactory {
 
     private fun buildSnoozePendingIntent(
         context: Context,
+        accountScope: AccountBackgroundScope,
         taskId: String,
         generation: Int,
         choice: SnoozeChoice
@@ -336,6 +348,7 @@ object ReminderNotificationFactory {
             putExtra(SnoozeActionReceiver.EXTRA_GENERATION, generation)
             putExtra(SnoozeActionReceiver.EXTRA_SNOOZE_CHOICE, choice.actionCode)
         }
+        accountScope.attach(intent)
         val requestCode = ("snooze:$taskId:$generation:${choice.actionCode}".hashCode() and 0x7FFFFFFF)
         return PendingIntent.getBroadcast(
             context,
@@ -347,6 +360,7 @@ object ReminderNotificationFactory {
 
     private fun buildDismissPendingIntent(
         context: Context,
+        accountScope: AccountBackgroundScope,
         taskId: String,
         generation: Int
     ): PendingIntent? {
@@ -356,6 +370,7 @@ object ReminderNotificationFactory {
             putExtra(SnoozeActionReceiver.EXTRA_TASK_ID, taskId)
             putExtra(SnoozeActionReceiver.EXTRA_GENERATION, generation)
         }
+        accountScope.attach(intent)
         val requestCode = ("dismiss:$taskId:$generation".hashCode() and 0x7FFFFFFF)
         return PendingIntent.getBroadcast(
             context,
@@ -367,6 +382,7 @@ object ReminderNotificationFactory {
 
     private fun buildAppLaunchPendingIntent(
         context: Context,
+        accountScope: AccountBackgroundScope,
         requestKey: String,
         navAction: String,
         taskId: String?,
@@ -385,6 +401,7 @@ object ReminderNotificationFactory {
             if (buildingId != null) putExtra(EXTRA_REMINDER_BUILDING_ID, buildingId)
             if (roomText != null) putExtra(EXTRA_REMINDER_ROOM_TEXT, roomText)
         }
+        accountScope.attach(launchIntent)
         val requestCode = (requestKey.hashCode() and 0x7FFFFFFF)
         return PendingIntent.getActivity(
             context,

@@ -28,13 +28,16 @@ interface AlarmScheduler {
 }
 
 class AndroidAlarmScheduler(
-    private val context: Context
+    private val context: Context,
+    private val accountScope: AccountBackgroundScope? = null,
+    private val isActive: () -> Boolean = { true }
 ) : AlarmScheduler {
 
     override fun schedule(
         task: ReminderTaskDomain,
         preferExact: Boolean
     ): ScheduleOutcome {
+        if (!isActive()) return ScheduleOutcome.Failed("ACCOUNT_SESSION_EXPIRED")
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             ?: return ScheduleOutcome.Failed("ALARM_MANAGER_NULL")
 
@@ -108,15 +111,26 @@ class AndroidAlarmScheduler(
 
     override fun cancel(taskId: String, generation: Int) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val existingPendingIntent = buildFirePendingIntent(
-            taskId = taskId,
-            generation = generation,
-            eventKey = null,
-            noCreate = true
-        ) ?: return
-        runCatching {
-            alarmManager.cancel(existingPendingIntent)
-            existingPendingIntent.cancel()
+        listOfNotNull(
+            buildFirePendingIntent(
+                taskId = taskId,
+                generation = generation,
+                eventKey = null,
+                noCreate = true,
+                attachAccountScope = true
+            ),
+            buildFirePendingIntent(
+                taskId = taskId,
+                generation = generation,
+                eventKey = null,
+                noCreate = true,
+                attachAccountScope = false
+            )
+        ).forEach { existingPendingIntent ->
+            runCatching {
+                alarmManager.cancel(existingPendingIntent)
+                existingPendingIntent.cancel()
+            }
         }
     }
 
@@ -124,7 +138,8 @@ class AndroidAlarmScheduler(
         taskId: String,
         generation: Int,
         eventKey: String?,
-        noCreate: Boolean
+        noCreate: Boolean,
+        attachAccountScope: Boolean = true
     ): PendingIntent? {
         val intent = Intent(context, ReminderFireReceiver::class.java).apply {
             action = ACTION_FIRE_REMINDER
@@ -135,6 +150,7 @@ class AndroidAlarmScheduler(
                 putExtra(EXTRA_EVENT_KEY, eventKey)
             }
         }
+        if (attachAccountScope) accountScope?.attach(intent)
         val flags = if (noCreate) {
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         } else {

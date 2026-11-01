@@ -146,6 +146,18 @@ interface CampusDao {
     @Query("DELETE FROM exam_schedules")
     suspend fun clearExamSchedules()
 
+    @Query("SELECT * FROM unscheduled_academic_courses ORDER BY termId DESC, name ASC, sourceKey ASC")
+    fun observeUnscheduledCourses(): Flow<List<UnscheduledAcademicCourseEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertUnscheduledCourses(items: List<UnscheduledAcademicCourseEntity>)
+
+    @Query("DELETE FROM unscheduled_academic_courses WHERE termId = :termId")
+    suspend fun clearUnscheduledCoursesForTerm(termId: String)
+
+    @Query("DELETE FROM unscheduled_academic_courses")
+    suspend fun clearUnscheduledCourses()
+
     @Query("DELETE FROM student_profile")
     suspend fun clearStudentProfile()
 
@@ -190,10 +202,11 @@ interface CampusDao {
         UtilityOnlineRoomEntity::class,
         UtilityMeterEntity::class,
         UtilityReadingEntity::class,
-        FocusSessionEntity::class
+        FocusSessionEntity::class,
+        UnscheduledAcademicCourseEntity::class
     ],
-    version = 4,
-    exportSchema = false
+    version = 5,
+    exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
     abstract fun campusDao(): CampusDao

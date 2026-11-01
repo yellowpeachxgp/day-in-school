@@ -8,6 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import android.widget.RemoteViews
+import android.net.Uri
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.ClassOccurrence
@@ -21,6 +24,8 @@ import java.time.LocalDate
 import java.time.ZonedDateTime
 
 data class WidgetScheduleSnapshot(
+    val profileId: String,
+    val generation: Long,
     val daySnapshot: DayTimelineSnapshot,
     val weekOccurrences: Map<LocalDate, List<ClassOccurrence>>,
     val config: WidgetInstanceConfig,
@@ -37,7 +42,7 @@ object WidgetRoomFormatter {
      * 去除冗余校区前缀并保留完整「楼宇 + 教室号」，确保小组件中教室信息完整清晰、绝不丢失楼号或房间号。
      */
     fun formatFullRoom(rawRoom: String, privacyMode: Boolean = false): String {
-        if (privacyMode) return "莲花街校区"
+        if (privacyMode) return "地点已隐藏"
         val cleaned = rawRoom
             .replace("河南工业大学", "")
             .replace("莲花街校区", "")
@@ -81,8 +86,11 @@ object ScheduleSnapshotUseCase {
         appWidgetId: Int,
         defaultType: WidgetType,
         now: ZonedDateTime = ZonedDateTime.now(HAUT_ZONE_ID)
-    ): WidgetScheduleSnapshot {
-        val repository = CampusRepository.getInstance(context)
+    ): WidgetScheduleSnapshot? {
+        val coordinator = AccountSessionCoordinator.getInstance(context)
+        runCatching { coordinator.initialize() }.getOrElse { return null }
+        val active = coordinator.currentSnapshot() ?: return null
+        val repository = active.repository
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
         val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF0066CC.toInt())
         val data = repository.getDirectScheduleDataSnapshot()
@@ -134,6 +142,8 @@ object ScheduleSnapshotUseCase {
         } else null
 
         return WidgetScheduleSnapshot(
+            profileId = active.profileId,
+            generation = active.generation,
             daySnapshot = daySnapshot,
             weekOccurrences = weekOccurrences,
             config = config,
@@ -165,6 +175,40 @@ object WidgetRefreshCoordinator {
     const val EXTRA_NAVIGATE_TAB = "extra_navigate_tab"
     const val EXTRA_COURSE_ID = "extra_course_id"
     const val EXTRA_RAW_ROOM = "extra_raw_room"
+    const val EXTRA_PROFILE_ID = "widget_profile_id"
+    const val EXTRA_GENERATION = "widget_session_generation"
+
+    fun stampIntent(intent: Intent, snapshot: WidgetScheduleSnapshot, widgetId: Int, action: String) {
+        intent.data = Uri.Builder().scheme("dayinschool").authority("widget")
+            .appendPath(snapshot.profileId).appendPath(snapshot.generation.toString())
+            .appendPath(widgetId.toString()).appendPath(action).build()
+        intent.putExtra(EXTRA_PROFILE_ID, snapshot.profileId)
+        intent.putExtra(EXTRA_GENERATION, snapshot.generation)
+    }
+
+    suspend fun publishIfCurrent(context: Context, widgetId: Int, snapshot: WidgetScheduleSnapshot, views: RemoteViews): Boolean =
+        AccountSessionCoordinator.getInstance(context).withActiveSession(snapshot.profileId, snapshot.generation) {
+            AppWidgetManager.getInstance(context).updateAppWidget(widgetId, views)
+            true
+        } ?: false
+
+    fun showSwitching(context: Context, ids: IntArray) {
+        if (ids.isEmpty()) return
+        val views = RemoteViews(context.packageName, R.layout.widget_account_switching)
+        AppWidgetManager.getInstance(context).updateAppWidget(ids, views)
+    }
+
+    fun clearForAccountSwitch(context: Context) {
+        val manager = AppWidgetManager.getInstance(context)
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+        for (provider in registeredProviderClasses) {
+            showSwitching(context, manager.getAppWidgetIds(ComponentName(context, provider)))
+            val pending = PendingIntent.getBroadcast(context, 2026,
+                Intent(context, provider).setAction(ACTION_REFRESH_ALL_WIDGETS),
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+            if (pending != null) { alarms?.cancel(pending); pending.cancel() }
+        }
+    }
 
     private val registeredProviderClasses = mutableSetOf<Class<*>>()
 
