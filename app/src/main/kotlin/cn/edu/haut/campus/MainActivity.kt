@@ -172,7 +172,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            HautCampusTheme(dynamicColor = prefs.useDynamicColor) {
+            HautCampusTheme(
+                themeMode = prefs.themeMode,
+                dynamicColor = prefs.useDynamicColor,
+                themePaletteKey = prefs.themePaletteKey,
+                customSeedArgb = prefs.customThemeSeedArgb
+            ) {
                 HautCampusRootApp(
                     repository = repository,
                     prefs = prefs,

@@ -12,6 +12,7 @@ import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.ScheduleSnapshotUseCase
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
+import cn.edu.haut.campus.widget.common.WidgetRoomFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,7 +69,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
 
             val weekLabel = day.teachingWeek?.let { "第 $it 教学周" } ?: "非教学周"
             views.setTextViewText(R.id.tv_wk_header, "本周课表 · $weekLabel")
-            views.setTextViewText(R.id.tv_wk_sub, "★ 今日 ${day.date.dayOfWeek.ChineseLabel}")
+            views.setTextViewText(R.id.tv_wk_sub, "今日 ${day.date.dayOfWeek.ChineseLabel}")
 
             val rowIds = listOf(
                 DayOfWeek.MONDAY to R.id.tv_wk_day_1,
@@ -82,7 +83,8 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
 
             val primaryColor = ContextCompat.getColor(context, R.color.wk_widget_primary)
             val secondaryColor = ContextCompat.getColor(context, R.color.wk_widget_secondary)
-            val accentColor = ContextCompat.getColor(context, R.color.wk_widget_accent)
+            val accentColor = snapshot.themeAccentArgb
+            views.setTextColor(R.id.tv_wk_sub, accentColor)
 
             val byWeekday = snapshot.weekOccurrences.entries.associate { (date, list) ->
                 date.dayOfWeek to (date to list)
@@ -91,14 +93,15 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
             for ((weekday, viewId) in rowIds) {
                 val pair = byWeekday[weekday]
                 val isToday = pair?.first == day.date || weekday == day.date.dayOfWeek
-                val prefix = if (isToday) "★${weekday.ChineseLabel}" else "  ${weekday.ChineseLabel}"
+                val prefix = if (isToday) "● ${weekday.ChineseLabel}" else "   ${weekday.ChineseLabel}"
                 val occurrences = pair?.second.orEmpty()
                 val summary = if (occurrences.isEmpty()) {
                     "无课"
                 } else {
-                    occurrences.joinToString(" · ") { occ ->
+                    occurrences.joinToString("  ·  ") { occ ->
                         val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(6)
-                        "${occ.startPeriod}-${occ.endPeriod}$shortName"
+                        val compactRoom = WidgetRoomFormatter.formatCompactRoom(occ.rawRoom, snapshot.config.privacyMode)
+                        "${occ.startPeriod}-${occ.endPeriod}节 $shortName @$compactRoom"
                     }
                 }
                 views.setInt(
@@ -114,7 +117,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                         else -> primaryColor
                     }
                 )
-                views.setTextViewText(viewId, "$prefix │ $summary")
+                views.setTextViewText(viewId, "$prefix   $summary")
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {

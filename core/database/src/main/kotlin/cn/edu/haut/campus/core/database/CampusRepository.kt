@@ -68,9 +68,25 @@ import java.util.concurrent.ConcurrentHashMap
 
 private val Context.appDataStore by preferencesDataStore(name = "haut_campus_prefs")
 
+val DEFAULT_HOME_CARD_ORDER = listOf(
+    "EXAM_SUMMARY",
+    "STUDY_FOCUS",
+    "DORM_ELECTRICITY",
+    "LIBRARY_SEAT",
+    "LIBRARY_CATALOG",
+    "EMPTY_CLASSROOM",
+    "CAMPUS_COMMUNITY"
+)
+
 data class AppPreferencesState(
     val gpaPrivacyShieldEnabled: Boolean = false,
     val useDynamicColor: Boolean = false,
+    val themeMode: String = "SYSTEM",
+    val themePaletteKey: String = "HAUT_BLUE",
+    val customThemeSeedArgb: Long = 0xFF0066CC,
+    val homeCardOrder: List<String> = DEFAULT_HOME_CARD_ORDER,
+    val hiddenHomeCards: Set<String> = emptySet(),
+    val fullWidthHomeCards: Set<String> = setOf("EXAM_SUMMARY"),
     val timelineZoomScale: Float = 2.0f,
     val officialGpaValuePlain: String? = null,
     val officialGpaNote: String? = null,
@@ -174,6 +190,12 @@ class CampusRepository private constructor(
         val ALLOW_UNVERIFIED_UTILITY_TRANSPORT = booleanPreferencesKey("allow_unverified_utility_transport_v1")
         val LAST_UTILITY_SAMPLE_MS = longPreferencesKey("last_utility_sample_epoch_ms_v1")
         val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
+        val THEME_MODE = stringPreferencesKey("theme_mode_v1")
+        val THEME_PALETTE_KEY = stringPreferencesKey("theme_palette_key_v1")
+        val CUSTOM_THEME_SEED_ARGB = longPreferencesKey("custom_theme_seed_argb_v1")
+        val HOME_CARD_ORDER = stringPreferencesKey("home_card_order_v1")
+        val HIDDEN_HOME_CARDS = stringPreferencesKey("hidden_home_cards_v1")
+        val FULL_WIDTH_HOME_CARDS = stringPreferencesKey("full_width_home_cards_v1")
     }
 
     init {
@@ -188,9 +210,34 @@ class CampusRepository private constructor(
 
     val preferencesFlow: Flow<AppPreferencesState> = appContext.appDataStore.data.map { prefs ->
         val reminderConfig = extractReminderConfig(prefs)
+        val rawOrder = prefs[PrefKeys.HOME_CARD_ORDER]
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it in DEFAULT_HOME_CARD_ORDER }
+            .orEmpty()
+        val normalizedOrder = (rawOrder + DEFAULT_HOME_CARD_ORDER).distinct()
+        val hiddenSet = prefs[PrefKeys.HIDDEN_HOME_CARDS]
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.toSet()
+            ?: emptySet()
+        val fullWidthSet = prefs[PrefKeys.FULL_WIDTH_HOME_CARDS]
+            ?.let { raw ->
+                if (raw == "_NONE_") emptySet()
+                else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+            }
+            ?: setOf("EXAM_SUMMARY")
+
         AppPreferencesState(
             gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
             useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
+            themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
+            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
+            customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC,
+            homeCardOrder = normalizedOrder,
+            hiddenHomeCards = hiddenSet,
+            fullWidthHomeCards = fullWidthSet,
             timelineZoomScale = prefs[PrefKeys.TIMELINE_SCALE] ?: 2.0f,
             officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
             officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
@@ -926,6 +973,60 @@ class CampusRepository private constructor(
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
         appContext.appDataStore.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
+    }
+
+    suspend fun setThemeMode(mode: String) {
+        appContext.appDataStore.edit { it[PrefKeys.THEME_MODE] = mode }
+    }
+
+    suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) {
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
+            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            if (customSeedArgb != null) {
+                prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
+            }
+        }
+    }
+
+    suspend fun updateHomeCardLayout(
+        order: List<String>,
+        hidden: Set<String>,
+        fullWidth: Set<String>
+    ) {
+        val normalizedOrder = (order.filter { it in DEFAULT_HOME_CARD_ORDER } + DEFAULT_HOME_CARD_ORDER).distinct()
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
+            prefs[PrefKeys.HIDDEN_HOME_CARDS] = hidden.joinToString(",")
+            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS] = if (fullWidth.isEmpty()) "_NONE_" else fullWidth.joinToString(",")
+        }
+    }
+
+    suspend fun resetHomeCardLayout() {
+        appContext.appDataStore.edit { prefs ->
+            prefs.remove(PrefKeys.HOME_CARD_ORDER)
+            prefs.remove(PrefKeys.HIDDEN_HOME_CARDS)
+            prefs.remove(PrefKeys.FULL_WIDTH_HOME_CARDS)
+        }
+    }
+
+    suspend fun getActiveThemeAccentArgb(): Int {
+        val prefs = appContext.appDataStore.data.first()
+        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
+        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC
+        val seedLong = when (key) {
+            "HAUT_BLUE" -> 0xFF0066CC
+            "PINE_TEAL" -> 0xFF0D9488
+            "JADE_GREEN" -> 0xFF16A34A
+            "AMBER_GOLD" -> 0xFFD97706
+            "CORAL_RED" -> 0xFFE11D48
+            "IRIS_PURPLE" -> 0xFF7C3AED
+            "SAKURA_PINK" -> 0xFFDB2777
+            "SLATE_INK" -> 0xFF334155
+            "CUSTOM" -> custom
+            else -> 0xFF0066CC
+        }
+        return seedLong.toInt()
     }
 
     suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {

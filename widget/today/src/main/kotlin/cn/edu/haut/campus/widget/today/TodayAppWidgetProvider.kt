@@ -14,6 +14,7 @@ import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.ScheduleSnapshotUseCase
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
+import cn.edu.haut.campus.widget.common.WidgetRoomFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -95,7 +96,13 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 if (minWidthDp < 210) View.GONE else View.VISIBLE
             )
 
-            val weekText = day.teachingWeek?.let { "第 $it 教学周" } ?: "假期/非教学周"
+            val accentArgb = snapshot.themeAccentArgb
+            views.setTextColor(R.id.chronometer_today, accentArgb)
+            views.setTextColor(R.id.tv_focus_status, accentArgb)
+            views.setTextColor(R.id.tv_focus_meta, accentArgb)
+            views.setTextColor(R.id.tv_sub_1_room, accentArgb)
+
+            val weekText = day.teachingWeek?.let { "第 $it 教学周" } ?: "非教学周"
             views.setTextViewText(
                 R.id.tv_today_header,
                 "${day.date.format(DATE_FMT)} ${day.date.dayOfWeek.ChineseLabel} · $weekText"
@@ -107,15 +114,20 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 val isOngoing = focus.status == ClassStatus.IN_PROGRESS
                 views.setTextViewText(
                     R.id.tv_focus_status,
-                    if (isOngoing) "● 正在上课 (${occ.periodRangeText})" else "▲ 下一节课 (${occ.periodRangeText})"
+                    if (isOngoing) "正在上课" else "下一节课"
+                )
+                views.setTextViewText(
+                    R.id.tv_focus_time,
+                    "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
                 )
                 views.setTextViewText(
                     R.id.tv_focus_title,
                     if (snapshot.config.privacyMode) "课程已隐藏" else occ.courseName
                 )
+                val fullFocusRoom = WidgetRoomFormatter.formatFullRoom(occ.rawRoom, snapshot.config.privacyMode)
                 views.setTextViewText(
                     R.id.tv_focus_meta,
-                    "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${if (snapshot.config.privacyMode) "莲花街" else occ.rawRoom}"
+                    "$fullFocusRoom · ${occ.periodRangeText}"
                 )
 
                 val base = snapshot.chronometerTargetElapsedRealtime
@@ -132,27 +144,51 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                     views.setViewVisibility(R.id.chronometer_today, View.GONE)
                 }
 
-                // 后续两节课
+                // 后续两节课：标题与完整教室分行展示，确保教室绝不截断
                 val focusIdx = day.items.indexOf(focus)
                 val remaining = if (focusIdx >= 0) day.items.drop(focusIdx + 1) else emptyList()
                 val sub1 = remaining.getOrNull(0)
                 val sub2 = remaining.getOrNull(1)
 
-                views.setTextViewText(
-                    R.id.tv_sub_1,
-                    sub1?.let {
-                        "${it.occurrence.startTime.format(TIME_FMT)} ${it.occurrence.courseName} · ${it.occurrence.rawRoom}"
-                    } ?: "今日后续无其他课程"
-                )
-                views.setTextViewText(
-                    R.id.tv_sub_2,
-                    sub2?.let {
-                        "${it.occurrence.startTime.format(TIME_FMT)} ${it.occurrence.courseName} · ${it.occurrence.rawRoom}"
-                    } ?: "今日共 ${day.items.size} 节课"
-                )
+                if (sub1 != null) {
+                    val o1 = sub1.occurrence
+                    views.setTextViewText(
+                        R.id.tv_sub_1,
+                        "${o1.startTime.format(TIME_FMT)} ${if (snapshot.config.privacyMode) "课程" else o1.courseName}"
+                    )
+                    views.setTextViewText(
+                        R.id.tv_sub_1_room,
+                        "${WidgetRoomFormatter.formatFullRoom(o1.rawRoom, snapshot.config.privacyMode)} · ${o1.periodRangeText}"
+                    )
+                } else {
+                    views.setTextViewText(R.id.tv_sub_1, "后续无其他课程")
+                    views.setTextViewText(R.id.tv_sub_1_room, "今日共 ${day.items.size} 节课")
+                }
+
+                if (sub2 != null) {
+                    val o2 = sub2.occurrence
+                    views.setTextViewText(
+                        R.id.tv_sub_2,
+                        "${o2.startTime.format(TIME_FMT)} ${if (snapshot.config.privacyMode) "课程" else o2.courseName}"
+                    )
+                    views.setTextViewText(
+                        R.id.tv_sub_2_room,
+                        "${WidgetRoomFormatter.formatFullRoom(o2.rawRoom, snapshot.config.privacyMode)} · ${o2.periodRangeText}"
+                    )
+                } else {
+                    views.setTextViewText(
+                        R.id.tv_sub_2,
+                        if (sub1 != null) "再后无课" else "点击查看课表"
+                    )
+                    views.setTextViewText(
+                        R.id.tv_sub_2_room,
+                        "今日共 ${day.items.size} 节课"
+                    )
+                }
             } else {
                 views.setViewVisibility(R.id.chronometer_today, View.GONE)
-                views.setTextViewText(R.id.tv_focus_status, "✓ 今日课程")
+                views.setTextViewText(R.id.tv_focus_status, "今日结课")
+                views.setTextViewText(R.id.tv_focus_time, "")
                 views.setTextViewText(
                     R.id.tv_focus_title,
                     if (day.items.isEmpty()) "今天没有课程安排" else "今日 ${day.items.size} 节课已结束"
@@ -161,14 +197,20 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(
                     R.id.tv_focus_meta,
                     hint?.let {
-                        "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)} ${it.firstCourseName}"
-                    } ?: (day.calendarNotice ?: "今日无课")
+                        "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}"
+                    } ?: (day.calendarNotice ?: "自主安排学习与休息")
                 )
                 views.setTextViewText(
                     R.id.tv_sub_1,
-                    hint?.let { "地点：${it.firstCourseRoom}" } ?: "点击查看学期课表"
+                    hint?.firstCourseName ?: "查看完整学期课表"
                 )
-                views.setTextViewText(R.id.tv_sub_2, "点击打开课表")
+                views.setTextViewText(
+                    R.id.tv_sub_1_room,
+                    hint?.let { WidgetRoomFormatter.formatFullRoom(it.firstCourseRoom, snapshot.config.privacyMode) }
+                        ?: "点击进入应用"
+                )
+                views.setTextViewText(R.id.tv_sub_2, "校园地图与自习")
+                views.setTextViewText(R.id.tv_sub_2_room, "点击打开")
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
@@ -182,6 +224,20 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 views.setOnClickPendingIntent(R.id.today_widget_root, pi)
+            }
+
+            val mapIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
+                putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, focus?.occurrence?.rawRoom)
+            }
+            if (mapIntent != null && focus != null) {
+                val mapPi = PendingIntent.getActivity(
+                    context,
+                    appWidgetId + 20000,
+                    mapIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                views.setOnClickPendingIntent(R.id.tv_focus_meta, mapPi)
             }
 
             appWidgetManager.updateAppWidget(appWidgetId, views)

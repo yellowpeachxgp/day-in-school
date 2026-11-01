@@ -186,19 +186,140 @@ val HautTypography = Typography(
     )
 )
 
+enum class PresetThemePalette(
+    val key: String,
+    val label: String,
+    val subtitle: String,
+    val seedArgb: Long
+) {
+    HAUT_BLUE("HAUT_BLUE", "工大蓝", "经典沉稳蓝", 0xFF0066CC),
+    PINE_TEAL("PINE_TEAL", "松石青", "清透青碧色", 0xFF0D9488),
+    JADE_GREEN("JADE_GREEN", "翡翠绿", "自然护眼绿", 0xFF16A34A),
+    AMBER_GOLD("AMBER_GOLD", "琥珀金", "暖阳活力橙", 0xFFD97706),
+    CORAL_RED("CORAL_RED", "朱砂红", "明快珊瑚红", 0xFFE11D48),
+    IRIS_PURPLE("IRIS_PURPLE", "鸢尾紫", "静谧学院紫", 0xFF7C3AED),
+    SAKURA_PINK("SAKURA_PINK", "樱花粉", "柔和春日粉", 0xFFDB2777),
+    SLATE_INK("SLATE_INK", "玄墨灰", "极简水墨灰", 0xFF334155);
+
+    companion object {
+        fun fromKey(key: String): PresetThemePalette? = entries.firstOrNull { it.key == key }
+    }
+}
+
+fun buildSeedColorScheme(seedArgb: Long, darkTheme: Boolean): androidx.compose.material3.ColorScheme {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(seedArgb.toInt(), hsv)
+    val hue = hsv[0]
+    val sat = hsv[1].coerceIn(0.18f, 0.92f)
+    val value = hsv[2].coerceIn(0.28f, 0.92f)
+
+    fun hsvColor(h: Float, s: Float, v: Float): Color {
+        val normH = ((h % 360f) + 360f) % 360f
+        return Color(android.graphics.Color.HSVToColor(floatArrayOf(normH, s.coerceIn(0f, 1f), v.coerceIn(0f, 1f))))
+    }
+
+    return if (!darkTheme) {
+        val primary = hsvColor(hue, sat, value.coerceIn(0.42f, 0.82f))
+        val primaryContainer = hsvColor(hue, (sat * 0.22f).coerceIn(0.06f, 0.22f), 0.98f)
+        val onPrimaryContainer = hsvColor(hue, (sat * 0.95f).coerceIn(0.45f, 0.95f), 0.42f)
+        val secondary = hsvColor(hue + 18f, (sat * 0.75f).coerceIn(0.25f, 0.78f), 0.68f)
+        val secondaryContainer = hsvColor(hue + 18f, (sat * 0.18f).coerceIn(0.05f, 0.18f), 0.97f)
+        val onSecondaryContainer = hsvColor(hue + 18f, (sat * 0.85f).coerceIn(0.4f, 0.85f), 0.38f)
+        val bgTint = hsvColor(hue, (sat * 0.05f).coerceIn(0.01f, 0.045f), 0.975f)
+        val wellTint = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.07f), 0.955f)
+        val borderTint = hsvColor(hue, (sat * 0.11f).coerceIn(0.03f, 0.09f), 0.915f)
+        val borderStrong = hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.12f), 0.86f)
+
+        lightColorScheme(
+            primary = primary,
+            onPrimary = Color.White,
+            primaryContainer = primaryContainer,
+            onPrimaryContainer = onPrimaryContainer,
+            secondary = secondary,
+            onSecondary = Color.White,
+            secondaryContainer = secondaryContainer,
+            onSecondaryContainer = onSecondaryContainer,
+            tertiary = XPeachOk,
+            onTertiary = Color.White,
+            tertiaryContainer = XPeachOkSoft,
+            onTertiaryContainer = Color(0xFF15803D),
+            error = XPeachDanger,
+            onError = Color.White,
+            errorContainer = XPeachDangerSoft,
+            onErrorContainer = Color(0xFFB91C1C),
+            background = bgTint,
+            onBackground = XPeachTextLight,
+            surface = XPeachCardLight,
+            onSurface = XPeachTextLight,
+            surfaceVariant = wellTint,
+            onSurfaceVariant = XPeachMutedLight,
+            outline = borderStrong,
+            outlineVariant = borderTint
+        )
+    } else {
+        val primaryDark = hsvColor(hue, (sat * 0.68f).coerceIn(0.28f, 0.72f), 0.96f)
+        val primaryContainerDark = hsvColor(hue, (sat * 0.62f).coerceIn(0.22f, 0.65f), 0.28f)
+        val onPrimaryContainerDark = hsvColor(hue, (sat * 0.48f).coerceIn(0.18f, 0.52f), 0.98f)
+        val secondaryDark = hsvColor(hue + 18f, (sat * 0.58f).coerceIn(0.22f, 0.62f), 0.90f)
+        val secondaryContainerDark = hsvColor(hue + 18f, (sat * 0.55f).coerceIn(0.2f, 0.58f), 0.26f)
+        val onSecondaryContainerDark = hsvColor(hue + 18f, (sat * 0.42f).coerceIn(0.16f, 0.48f), 0.95f)
+
+        darkColorScheme(
+            primary = primaryDark,
+            onPrimary = Color(0xFF09111E),
+            primaryContainer = primaryContainerDark,
+            onPrimaryContainer = onPrimaryContainerDark,
+            secondary = secondaryDark,
+            onSecondary = Color(0xFF09111E),
+            secondaryContainer = secondaryContainerDark,
+            onSecondaryContainer = onSecondaryContainerDark,
+            tertiary = Color(0xFF22C55E),
+            onTertiary = Color(0xFF052E16),
+            tertiaryContainer = Color(0xFF143823),
+            onTertiaryContainer = Color(0xFF4ADE80),
+            error = Color(0xFFEF4444),
+            onError = Color.White,
+            errorContainer = Color(0xFF3F1D1D),
+            onErrorContainer = Color(0xFFF87171),
+            background = XPeachBgDark,
+            onBackground = XPeachTextDark,
+            surface = XPeachCardDark,
+            onSurface = XPeachTextDark,
+            surfaceVariant = XPeachWellDark,
+            onSurfaceVariant = XPeachMutedDark,
+            outline = XPeachBorderStrongDark,
+            outlineVariant = XPeachBorderDark
+        )
+    }
+}
+
 @Composable
 fun HautCampusTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: String = "SYSTEM",
     dynamicColor: Boolean = false,
+    themePaletteKey: String = "HAUT_BLUE",
+    customSeedArgb: Long = 0xFF0066CC,
     content: @Composable () -> Unit
 ) {
+    val effectiveDark = when (themeMode) {
+        "LIGHT" -> false
+        "DARK" -> true
+        else -> darkTheme
+    }
+    val resolvedSeedArgb = when (themePaletteKey) {
+        "CUSTOM" -> customSeedArgb
+        else -> PresetThemePalette.fromKey(themePaletteKey)?.seedArgb ?: 0xFF0066CC
+    }
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (effectiveDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColors
-        else -> LightColors
+        themePaletteKey == "HAUT_BLUE" -> {
+            if (effectiveDark) DarkColors else LightColors
+        }
+        else -> buildSeedColorScheme(resolvedSeedArgb, effectiveDark)
     }
 
     MaterialTheme(

@@ -13,6 +13,7 @@ import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.ScheduleSnapshotUseCase
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
+import cn.edu.haut.campus.widget.common.WidgetRoomFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -92,35 +93,40 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
 
             val views = RemoteViews(context.packageName, R.layout.widget_next_class_2x2)
             val day = snapshot.daySnapshot
-            val weekLabel = day.teachingWeek?.let { "第${it}周" } ?: "假期/非教学周"
+            val weekLabel = day.teachingWeek?.let { "第${it}周" } ?: "非教学周"
             views.setTextViewText(R.id.tv_week_tag, weekLabel)
+
+            val accentArgb = snapshot.themeAccentArgb
+            views.setTextColor(R.id.tv_status_badge, accentArgb)
+            views.setTextColor(R.id.chronometer_countdown, accentArgb)
+            views.setTextColor(R.id.tv_room_and_teacher, accentArgb)
 
             val activeOrNext = day.activeOrNextClass
             if (!snapshot.hasImportedCourses) {
                 views.setTextViewText(R.id.tv_status_badge, "未同步")
                 views.setTextViewText(R.id.tv_course_name, "点击导入课表")
                 views.setTextViewText(R.id.tv_time_range, "暂无课程数据")
-                views.setTextViewText(R.id.tv_room_and_teacher, "支持教务同步与 CSV 导入")
+                views.setTextViewText(R.id.tv_room_and_teacher, "支持教务直连同步")
+                views.setTextViewText(R.id.tv_teacher_tag, "去导入 ›")
                 views.setViewVisibility(R.id.chronometer_countdown, View.GONE)
             } else if (activeOrNext != null) {
                 val occ = activeOrNext.occurrence
                 val isOngoing = activeOrNext.status == ClassStatus.IN_PROGRESS
                 views.setTextViewText(
                     R.id.tv_status_badge,
-                    if (isOngoing) "● 正在上课" else "▲ 下一节课"
+                    if (isOngoing) "正在上课" else "下一节课"
                 )
                 views.setTextViewText(
                     R.id.tv_course_name,
-                    if (snapshot.config.privacyMode) "课程已隐藏（隐私模式）" else occ.courseName
+                    if (snapshot.config.privacyMode) "课程已隐藏" else occ.courseName
                 )
                 val timeText = if (isNarrow) {
-                    occ.startTime.format(TIME_FMT)
-                } else {
                     "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
+                } else {
+                    "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}"
                 }
                 views.setTextViewText(R.id.tv_time_range, timeText)
 
-                // 使用系统级 RemoteViews.setChronometer + setChronometerCountDown 推进倒计时
                 val baseRealtime = snapshot.chronometerTargetElapsedRealtime
                 if (baseRealtime != null) {
                     views.setViewVisibility(R.id.chronometer_countdown, View.VISIBLE)
@@ -135,42 +141,38 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                     views.setViewVisibility(R.id.chronometer_countdown, View.GONE)
                 }
 
-                // 自适应布局：横向受限时优先隐藏教师，保留教室
-                val locationLine = buildString {
-                    if (snapshot.config.privacyMode) {
-                        append("莲花街校区")
-                    } else {
-                        append(occ.rawRoom)
-                        if (!isNarrow && snapshot.config.showTeacher && !occ.teacher.isNullOrBlank()) {
-                            append(" · ")
-                            append(occ.teacher)
-                        }
-                    }
+                // 独立完整展示教室，教师姓名放在右侧副标签，彻底杜绝教室显示不全
+                val fullRoom = WidgetRoomFormatter.formatFullRoom(occ.rawRoom, snapshot.config.privacyMode)
+                views.setTextViewText(R.id.tv_room_and_teacher, fullRoom)
+                val rightTag = if (!isNarrow && !snapshot.config.privacyMode && snapshot.config.showTeacher && !occ.teacher.isNullOrBlank()) {
+                    "${occ.teacher} ›"
+                } else {
+                    "去教室 ›"
                 }
-                views.setTextViewText(R.id.tv_room_and_teacher, locationLine)
+                views.setTextViewText(R.id.tv_teacher_tag, rightTag)
             } else {
-                // 今日无课或今日课程已全部结束：显示短文案与下一次课日期，不留空白
-                views.setTextViewText(R.id.tv_status_badge, "✓ 今日无后续课")
+                views.setTextViewText(R.id.tv_status_badge, "今日结课")
                 views.setViewVisibility(R.id.chronometer_countdown, View.GONE)
                 val hint = day.nextClassDayHint
                 if (hint != null) {
-                    views.setTextViewText(R.id.tv_course_name, "今日课程已完成")
+                    views.setTextViewText(R.id.tv_course_name, hint.firstCourseName)
                     views.setTextViewText(
                         R.id.tv_time_range,
-                        "下次课：${hint.nextDate.format(DATE_FMT)} ${hint.nextDate.dayOfWeek.ChineseLabel}"
+                        "下次课 ${hint.nextDate.format(DATE_FMT)} ${hint.nextDate.dayOfWeek.ChineseLabel} ${hint.firstCourseStartTime.format(TIME_FMT)}"
                     )
                     views.setTextViewText(
                         R.id.tv_room_and_teacher,
-                        "${hint.firstCourseStartTime.format(TIME_FMT)} ${hint.firstCourseName} @${hint.firstCourseRoom}"
+                        WidgetRoomFormatter.formatFullRoom(hint.firstCourseRoom, snapshot.config.privacyMode)
                     )
+                    views.setTextViewText(R.id.tv_teacher_tag, "预习 ›")
                 } else {
                     views.setTextViewText(R.id.tv_course_name, "今天没有安排课程")
-                    views.setTextViewText(R.id.tv_time_range, day.calendarNotice ?: "好好休息或自主学习")
-                    views.setTextViewText(R.id.tv_room_and_teacher, "点击查看完整学期课表")
+                    views.setTextViewText(R.id.tv_time_range, day.calendarNotice ?: "自主安排学习与休息")
+                    views.setTextViewText(R.id.tv_room_and_teacher, "查看完整学期课表")
+                    views.setTextViewText(R.id.tv_teacher_tag, "打开 ›")
                 }
             }
 
-            // 点击卡片打开今日课程，点击地点跳到校园地图
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
             }
@@ -188,13 +190,14 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
                 putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, activeOrNext?.occurrence?.rawRoom)
             }
-            if (mapIntent != null) {
+            if (mapIntent != null && activeOrNext != null) {
                 val mapPi = PendingIntent.getActivity(
                     context,
                     appWidgetId + 10000,
                     mapIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
+                views.setOnClickPendingIntent(R.id.layout_room_bar, mapPi)
                 views.setOnClickPendingIntent(R.id.tv_room_and_teacher, mapPi)
             }
 

@@ -55,6 +55,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -63,6 +64,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -85,7 +88,9 @@ import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.DEFAULT_HOME_CARD_ORDER
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
+import cn.edu.haut.campus.core.designsystem.PresetThemePalette
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -1505,6 +1510,36 @@ fun SettingsScreen(
                 }
             }
 
+            // 7.5 主题、自定义调色盘与模块化卡片布局
+            ThemePaletteAndCardLayoutSection(
+                prefs = prefs,
+                onSelectThemeMode = { mode ->
+                    scope.launch { repository.setThemeMode(mode) }
+                },
+                onToggleDynamicColor = { enabled ->
+                    scope.launch { repository.setUseDynamicColor(enabled) }
+                },
+                onSelectPalette = { key, seedArgb ->
+                    scope.launch {
+                        repository.setThemePalette(key, seedArgb)
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        feedbackText = "已应用主题配色并同步刷新桌面小组件"
+                    }
+                },
+                onUpdateCardLayout = { order, hidden, fullWidth ->
+                    scope.launch {
+                        repository.updateHomeCardLayout(order, hidden, fullWidth)
+                        feedbackText = "已保存首页模块化卡片布局"
+                    }
+                },
+                onResetCardLayout = {
+                    scope.launch {
+                        repository.resetHomeCardLayout()
+                        feedbackText = "已恢复默认首页卡片布局"
+                    }
+                }
+            )
+
             // 8. 外观、隐私安全与数据管理
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text("外观、隐私与数据", style = MaterialTheme.typography.titleMedium)
@@ -2297,12 +2332,14 @@ fun SettingsScreen(
     }
 }
 
+
 private fun copyTextToClipboard(context: Context, label: String, text: String) {
     runCatching {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
     }
 }
+
 
 /**
  * 唤醒手机 QQ 群资料卡或复制社团群号：
@@ -2329,6 +2366,7 @@ private fun joinOrCopyClubQqGroup(
     }
 }
 
+
 /**
  * 跳转加入 QQ 频道：
  * 同时将频道邀请链接复制到剪贴板，并通过系统 ACTION_VIEW 直接调起 QQ 频道或浏览器落地页。
@@ -2350,6 +2388,7 @@ private fun jumpToPresetQqChannel(
         "已复制「$channelTitle」链接：$cleanUrl"
     }
 }
+
 
 @Composable
 private fun StudentDigitalIdCard(
@@ -2486,6 +2525,7 @@ private fun StudentDigitalIdCard(
     }
 }
 
+
 @Composable
 private fun ProfileMetricItem(
     label: String,
@@ -2515,3 +2555,422 @@ private fun ProfileMetricItem(
         )
     }
 }
+
+private val SETTINGS_HOME_CARD_LABELS: List<Pair<String, String>> = listOf(
+    "EXAM_SUMMARY" to "近期考试与学业",
+    "STUDY_FOCUS" to "自习专注",
+    "DORM_ELECTRICITY" to "宿舍水电",
+    "LIBRARY_SEAT" to "座位预约",
+    "LIBRARY_CATALOG" to "馆藏检索",
+    "EMPTY_CLASSROOM" to "空教室查询",
+    "CAMPUS_COMMUNITY" to "社团与频道"
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ThemePaletteAndCardLayoutSection(
+    prefs: AppPreferencesState,
+    onSelectThemeMode: (String) -> Unit,
+    onToggleDynamicColor: (Boolean) -> Unit,
+    onSelectPalette: (String, Long?) -> Unit,
+    onUpdateCardLayout: (List<String>, Set<String>, Set<String>) -> Unit,
+    onResetCardLayout: () -> Unit
+) {
+    var expandCustomPalette by remember { mutableStateOf(prefs.themePaletteKey == "CUSTOM") }
+    var expandCardManager by remember { mutableStateOf(false) }
+
+    val initialHsv = remember(prefs.customThemeSeedArgb) {
+        val arr = FloatArray(3)
+        android.graphics.Color.colorToHSV(prefs.customThemeSeedArgb.toInt(), arr)
+        arr
+    }
+    var hue by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[1].coerceIn(0.2f, 1f)) }
+    var brightness by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[2].coerceIn(0.3f, 1f)) }
+
+    val customColorInt = remember(hue, saturation, brightness) {
+        android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness))
+    }
+    val customHexText = remember(customColorInt) {
+        String.format("#%06X", 0xFFFFFF and customColorInt)
+    }
+    var hexInput by remember(customHexText) { mutableStateOf(customHexText) }
+
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "主题与调色盘",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "自定义深浅外观、8款精选主题色与自由HSV调色盘",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            val currentPaletteLabel = when {
+                prefs.useDynamicColor -> "壁纸取色"
+                prefs.themePaletteKey == "CUSTOM" -> customHexText
+                else -> PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "工大蓝"
+            }
+            XPeachStatusBadge(
+                text = currentPaletteLabel,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 1. 深浅色外观模式切换
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "深浅外观",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((modeKey, modeLabel) in listOf(
+                    "SYSTEM" to "跟随系统",
+                    "LIGHT" to "浅色",
+                    "DARK" to "深色"
+                )) {
+                    XPeachFilterPill(
+                        label = modeLabel,
+                        selected = prefs.themeMode == modeKey,
+                        onClick = { onSelectThemeMode(modeKey) }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 2. 8款精选预设主题色卡矩阵
+        Text(
+            text = "精选主题配色",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (rowPalettes in PresetThemePalette.entries.chunked(4)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (palette in rowPalettes) {
+                        val isSelected = !prefs.useDynamicColor && prefs.themePaletteKey == palette.key
+                        val swatchColor = Color(palette.seedArgb)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isSelected) swatchColor.copy(alpha = 0.14f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 0.6.dp,
+                                    color = if (isSelected) swatchColor else Color.Transparent,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onSelectPalette(palette.key, null) }
+                                .padding(vertical = 8.dp, horizontal = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(swatchColor)
+                            )
+                            Text(
+                                text = palette.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) swatchColor else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 3. 自由调色盘展开/收起
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color(customColorInt))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                )
+                Column {
+                    Text(
+                        text = "自定义调色盘 ($customHexText)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "拖动色相、饱和度与明度滑块或输入色号定制专属主题",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            XPeachFilterPill(
+                label = if (expandCustomPalette) "收起" else "调色盘",
+                selected = prefs.themePaletteKey == "CUSTOM" && !prefs.useDynamicColor,
+                onClick = { expandCustomPalette = !expandCustomPalette }
+            )
+        }
+
+        AnimatedVisibility(visible = expandCustomPalette) {
+            XPeachWell(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            ) {
+                // 360° 彩虹色相渐变条预览
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFFFF0000),
+                                    Color(0xFFFFFF00),
+                                    Color(0xFF00FF00),
+                                    Color(0xFF00FFFF),
+                                    Color(0xFF0000FF),
+                                    Color(0xFFFF00FF),
+                                    Color(0xFFFF0000)
+                                )
+                            )
+                        )
+                )
+                Text(
+                    text = "色相 Hue (${hue.toInt()}°)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+                Slider(
+                    value = hue,
+                    onValueChange = { hue = it },
+                    valueRange = 0f..360f
+                )
+
+                Text(
+                    text = "饱和度 Saturation (${(saturation * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = saturation,
+                    onValueChange = { saturation = it },
+                    valueRange = 0.20f..1f
+                )
+
+                Text(
+                    text = "明度 Brightness (${(brightness * 100).toInt()}%)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(
+                    value = brightness,
+                    onValueChange = { brightness = it },
+                    valueRange = 0.30f..0.95f
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = hexInput,
+                        onValueChange = { raw ->
+                            hexInput = raw
+                            val cleaned = raw.trim().removePrefix("#")
+                            if (cleaned.length == 6) {
+                                cleaned.toLongOrNull(16)?.let { rgb ->
+                                    val argb = (0xFF000000L or rgb).toInt()
+                                    val arr = FloatArray(3)
+                                    android.graphics.Color.colorToHSV(argb, arr)
+                                    hue = arr[0]
+                                    saturation = arr[1].coerceIn(0.2f, 1f)
+                                    brightness = arr[2].coerceIn(0.3f, 0.95f)
+                                }
+                            }
+                        },
+                        label = { Text("HEX 色号 (#RRGGBB)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            val seedLong = 0xFF000000L or (customColorInt.toLong() and 0xFFFFFFL)
+                            onSelectPalette("CUSTOM", seedLong)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(customColorInt)
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("应用配色", color = Color.White, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        HorizontalDivider(
+            thickness = 0.6.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 4. 首页模块化卡片排序与显隐管理
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "首页模块化卡片布局",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                val visibleCount = (DEFAULT_HOME_CARD_ORDER.size - prefs.hiddenHomeCards.size).coerceAtLeast(0)
+                Text(
+                    text = "当前已启用 $visibleCount / ${DEFAULT_HOME_CARD_ORDER.size} 个板块 · 支持调整顺序与通栏/双列尺寸",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            XPeachFilterPill(
+                label = if (expandCardManager) "收起" else "调整卡片",
+                selected = expandCardManager,
+                onClick = { expandCardManager = !expandCardManager }
+            )
+        }
+
+        AnimatedVisibility(visible = expandCardManager) {
+            val labelMap = remember { SETTINGS_HOME_CARD_LABELS.toMap() }
+            val currentOrder = remember(prefs.homeCardOrder) {
+                (prefs.homeCardOrder.filter { it in labelMap.keys } + DEFAULT_HOME_CARD_ORDER).distinct()
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                currentOrder.forEachIndexed { index, cardId ->
+                    val title = labelMap[cardId] ?: cardId
+                    val isVisible = cardId !in prefs.hiddenHomeCards
+                    val isFull = cardId in prefs.fullWidthHomeCards
+
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${index + 1}. $title",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                XPeachFilterPill(
+                                    label = if (isFull) "通栏" else "双列",
+                                    selected = isFull,
+                                    onClick = {
+                                        val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
+                                        onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = if (isVisible) "显示" else "隐藏",
+                                    selected = isVisible,
+                                    onClick = {
+                                        val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
+                                        onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = "↑",
+                                    selected = false,
+                                    onClick = {
+                                        if (index > 0) {
+                                            val mut = currentOrder.toMutableList()
+                                            val tmp = mut[index - 1]
+                                            mut[index - 1] = mut[index]
+                                            mut[index] = tmp
+                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                                        }
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = "↓",
+                                    selected = false,
+                                    onClick = {
+                                        if (index < currentOrder.lastIndex) {
+                                            val mut = currentOrder.toMutableList()
+                                            val tmp = mut[index + 1]
+                                            mut[index + 1] = mut[index]
+                                            mut[index] = tmp
+                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = onResetCardLayout,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("恢复默认卡片布局")
+                }
+            }
+        }
+    }
+}
+

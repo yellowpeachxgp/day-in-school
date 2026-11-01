@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="wk_widget_bg">#1E293B</color>
-    <color name="wk_widget_stroke">#334155</color>
-    <color name="wk_widget_primary">#F8FAFC</color>
-    <color name="wk_widget_secondary">#CBD5E1</color>
-    <color name="wk_widget_accent">#FB923C</color>
-    <color name="wk_widget_grid_bg">#0F172A</color>
-    <color name="wk_widget_row_stroke">#334155</color>
-    <color name="wk_widget_today_bg">#271A14</color>
-    <color name="wk_widget_today_stroke">#7C2D12</color>
-    <color name="wk_widget_badge_bg">#7C2D12</color>
+    <color name="wk_widget_bg">#181B22</color>
+    <color name="wk_widget_stroke">#282E3B</color>
+    <color name="wk_widget_primary">#F3F4F6</color>
+    <color name="wk_widget_secondary">#9CA3AF</color>
+    <color name="wk_widget_accent">#58A6FF</color>
+    <color name="wk_widget_grid_bg">#212630</color>
+    <color name="wk_widget_row_stroke">#2D3442</color>
+    <color name="wk_widget_today_bg">#1B2638</color>
+    <color name="wk_widget_today_stroke">#2B4263</color>
+    <color name="wk_widget_badge_bg">#1A2D47</color>
 </resources>

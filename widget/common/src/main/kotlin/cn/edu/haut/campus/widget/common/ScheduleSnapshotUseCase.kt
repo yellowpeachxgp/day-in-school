@@ -25,8 +25,54 @@ data class WidgetScheduleSnapshot(
     val weekOccurrences: Map<LocalDate, List<ClassOccurrence>>,
     val config: WidgetInstanceConfig,
     val hasImportedCourses: Boolean,
-    val chronometerTargetElapsedRealtime: Long?
+    val chronometerTargetElapsedRealtime: Long?,
+    val themeAccentArgb: Int = 0xFF0066CC.toInt()
 )
+
+object WidgetRoomFormatter {
+    private val BUILDING_SPACE_REGEX = Regex("""^(\d+号教学楼|钟楼报告厅|钟楼|工业中心|实验楼|体育馆)(\d+[A-Za-z0-9\-]*)$""")
+    private val COMPACT_BUILDING_REGEX = Regex("""^(\d+)号教学楼(\d+[A-Za-z0-9\-]*)$""")
+
+    /**
+     * 去除冗余校区前缀并保留完整「楼宇 + 教室号」，确保小组件中教室信息完整清晰、绝不丢失楼号或房间号。
+     */
+    fun formatFullRoom(rawRoom: String, privacyMode: Boolean = false): String {
+        if (privacyMode) return "莲花街校区"
+        val cleaned = rawRoom
+            .replace("河南工业大学", "")
+            .replace("莲花街校区", "")
+            .replace("莲花街", "")
+            .trim()
+        if (cleaned.isEmpty()) return "待定教室"
+        val match = BUILDING_SPACE_REGEX.matchEntire(cleaned)
+        return if (match != null) {
+            "${match.groupValues[1]} ${match.groupValues[2]}"
+        } else {
+            cleaned
+        }
+    }
+
+    /**
+     * 紧凑教室名（用于周课表多课并列场景）：如「莲花街校区5号教学楼5204」->「5教5204」，完整保留楼号与房间号。
+     */
+    fun formatCompactRoom(rawRoom: String, privacyMode: Boolean = false): String {
+        if (privacyMode) return "校区"
+        val cleaned = rawRoom
+            .replace("河南工业大学", "")
+            .replace("莲花街校区", "")
+            .replace("莲花街", "")
+            .trim()
+        if (cleaned.isEmpty()) return "待定"
+        val match = COMPACT_BUILDING_REGEX.matchEntire(cleaned)
+        if (match != null) {
+            return "${match.groupValues[1]}教${match.groupValues[2]}"
+        }
+        return cleaned
+            .replace("号教学楼", "教")
+            .replace("教学楼", "教")
+            .replace("报告厅", "")
+    }
+}
 
 object ScheduleSnapshotUseCase {
 
@@ -38,6 +84,7 @@ object ScheduleSnapshotUseCase {
     ): WidgetScheduleSnapshot {
         val repository = CampusRepository.getInstance(context)
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
+        val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF0066CC.toInt())
         val data = repository.getDirectScheduleDataSnapshot()
         val today = now.toLocalDate()
 
@@ -91,7 +138,8 @@ object ScheduleSnapshotUseCase {
             weekOccurrences = weekOccurrences,
             config = config,
             hasImportedCourses = data.rules.isNotEmpty(),
-            chronometerTargetElapsedRealtime = chronometerBase
+            chronometerTargetElapsedRealtime = chronometerBase,
+            themeAccentArgb = themeAccentArgb
         )
     }
 

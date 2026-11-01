@@ -10,10 +10,10 @@ import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.model.ClassStatus
-import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import cn.edu.haut.campus.core.model.WidgetType
 import cn.edu.haut.campus.widget.common.ScheduleSnapshotUseCase
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
+import cn.edu.haut.campus.widget.common.WidgetRoomFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +58,13 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
         private val TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
         private val DATE_FMT = DateTimeFormatter.ofPattern("MM月dd日")
 
+        private data class SlotViewGroup(
+            val containerId: Int,
+            val timeId: Int,
+            val titleId: Int,
+            val roomId: Int
+        )
+
         suspend fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
@@ -71,79 +78,118 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             val day = snapshot.daySnapshot
             val views = RemoteViews(context.packageName, R.layout.widget_timeline_4x4)
 
-            val weekText = day.teachingWeek?.let { "第 $it 教学周" } ?: "假期/非教学周"
+            val weekText = day.teachingWeek?.let { "第 $it 教学周" } ?: "非教学周"
             views.setTextViewText(
                 R.id.tv_tl_title,
                 "${day.date.format(DATE_FMT)} ${day.date.dayOfWeek.ChineseLabel} · $weekText"
             )
             views.setTextViewText(
                 R.id.tv_tl_now_indicator,
-                "更新于 ${day.now.toLocalTime().format(TIME_FMT)}"
+                "共 ${day.items.size} 节课"
             )
 
-            val slotIds = listOf(
-                R.id.tv_tl_slot_1,
-                R.id.tv_tl_slot_2,
-                R.id.tv_tl_slot_3,
-                R.id.tv_tl_slot_4
+            val slotGroups = listOf(
+                SlotViewGroup(R.id.layout_tl_slot_1, R.id.tv_tl_time_1, R.id.tv_tl_slot_1, R.id.tv_tl_room_1),
+                SlotViewGroup(R.id.layout_tl_slot_2, R.id.tv_tl_time_2, R.id.tv_tl_slot_2, R.id.tv_tl_room_2),
+                SlotViewGroup(R.id.layout_tl_slot_3, R.id.tv_tl_time_3, R.id.tv_tl_slot_3, R.id.tv_tl_room_3),
+                SlotViewGroup(R.id.layout_tl_slot_4, R.id.tv_tl_time_4, R.id.tv_tl_slot_4, R.id.tv_tl_room_4)
             )
 
             val primaryColor = ContextCompat.getColor(context, R.color.tl_widget_primary)
             val secondaryColor = ContextCompat.getColor(context, R.color.tl_widget_secondary)
-            val accentColor = ContextCompat.getColor(context, R.color.tl_widget_accent)
+            val accentColor = snapshot.themeAccentArgb
+            views.setTextColor(R.id.tv_tl_now_indicator, accentColor)
+
             val activeItem = day.activeOrNextClass
 
             if (day.items.isEmpty()) {
-                for ((idx, slotId) in slotIds.withIndex()) {
+                val hint = day.nextClassDayHint
+                for ((idx, grp) in slotGroups.withIndex()) {
                     views.setInt(
-                        slotId,
+                        grp.containerId,
                         "setBackgroundResource",
                         if (idx == 0) R.drawable.bg_timeline_slot_active else R.drawable.bg_timeline_slot
                     )
-                    views.setTextColor(slotId, if (idx == 0) accentColor else secondaryColor)
+                    views.setTextColor(grp.timeId, secondaryColor)
+                    views.setTextColor(grp.titleId, if (idx == 0) accentColor else secondaryColor)
+                    views.setTextColor(grp.roomId, accentColor)
                 }
-                views.setTextViewText(R.id.tv_tl_slot_1, "08:00 │ 今天没有安排课程")
-                val hint = day.nextClassDayHint
+                views.setTextViewText(R.id.tv_tl_time_1, "今日")
+                views.setTextViewText(R.id.tv_tl_slot_1, "今天没有安排课程")
+                views.setTextViewText(R.id.tv_tl_room_1, day.calendarNotice ?: "无课")
+
+                views.setTextViewText(
+                    R.id.tv_tl_time_2,
+                    hint?.let { "${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}" } ?: "下次课"
+                )
                 views.setTextViewText(
                     R.id.tv_tl_slot_2,
-                    hint?.let {
-                        "下次课 │ ${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)} ${it.firstCourseName}"
-                    } ?: "今天全天无课"
+                    hint?.firstCourseName ?: "近期暂无排课"
                 )
                 views.setTextViewText(
-                    R.id.tv_tl_slot_3,
-                    hint?.let { "上课地点 │ ${it.firstCourseRoom}" } ?: (day.calendarNotice ?: "暂无近期课程")
+                    R.id.tv_tl_room_2,
+                    hint?.let { WidgetRoomFormatter.formatFullRoom(it.firstCourseRoom, snapshot.config.privacyMode) } ?: ""
                 )
-                views.setTextViewText(R.id.tv_tl_slot_4, "点击查看周课表")
+
+                views.setTextViewText(R.id.tv_tl_time_3, "自习")
+                views.setTextViewText(R.id.tv_tl_slot_3, "图书馆选座与空教室查询")
+                views.setTextViewText(R.id.tv_tl_room_3, "去学业页 ›")
+
+                views.setTextViewText(R.id.tv_tl_time_4, "课表")
+                views.setTextViewText(R.id.tv_tl_slot_4, "查看完整学期课表")
+                views.setTextViewText(R.id.tv_tl_room_4, "打开 ›")
             } else {
-                for (index in slotIds.indices) {
+                for (index in slotGroups.indices) {
                     val item = day.items.getOrNull(index)
-                    val slotId = slotIds[index]
+                    val grp = slotGroups[index]
                     val isFocus = item != null && item == activeItem
                     views.setInt(
-                        slotId,
+                        grp.containerId,
                         "setBackgroundResource",
                         if (isFocus) R.drawable.bg_timeline_slot_active else R.drawable.bg_timeline_slot
                     )
                     if (item != null) {
-                        val color = when {
-                            isFocus -> accentColor
-                            item.status == ClassStatus.FINISHED -> secondaryColor
-                            else -> primaryColor
-                        }
-                        views.setTextColor(slotId, color)
-                        views.setTextViewText(slotId, formatSlotLine(item, snapshot.config.privacyMode))
+                        val occ = item.occurrence
+                        val isFinished = item.status == ClassStatus.FINISHED
+                        views.setTextColor(grp.timeId, if (isFocus) accentColor else secondaryColor)
+                        views.setTextColor(
+                            grp.titleId,
+                            when {
+                                isFocus -> accentColor
+                                isFinished -> secondaryColor
+                                else -> primaryColor
+                            }
+                        )
+                        views.setTextColor(grp.roomId, if (isFinished) secondaryColor else accentColor)
+                        views.setTextViewText(
+                            grp.timeId,
+                            "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
+                        )
+                        views.setTextViewText(
+                            grp.titleId,
+                            if (snapshot.config.privacyMode) "课程已隐藏" else occ.courseName
+                        )
+                        views.setTextViewText(
+                            grp.roomId,
+                            WidgetRoomFormatter.formatFullRoom(occ.rawRoom, snapshot.config.privacyMode)
+                        )
                     } else {
-                        views.setTextColor(slotId, secondaryColor)
-                        views.setTextViewText(slotId, "──  空闲时段")
+                        views.setTextColor(grp.timeId, secondaryColor)
+                        views.setTextColor(grp.titleId, secondaryColor)
+                        views.setTextColor(grp.roomId, secondaryColor)
+                        views.setTextViewText(grp.timeId, "空闲")
+                        views.setTextViewText(grp.titleId, "自由学习或休息时段")
+                        views.setTextViewText(grp.roomId, "")
                     }
                 }
             }
 
             views.setTextViewText(
                 R.id.tv_tl_footer,
-                activeItem?.let { "当前：${it.occurrence.courseName} · ${it.occurrence.rawRoom} (${it.statusText})" }
-                    ?: "今日课程已结束"
+                activeItem?.let {
+                    val room = WidgetRoomFormatter.formatFullRoom(it.occurrence.rawRoom, snapshot.config.privacyMode)
+                    "${it.statusText} · ${it.occurrence.courseName} · $room"
+                } ?: "今日课程已全部结束"
             )
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
@@ -160,17 +206,6 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             }
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
-
-        private fun formatSlotLine(item: TimelineOccurrenceState, privacyMode: Boolean): String {
-            val occ = item.occurrence
-            val statusSymbol = when (item.status) {
-                ClassStatus.IN_PROGRESS -> "● [上课中]"
-                ClassStatus.UPCOMING -> "▲ [${item.statusText}]"
-                ClassStatus.FINISHED -> "✓ [已结束]"
-            }
-            val title = if (privacyMode) "课程已隐藏" else "${occ.courseName} · ${occ.rawRoom}"
-            return "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} │ $title $statusSymbol"
         }
     }
 }

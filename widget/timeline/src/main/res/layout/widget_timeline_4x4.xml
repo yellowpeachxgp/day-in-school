@@ -20,7 +20,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:singleLine="true"
-            android:text="今日时间轴 · 第 8 教学周"
+            android:text="今日时间轴 · 第 10 教学周"
             android:textColor="@color/tl_widget_primary"
             android:textSize="13sp"
             android:textStyle="bold" />
@@ -32,13 +32,14 @@
             android:background="@drawable/bg_timeline_badge"
             android:paddingHorizontal="8dp"
             android:paddingVertical="2dp"
-            android:text="● 实时同步"
+            android:singleLine="true"
+            android:text="今日日程"
             android:textColor="@color/tl_widget_accent"
             android:textSize="10sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 主体第2层：4 张独立层次分明的时间轴槽位卡片 -->
+    <!-- 主体第2层：4 张三栏结构化时间轴卡片（左时间 + 中课程名 + 右侧独立完整教室） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -46,68 +47,187 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tv_tl_slot_1"
+        <LinearLayout
+            android:id="@+id/layout_tl_slot_1"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:background="@drawable/bg_timeline_slot"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:paddingHorizontal="10dp"
-            android:singleLine="true"
-            android:text="08:00–09:40 │ 智慧粮仓与物联网导论 · 1教1104 [已结束]"
-            android:textColor="@color/tl_widget_secondary"
-            android:textSize="12sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_tl_slot_2"
+            <TextView
+                android:id="@+id/tv_tl_time_1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="08:00–09:40"
+                android:textColor="@color/tl_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_slot_1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="数据结构与算法"
+                android:textColor="@color/tl_widget_primary"
+                android:textSize="12.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_room_1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="5号教学楼 5204"
+                android:textColor="@color/tl_widget_accent"
+                android:textSize="11.5sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_tl_slot_2"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginTop="5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_timeline_slot_active"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:paddingHorizontal="10dp"
-            android:singleLine="true"
-            android:text="10:10–11:50 │ ● 数据结构与算法 · 2教2204 [下一节]"
-            android:textColor="@color/tl_widget_accent"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_tl_slot_3"
+            <TextView
+                android:id="@+id/tv_tl_time_2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="10:10–11:50"
+                android:textColor="@color/tl_widget_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_slot_2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="操作系统原理"
+                android:textColor="@color/tl_widget_primary"
+                android:textSize="12.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_room_2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="6号教学楼 6201"
+                android:textColor="@color/tl_widget_accent"
+                android:textSize="11.5sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_tl_slot_3"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginTop="5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_timeline_slot"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:paddingHorizontal="10dp"
-            android:singleLine="true"
-            android:text="14:30–16:10 │ 操作系统原理 · 4教4102 [未开始]"
-            android:textColor="@color/tl_widget_primary"
-            android:textSize="12sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_tl_slot_4"
+            <TextView
+                android:id="@+id/tv_tl_time_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="14:30–16:10"
+                android:textColor="@color/tl_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_slot_3"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="计算机网络"
+                android:textColor="@color/tl_widget_primary"
+                android:textSize="12.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_room_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="8号教学楼 8301"
+                android:textColor="@color/tl_widget_accent"
+                android:textSize="11.5sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_tl_slot_4"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginTop="5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_timeline_slot"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:paddingHorizontal="10dp"
-            android:singleLine="true"
-            android:text="19:00–20:40 │ 形势与政策 · 钟楼报告厅101 [未开始]"
-            android:textColor="@color/tl_widget_primary"
-            android:textSize="12sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <TextView
+                android:id="@+id/tv_tl_time_4"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="19:00–20:40"
+                android:textColor="@color/tl_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_slot_4"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="形势与政策"
+                android:textColor="@color/tl_widget_primary"
+                android:textSize="12.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_tl_room_4"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="钟楼报告厅 101"
+                android:textColor="@color/tl_widget_accent"
+                android:textSize="11.5sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- 底部第3层：状态摘要胶囊条 -->
+    <!-- 底部第3层：焦点课程完整教室与状态胶囊条 -->
     <TextView
         android:id="@+id/tv_tl_footer"
         android:layout_width="match_parent"
@@ -116,10 +236,10 @@
         android:background="@drawable/bg_timeline_slot"
         android:ellipsize="end"
         android:gravity="center_vertical"
+        android:maxLines="1"
         android:paddingHorizontal="10dp"
         android:paddingVertical="5dp"
-        android:singleLine="true"
-        android:text="点击打开课程表"
+        android:text="点击打开今日日程"
         android:textColor="@color/tl_widget_secondary"
         android:textSize="11sp" />
 

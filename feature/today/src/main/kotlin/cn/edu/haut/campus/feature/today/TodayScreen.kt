@@ -163,6 +163,7 @@ fun TodayScreen(
     var isDynamicSyncing by remember { mutableStateOf(false) }
     var dynamicSyncBanner by remember { mutableStateOf<String?>(null) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
+    var showCardCustomizerDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -412,7 +413,7 @@ fun TodayScreen(
                 }
             }
 
-            // 3. 下半部分：Bento 混合卡片式板块模块（通栏考试窄卡 + 双列高频校园模块）
+            // 3. 下半部分：支持用户自定义排序、显隐与尺寸（通栏/双列）的模块化 Bento 卡片矩阵
             TodayCampusBentoSection(
                 examSchedules = examSchedules,
                 activeTermId = term?.id,
@@ -426,6 +427,10 @@ fun TodayScreen(
                 onlineRooms = onlineRooms,
                 utilityMeters = utilityMeters,
                 utilityReadings = utilityReadings,
+                cardOrder = prefs.homeCardOrder,
+                hiddenCards = prefs.hiddenHomeCards,
+                fullWidthCards = prefs.fullWidthHomeCards,
+                onOpenCustomizer = { showCardCustomizerDialog = true },
                 onNavigateToGrades = onNavigateToGrades,
                 onNavigateToMapWithRoom = onNavigateToMapWithRoom,
                 onNavigateToFocus = onNavigateToFocus,
@@ -438,6 +443,27 @@ fun TodayScreen(
 
             Spacer(modifier = Modifier.height(92.dp))
         }
+    }
+
+    if (showCardCustomizerDialog) {
+        HomeCardLayoutCustomizerDialog(
+            currentOrder = prefs.homeCardOrder,
+            currentHidden = prefs.hiddenHomeCards,
+            currentFullWidth = prefs.fullWidthHomeCards,
+            onSave = { newOrder, newHidden, newFullWidth ->
+                scope.launch {
+                    repository.updateHomeCardLayout(newOrder, newHidden, newFullWidth)
+                    showCardCustomizerDialog = false
+                }
+            },
+            onResetDefault = {
+                scope.launch {
+                    repository.resetHomeCardLayout()
+                    showCardCustomizerDialog = false
+                }
+            },
+            onDismiss = { showCardCustomizerDialog = false }
+        )
     }
 
     val detailState = selectedOccurrenceForDetail
@@ -1095,6 +1121,27 @@ private fun WeekDaySelectorStrip(
     }
 }
 
+private data class HomeModularCardSpec(
+    val id: String,
+    val title: String,
+    val badgeText: String,
+    val subtitle: String,
+    val highlighted: Boolean = false,
+    val actionPillText: String? = null,
+    val onActionPillClick: (() -> Unit)? = null,
+    val onClick: () -> Unit
+)
+
+private val HOME_CARD_META: List<Pair<String, String>> = listOf(
+    "EXAM_SUMMARY" to "近期考试与学业",
+    "STUDY_FOCUS" to "自习专注",
+    "DORM_ELECTRICITY" to "宿舍水电",
+    "LIBRARY_SEAT" to "座位预约",
+    "LIBRARY_CATALOG" to "馆藏检索",
+    "EMPTY_CLASSROOM" to "空教室查询",
+    "CAMPUS_COMMUNITY" to "社团与频道"
+)
+
 @Composable
 private fun TodayCampusBentoSection(
     examSchedules: List<ExamScheduleItem>,
@@ -1109,6 +1156,10 @@ private fun TodayCampusBentoSection(
     onlineRooms: List<cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain>,
     utilityMeters: List<cn.edu.haut.campus.core.model.UtilityMeterDomain>,
     utilityReadings: List<cn.edu.haut.campus.core.model.UtilityReadingDomain>,
+    cardOrder: List<String>,
+    hiddenCards: Set<String>,
+    fullWidthCards: Set<String>,
+    onOpenCustomizer: () -> Unit,
     onNavigateToGrades: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit,
     onNavigateToFocus: () -> Unit,
@@ -1118,7 +1169,27 @@ private fun TodayCampusBentoSection(
     onNavigateToEmptyClassrooms: () -> Unit,
     onNavigateToCommunity: () -> Unit
 ) {
-    // 1. 通栏窄卡：近期考试 / 学业摘要（仅展示最临近的 1 场考试，绝不铺开长列表）
+    // 顶部板块栏：左标题 + 右侧「定制卡片」按钮
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "校园板块",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        XPeachFilterPill(
+            label = "定制卡片",
+            selected = false,
+            onClick = onOpenCustomizer
+        )
+    }
+
     val nearestExam = remember(examSchedules, activeTermId, selectedDate, todayDate) {
         val sameDate = examSchedules.firstOrNull { it.examDate == selectedDate }
         if (sameDate != null) {
@@ -1134,109 +1205,6 @@ private fun TodayCampusBentoSection(
         }
     }
 
-    XPeachCard(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onNavigateToGrades,
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-    ) {
-        if (nearestExam != null) {
-            val daysLeft = nearestExam.examDate?.let { ChronoUnit.DAYS.between(todayDate, it) }
-            val countdownBadge = when {
-                daysLeft == null -> "待定"
-                daysLeft == 0L -> "今天考试"
-                daysLeft == 1L -> "明天考试"
-                daysLeft > 1L -> "还有 ${daysLeft} 天"
-                else -> "考试安排"
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        XPeachStatusBadge(
-                            text = countdownBadge,
-                            containerColor = if (daysLeft == 0L || daysLeft == 1L) {
-                                Color(0xFFFEF3C7)
-                            } else {
-                                MaterialTheme.colorScheme.primaryContainer
-                            },
-                            contentColor = if (daysLeft == 0L || daysLeft == 1L) {
-                                Color(0xFFB45309)
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            }
-                        )
-                        Text(
-                            text = nearestExam.courseName,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Text(
-                        text = "${nearestExam.rawTimeText} · ${nearestExam.rawRoom}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                XPeachFilterPill(
-                    label = "去考场",
-                    selected = daysLeft == 0L || daysLeft == 1L,
-                    onClick = { onNavigateToMapWithRoom(nearestExam.rawRoom) }
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = "考试与学业成绩",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = if (examSchedules.isNotEmpty()) {
-                            "本学期共记录 ${examSchedules.size} 场考试 · 查看成绩与 GPA"
-                        } else {
-                            "查看学期成绩、GPA 测算与考试安排"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                XPeachStatusBadge(
-                    text = "学业",
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-    }
-
-    // 2. 双列 Bento 网格：第 1 行（自习专注 + 宿舍水电）
     val todayDoneMins = remember(completedFocusSessions, todayDate) {
         completedFocusSessions.sumOf { s ->
             val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
@@ -1273,49 +1241,6 @@ private fun TodayCampusBentoSection(
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
-            title = "自习专注",
-            badgeText = focusBadge,
-            subtitle = focusSub,
-            highlighted = runningFocus != null,
-            onClick = onNavigateToFocus
-        )
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
-            title = "宿舍水电",
-            badgeText = elecBadge,
-            subtitle = elecSub,
-            onClick = onNavigateToElectricity
-        )
-    }
-
-    // 3. 双列 Bento 网格：第 2 行（座位预约 + 馆藏检索）
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
-            title = "座位预约",
-            badgeText = "图书馆",
-            subtitle = "实时余位与在线选座",
-            onClick = onNavigateToLibrarySeats
-        )
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
-            title = "馆藏检索",
-            badgeText = "OPAC",
-            subtitle = "书目搜索与在馆状态",
-            onClick = onNavigateToLibraryCatalog
-        )
-    }
-
-    // 4. 双列 Bento 网格：第 3 行（空教室查询 + 社团与频道）
     val (currentSlotLabel, freeRoomsCount) = remember(currentNow, selectedDate, teachingWeek, activeTermId, rules) {
         val nowTime = currentNow.toLocalTime()
         val (slotStart, slotEnd, label) = when {
@@ -1346,25 +1271,371 @@ private fun TodayCampusBentoSection(
         label to freeCount
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
+    val examSpec = if (nearestExam != null) {
+        val daysLeft = nearestExam.examDate?.let { ChronoUnit.DAYS.between(todayDate, it) }
+        val countdownBadge = when {
+            daysLeft == null -> "待定"
+            daysLeft == 0L -> "今天考试"
+            daysLeft == 1L -> "明天考试"
+            daysLeft > 1L -> "还有 ${daysLeft} 天"
+            else -> "考试安排"
+        }
+        HomeModularCardSpec(
+            id = "EXAM_SUMMARY",
+            title = nearestExam.courseName,
+            badgeText = countdownBadge,
+            subtitle = "${nearestExam.rawTimeText} · ${nearestExam.rawRoom}",
+            highlighted = daysLeft == 0L || daysLeft == 1L,
+            actionPillText = "去考场",
+            onActionPillClick = { onNavigateToMapWithRoom(nearestExam.rawRoom) },
+            onClick = onNavigateToGrades
+        )
+    } else {
+        HomeModularCardSpec(
+            id = "EXAM_SUMMARY",
+            title = "考试与学业成绩",
+            badgeText = "学业",
+            subtitle = if (examSchedules.isNotEmpty()) {
+                "本学期共记录 ${examSchedules.size} 场考试 · 查看成绩与 GPA"
+            } else {
+                "查看学期成绩、GPA 测算与考试安排"
+            },
+            onClick = onNavigateToGrades
+        )
+    }
+
+    val specsById = mapOf(
+        "EXAM_SUMMARY" to examSpec,
+        "STUDY_FOCUS" to HomeModularCardSpec(
+            id = "STUDY_FOCUS",
+            title = "自习专注",
+            badgeText = focusBadge,
+            subtitle = focusSub,
+            highlighted = runningFocus != null,
+            onClick = onNavigateToFocus
+        ),
+        "DORM_ELECTRICITY" to HomeModularCardSpec(
+            id = "DORM_ELECTRICITY",
+            title = "宿舍水电",
+            badgeText = elecBadge,
+            subtitle = elecSub,
+            onClick = onNavigateToElectricity
+        ),
+        "LIBRARY_SEAT" to HomeModularCardSpec(
+            id = "LIBRARY_SEAT",
+            title = "座位预约",
+            badgeText = "图书馆",
+            subtitle = "实时余位与在线选座",
+            onClick = onNavigateToLibrarySeats
+        ),
+        "LIBRARY_CATALOG" to HomeModularCardSpec(
+            id = "LIBRARY_CATALOG",
+            title = "馆藏检索",
+            badgeText = "OPAC",
+            subtitle = "书目搜索与在馆状态",
+            onClick = onNavigateToLibraryCatalog
+        ),
+        "EMPTY_CLASSROOM" to HomeModularCardSpec(
+            id = "EMPTY_CLASSROOM",
             title = "空教室查询",
             badgeText = currentSlotLabel,
             subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查空闲教室",
             onClick = onNavigateToEmptyClassrooms
-        )
-        BentoModuleTile(
-            modifier = Modifier.weight(1f),
+        ),
+        "CAMPUS_COMMUNITY" to HomeModularCardSpec(
+            id = "CAMPUS_COMMUNITY",
             title = "社团与频道",
             badgeText = "${PresetCampusCommunityCatalog.defaultCampusClubs.size} 社团",
             subtitle = "社团招新群与校园频道",
             onClick = onNavigateToCommunity
         )
+    )
+
+    val visibleSpecs = cardOrder
+        .filter { it !in hiddenCards }
+        .mapNotNull { specsById[it] }
+
+    if (visibleSpecs.isEmpty()) {
+        XPeachWell(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenCustomizer)
+        ) {
+            Text(
+                text = "已隐藏全部首页模块卡片 · 点击恢复或自由组合卡片",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    } else {
+        // 智能模块化排版：通栏卡片独占一行，相邻双列卡片自动两两配对成双列 Bento 网格
+        var idx = 0
+        while (idx < visibleSpecs.size) {
+            val current = visibleSpecs[idx]
+            val isCurrentFull = current.id in fullWidthCards
+            if (isCurrentFull) {
+                FullWidthModularCard(spec = current)
+                idx += 1
+            } else {
+                val next = visibleSpecs.getOrNull(idx + 1)
+                if (next != null && next.id !in fullWidthCards) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        BentoModuleTile(
+                            modifier = Modifier.weight(1f),
+                            title = current.title,
+                            badgeText = current.badgeText,
+                            subtitle = current.subtitle,
+                            highlighted = current.highlighted,
+                            onClick = current.onClick
+                        )
+                        BentoModuleTile(
+                            modifier = Modifier.weight(1f),
+                            title = next.title,
+                            badgeText = next.badgeText,
+                            subtitle = next.subtitle,
+                            highlighted = next.highlighted,
+                            onClick = next.onClick
+                        )
+                    }
+                    idx += 2
+                } else {
+                    FullWidthModularCard(spec = current)
+                    idx += 1
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun FullWidthModularCard(spec: HomeModularCardSpec) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = if (spec.highlighted) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        borderColor = if (spec.highlighted) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        },
+        onClick = spec.onClick,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    XPeachStatusBadge(
+                        text = spec.badgeText,
+                        containerColor = if (spec.highlighted) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        } else {
+                            MaterialTheme.colorScheme.primaryContainer
+                        },
+                        contentColor = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = spec.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = spec.subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (spec.actionPillText != null && spec.onActionPillClick != null) {
+                XPeachFilterPill(
+                    label = spec.actionPillText,
+                    selected = spec.highlighted,
+                    onClick = spec.onActionPillClick
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeCardLayoutCustomizerDialog(
+    currentOrder: List<String>,
+    currentHidden: Set<String>,
+    currentFullWidth: Set<String>,
+    onSave: (List<String>, Set<String>, Set<String>) -> Unit,
+    onResetDefault: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val labelMap = remember { HOME_CARD_META.toMap() }
+    var workingOrder by remember(currentOrder) {
+        val base = currentOrder.filter { it in labelMap.keys }
+        val full = (base + HOME_CARD_META.map { it.first }).distinct()
+        mutableStateOf(full)
+    }
+    var workingHidden by remember(currentHidden) { mutableStateOf(currentHidden) }
+    var workingFullWidth by remember(currentFullWidth) { mutableStateOf(currentFullWidth) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("模块化卡片布局定制", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "自由调整首页卡片上下顺序、切换通栏/双列尺寸或隐藏不常用模块",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                workingOrder.forEachIndexed { index, cardId ->
+                    val title = labelMap[cardId] ?: cardId
+                    val isVisible = cardId !in workingHidden
+                    val isFull = cardId in workingFullWidth
+
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${index + 1}. $title",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isVisible) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                                Text(
+                                    text = if (!isVisible) {
+                                        "已隐藏"
+                                    } else if (isFull) {
+                                        "通栏宽卡"
+                                    } else {
+                                        "双列网格卡"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isVisible) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                XPeachFilterPill(
+                                    label = if (isFull) "通栏" else "双列",
+                                    selected = isFull,
+                                    onClick = {
+                                        workingFullWidth = if (isFull) {
+                                            workingFullWidth - cardId
+                                        } else {
+                                            workingFullWidth + cardId
+                                        }
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = if (isVisible) "显示" else "隐藏",
+                                    selected = isVisible,
+                                    onClick = {
+                                        workingHidden = if (isVisible) {
+                                            workingHidden + cardId
+                                        } else {
+                                            workingHidden - cardId
+                                        }
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = "↑",
+                                    selected = false,
+                                    onClick = {
+                                        if (index > 0) {
+                                            val mut = workingOrder.toMutableList()
+                                            val tmp = mut[index - 1]
+                                            mut[index - 1] = mut[index]
+                                            mut[index] = tmp
+                                            workingOrder = mut
+                                        }
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = "↓",
+                                    selected = false,
+                                    onClick = {
+                                        if (index < workingOrder.lastIndex) {
+                                            val mut = workingOrder.toMutableList()
+                                            val tmp = mut[index + 1]
+                                            mut[index + 1] = mut[index]
+                                            mut[index] = tmp
+                                            workingOrder = mut
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(
+                    onClick = onResetDefault,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("恢复默认卡片布局")
+                }
+            }
+        },
+        confirmButton = {
+            FilledTonalButton(
+                onClick = { onSave(workingOrder, workingHidden, workingFullWidth) }
+            ) {
+                Text("保存布局")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
 }
 
 @Composable
