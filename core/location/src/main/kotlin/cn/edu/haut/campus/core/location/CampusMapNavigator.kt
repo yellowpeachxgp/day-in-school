@@ -13,6 +13,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.view.Surface
@@ -20,8 +21,11 @@ import android.view.WindowManager
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.model.Building
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.util.PriorityQueue
 import kotlin.math.PI
 import kotlin.math.abs
@@ -92,7 +96,7 @@ object CampusMapNavigator {
     // 河南工业大学莲花街校区真实中心点（WGS-84）
     const val CAMPUS_CENTER_LAT = 34.831200
     const val CAMPUS_CENTER_LNG = 113.544200
-    private const val CAMPUS_GEOFENCE_RADIUS_METERS = 1600
+    private const val CAMPUS_GEOFENCE_RADIUS_METERS = 3000
 
     private const val EARTH_RADIUS_M = 6378245.0
     private const val EE = 0.00669342162296594323
@@ -419,7 +423,7 @@ object CampusMapNavigator {
         }
 
         val candidateProviders = buildList {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 add(LocationManager.FUSED_PROVIDER)
             }
             add(LocationManager.GPS_PROVIDER)
@@ -427,52 +431,165 @@ object CampusMapNavigator {
             add(LocationManager.PASSIVE_PROVIDER)
         }.distinct()
 
-        val lastKnown = candidateProviders
+        var latestFix: Location? = null
+        var dynamicWalkingBearing: Float? = null
+
+        @Synchronized
+        fun dispatchLocation(incoming: Location, forceEmit: Boolean = false) {
+            val prev = latestFix
+            if (prev != null && !forceEmit) {
+                // 避免旧的缓存坐标覆盖更新的实时坐标
+                if (incoming.time > 0L && prev.time > 0L && incoming.time < prev.time - 3_000L) {
+                    return
+                }
+                // 若最近 5 秒内已有高精度 GPS 定位，忽略精度过差(>120m)的粗略基站跳变
+                val ageSincePrevMs = System.currentTimeMillis() - prev.time
+                val prevAcc = if (prev.hasAccuracy()) prev.accuracy else 30f
+                val newAcc = if (incoming.hasAccuracy()) incoming.accuracy else 30f
+                if (ageSincePrevMs in 0..5_000L && prevAcc <= 22f && newAcc > 120f) {
+                    return
+                }
+                val movedMeters = calculateDistanceMeters(
+                    prev.latitude,
+                    prev.longitude,
+                    incoming.latitude,
+                    incoming.longitude
+                )
+                if (movedMeters >= 2) {
+                    dynamicWalkingBearing = calculateBearingDegrees(
+                        prev.latitude,
+                        prev.longitude,
+                        incoming.latitude,
+                        incoming.longitude
+                    ).toFloat()
+                }
+                val sameCoords = abs(prev.latitude - incoming.latitude) < 1e-7 &&
+                    abs(prev.longitude - incoming.longitude) < 1e-7 &&
+                    abs(prevAcc - newAcc) < 0.5f
+                if (sameCoords) {
+                    return
+                }
+            }
+            latestFix = Location(incoming)
+            trySend(
+                incoming.toUserGeoLocation(
+                    fallbackBearing = dynamicWalkingBearing,
+                    emittedAtMs = System.currentTimeMillis()
+                )
+            )
+        }
+
+        // 1. 立即读取所有可用 Provider 中最新的缓存位置作为初始快照
+        candidateProviders
             .mapNotNull { provider ->
                 runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
             }
             .maxByOrNull { it.time }
+            ?.let { dispatchLocation(it, forceEmit = true) }
 
-        if (lastKnown != null) {
-            trySend(lastKnown.toUserGeoLocation())
-        }
+        // 2. 为每个 Provider 创建独立的 LocationListener（防止共用同一 Listener 导致底层注册互相覆盖）
+        val registeredListeners = mutableListOf<LocationListener>()
+        for (provider in candidateProviders) {
+            val providerListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    dispatchLocation(location)
+                }
 
-        val listener = object : LocationListener {
-            override fun onLocationChanged(location: Location) {
-                trySend(location.toUserGeoLocation())
+                @Deprecated("Deprecated in Android API")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+                override fun onProviderEnabled(provider: String) = Unit
+                override fun onProviderDisabled(provider: String) = Unit
             }
 
-            @Deprecated("Deprecated in Android API")
-            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
-            override fun onProviderEnabled(provider: String) = Unit
-            override fun onProviderDisabled(provider: String) = Unit
+            val registered = runCatching {
+                locationManager.requestLocationUpdates(
+                    provider,
+                    1_000L,
+                    0f,
+                    providerListener,
+                    Looper.getMainLooper()
+                )
+                true
+            }.getOrDefault(false)
+
+            if (registered) {
+                registeredListeners.add(providerListener)
+            }
         }
 
-        val registeredProviders = mutableListOf<String>()
-        for (provider in candidateProviders) {
-            val enabled = runCatching { locationManager.isProviderEnabled(provider) }.getOrDefault(false)
-            if (enabled) {
-                runCatching {
-                    locationManager.requestLocationUpdates(
-                        provider,
-                        2_000L,
-                        1.5f,
-                        listener,
-                        Looper.getMainLooper()
-                    )
-                    registeredProviders.add(provider)
+        // 3. 持续主动拉取协程：每 2 秒主动请求一次最新实时坐标，解决国产 ROM 对被动 LocationListener 节流不回调的问题
+        val activeProviders = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(LocationManager.FUSED_PROVIDER)
+            }
+            add(LocationManager.GPS_PROVIDER)
+            add(LocationManager.NETWORK_PROVIDER)
+        }.distinct()
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+
+        val activePollJob = launch {
+            while (isActive) {
+                for (provider in activeProviders) {
+                    val enabled = runCatching { locationManager.isProviderEnabled(provider) }
+                        .getOrDefault(provider == LocationManager.FUSED_PROVIDER)
+                    if (!enabled) continue
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        runCatching {
+                            locationManager.getCurrentLocation(
+                                provider,
+                                null,
+                                mainExecutor
+                            ) { freshLoc ->
+                                if (freshLoc != null) {
+                                    dispatchLocation(freshLoc)
+                                }
+                            }
+                        }
+                    } else {
+                        runCatching {
+                            @Suppress("DEPRECATION")
+                            locationManager.requestSingleUpdate(
+                                provider,
+                                object : LocationListener {
+                                    override fun onLocationChanged(location: Location) {
+                                        dispatchLocation(location)
+                                    }
+                                    @Deprecated("Deprecated in Android API")
+                                    override fun onStatusChanged(p: String?, s: Int, e: Bundle?) = Unit
+                                    override fun onProviderEnabled(p: String) = Unit
+                                    override fun onProviderDisabled(p: String) = Unit
+                                },
+                                Looper.getMainLooper()
+                            )
+                        }
+                    }
                 }
+
+                // 同步检查系统底层最新缓存坐标是否已刷新
+                candidateProviders
+                    .mapNotNull { provider ->
+                        runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
+                    }
+                    .maxByOrNull { it.time }
+                    ?.let { dispatchLocation(it) }
+
+                delay(2_000L)
             }
         }
 
         awaitClose {
-            if (registeredProviders.isNotEmpty()) {
+            activePollJob.cancel()
+            for (listener in registeredListeners) {
                 runCatching { locationManager.removeUpdates(listener) }
             }
         }
     }
 
-    private fun Location.toUserGeoLocation(): UserGeoLocation {
+    private fun Location.toUserGeoLocation(
+        fallbackBearing: Float? = null,
+        emittedAtMs: Long = time
+    ): UserGeoLocation {
         val distToCampus = calculateDistanceMeters(
             latitude,
             longitude,
@@ -483,16 +600,16 @@ object CampusMapNavigator {
             latitude = latitude,
             longitude = longitude,
             accuracyMeters = if (hasAccuracy()) accuracy else 15f,
-            bearingDegrees = if (hasBearing()) bearing else null,
+            bearingDegrees = if (hasBearing()) bearing else fallbackBearing,
             provider = provider ?: "fused",
-            timestampMillis = time,
+            timestampMillis = maxOf(time, emittedAtMs),
             isInsideLianhuajieCampus = distToCampus <= CAMPUS_GEOFENCE_RADIUS_METERS,
             distanceToCampusCenterMeters = distToCampus
         )
     }
 
     /**
-     * 基于莲花街校区步行路网拓扑图的动态最短路径规划（Dijkstra + 实时坐标垂足吸附 + 转向角解算）。
+     * 莲花街校区步行路线计算。
      */
     fun buildInAppNavigationPlan(
         userLocation: UserGeoLocation?,
@@ -516,9 +633,9 @@ object CampusMapNavigator {
             useLiveGps -> {
                 val nearest = findNearestBuilding(originLat, originLng, allBuildings)
                 if (nearest != null && nearest.second <= 120) {
-                    "当前位置（近${nearest.first.shortName}）"
+                    "我的位置（${nearest.first.shortName}附近）"
                 } else {
-                    "当前定位"
+                    "我的位置"
                 }
             }
             fallbackOriginBuilding != null -> fallbackOriginBuilding.name

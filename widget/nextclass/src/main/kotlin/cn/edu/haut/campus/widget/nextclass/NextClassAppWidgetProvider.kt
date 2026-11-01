@@ -97,10 +97,10 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
 
             val activeOrNext = day.activeOrNextClass
             if (!snapshot.hasImportedCourses) {
-                views.setTextViewText(R.id.tv_status_badge, "待导入")
-                views.setTextViewText(R.id.tv_course_name, "点击导入河南工大课表")
-                views.setTextViewText(R.id.tv_time_range, "离线优先 · 本地存储")
-                views.setTextViewText(R.id.tv_room_and_teacher, "支持官方教务与CSV导入")
+                views.setTextViewText(R.id.tv_status_badge, "未同步")
+                views.setTextViewText(R.id.tv_course_name, "点击导入课表")
+                views.setTextViewText(R.id.tv_time_range, "暂无课程数据")
+                views.setTextViewText(R.id.tv_room_and_teacher, "支持教务同步与 CSV 导入")
                 views.setViewVisibility(R.id.chronometer_countdown, View.GONE)
             } else if (activeOrNext != null) {
                 val occ = activeOrNext.occurrence

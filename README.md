@@ -1,66 +1,103 @@
 # 日在校园 (Day in School)
 
-> **产品北极星：打开手机就知道下一节课何时、何地；打开 App 就能看懂整个学期的课程与学业表现。**
+面向河南工业大学（莲花街校区）的 Android 课表、学业、校园地图与校园生活工具。
 
-本项目按照《[河南工业大学校园助手 — V0.1 产品与技术开发规格](docs/HAUT_Campus_Assistant_V0.1_PRD_Tech.md)》构建，全面面向 **最新 Android 平台（CompileSdk 36 / TargetSdk 36 · Android 16，MinSdk 31 · Android 12）**，采用原生 **Kotlin 2.1 + Jetpack Compose + Material 3 + Room + AppWidget (`RemoteViews` + `Chronometer`)** 多模块架构实现。
-
----
-
-## 1. 最新 Android (Android 12–16 / API 31–36) 原生特性支持
-
-- **TargetSdk 36 (Android 16) 全屏沉浸式 Edge-to-Edge**：通过 `enableEdgeToEdge()` 原生适配系统状态栏与手势导航栏留白。
-- **Android 14–16 预测式返回手势 (`enableOnBackInvokedCallback="true"`)**：配合 Compose `BackHandler` 实现页面与底部栏平滑手势回退。
-- **Material You (Monet) 动态壁纸取色与河工大暖橙主题双模式**：可在「设置」页随时切换 Android 12–16 系统级动态壁纸色彩或河工大定制暖橙理性主题。
-- **Android 12–16 原生一键固定桌面小组件 (`AppWidgetManager.requestPinAppWidget`)**：无需返回桌面长按寻找，在「设置」页即可一键将 `2×2 下一节课`、`4×2 今日课程`、`4×4 时间轴`、`4×4 周课表` 固定到手机主屏。
-- **零后台轮询省电桌面小组件**：使用系统级 `Chronometer` (`SystemClock.elapsedRealtime()`) + 课程起止时刻非精确 `AlarmManager` 窗口触发，无常驻后台 Service。
-- **全自动课间识别引擎**：
-  - **连堂课内小课间**：自动识别如 `1-2节` (`08:30–10:05`) 内部的 `09:15–09:20`（5 分钟小课间）、`9-10节` 内部的 `20:15–20:25`（10 分钟小课间）。
-  - **跨课程大课间与换楼提醒**：自动识别如 `2-3节` 之间 `10:05–10:25`（20 分钟大课间）、`4-5节` 之间 `12:00–14:30`（午间休息），并自动检测前后两节课是否需要跨教学楼换教室（如 `莲4号教学楼321 → 文科组团楼131`）。
+项目基于 **Android 12–16 (MinSdk 31 / TargetSdk 36)** 构建，采用 **Kotlin 2.1 + Jetpack Compose + Material 3 + Room + WorkManager + AppWidget (`RemoteViews` + `Chronometer`)** 多模块架构。
 
 ---
 
-## 2. 模块化工程结构 (18 Modules)
+## 1. 主要功能
 
-| 模块路径 | 类型 | 职责说明 |
+- **今日日程与比例时间轴**：
+  - 展示当前或下一节课、上课教室、连堂小课间、跨课大课间及换楼提示。
+  - 临近考试自动置顶显示考场、座位号与倒计时。
+  - 顶部提供「自习专注」快捷状态条，支持单节课程临时改教室、改时间或标记停课，支持按日查看课表。
+- **周课表**：
+  - 周一至周日 1–10 节网格视图，支持周次切换、回本周、手动添加课程与颜色修改。
+- **学业与考试**：
+  - 累计/学年/学期平均学分绩点（`BigDecimal` 加权计算）、重修去重、学期趋势折线图与新修学分绩点测算。
+  - 考试安排列表（含期初补缓考、期中考试、期末考试），支持一键跳转考场地图。
+  - 支持成绩与学号隐藏（开启 `FLAG_SECURE` 防截屏）及 CSV 导出。
+- **校园地图与实时定位**：
+  - 莲花街校区矢量地图，支持自由拖拽、双指缩放、双击放大与教学楼/宿舍/食堂/校门分类检索。
+  - 实时监听 `FUSED` / `GPS` / `NETWORK` 定位源并结合方位传感器（`TYPE_ROTATION_VECTOR` / 加速度计 + 地磁计），动态刷新当前位置、扇形朝向角与地图视角跟随。
+  - 内置校内步行路网（A* 寻路），动态计算从当前位置或指定起点到目标教室的折线路径、步行距离、耗时与转向提示，支持调起高德/百度/系统地图导航。
+- **教务同步与 `univ-timetable/v1` 课表互通**：
+  - 支持河南工业大学统一身份认证（`jwglxt.haut.edu.cn` / `mapp.haut.edu.cn`）直连同步课表、考试安排与成绩。
+  - 支持启动时自动更新课表与考试、WebView 网页登录导入、CSV 文本导入及手动修改冲突保留。
+  - 支持 `univ-timetable/v1` 课表文件（`.json` / `.md`）双向导入与脱敏导出，自动拆分不连续节次并通过 `ImportDiffEngine` 预览合并。
+- **上课与考试提醒（含「稍后提醒」Snooze）**：
+  - 支持课前提醒（提前 5–60 分钟可选）、考前 1 天提醒与考前 1 小时提醒，支持单门课程独立设置提前时间或关闭提醒。
+  - 通知栏提供「5 分钟后」「10 分钟后」（考试为「15 分钟后」「30 分钟后」）及「去教室 / 去考场」操作按钮。
+  - 基于持久化任务表与 `generation` 代数校验，在关机重启、修改系统时间、调休补课或重导课表后自动更新闹钟计划。
+- **校园服务（我的 → 校园服务 2×2 矩阵）**：
+  - **宿舍水电**：支持已绑定宿舍在线水电账单查询（Keystore `AES/GCM/NoPadding` 加密存储账号、POST 表单请求体传输、每日低频采样与 7/30 日趋势图）及离线手动水电表记录。
+  - **馆藏检索**：对接学校图书馆 OPAC（`opac.haut.edu.cn`），提供移动端版式适配、书目馆藏状态快照提取、条码/索书号明细查看与纯文本复制分享。
+  - **座位预约**：对接学校图书馆官方选座系统（`seat.lib.haut.edu.cn`），支持学校统一认证与 WebVPN 会话复用、快速回首页、刷新与清空会话（仅提供官方页面浏览与手动选座，不含自动抢座或代签）。
+  - **自习专注**：独立番茄钟/自习倒计时（15 / 25 / 45 / 60 / 90 分钟及自定义时长），具备课前 20 分钟非强制冲突提示、独立闹钟通道（`dayinschool_focus_timer_v1`）、15 分钟恢复静默窗口与今日/累计专注统计。
+- **个人中心与校园工具**：
+  - 空闲教室速查（按教学楼与节次反查无课教室）、校历调休/补课设置、作息时间微调、校园服务实验开关。
+  - 校区社团名录（支持分类搜索、复制群号与唤起手机 QQ 加群）与 QQ 频道快捷入口（支持自定义频道链接）。
+  - 检查 GitHub Release 新版本并直接下载安装 APK。
+- **桌面小组件**：
+  - 提供 `2×2 下一节课`、`4×2 今日课程`、`4×4 日程时间轴`、`4×4 周课表` 四款桌面小组件，使用系统 `Chronometer` 与课程边界定时刷新。
+
+---
+
+## 2. 模块结构 (20 Modules)
+
+| 模块路径 | 类型 | 说明 |
 | --- | --- | --- |
-| `:core:model` | Pure Kotlin JVM | 领域模型（`Term`、`PeriodTime`、`Course`、`CourseScheduleRule`、`OccurrenceOverride`、`InternalPeriodBreak`、`ScheduleBreakInterval`、`GradeAttempt`、`Building` 等） |
-| `:core:domain` | Pure Kotlin JVM | 纯业务算法内核：教学周映射、比例时间轴计算 `y = (t - timelineStart) * pxPerMinute`、课内小课间与跨课大课间自动识别、冲突分栏、导入差异引擎、GPA `BigDecimal` 精确加权引擎、教室楼宇别名解析 |
-| `:core:database` | Android Library (Room) | 13 张 Room 数据表、DAO、DataStore 偏好设置、`CampusRepository` 及莲花街校区真实作息与离线种子数据 |
-| `:core:designsystem` | Android Library (Compose) | 极简理性中性配色 + 暖橙/桃色强调色 + Android 12–16 Material You 动态色主题 |
-| `:core:academic` | Android Library | 河南工业大学统一身份认证 CAS (`jwglxt.haut.edu.cn/sso/jhlogin` ↔ `mapp.haut.edu.cn/cas/login`) 实网直连抓取、WebView 授权抓取、独立 `kbList`/`items` JSON 与 CSV 解析器 |
-| `:core:location` | Android Library | 莲花街校区建筑坐标与系统/外部地图步行导航拉起 |
-| `:feature:today` | Android Library (Compose) | **今天**：下一节课核心卡片、跨课大课间与换楼提醒、按真实时刻比例绘制的日时间轴、前台生命周期感知的实时时间线（`● 现在`）、单日停课覆盖 |
-| `:feature:timetable` | Android Library (Compose) | **课表**：周一至周日完整网格、跨节次纵向合并、小课间/大课间标注、冲突课程并列提示、周次切换、回本周、手动加课与课程编辑保护 |
-| `:feature:grades` | Android Library (Compose) | **学业**：累计/学期/学年 GPA 看板（严格区分官方/教务课程绩点加权/不足以计算）、学期趋势折线图、重修去重解释、防截屏隐私保护与 CSV 导出 |
-| `:feature:map` | Android Library (Compose) | **校园**：莲花街校区建筑相对方位图、教室字符串解析、模糊匹配确认弹窗与外部步行路线导航 |
-| `:feature:importer` | Android Library (Compose) | **导入**：统一身份认证实网直连同步、教务 WebView 登录、同步差异预览（新增/更新/保留用户修改冲突）、CSV 本地导入与导入审计 |
-| `:feature:settings` | Android Library (Compose) | **设置**：学期切换、完整 1–10 节作息时间表自定义、一键固定桌面小组件、Material You 动态色切换、个人数据与会话一键彻底清除 |
-| `:widget:common` | Android Library | App 与四款桌面小组件共用的 `ScheduleSnapshotUseCase` 与非精确 `AlarmManager` 课时边界刷新调度器 |
-| `:widget:nextclass` | Android Library | **2×2 下一节课 Mini**：基于 `SystemClock.elapsedRealtime()` 的系统级 `Chronometer` 倒计时与窄屏自适应布局 |
-| `:widget:today` | Android Library | **4×2 今日课程 Today**：今日日期、教学周、当前/下节课高亮与随后两节课 |
-| `:widget:timeline` | Android Library | **4×4 日程时间轴 Timeline**：左侧时间刻度、竖向时间轴与今日课程状态进度 |
-| `:widget:week` | Android Library | **4×4 周课表 Week**：周一至周日简化周视图与当天强调色 |
-| `:app` | Android Application | 主入口、Edge-to-Edge、预测式返回手势、底部四栏导航、小组件广播注册与 `FLAG_SECURE` 隐私控制 |
+| `:app` | Android Application | 应用入口、底部五栏导航（今日 / 课表 / 学业 / 校园 / 我的）、全屏二级页面路由、水电周期采样 Worker、启动自动同步与版本更新检查 |
+| `:core:model` | Pure Kotlin JVM | 课表、成绩、考试、地图、提醒、水电、自习专注、社团与小组件领域模型 |
+| `:core:domain` | Pure Kotlin JVM | 教学周计算、比例时间轴、课间识别、冲突检测、导入差异对比、GPA 计算、提醒计划与自习专注状态机 (`FocusSessionEngine`) |
+| `:core:campusservices` | Android Library | 校园服务核心层：HTTPS 域名白名单守卫 (`OfficialServiceRoutePolicy`)、WebView 会话管理 (`SchoolWebSessionManager`)、水电加密存储与协议解析 (`WanxiaoProtocolParser`)、采样策略 (`UtilitySamplingPolicy`)、图书馆 OPAC 适配与馆藏快照提取 (`OfficialLibraryWebAdapter`) |
+| `:core:database` | Android Library (Room) | Room 数据库（v4，含 `MIGRATION_1_2` / `MIGRATION_2_3` / `MIGRATION_3_4`）、DAO、DataStore 配置、AES-GCM 凭据加密、`CampusRepository` 与多钩子全量擦除 |
+| `:core:reminder` | Android Library | 课前/考前提醒子系统 (`ReminderCoordinator`) 与完全隔离的自习专注闹钟子系统 (`FocusCoordinator` / `AndroidFocusAlarmScheduler`) |
+| `:core:designsystem` | Android Library (Compose) | Material 3 主题配色（工大蓝默认主题与 Android 12+ 壁纸动态取色）、通用组件及 `CampusMetricChart` 趋势图组件 |
+| `:core:academic` | Android Library | 教务 CAS 登录、课表/考试/成绩抓取、CSV 解析及 `univ-timetable/v1` 双向课表适配器 (`TimetableInterchangeAdapter`) |
+| `:core:location` | Android Library | 多源实时定位、手机朝向角监听、校内步行路网 A* 规划与外部地图调用 |
+| `:feature:today` | Android Library (Compose) | 今日页：当前/下节课卡片、自习专注快捷条、近期考试、日时间轴、单门课程提醒与临时调课弹窗 |
+| `:feature:timetable` | Android Library (Compose) | 课表页：周视图网格、周次切换、手动加课与课程编辑 |
+| `:feature:grades` | Android Library (Compose) | 学业页：绩点统计、绩点测算、学期趋势、成绩明细与考试安排列表 |
+| `:feature:map` | Android Library (Compose) | 地图页：校区交互地图、实时定位跟随、教室搜索、校内步行路线与转向提示 |
+| `:feature:settings` | Android Library (Compose) | 我的页：校园服务 2×2 矩阵（宿舍水电 / 馆藏检索 / 座位预约 / 自习专注）、空教室查询、调休设置、社团名录、提醒设置、小组件固定与在线更新 |
+| `:feature:importer` | Android Library (Compose) | 导入页：教务账号同步、网页登录导入、`univ-timetable/v1` (`.md`/`.json`) 导入与导出、CSV 导入与差异预览 |
+| `:widget:common` | Android Library | 小组件数据快照加载与定时刷新调度 |
+| `:widget:nextclass` | Android Library | `2×2` 下一节课桌面小组件 |
+| `:widget:today` | Android Library | `4×2` 今日课程桌面小组件 |
+| `:widget:timeline` | Android Library | `4×4` 日程时间轴桌面小组件 |
+| `:widget:week` | Android Library | `4×4` 周课表桌面小组件 |
 
 ---
 
-## 3. 版本号管理与 CI/CD 工作流
+## 3. 架构、安全与开源合规文档
 
-项目通过根目录 [`version.properties`](version.properties) 集中管理语义化版本与 Android SDK 版本：
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) & [`licenses/HAUTPocket-MIT.txt`](licenses/HAUTPocket-MIT.txt)：第三方开源代码许可声明（MIT License）。
+- [`docs/HAUTPOCKET_MIGRATION_PROVENANCE.md`](docs/HAUTPOCKET_MIGRATION_PROVENANCE.md)：上游模块复用映射、重写范围与资产排除台账。
+- [`docs/CAMPUS_SERVICES_ARCHITECTURE.md`](docs/CAMPUS_SERVICES_ARCHITECTURE.md)：`:core:campusservices` 模块架构、Room v3→v4 迁移与闹钟隔离说明。
+- [`docs/CAMPUS_SERVICES_SECURITY_REVIEW.md`](docs/CAMPUS_SERVICES_SECURITY_REVIEW.md)：校园服务安全与隐私边界审计（Keystore 加密、HTTPS 白名单、POST 表单传输与全量擦除闭环）。
+- [`docs/CAMPUS_SERVICES_REAL_DEVICE_VERIFICATION.md`](docs/CAMPUS_SERVICES_REAL_DEVICE_VERIFICATION.md)：真机回归验证清单（含冒烟与 26 项功能/安全验收用例）。
+
+---
+
+## 4. 构建与测试
+
+项目通过根目录 [`version.properties`](version.properties) 管理版本号与 SDK 版本：
 
 ```bash
-# 查看当前解析出的版本号与 VersionCode
+# 查看当前版本号与 VersionCode
 ./gradlew printVersion
 
-# 自动递增修订号 / 次版本号 / 主版本号（自动重算 VERSION_BUILD）
+# 递增修订号 / 次版本号 / 主版本号
 ./gradlew bumpPatch
 ./gradlew bumpMinor
 ./gradlew bumpMajor
 
-# 运行单元测试并构建已签名的 Release APK 与 Debug APK
-./gradlew :core:domain:test :core:academic:testDebugUnitTest :app:assembleRelease :app:assembleDebug
+# 运行全部单元测试并构建 Debug / Release APK
+./gradlew testDebugUnitTest :app:assembleDebug :app:assembleRelease
 ```
 
-### GitHub Actions 工作流
-- **`.github/workflows/android-ci.yml`**：每次推送或 PR 到 `main` 分支时自动运行单元测试、编译 Debug & Release APK 并上传构建产物。
-- **`.github/workflows/android-release.yml`**：当推送 `v*.*.*` 标签（如 `v0.1.0`）或手动触发时，自动提取标签版本号、运行全量测试、使用签名密钥打包 V1/V2/V3/V4 签名 Release APK，并自动发布到 GitHub Releases。
+### GitHub Actions
+- [`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml)：推送或 PR 时运行单元测试并构建 Debug / Release APK。
+- [`.github/workflows/android-release.yml`](.github/workflows/android-release.yml)：推送 `v*.*.*` 标签或手动触发时运行测试、签名打包 Release APK 并发布到 GitHub Releases。

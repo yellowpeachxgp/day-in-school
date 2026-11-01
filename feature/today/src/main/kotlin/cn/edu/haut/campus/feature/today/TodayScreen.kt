@@ -106,6 +106,7 @@ fun TodayScreen(
     onNavigateToMapWithRoom: (String) -> Unit,
     onNavigateToImporter: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToFocus: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -122,6 +123,8 @@ fun TodayScreen(
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
+    val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
     val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
     val reminderOverrides by repository.reminderEventOverridesFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
@@ -246,12 +249,12 @@ fun TodayScreen(
                 }
                 XPeachIconButton(
                     icon = Icons.Default.CloudDownload,
-                    contentDescription = "动态同步课表与考试",
+                    contentDescription = "刷新课表与考试",
                     onClick = {
                         if (prefs.hasSavedCredentials && !isDynamicSyncing) {
                             scope.launch {
                                 isDynamicSyncing = true
-                                dynamicSyncBanner = "正在从教务系统动态拉取最新课表与考试..."
+                                dynamicSyncBanner = "正在更新课表和考试..."
                                 val res = repository.performDynamicAcademicSync(force = true)
                                 isDynamicSyncing = false
                                 if (res == null) {
@@ -259,9 +262,9 @@ fun TodayScreen(
                                 } else {
                                     res.onSuccess { syncData ->
                                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                        dynamicSyncBanner = "已同步 ${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试"
+                                        dynamicSyncBanner = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试"
                                     }.onFailure { err ->
-                                        dynamicSyncBanner = "动态同步失败：${err.message ?: "请检查网络"}"
+                                        dynamicSyncBanner = "更新失败：${err.message ?: "请检查网络"}"
                                     }
                                 }
                             }
@@ -346,11 +349,11 @@ fun TodayScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "尚未导入课表",
+                                text = "还没有课表",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "同步教务课表与成绩后自动生成每日日程",
+                                text = "登录教务系统即可导入本学期课表",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -378,6 +381,75 @@ fun TodayScreen(
                     onNavigateBuilding = onNavigateToMapWithRoom,
                     onCardClick = { selectedOccurrenceForDetail = it }
                 )
+            }
+
+            if (prefs.focusEnabled && prefs.showTodayFocusQuickPill) {
+                val runningFocus = activeFocusSession
+                val todayDoneMins = remember(completedFocusSessions, todayDate) {
+                    completedFocusSessions.sumOf { s ->
+                        val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
+                        val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
+                        if (d == todayDate) s.durationMinutes else 0
+                    }
+                }
+                XPeachCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onNavigateToFocus),
+                    containerColor = if (runningFocus != null) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (runningFocus != null) {
+                            val remMin = ((runningFocus.remainingMillis(System.currentTimeMillis()) + 59_999L) / 60_000L)
+                                .coerceAtLeast(1L)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "自习专注进行中 · 约剩 $remMin 分钟",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "点击查看实时倒计时或结束专注",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "查看",
+                                selected = true,
+                                onClick = onNavigateToFocus
+                            )
+                        } else {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "自习专注",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (todayDoneMins > 0) "今日已专注 $todayDoneMins 分钟"
+                                    else "设定 15 / 25 / 45 分钟倒计时，到点通知提醒",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "去专注",
+                                selected = false,
+                                onClick = onNavigateToFocus
+                            )
+                        }
+                    }
+                }
             }
 
             // 3. 流式日程列表（清新呼吸感卡片流，彻底告别生硬网格线与挤字）
@@ -456,17 +528,10 @@ fun TodayScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = if (examSchedules.any { it.examDate == selectedDate }) "当日考试安排" else "本学期考试动态",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "自动识别期初补缓考 · 期中随堂考 · 期末集中考",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = if (examSchedules.any { it.examDate == selectedDate }) "今日考试" else "考试安排",
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         XPeachStatusBadge(
                             text = "共 ${relevantExams.size} 场",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -623,8 +688,8 @@ private fun formatOccurrenceReminderBadge(
             .toLocalTime()
             .format(TIME_FMT)
         return when (activeTask.status) {
-            ReminderTaskStatus.SNOOZED -> "将于 $triggerTime 再次提醒 (${activeTask.snoozeCount}/${activeTask.maxSnoozes})"
-            ReminderTaskStatus.FIRED -> "已提醒 · 可延后"
+            ReminderTaskStatus.SNOOZED -> "$triggerTime 再提醒"
+            ReminderTaskStatus.FIRED -> "已提醒"
             ReminderTaskStatus.PENDING -> "$triggerTime 提醒"
             else -> null
         }
@@ -742,14 +807,14 @@ private fun CourseDetailAndSnoozeDialog(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "课程提醒与稍后提醒",
+                                    text = "上课提醒",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
 
                             XPeachFilterPill(
-                                label = if (effectivePolicy.enabled) "已开启" else "已静音",
+                                label = if (effectivePolicy.enabled) "已开启" else "已关闭",
                                 selected = effectivePolicy.enabled,
                                 onClick = {
                                     scope.launch {
@@ -766,7 +831,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                 updatedAtEpochMs = System.currentTimeMillis()
                                             )
                                         )
-                                        actionFeedback = if (nextEnabled) "已开启本课程提醒" else "已静音本课程提醒"
+                                        actionFeedback = if (nextEnabled) "已开启这门课的提醒" else "已关闭这门课的提醒"
                                         refreshTrigger++
                                     }
                                 }
@@ -774,21 +839,21 @@ private fun CourseDetailAndSnoozeDialog(
                         }
 
                         val statusSummary = when {
-                            !effectivePolicy.enabled -> "本课程当前已关闭课前通知"
+                            !effectivePolicy.enabled -> "这门课已关闭提醒"
                             activeTask?.status == ReminderTaskStatus.SNOOZED -> {
                                 val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
                                     .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
-                                "已延后至 $t 再次提醒（已延后 ${activeTask.snoozeCount}/${activeTask.maxSnoozes} 次）"
+                                "将在 $t 再次提醒"
                             }
                             activeTask?.status == ReminderTaskStatus.FIRED -> {
-                                "本次课前提醒已送达，可选择下方稍后再次提醒"
+                                "已发送提醒，可在下方选择稍后提醒"
                             }
                             activeTask?.status == ReminderTaskStatus.PENDING -> {
                                 val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
                                     .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
-                                "计划于 $t 发送提醒（课前 ${effectivePolicy.classLeadMinutes} 分钟）"
+                                "将在 $t 提醒（提前 ${effectivePolicy.classLeadMinutes} 分钟）"
                             }
-                            else -> "默认课前 ${effectivePolicy.classLeadMinutes} 分钟提醒（最多可延后 ${effectivePolicy.maxSnoozes} 次）"
+                            else -> "课前 ${effectivePolicy.classLeadMinutes} 分钟提醒"
                         }
                         Text(
                             text = statusSummary,
@@ -803,13 +868,13 @@ private fun CourseDetailAndSnoozeDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "提前量：",
+                                text = "提前时间：",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             for (lead in listOf(10, 15, 20, 30)) {
                                 XPeachFilterPill(
-                                    label = "${lead}分",
+                                    label = "${lead}分钟",
                                     selected = effectivePolicy.classLeadMinutes == lead,
                                     onClick = {
                                         scope.launch {
@@ -832,7 +897,7 @@ private fun CourseDetailAndSnoozeDialog(
 
                         if (detailState.status != ClassStatus.FINISHED && snoozeOptions.isNotEmpty()) {
                             Text(
-                                text = "稍后提醒（上课前 2 分钟自动截止）：",
+                                text = "稍后提醒：",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Medium
@@ -858,16 +923,16 @@ private fun CourseDetailAndSnoozeDialog(
                                                         is SnoozeOutcome.Accepted -> {
                                                             val t = outcome.triggerAt.atZone(HAUT_ZONE_ID)
                                                                 .toLocalTime().format(TIME_FMT)
-                                                            "已设定于 $t 再次提醒（剩余可延后 ${outcome.remainingSnoozes} 次）"
+                                                            "将在 $t 再次提醒"
                                                         }
                                                         is SnoozeOutcome.AcceptedPendingRepair -> {
-                                                            "已记录延后请求，正在后台重排闹钟"
+                                                            "已设置稍后提醒"
                                                         }
                                                         is SnoozeOutcome.Rejected -> outcome.reason.userMessage
-                                                        SnoozeOutcome.EventChanged -> "课程安排已变更，请刷新后重试"
-                                                        SnoozeOutcome.ConcurrentlyHandled -> "提醒状态已更新"
-                                                        SnoozeOutcome.NotFound -> "未找到对应提醒任务"
-                                                        SnoozeOutcome.InternalError -> "设置延后提醒失败"
+                                                        SnoozeOutcome.EventChanged -> "课程时间已变更，请刷新后重试"
+                                                        SnoozeOutcome.ConcurrentlyHandled -> "提醒已更新"
+                                                        SnoozeOutcome.NotFound -> "未找到提醒"
+                                                        SnoozeOutcome.InternalError -> "设置失败"
                                                     }
                                                     refreshTrigger++
                                                 }
@@ -911,7 +976,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                 )
                                             }
                                             Text(
-                                                text = if (opt.available) "点击延后" else (opt.disabledReason?.userMessage ?: "不可用"),
+                                                text = if (opt.available) "选择" else (opt.disabledReason?.userMessage ?: "不可选"),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = if (opt.available) {
                                                     MaterialTheme.colorScheme.primary
@@ -1452,7 +1517,7 @@ private fun MinimalistDayScheduleFlow(
 
                         if (!reminderBadge.isNullOrBlank()) {
                             Text(
-                                text = "提醒：$reminderBadge · 点击可设稍后提醒",
+                                text = reminderBadge,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1,

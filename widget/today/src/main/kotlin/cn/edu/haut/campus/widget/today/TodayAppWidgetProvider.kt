@@ -148,27 +148,27 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                     R.id.tv_sub_2,
                     sub2?.let {
                         "${it.occurrence.startTime.format(TIME_FMT)} ${it.occurrence.courseName} · ${it.occurrence.rawRoom}"
-                    } ?: "共 ${day.items.size} 节今日大课"
+                    } ?: "今日共 ${day.items.size} 节课"
                 )
             } else {
                 views.setViewVisibility(R.id.chronometer_today, View.GONE)
-                views.setTextViewText(R.id.tv_focus_status, "✓ 今日课程状态")
+                views.setTextViewText(R.id.tv_focus_status, "✓ 今日课程")
                 views.setTextViewText(
                     R.id.tv_focus_title,
-                    if (day.items.isEmpty()) "今天没有课程安排" else "今日 ${day.items.size} 节课已全部结束"
+                    if (day.items.isEmpty()) "今天没有课程安排" else "今日 ${day.items.size} 节课已结束"
                 )
                 val hint = day.nextClassDayHint
                 views.setTextViewText(
                     R.id.tv_focus_meta,
                     hint?.let {
                         "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)} ${it.firstCourseName}"
-                    } ?: (day.calendarNotice ?: "祝你拥有充实愉快的一天")
+                    } ?: (day.calendarNotice ?: "今日无课")
                 )
                 views.setTextViewText(
                     R.id.tv_sub_1,
-                    hint?.let { "地点：${it.firstCourseRoom}" } ?: "支持离线查看全学期课表"
+                    hint?.let { "地点：${it.firstCourseRoom}" } ?: "点击查看学期课表"
                 )
-                views.setTextViewText(R.id.tv_sub_2, "点击打开 App 时间轴")
+                views.setTextViewText(R.id.tv_sub_2, "点击打开课表")
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {

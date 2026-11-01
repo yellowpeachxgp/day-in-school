@@ -114,10 +114,17 @@ import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderNotificationFactory
+import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
+import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
+import cn.edu.haut.campus.core.reminder.focus.FocusNotificationFactory
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
+import cn.edu.haut.campus.feature.settings.DormElectricityScreen
+import cn.edu.haut.campus.feature.settings.LibraryCatalogScreen
+import cn.edu.haut.campus.feature.settings.LibrarySeatBookingScreen
 import cn.edu.haut.campus.feature.settings.SettingsScreen
+import cn.edu.haut.campus.feature.settings.StudyFocusScreen
 import cn.edu.haut.campus.feature.timetable.TimetableScreen
 import cn.edu.haut.campus.feature.today.TodayScreen
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -141,6 +148,7 @@ class MainActivity : ComponentActivity() {
 
     private var deepLinkTab by mutableStateOf<String?>(null)
     private var deepLinkRoomQuery by mutableStateOf<String?>(null)
+    private var deepLinkOverlayRoute by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -168,12 +176,25 @@ class MainActivity : ComponentActivity() {
                     prefs = prefs,
                     externalTabRequest = deepLinkTab,
                     externalRoomQuery = deepLinkRoomQuery,
+                    externalOverlayRequest = deepLinkOverlayRoute,
                     onConsumeExternalRequest = {
                         deepLinkTab = null
+                        deepLinkOverlayRoute = null
                     }
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        FocusDeliveryTracker.isAppInForeground = true
+        FocusCoordinator.getInstance(applicationContext).restoreOrCompleteActiveSessionAsync()
+    }
+
+    override fun onPause() {
+        FocusDeliveryTracker.isAppInForeground = false
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -182,6 +203,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extractWidgetIntent(intent: Intent?) {
+        val overlayRoute = intent?.getStringExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
+        if (!overlayRoute.isNullOrBlank()) {
+            deepLinkOverlayRoute = overlayRoute
+        }
         val tab = intent?.getStringExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB)
         val room = intent?.getStringExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM)
         if (!tab.isNullOrBlank()) {
@@ -229,6 +254,7 @@ fun HautCampusRootApp(
     prefs: AppPreferencesState,
     externalTabRequest: String?,
     externalRoomQuery: String?,
+    externalOverlayRequest: String? = null,
     onConsumeExternalRequest: () -> Unit
 ) {
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
@@ -282,8 +308,11 @@ fun HautCampusRootApp(
         }
     }
 
-    LaunchedEffect(externalTabRequest, externalRoomQuery) {
-        if (externalTabRequest != null) {
+    LaunchedEffect(externalTabRequest, externalRoomQuery, externalOverlayRequest) {
+        if (!externalOverlayRequest.isNullOrBlank()) {
+            overlayScreen = externalOverlayRequest
+            onConsumeExternalRequest()
+        } else if (externalTabRequest != null) {
             overlayScreen = null
             currentTab = PrimaryBottomTab.entries.firstOrNull { it.route == externalTabRequest }
                 ?: PrimaryBottomTab.TODAY
@@ -297,6 +326,28 @@ fun HautCampusRootApp(
     when {
         overlayScreen == "importer" -> {
             ImporterScreen(
+                repository = repository,
+                onBack = { overlayScreen = null }
+            )
+        }
+        overlayScreen == "electricity" -> {
+            DormElectricityScreen(
+                repository = repository,
+                onBack = { overlayScreen = null }
+            )
+        }
+        overlayScreen == "library_catalog" -> {
+            LibraryCatalogScreen(
+                onBack = { overlayScreen = null }
+            )
+        }
+        overlayScreen == "library_seats" -> {
+            LibrarySeatBookingScreen(
+                onBack = { overlayScreen = null }
+            )
+        }
+        overlayScreen == "focus" -> {
+            StudyFocusScreen(
                 repository = repository,
                 onBack = { overlayScreen = null }
             )
@@ -330,6 +381,7 @@ fun HautCampusRootApp(
                             },
                             onNavigateToImporter = { overlayScreen = "importer" },
                             onNavigateToSettings = { currentTab = PrimaryBottomTab.PROFILE },
+                            onNavigateToFocus = { overlayScreen = "focus" },
                             resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
                         )
                         PrimaryBottomTab.TIMETABLE -> TimetableScreen(
@@ -363,6 +415,10 @@ fun HautCampusRootApp(
                                 mapRoomQuery = room
                                 currentTab = PrimaryBottomTab.CAMPUS
                             },
+                            onNavigateToElectricity = { overlayScreen = "electricity" },
+                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                            onNavigateToFocus = { overlayScreen = "focus" },
                             resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
                         )
                     }
@@ -404,7 +460,7 @@ fun HautCampusRootApp(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "当前版本 v${releaseToPrompt.currentVersionNormalized} → 最新版本 ${releaseToPrompt.tagName}",
+                        text = "当前版本 v${releaseToPrompt.currentVersionNormalized}，可更新至 ${releaseToPrompt.tagName}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -444,19 +500,19 @@ fun HautCampusRootApp(
                             GitHubReleaseUpdater.triggerInstallApk(context, readyFile)
                                 .onSuccess { installed ->
                                     startupDownloadStatusText = if (installed) {
-                                        "已调起系统安装器，请确认安装。"
+                                        "请在系统弹窗中确认安装"
                                     } else {
-                                        "请在系统设置中允许「安装未知应用」后再次点击安装。"
+                                        "请先在设置中允许安装未知应用，再点击安装"
                                     }
                                 }
                                 .onFailure { err ->
-                                    startupDownloadStatusText = "唤起安装失败：${err.message}"
+                                    startupDownloadStatusText = "打开安装器失败：${err.message}"
                                 }
                         } else {
                             scope.launch {
                                 isDownloadingStartupApk = true
                                 startupDownloadProgress = 0f
-                                startupDownloadStatusText = "正在从 GitHub Release 拉取最新 APK..."
+                                startupDownloadStatusText = "正在下载安装包..."
                                 val dlRes = GitHubReleaseUpdater.downloadReleaseApk(
                                     context = context,
                                     releaseInfo = releaseToPrompt,
@@ -466,7 +522,7 @@ fun HautCampusRootApp(
                                             val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
                                             val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
                                             startupDownloadStatusText =
-                                                "正在拉取更新包 ${(startupDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
+                                                "正在下载 ${(startupDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
                                         }
                                     }
                                 )
@@ -476,16 +532,16 @@ fun HautCampusRootApp(
                                     GitHubReleaseUpdater.triggerInstallApk(context, apkFile)
                                         .onSuccess { installed ->
                                             startupDownloadStatusText = if (installed) {
-                                                "下载完成，已自动唤起系统安装器。"
+                                                "下载完成，请确认安装"
                                             } else {
-                                                "下载完成！请开启「允许安装未知应用」权限后再次点击下方按钮安装。"
+                                                "下载完成，开启安装权限后即可安装"
                                             }
                                         }
                                         .onFailure { err ->
-                                            startupDownloadStatusText = "唤起安装失败：${err.message}"
+                                            startupDownloadStatusText = "打开安装器失败：${err.message}"
                                         }
                                 }.onFailure { err ->
-                                    startupDownloadStatusText = "拉取失败：${err.message ?: "请检查网络"}"
+                                    startupDownloadStatusText = "下载失败：${err.message ?: "请检查网络"}"
                                 }
                             }
                         }
@@ -494,9 +550,9 @@ fun HautCampusRootApp(
                 ) {
                     Text(
                         text = when {
-                            isDownloadingStartupApk -> "正在拉取..."
-                            downloadedStartupApkFile?.exists() == true -> "立即安装 APK"
-                            else -> "直接拉取并更新"
+                            isDownloadingStartupApk -> "正在下载..."
+                            downloadedStartupApkFile?.exists() == true -> "安装更新"
+                            else -> "立即更新"
                         },
                         maxLines = 1,
                         softWrap = false
@@ -595,7 +651,7 @@ private fun OnboardingWelcomeScreen(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "用于校内实时定位与教学楼步行路线",
+                            text = "在地图中显示当前位置和步行路线",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -720,7 +776,7 @@ private fun OnboardingWelcomeScreen(
                             val plainPwd = passwordInput
                             isSyncing = true
                             isErrorStatus = false
-                            syncStatusMessage = "正在同步教务课表、考试安排与成绩..."
+                            syncStatusMessage = "正在获取课表、考试和成绩..."
                             val result = HautLiveAcademicClient.fetchLiveAcademicData(
                                 studentId = studentIdInput,
                                 passwordPlain = plainPwd,
@@ -809,7 +865,7 @@ private fun OnboardingWelcomeScreen(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("暂不同步，直接进入", maxLines = 1, softWrap = false)
+                        Text("先去看看", maxLines = 1, softWrap = false)
                     }
                 }
             }

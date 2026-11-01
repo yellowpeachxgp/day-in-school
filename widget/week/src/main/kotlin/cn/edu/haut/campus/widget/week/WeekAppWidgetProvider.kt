@@ -94,7 +94,7 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 val prefix = if (isToday) "★${weekday.ChineseLabel}" else "  ${weekday.ChineseLabel}"
                 val occurrences = pair?.second.orEmpty()
                 val summary = if (occurrences.isEmpty()) {
-                    "无课（自由安排）"
+                    "无课"
                 } else {
                     occurrences.joinToString(" · ") { occ ->
                         val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(6)

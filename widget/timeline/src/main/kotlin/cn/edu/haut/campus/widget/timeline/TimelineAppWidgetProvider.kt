@@ -78,7 +78,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             )
             views.setTextViewText(
                 R.id.tv_tl_now_indicator,
-                "● 基准 ${day.now.toLocalTime().format(TIME_FMT)}"
+                "更新于 ${day.now.toLocalTime().format(TIME_FMT)}"
             )
 
             val slotIds = listOf(
@@ -108,13 +108,13 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                     R.id.tv_tl_slot_2,
                     hint?.let {
                         "下次课 │ ${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)} ${it.firstCourseName}"
-                    } ?: "全天自由安排 · 可前往图书馆或自习室"
+                    } ?: "今天全天无课"
                 )
                 views.setTextViewText(
                     R.id.tv_tl_slot_3,
-                    hint?.let { "上课地点 │ ${it.firstCourseRoom}" } ?: (day.calendarNotice ?: "祝学业顺利")
+                    hint?.let { "上课地点 │ ${it.firstCourseRoom}" } ?: (day.calendarNotice ?: "暂无近期课程")
                 )
-                views.setTextViewText(R.id.tv_tl_slot_4, "点击打开 App 查看完整周课表")
+                views.setTextViewText(R.id.tv_tl_slot_4, "点击查看周课表")
             } else {
                 for (index in slotIds.indices) {
                     val item = day.items.getOrNull(index)
@@ -135,15 +135,15 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                         views.setTextViewText(slotId, formatSlotLine(item, snapshot.config.privacyMode))
                     } else {
                         views.setTextColor(slotId, secondaryColor)
-                        views.setTextViewText(slotId, "──  空闲时段（自习/休息）")
+                        views.setTextViewText(slotId, "──  空闲时段")
                     }
                 }
             }
 
             views.setTextViewText(
                 R.id.tv_tl_footer,
-                activeItem?.let { "焦点：${it.occurrence.courseName} · ${it.occurrence.rawRoom} (${it.statusText})" }
-                    ?: "今日课程已全部完成 · 点击打开时间轴"
+                activeItem?.let { "当前：${it.occurrence.courseName} · ${it.occurrence.rawRoom} (${it.statusText})" }
+                    ?: "今日课程已结束"
             )
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {

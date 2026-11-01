@@ -189,7 +189,7 @@ fun GradesScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "同步教务系统成绩后自动计算累计绩点与学分",
+                                text = "同步教务后自动计算绩点与学分",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -205,7 +205,7 @@ fun GradesScreen(
                 }
             }
 
-            // 1. 聚合式绩点焦点卡片
+            // 1. 绩点卡片
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -214,7 +214,7 @@ fun GradesScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "累计平均绩点 (GPA)",
+                            text = "平均学分绩点",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -233,13 +233,13 @@ fun GradesScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         XPeachFilterPill(
-                            label = if (showSimulatorSection) "收起模拟" else "绩点模拟",
+                            label = if (showSimulatorSection) "收起测算" else "绩点测算",
                             selected = showSimulatorSection,
                             onClick = { showSimulatorSection = !showSimulatorSection }
                         )
                         if (gpaReport.termTrends.isNotEmpty()) {
                             XPeachFilterPill(
-                                label = if (showTrendSection) "收起走势" else "走势分析",
+                                label = if (showTrendSection) "收起趋势" else "学期趋势",
                                 selected = showTrendSection,
                                 onClick = { showTrendSection = !showTrendSection }
                             )
@@ -258,24 +258,24 @@ fun GradesScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         GpaCompactStat(
-                            label = "本学期 GPA",
+                            label = "本学期",
                             value = if (privacyMasked) "∗.∗∗" else (gpaReport.currentTermGpa?.toPlainString() ?: "—"),
                             modifier = Modifier.weight(1f)
                         )
                         GpaCompactStat(
-                            label = "本学年 GPA",
+                            label = "本学年",
                             value = if (privacyMasked) "∗.∗∗" else (gpaReport.currentAcademicYearGpa?.toPlainString() ?: "—"),
                             modifier = Modifier.weight(1f)
                         )
                         GpaCompactStat(
-                            label = "已修总学分",
+                            label = "已修学分",
                             value = if (privacyMasked) "∗∗.∗" else gpaReport.totalEarnedCredits.toPlainString(),
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                // 目标绩点与新修学分模拟器
+                // 目标绩点与新修学分测算
                 if (showSimulatorSection) {
                     Spacer(modifier = Modifier.height(12.dp))
                     val baseCredits = gpaReport.gpaIncludedCredits.toFloat().coerceAtLeast(0f)
@@ -290,7 +290,7 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "预计新修后总 GPA",
+                                text = "预计总绩点",
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
@@ -302,7 +302,7 @@ fun GradesScreen(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "未来计划新修学分：${simulatedNewCredits.toInt()} 学分",
+                            text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -312,7 +312,7 @@ fun GradesScreen(
                             valueRange = 2f..60f
                         )
                         Text(
-                            text = "预计新修课程均绩：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
+                            text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -485,7 +485,7 @@ fun GradesScreen(
                 if (filteredExams.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "当前筛选下暂无考试安排记录。点击右上角同步按钮可从正方教务系统拉取最新考试日程。",
+                            text = "暂无考试安排，点击右上角按钮可从教务系统同步。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

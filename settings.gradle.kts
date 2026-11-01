@@ -24,6 +24,7 @@ include(
     ":core:reminder",
     ":core:designsystem",
     ":core:academic",
+    ":core:campusservices",
     ":core:location",
     ":feature:today",
     ":feature:timetable",

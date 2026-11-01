@@ -37,7 +37,7 @@ object HautMockSeedData {
     val defaultStudent = StudentProfile(
         id = "stu_demo",
         schoolId = "2024160101XX",
-        displayName = "工大同学（本地演示）",
+        displayName = "未设置姓名",
         major = "计算机科学与技术（莲花街校区）",
         enrollmentYear = 2024
     )

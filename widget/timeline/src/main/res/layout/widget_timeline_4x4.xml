@@ -119,7 +119,7 @@
         android:paddingHorizontal="10dp"
         android:paddingVertical="5dp"
         android:singleLine="true"
-        android:text="点击任意条目进入 App 比例时间轴与教室导航"
+        android:text="点击打开课程表"
         android:textColor="@color/tl_widget_secondary"
         android:textSize="11sp" />
 

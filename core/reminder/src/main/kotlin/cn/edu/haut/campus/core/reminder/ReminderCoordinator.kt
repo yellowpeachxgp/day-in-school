@@ -185,11 +185,11 @@ class ReminderCoordinator internal constructor(
         val nextTriggerMs = remainingActive.firstOrNull()?.scheduledAtEpochMs
         val nextTriggerText = nextTriggerMs?.let {
             Instant.ofEpochMilli(it).atZone(HAUT_ZONE_ID).format(timeFormatter)
-        } ?: "暂无待触发提醒"
+        } ?: "暂无"
 
-        val summary = "待触发 ${remainingActive.size} 项 · 下次：$nextTriggerText"
+        val summary = "待提醒 ${remainingActive.size} 项 · 下次：$nextTriggerText"
         repository.appendReminderDiagnosticLog(
-            message = "对账完成($reason)：待触发${remainingActive.size}项，新增/更新${diff.tasksToUpsert.size}项，撤销${diff.alarmsToCancel.size}项",
+            message = "已更新提醒计划($reason)：待提醒 ${remainingActive.size} 项，变更 ${diff.tasksToUpsert.size} 项，取消 ${diff.alarmsToCancel.size} 项",
             reconcileSummary = summary
         )
 

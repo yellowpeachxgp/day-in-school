@@ -1,8 +1,13 @@
 package cn.edu.haut.campus.feature.importer
 
 import android.annotation.SuppressLint
+import android.net.http.SslError
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -48,6 +53,9 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.academic.HautZfsoftParser
+import cn.edu.haut.campus.core.academic.TimetableInterchangeAdapter
+import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
+import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -73,15 +81,95 @@ fun ImporterScreen(
     val scope = rememberCoroutineScope()
 
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
+    val courses by repository.coursesFlow.collectAsState(initial = emptyList())
+    val rules by repository.rulesFlow.collectAsState(initial = emptyList())
+    val periodTimes by repository.periodTimesFlow.collectAsState(initial = emptyList())
     val audits by repository.importAuditsFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: 统一认证, 1: 网页登录, 2: CSV 导入
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: 统一认证, 1: 网页登录, 2: 文件与 CSV
     var diffPreview by remember { mutableStateOf<ImportDiffPreview?>(null) }
+    var pendingInterchangeMeta by remember {
+        mutableStateOf<TimetableInterchangeAdapter.InterchangeParseResult?>(null)
+    }
+    var applyInterchangeCalendar by remember { mutableStateOf(true) }
     var overwriteUserEdits by remember { mutableStateOf(false) }
     var rememberForAutoSync by remember { mutableStateOf(true) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
     var isSyncing by remember { mutableStateOf(false) }
+
+    val openTimetableFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val rawText = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader(Charsets.UTF_8).readText()
+                }.orEmpty()
+                val parsed = TimetableInterchangeAdapter.parse(rawText)
+                val termId = currentTerm?.id ?: "2025-2026-2"
+                pendingInterchangeMeta = parsed
+                diffPreview = repository.previewCourseImportDiff(
+                    termId = termId,
+                    source = CourseSource.CSV_ICS,
+                    candidates = parsed.candidates
+                )
+                val warnSuffix = if (parsed.warnings.isNotEmpty()) {
+                    "（提示：${parsed.warnings.joinToString("；")}）"
+                } else {
+                    ""
+                }
+                statusBanner = "已从${parsed.sourceLabel}解析 ${parsed.candidates.size} 条课程记录，请确认下方预览。$warnSuffix"
+            }.onFailure { err ->
+                statusBanner = "导入文件失败：${err.message ?: "请检查文件格式"}"
+            }
+        }
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val jsonText = TimetableInterchangeAdapter.exportJson(
+                    term = currentTerm,
+                    courses = courses,
+                    rules = rules,
+                    periodTimes = periodTimes
+                )
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(jsonText.toByteArray(Charsets.UTF_8))
+                }
+                statusBanner = "已导出 univ-timetable/v1 JSON 课表文件（不含学号与个人敏感信息）。"
+            }.onFailure { err ->
+                statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
+            }
+        }
+    }
+
+    val exportMarkdownLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/markdown")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val mdText = TimetableInterchangeAdapter.exportMarkdown(
+                    term = currentTerm,
+                    courses = courses,
+                    rules = rules,
+                    periodTimes = periodTimes
+                )
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(mdText.toByteArray(Charsets.UTF_8))
+                }
+                statusBanner = "已导出 univ-timetable/v1 Markdown 课表文件（不含学号与个人敏感信息）。"
+            }.onFailure { err ->
+                statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
+            }
+        }
+    }
 
     var studentIdInput by remember(prefs.savedStudentId) { mutableStateOf(prefs.savedStudentId ?: "") }
     var passwordInput by remember { mutableStateOf("") }
@@ -125,7 +213,7 @@ fun ImporterScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
-                items = listOf("统一认证", "网页登录", "CSV 导入"),
+                items = listOf("账号登录", "网页登录", "文件与 CSV"),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
             )
@@ -152,7 +240,7 @@ fun ImporterScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "统一身份认证直连",
+                                text = "教务账号登录",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             XPeachStatusBadge(text = "课表 + 考试 + 成绩")
@@ -173,7 +261,7 @@ fun ImporterScreen(
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
-                                            text = "免输密码一键拉取最新课表、考试与成绩",
+                                            text = "直接更新本学期课表、考试与成绩",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -183,20 +271,20 @@ fun ImporterScreen(
                                         onClick = {
                                             scope.launch {
                                                 isSyncing = true
-                                                statusBanner = "正在从教务系统动态拉取最新课表、考试与成绩..."
+                                                statusBanner = "正在更新课表、考试与成绩..."
                                                 val res = repository.performDynamicAcademicSync(force = true)
                                                 isSyncing = false
                                                 res?.onSuccess { syncData ->
                                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                    statusBanner = "动态更新完成：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
+                                                    statusBanner = "更新完成：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
                                                 }?.onFailure { err ->
-                                                    statusBanner = "动态更新失败：${err.message ?: "请检查网络或重新输入密码"}"
+                                                    statusBanner = "更新失败：${err.message ?: "请检查网络或重新输入密码"}"
                                                 }
                                             }
                                         },
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
-                                        Text("一键动态更新", maxLines = 1, softWrap = false)
+                                        Text("立即更新", maxLines = 1, softWrap = false)
                                     }
                                 }
                             }
@@ -269,7 +357,7 @@ fun ImporterScreen(
                                 onCheckedChange = { rememberForAutoSync = it }
                             )
                             Text(
-                                text = "授权自动动态更新（打开应用自动同步课表、期初/期中/期末考试与成绩）",
+                                text = "启动时自动更新课表、考试与成绩",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -352,7 +440,7 @@ fun ImporterScreen(
                 1 -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "教务网页登录抓取",
+                            text = "网页登录导入",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -416,8 +504,11 @@ fun ImporterScreen(
                             }
                             OutlinedButton(
                                 onClick = {
-                                    HautSessionManager.clearAuthorizedSessionCookies()
-                                    statusBanner = "已清除网页会话。"
+                                    scope.launch {
+                                        HautSessionManager.clearAuthorizedSessionCookies()
+                                        SchoolWebSessionManager.clearAllSchoolWebSessions(webViewRef)
+                                        statusBanner = "已清除网页会话。"
+                                    }
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
@@ -429,10 +520,35 @@ fun ImporterScreen(
 
                         AndroidView(
                             factory = { ctx ->
+                                val teachingFixScript = runCatching {
+                                    ctx.assets.open("teaching-layout.js").bufferedReader().use { it.readText() }
+                                }.getOrNull()
                                 WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    webViewClient = WebViewClient()
+                                    SchoolWebSessionManager.configureHardenedSchoolWebView(this)
+                                    webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            request: WebResourceRequest?
+                                        ): Boolean {
+                                            return SafeWebNavigationPolicy.shouldBlockNavigation(request)
+                                        }
+
+                                        override fun onReceivedSslError(
+                                            view: WebView?,
+                                            handler: SslErrorHandler?,
+                                            error: SslError?
+                                        ) {
+                                            SafeWebNavigationPolicy.cancelOnSslError(handler, error)
+                                        }
+
+                                        override fun onPageFinished(view: WebView?, url: String?) {
+                                            super.onPageFinished(view, url)
+                                            if (!teachingFixScript.isNullOrBlank()) {
+                                                view?.evaluateJavascript(teachingFixScript, null)
+                                            }
+                                            SchoolWebSessionManager.persistCookiesAsync()
+                                        }
+                                    }
                                     loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
                                     webViewRef = this
                                 }
@@ -447,8 +563,69 @@ fun ImporterScreen(
                 }
 
                 2 -> {
+                    if (prefs.timetableInterchangeEnabled) {
+                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "大学课表文件互通 (univ-timetable/v1)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                XPeachStatusBadge(text = ".md / .json")
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "支持导入或导出标准 univ-timetable/v1 课表文件（.md / .json）及正方 JSON。导出文件已自动剔除姓名、学号与水电账号。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        openTimetableFileLauncher.launch(
+                                            arrayOf("application/json", "text/markdown", "text/plain", "*/*")
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1.2f)
+                                ) {
+                                    Text("选择课表文件", maxLines = 1, softWrap = false)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        exportMarkdownLauncher.launch("haut-timetable-v1.md")
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("导出 .md", maxLines = 1, softWrap = false)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        exportJsonLauncher.launch("haut-timetable-v1.json")
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("导出 .json", maxLines = 1, softWrap = false)
+                                }
+                            }
+                        }
+                    }
+
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text("CSV 文本导入", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "文本导入（支持 CSV / Markdown 课表 / JSON）",
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = csvInputText,
@@ -462,18 +639,39 @@ fun ImporterScreen(
                             onClick = {
                                 scope.launch {
                                     val termId = currentTerm?.id ?: "2025-2026-2"
-                                    val candidates = HautZfsoftParser.parseCsvSchedule(csvInputText)
-                                    diffPreview = repository.previewCourseImportDiff(
-                                        termId = termId,
-                                        source = CourseSource.CSV_ICS,
-                                        candidates = candidates
-                                    )
-                                    statusBanner = "已解析 ${candidates.size} 条课程，请确认下方预览。"
+                                    val trimmed = csvInputText.trim()
+                                    val isInterchangeFormat = trimmed.startsWith("{") ||
+                                        trimmed.startsWith("[") ||
+                                        trimmed.contains("| 课程") ||
+                                        trimmed.contains("```json")
+                                    if (isInterchangeFormat) {
+                                        runCatching {
+                                            val parsed = TimetableInterchangeAdapter.parse(trimmed)
+                                            pendingInterchangeMeta = parsed
+                                            diffPreview = repository.previewCourseImportDiff(
+                                                termId = termId,
+                                                source = CourseSource.CSV_ICS,
+                                                candidates = parsed.candidates
+                                            )
+                                            statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认下方预览。"
+                                        }.onFailure { err ->
+                                            statusBanner = "解析失败：${err.message ?: "请检查文本格式"}"
+                                        }
+                                    } else {
+                                        pendingInterchangeMeta = null
+                                        val candidates = HautZfsoftParser.parseCsvSchedule(csvInputText)
+                                        diffPreview = repository.previewCourseImportDiff(
+                                            termId = termId,
+                                            source = CourseSource.CSV_ICS,
+                                            candidates = candidates
+                                        )
+                                        statusBanner = "已解析 ${candidates.size} 条 CSV 课程，请确认下方预览。"
+                                    }
                                 }
                             },
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("解析 CSV", maxLines = 1, softWrap = false)
+                            Text("解析文本", maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -513,6 +711,21 @@ fun ImporterScreen(
                         }
                     }
 
+                    val meta = pendingInterchangeMeta
+                    if (meta != null && meta.hasCalendarMetadata) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = applyInterchangeCalendar,
+                                onCheckedChange = { applyInterchangeCalendar = it }
+                            )
+                            Text(
+                                text = "同时应用文件中的开学日期与作息节次时间",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+
                     if (preview.conflictUserEditCount > 0) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -537,17 +750,30 @@ fun ImporterScreen(
                                         preview = preview,
                                         overwriteUserConflicts = overwriteUserEdits
                                     )
+                                    val calMeta = pendingInterchangeMeta
+                                    if (calMeta != null && calMeta.hasCalendarMetadata && applyInterchangeCalendar) {
+                                        repository.applyInterchangeCalendarMetadata(
+                                            termId = preview.termId,
+                                            semesterStart = calMeta.semesterStart,
+                                            totalWeeks = calMeta.totalWeeks,
+                                            sectionTimes = calMeta.sectionTimes.map { it.toPeriodTime() }
+                                        )
+                                    }
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     diffPreview = null
-                                    statusBanner = "已保存入库。"
+                                    pendingInterchangeMeta = null
+                                    statusBanner = "已保存课表。"
                                 }
                             },
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("确认入库", maxLines = 1, softWrap = false)
+                            Text("保存课表", maxLines = 1, softWrap = false)
                         }
                         OutlinedButton(
-                            onClick = { diffPreview = null },
+                            onClick = {
+                                diffPreview = null
+                                pendingInterchangeMeta = null
+                            },
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("取消", maxLines = 1, softWrap = false)

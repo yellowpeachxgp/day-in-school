@@ -149,5 +149,23 @@
             </intent-filter>
         </receiver>
 
+        <!-- 8. 自习专注计时独立到期与测试广播接收器 -->
+        <receiver
+            android:name="cn.edu.haut.campus.core.reminder.focus.FocusAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 9. 自习专注计时独立重启/时间变更恢复接收器 -->
+        <receiver
+            android:name="cn.edu.haut.campus.core.reminder.focus.FocusRestoreReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

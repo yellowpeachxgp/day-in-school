@@ -185,12 +185,18 @@ interface CampusDao {
         ImportAuditEntity::class,
         ExamScheduleEntity::class,
         ReminderTaskEntity::class,
-        ReminderEventPrefEntity::class
+        ReminderEventPrefEntity::class,
+        UtilityDailySampleEntity::class,
+        UtilityOnlineRoomEntity::class,
+        UtilityMeterEntity::class,
+        UtilityReadingEntity::class,
+        FocusSessionEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class HautDatabase : RoomDatabase() {
     abstract fun campusDao(): CampusDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun utilityAndFocusDao(): UtilityAndFocusDao
 }

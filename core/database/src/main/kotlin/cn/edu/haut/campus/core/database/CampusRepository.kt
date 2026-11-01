@@ -14,6 +14,13 @@ import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
+import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
+import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
+import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
+import cn.edu.haut.campus.core.campusservices.UtilityAccountSecureStore
+import cn.edu.haut.campus.core.campusservices.UtilityDailySample
+import cn.edu.haut.campus.core.campusservices.UtilitySamplingPolicy
+import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
@@ -24,6 +31,7 @@ import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ExamScheduleItem
+import cn.edu.haut.campus.core.model.FocusSessionDomain
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.ImportAudit
@@ -38,6 +46,9 @@ import cn.edu.haut.campus.core.model.ReminderGlobalConfig
 import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.model.UtilityMeterDomain
+import cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain
+import cn.edu.haut.campus.core.model.UtilityReadingDomain
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +63,7 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 private val Context.appDataStore by preferencesDataStore(name = "haut_campus_prefs")
 
@@ -76,7 +88,16 @@ data class AppPreferencesState(
     val reminderPolicyRevision: String = "v1",
     val lastReminderReconcileEpochMillis: Long? = null,
     val lastReminderReconcileSummary: String? = null,
-    val reminderDiagnosticLogs: List<String> = emptyList()
+    val reminderDiagnosticLogs: List<String> = emptyList(),
+    val utilitiesEnabled: Boolean = true,
+    val libraryNativeEnabled: Boolean = true,
+    val librarySeatEnabled: Boolean = true,
+    val focusEnabled: Boolean = true,
+    val showTodayFocusQuickPill: Boolean = true,
+    val timetableInterchangeEnabled: Boolean = true,
+    val allowUnverifiedUtilityTransport: Boolean = false,
+    val lastUtilitySampleEpochMillis: Long? = null,
+    val selectedFocusMinutes: Int = 25
 )
 
 class CampusRepository private constructor(
@@ -85,13 +106,29 @@ class CampusRepository private constructor(
 ) {
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
+    private val utilityAndFocusDao = database.utilityAndFocusDao()
+    private val utilityAccountStore = UtilityAccountSecureStore(appContext)
+    private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
 
-    @Volatile
-    var onBeforeWipePersonalDataHook: (suspend () -> Unit)? = null
+    private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
+
+    var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
+        get() = beforeWipeHooks["reminder_coordinator_hook"]
+        set(value) {
+            if (value == null) {
+                beforeWipeHooks.remove("reminder_coordinator_hook")
+            } else {
+                beforeWipeHooks["reminder_coordinator_hook"] = value
+            }
+        }
+
+    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) {
+        beforeWipeHooks[key] = hook
+    }
 
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
@@ -126,9 +163,22 @@ class CampusRepository private constructor(
         val LAST_REMINDER_RECONCILE_MS = longPreferencesKey("last_reminder_reconcile_ms")
         val LAST_REMINDER_RECONCILE_SUMMARY = stringPreferencesKey("last_reminder_reconcile_summary")
         val REMINDER_DIAGNOSTIC_LOGS = stringPreferencesKey("reminder_diagnostic_logs_v1")
+        val FF_UTILITIES_ENABLED = booleanPreferencesKey("ff_utilities_enabled_v1")
+        val FF_LIBRARY_NATIVE_ENABLED = booleanPreferencesKey("ff_library_native_enabled_v1")
+        val FF_LIBRARY_SEAT_ENABLED = booleanPreferencesKey("ff_library_seat_enabled_v1")
+        val FF_FOCUS_ENABLED = booleanPreferencesKey("ff_focus_enabled_v1")
+        val FF_TODAY_FOCUS_PILL = booleanPreferencesKey("ff_show_today_focus_pill_v1")
+        val FF_TIMETABLE_INTERCHANGE = booleanPreferencesKey("ff_timetable_interchange_v1")
+        val ALLOW_UNVERIFIED_UTILITY_TRANSPORT = booleanPreferencesKey("allow_unverified_utility_transport_v1")
+        val LAST_UTILITY_SAMPLE_MS = longPreferencesKey("last_utility_sample_epoch_ms_v1")
+        val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
     }
 
     init {
+        registerBeforeWipeHook("campus_services_account_and_web_wipe") {
+            runCatching { utilityAccountStore.wipeAll() }
+            runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
+        }
         repoScope.launch {
             ensureInitialSeedIfNeeded()
         }
@@ -169,7 +219,16 @@ class CampusRepository private constructor(
             reminderDiagnosticLogs = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
                 ?.split("\n")
                 ?.filter { it.isNotBlank() }
-                .orEmpty()
+                .orEmpty(),
+            utilitiesEnabled = prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true,
+            libraryNativeEnabled = prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true,
+            librarySeatEnabled = prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true,
+            focusEnabled = prefs[PrefKeys.FF_FOCUS_ENABLED] ?: true,
+            showTodayFocusQuickPill = prefs[PrefKeys.FF_TODAY_FOCUS_PILL] ?: true,
+            timetableInterchangeEnabled = prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
+            allowUnverifiedUtilityTransport = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
+            lastUtilitySampleEpochMillis = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS],
+            selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180)
         )
     }
 
@@ -244,6 +303,26 @@ class CampusRepository private constructor(
         }
 
     fun reminderDao(): ReminderDao = reminderDao
+    fun utilityAndFocusDao(): UtilityAndFocusDao = utilityAndFocusDao
+    fun utilityAccountSecureStore(): UtilityAccountSecureStore = utilityAccountStore
+
+    val utilityDailySamplesFlow: Flow<List<UtilityDailySample>> =
+        utilityAndFocusDao.observeDailySamples().map { list -> list.map { it.toDomain() } }
+
+    val utilityOnlineRoomsFlow: Flow<List<UtilityOnlineRoomDomain>> =
+        utilityAndFocusDao.observeOnlineRooms().map { list -> list.map { it.toDomain() } }
+
+    val utilityMetersFlow: Flow<List<UtilityMeterDomain>> =
+        utilityAndFocusDao.observeMeters().map { list -> list.map { it.toDomain() } }
+
+    val utilityReadingsFlow: Flow<List<UtilityReadingDomain>> =
+        utilityAndFocusDao.observeReadings().map { list -> list.map { it.toDomain() } }
+
+    val activeFocusSessionFlow: Flow<FocusSessionDomain?> =
+        utilityAndFocusDao.observeActiveRunningFocusSession().map { it?.toDomain() }
+
+    val completedFocusSessionsFlow: Flow<List<FocusSessionDomain>> =
+        utilityAndFocusDao.observeCompletedFocusSessions().map { list -> list.map { it.toDomain() } }
 
     private suspend fun notifyScheduleOrPolicyChanged(reason: String) {
         runCatching { onScheduleOrPolicyChangedListener?.invoke(reason) }
@@ -846,14 +925,247 @@ class CampusRepository private constructor(
         }
     }
 
+    suspend fun setCampusServiceFeatureFlag(
+        utilitiesEnabled: Boolean? = null,
+        libraryNativeEnabled: Boolean? = null,
+        librarySeatEnabled: Boolean? = null,
+        focusEnabled: Boolean? = null,
+        showTodayFocusQuickPill: Boolean? = null,
+        timetableInterchangeEnabled: Boolean? = null
+    ) {
+        appContext.appDataStore.edit { prefs ->
+            utilitiesEnabled?.let { prefs[PrefKeys.FF_UTILITIES_ENABLED] = it }
+            libraryNativeEnabled?.let { prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] = it }
+            librarySeatEnabled?.let { prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] = it }
+            focusEnabled?.let { prefs[PrefKeys.FF_FOCUS_ENABLED] = it }
+            showTodayFocusQuickPill?.let { prefs[PrefKeys.FF_TODAY_FOCUS_PILL] = it }
+            timetableInterchangeEnabled?.let { prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] = it }
+        }
+    }
+
+    suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) {
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
+        }
+    }
+
+    suspend fun setSelectedFocusMinutes(minutes: Int) {
+        appContext.appDataStore.edit { prefs ->
+            prefs[PrefKeys.SELECTED_FOCUS_MINUTES] = minutes.coerceIn(1, 180)
+        }
+    }
+
+    fun readUtilityAccountResult(): UtilityAccountReadResult =
+        utilityAccountStore.readAccountResult()
+
     /**
-     * 完全清除本地个人课程、成绩、导入审计与小组件个性化缓存（保留公开的校区建筑字典与节次模板）。
-     * 采用两阶段清理：
-     * 阶段 1：通过 onBeforeWipePersonalDataHook 先取消所有活跃 AlarmManager 闹钟与系统通知；
-     * 阶段 2：在 Room 事务内清空个人数据表及 reminder_tasks / reminder_event_prefs。
+     * 在线查询本人已绑定房间水电并同步更新缓存与每日电表采样。
+     */
+    suspend fun saveAndRefreshOnlineUtilities(
+        rawAccount: String? = null,
+        allowUnverified: Boolean = false
+    ): Result<List<OnlineUtilityRoomSnapshot>> = runCatching {
+        val accountToUse = if (!rawAccount.isNullOrBlank()) {
+            val clean = UtilityAccountSecureStore.validateAccountFormat(rawAccount)
+            var switched = false
+            utilityAccountStore.saveOrSwitchAccount(clean) {
+                switched = true
+            }
+            if (switched) {
+                database.withTransaction {
+                    utilityAndFocusDao.clearAllOnlineRooms()
+                    utilityAndFocusDao.clearAllDailySamples()
+                }
+            }
+            clean
+        } else {
+            when (val saved = utilityAccountStore.readAccountResult()) {
+                is UtilityAccountReadResult.Active -> saved.plainAccount
+                is UtilityAccountReadResult.InvalidatedAndReset ->
+                    throw IllegalStateException("安全密钥已重置，请重新输入本人校园卡账号")
+                is UtilityAccountReadResult.Empty ->
+                    throw IllegalArgumentException("请先填写本人校园卡账号（通常为学号）")
+            }
+        }
+
+        val startedAtMs = System.currentTimeMillis()
+        val snapshots = wanxiaoUtilityClient.queryOwnBoundRooms(
+            account = accountToUse,
+            allowUnverifiedTransport = allowUnverified
+        )
+        val finishedAtMs = System.currentTimeMillis()
+
+        database.withTransaction {
+            val existingRooms = utilityAndFocusDao.getOnlineRoomsSnapshot().associateBy { it.roomId }
+            val updatedEntities = snapshots.map { snap ->
+                val prev = existingRooms[snap.roomId]
+                if (snap.failed && prev != null) {
+                    prev.copy(failed = true)
+                } else {
+                    UtilityOnlineRoomEntity(
+                        roomId = snap.roomId,
+                        roomName = snap.roomName,
+                        campusCode = prev?.campusCode,
+                        devicesJson = encodeOnlineDevicesJson(snap.devices),
+                        updatedAtEpochMs = if (snap.fetchedAtEpochMs > 0L) snap.fetchedAtEpochMs else finishedAtMs,
+                        failed = snap.failed
+                    )
+                }
+            }
+            utilityAndFocusDao.clearAllOnlineRooms()
+            utilityAndFocusDao.upsertOnlineRooms(updatedEntities)
+
+            val existingSamples = utilityAndFocusDao.getDailySamplesSnapshot().map { it.toDomain() }
+            val mergedSamples = UtilitySamplingPolicy.mergeDailySamples(
+                existingSamples = existingSamples,
+                rooms = snapshots,
+                startedAtEpochMs = startedAtMs,
+                finishedAtEpochMs = finishedAtMs
+            )
+            utilityAndFocusDao.clearAllDailySamples()
+            utilityAndFocusDao.upsertDailySamples(mergedSamples.map { it.toEntity() })
+        }
+
+        if (snapshots.any { !it.failed }) {
+            appContext.appDataStore.edit { prefs ->
+                prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
+            }
+        }
+        snapshots
+    }
+
+    /**
+     * 供后台周期 Worker 或前台恢复时调用的按需水电采样：
+     * 仅在已开启水电功能、已开启在线传输许可、存在有效加密账号且满足采样间隔时触发。
+     */
+    suspend fun performPeriodicUtilitySampleIfEligible(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        val prefs = appContext.appDataStore.data.first()
+        val utilitiesEnabled = prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true
+        val allowUnverified = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
+        if (!utilitiesEnabled || !allowUnverified) return false
+
+        val lastSampleMs = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] ?: 0L
+        if (!UtilitySamplingPolicy.shouldSample(lastSampleMs, nowEpochMs)) return false
+
+        val activeAccount = (utilityAccountStore.readAccountResult() as? UtilityAccountReadResult.Active)
+            ?.plainAccount ?: return false
+
+        return saveAndRefreshOnlineUtilities(
+            rawAccount = activeAccount,
+            allowUnverified = true
+        ).isSuccess
+    }
+
+    suspend fun updateOnlineRoomCampus(roomId: String, campusCode: String?) {
+        utilityAndFocusDao.updateOnlineRoomCampus(roomId, campusCode)
+    }
+
+    suspend fun clearUtilityAccountAndOnlineCache() {
+        runCatching { utilityAccountStore.wipeAll() }
+        database.withTransaction {
+            utilityAndFocusDao.clearAllOnlineRooms()
+            utilityAndFocusDao.clearAllDailySamples()
+        }
+        appContext.appDataStore.edit { prefs ->
+            prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
+        }
+    }
+
+    suspend fun saveUtilityMeter(
+        name: String,
+        campusName: String,
+        roomName: String,
+        unit: String,
+        lowThreshold: Double
+    ) {
+        val cleanName = name.trim()
+        val cleanRoom = roomName.trim()
+        val cleanUnit = unit.trim()
+        require(cleanName.isNotEmpty() && cleanRoom.isNotEmpty() && cleanUnit.isNotEmpty()) {
+            "请完整填写表计名称、房间号与单位"
+        }
+        require(lowThreshold.isFinite() && lowThreshold >= 0.0) {
+            "低量提醒阈值不能为负数"
+        }
+        val entity = UtilityMeterEntity(
+            id = UUID.randomUUID().toString(),
+            name = cleanName.take(40),
+            campusName = campusName.trim().ifBlank { "莲花街校区" },
+            roomName = cleanRoom.take(40),
+            unit = cleanUnit.take(12),
+            lowThreshold = lowThreshold,
+            createdAtEpochMs = System.currentTimeMillis()
+        )
+        utilityAndFocusDao.upsertMeter(entity)
+    }
+
+    suspend fun deleteUtilityMeter(meterId: String) {
+        database.withTransaction {
+            utilityAndFocusDao.deleteReadingsByMeterId(meterId)
+            utilityAndFocusDao.deleteMeterById(meterId)
+        }
+    }
+
+    suspend fun addUtilityReading(
+        meterId: String,
+        value: Double,
+        topUpValue: Double = 0.0,
+        note: String = ""
+    ) {
+        require(value.isFinite() && value >= 0.0) { "当前读数不能为负数" }
+        require(topUpValue.isFinite() && topUpValue >= 0.0) { "充值/购入量不能为负数" }
+        val entity = UtilityReadingEntity(
+            id = UUID.randomUUID().toString(),
+            meterId = meterId,
+            value = value,
+            topUpValue = topUpValue,
+            recordedAtEpochMs = System.currentTimeMillis(),
+            note = note.trim().take(80)
+        )
+        utilityAndFocusDao.upsertReading(entity)
+    }
+
+    suspend fun deleteUtilityReading(readingId: String) {
+        utilityAndFocusDao.deleteReadingById(readingId)
+    }
+
+    suspend fun applyInterchangeCalendarMetadata(
+        termId: String,
+        semesterStart: LocalDate?,
+        totalWeeks: Int?,
+        sectionTimes: List<PeriodTime>
+    ) {
+        database.withTransaction {
+            if (semesterStart != null || totalWeeks != null) {
+                val terms = dao.observeTerms().first().map { it.toDomain() }
+                val target = terms.firstOrNull { it.id == termId }
+                if (target != null) {
+                    dao.upsertTerms(
+                        listOf(
+                            target.copy(
+                                startDate = semesterStart ?: target.startDate,
+                                weekCount = totalWeeks ?: target.weekCount
+                            ).toEntity()
+                        )
+                    )
+                }
+            }
+            if (sectionTimes.isNotEmpty()) {
+                dao.upsertPeriodTimes(sectionTimes.map { it.toEntity() })
+            }
+        }
+        notifyScheduleOrPolicyChanged("INTERCHANGE_CALENDAR_APPLIED")
+    }
+
+    /**
+     * 完全清除本地个人课程、成绩、导入审计、水电账号与历史、自习专注及学校网页会话（保留公开的校区建筑字典与节次模板）。
      */
     suspend fun wipeAllPersonalData() {
-        runCatching { onBeforeWipePersonalDataHook?.invoke() }
+        for (hook in beforeWipeHooks.values) {
+            runCatching { hook.invoke() }
+        }
         database.withTransaction {
             dao.clearStudentProfile()
             dao.clearCourses()
@@ -865,6 +1177,11 @@ class CampusRepository private constructor(
             dao.clearWidgetConfigs()
             reminderDao.clearAllTasks()
             reminderDao.clearAllEventPrefs()
+            utilityAndFocusDao.clearAllDailySamples()
+            utilityAndFocusDao.clearAllOnlineRooms()
+            utilityAndFocusDao.clearAllReadings()
+            utilityAndFocusDao.clearAllMeters()
+            utilityAndFocusDao.clearAllFocusSessions()
         }
         appContext.appDataStore.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
@@ -875,6 +1192,8 @@ class CampusRepository private constructor(
             prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
             prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
             prefs.remove(PrefKeys.REMINDER_DIAGNOSTIC_LOGS)
+            prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
+            prefs.remove(PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
             prefs[PrefKeys.SEEDED] = true
             prefs[PrefKeys.CLEAN_BASE_V2] = true
             prefs[PrefKeys.ONBOARDING_COMPLETED] = false
@@ -1000,7 +1319,7 @@ class CampusRepository private constructor(
                         HautDatabase::class.java,
                         "haut_campus_assistant.db"
                     )
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                         .build()
                     CampusRepository(appCtx, db).also { INSTANCE = it }
                 }

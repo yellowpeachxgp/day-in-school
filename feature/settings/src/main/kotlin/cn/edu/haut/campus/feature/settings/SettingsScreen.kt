@@ -158,6 +158,10 @@ fun SettingsScreen(
     onBack: (() -> Unit)? = null,
     onNavigateToImporter: () -> Unit = {},
     onNavigateToMapWithRoom: (String) -> Unit = {},
+    onNavigateToElectricity: () -> Unit = {},
+    onNavigateToLibraryCatalog: () -> Unit = {},
+    onNavigateToLibrarySeats: () -> Unit = {},
+    onNavigateToFocus: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -302,9 +306,9 @@ fun SettingsScreen(
         checkRes.onSuccess { info ->
             releaseInfoState = info
             releaseStatusMessage = if (info.hasNewerVersion) {
-                "发现新版本 ${info.tagName}（发布于 ${info.publishedAt}），支持一键直接拉取安装"
+                "发现新版本 ${info.tagName}"
             } else {
-                "当前 v$currentInstalledVersion 已是最新版本（远端 Release: ${info.tagName}）"
+                "当前已是最新版本（v$currentInstalledVersion）"
             }
         }
     }
@@ -330,8 +334,8 @@ fun SettingsScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = if (onBack == null) "我的" else "个人中心与设置",
-            subtitle = "学籍名片 · 校园工具箱 · 偏好设置",
+            title = if (onBack == null) "我的" else "设置",
+            subtitle = "河南工业大学 · 莲花街校区",
             badgeText = resolvedWeekInfo?.teachingWeek?.let { "第 $it 周" },
             navigationIcon = if (onBack != null) {
                 {
@@ -396,7 +400,7 @@ fun SettingsScreen(
                     if (prefs.hasSavedCredentials && !isDynamicSyncing) {
                         scope.launch {
                             isDynamicSyncing = true
-                            feedbackText = "正在从教务系统动态拉取最新课表、考试与成绩..."
+                            feedbackText = "正在同步课表、考试和成绩..."
                             val res = repository.performDynamicAcademicSync(force = true)
                             isDynamicSyncing = false
                             if (res == null) {
@@ -404,9 +408,9 @@ fun SettingsScreen(
                             } else {
                                 res.onSuccess { syncData ->
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "动态同步完成：${syncData.timetableCandidates.size} 门课程 · ${syncData.examItems.size} 场考试 · ${syncData.gradeAttempts.size} 条成绩。"
+                                    feedbackText = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试、${syncData.gradeAttempts.size} 条成绩"
                                 }.onFailure { err ->
-                                    feedbackText = "动态同步失败：${err.message ?: "请检查网络"}"
+                                    feedbackText = "同步失败：${err.message ?: "请检查网络"}"
                                 }
                             }
                         }
@@ -501,12 +505,12 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "校历调休与停课安排 (${calendarOverrides.size})",
+                        text = "调休与停课 (${calendarOverrides.size})",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     XPeachFilterPill(
-                        label = "+ 新增调休/停课",
+                        label = "+ 添加",
                         selected = false,
                         onClick = { showAddCalendarOverrideDialog = true }
                     )
@@ -565,6 +569,80 @@ fun SettingsScreen(
                 }
             }
 
+            // 3.5 校园服务快捷入口（宿舍水电 / 馆藏查询 / 座位预约 / 自习专注 / 课表互通）
+            if (prefs.utilitiesEnabled || prefs.libraryNativeEnabled || prefs.librarySeatEnabled || prefs.focusEnabled) {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "校园服务",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (prefs.timetableInterchangeEnabled) {
+                            XPeachFilterPill(
+                                label = "课表文件互通 (.md/.json)",
+                                selected = false,
+                                onClick = onNavigateToImporter
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val serviceEntries = buildList {
+                        if (prefs.utilitiesEnabled) {
+                            add(Triple("宿舍水电", "电费余量与每日趋势", onNavigateToElectricity))
+                        }
+                        if (prefs.libraryNativeEnabled) {
+                            add(Triple("馆藏查询", "书目检索与在馆状态", onNavigateToLibraryCatalog))
+                        }
+                        if (prefs.librarySeatEnabled) {
+                            add(Triple("座位预约", "图书馆选座与余位", onNavigateToLibrarySeats))
+                        }
+                        if (prefs.focusEnabled) {
+                            add(Triple("自习专注", "倒计时与到点提醒", onNavigateToFocus))
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (rowItems in serviceEntries.chunked(2)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                for ((titleText, subText, action) in rowItems) {
+                                    XPeachWell(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable(onClick = action)
+                                    ) {
+                                        Text(
+                                            text = titleText,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = subText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (rowItems.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 4. 校园工具箱：莲花街校区「今日空教室 / 自习室速查」
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -574,11 +652,11 @@ fun SettingsScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "空教室与自习室速查",
+                            text = "空教室查询",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "${today.dayOfWeek.ChineseLabel} · 基于已同步课表反查空闲教室，点击可导航",
+                            text = "${today.dayOfWeek.ChineseLabel} · 根据当前课表筛选空闲教室",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -691,28 +769,17 @@ fun SettingsScreen(
                 }
             }
 
-            // 4B. 预置 QQ 频道模块（点击快速跳转未来或自定义的 QQ 频道加入）
+            // 4B. 校园 QQ 频道
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "预置 QQ 频道",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = "点击卡片快速跳转加入工大 QQ 频道 · 支持自定义写入频道邀请链接",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    XPeachStatusBadge(
-                        text = "快速跳转",
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.primary
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "校园频道",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "点击可进入对应 QQ 频道，也可修改链接",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
@@ -763,7 +830,7 @@ fun SettingsScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     XPeachStatusBadge(
-                                        text = if (isCustomized) "已写入" else channel.tagLabel,
+                                        text = if (isCustomized) "已修改" else channel.tagLabel,
                                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                                         contentColor = MaterialTheme.colorScheme.primary
                                     )
@@ -789,12 +856,12 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 XPeachFilterPill(
-                                    label = "写入链接",
+                                    label = "改链接",
                                     selected = false,
                                     onClick = { editingChannelItem = channel }
                                 )
                                 XPeachFilterPill(
-                                    label = "进入频道",
+                                    label = "打开",
                                     selected = true,
                                     onClick = {
                                         feedbackText = jumpToPresetQqChannel(
@@ -810,7 +877,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 4C. 工大社团与学生组织模块（方便新生了解各社团、一键复制群号或唤醒 QQ 加群）
+            // 4C. 学生社团
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -819,11 +886,11 @@ fun SettingsScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "工大社团与迎新加群",
+                            text = "学生社团",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "莲花街校区 ${PresetCampusCommunityCatalog.defaultCampusClubs.size} 个热门社团与组织 · 一键加群或复制群号",
+                            text = "共 ${PresetCampusCommunityCatalog.defaultCampusClubs.size} 个社团，可复制群号或打开 QQ 加群",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -863,7 +930,7 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = clubSearchQuery,
                             onValueChange = { clubSearchQuery = it },
-                            label = { Text("搜索社团名称、竞赛关键词、活动地点或群号") },
+                            label = { Text("搜索社团或群号") },
                             singleLine = true,
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -972,14 +1039,14 @@ fun SettingsScreen(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "活动场地：${club.activityVenue}",
+                                                text = "场地：${club.activityVenue}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = "纳新 QQ 群：$effectiveGroupNo",
+                                                text = "QQ 群：$effectiveGroupNo",
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = MaterialTheme.colorScheme.primary,
@@ -995,15 +1062,15 @@ fun SettingsScreen(
                                                 onClick = { editingClubItem = club }
                                             )
                                             XPeachFilterPill(
-                                                label = "复制群号",
+                                                label = "复制",
                                                 selected = false,
                                                 onClick = {
                                                     copyTextToClipboard(context, "社团QQ群号", effectiveGroupNo)
-                                                    feedbackText = "已复制「${club.name}」QQ 群号：$effectiveGroupNo"
+                                                    feedbackText = "已复制「${club.name}」群号：$effectiveGroupNo"
                                                 }
                                             )
                                             XPeachFilterPill(
-                                                label = "一键加群",
+                                                label = "加群",
                                                 selected = true,
                                                 onClick = {
                                                     feedbackText = joinOrCopyClubQqGroup(
@@ -1025,7 +1092,7 @@ fun SettingsScreen(
             // 5. 学分结构分类统计（当存在已导入成绩时展示）
             if (attempts.isNotEmpty()) {
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("修读学分构成", style = MaterialTheme.typography.titleMedium)
+                    Text("学分统计", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(8.dp))
                     val categoryCredits = remember(attempts) {
                         val passed = attempts.filter { it.passed }.distinctBy { it.courseKey }
@@ -1247,15 +1314,15 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("莲花街作息时间表", style = MaterialTheme.typography.titleMedium)
+                        Text("作息时间", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "08:00–21:25 · 共 ${periodTimes.size} 节 · 支持自定义微调",
+                            text = "08:00–21:25 · 共 ${periodTimes.size} 节 · 点击时间可修改",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     XPeachFilterPill(
-                        label = if (expandPeriodTable) "收起" else "展开编辑",
+                        label = if (expandPeriodTable) "收起" else "展开",
                         selected = expandPeriodTable,
                         onClick = { expandPeriodTable = !expandPeriodTable }
                     )
@@ -1286,7 +1353,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 7.5 课程与考试智能提醒（含「稍后提醒」Snooze 系统）
+            // 7.5 上课与考试提醒（含「稍后提醒」Snooze）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 val rCfg = prefs.reminderConfig
                 Row(
@@ -1295,9 +1362,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("课程与考试智能提醒", style = MaterialTheme.typography.titleMedium)
+                        Text("上课与考试提醒", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "课前提醒 · 通知栏稍后提醒 · 考前1天/1小时自动提醒",
+                            text = "课前提醒 · 稍后提醒 · 考试提醒",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1305,9 +1372,9 @@ fun SettingsScreen(
                     XPeachStatusBadge(
                         text = when {
                             !rCfg.enabled -> "已关闭"
-                            !reminderPermSnapshot.canPostNotifications -> "需通知权限"
-                            reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred -> "准时优先"
-                            else -> "省电提醒"
+                            !reminderPermSnapshot.canPostNotifications -> "无通知权限"
+                            reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred -> "精确闹钟"
+                            else -> "普通提醒"
                         },
                         containerColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
                             MaterialTheme.colorScheme.primaryContainer
@@ -1330,9 +1397,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("开启课程与考试智能提醒", style = MaterialTheme.typography.bodyMedium)
+                        Text("开启上课与考试提醒", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "基于莲花街作息表自动计算课前与考前提醒，支持调休补课与一键延后",
+                            text = "按作息时间自动发送课前和考前通知，可在通知栏延后",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1365,7 +1432,7 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "系统通知权限未开启，提醒将无法弹出",
+                                    text = "未开启通知权限，无法弹出提醒",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.weight(1f)
@@ -1390,7 +1457,7 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "未开启「闹钟和提醒」精确权限，当前自动降级为省电非精确模式",
+                                    text = "未开启精确闹钟权限，通知可能延迟几分钟",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
@@ -1404,7 +1471,7 @@ fun SettingsScreen(
                                         }
                                     }
                                 ) {
-                                    Text("授权准时", maxLines = 1, softWrap = false)
+                                    Text("去开启", maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -1414,7 +1481,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "默认课前提前时间（当前：提前 ${rCfg.classLeadMinutes} 分钟）",
+                    text = "课前提前时间（当前：提前 ${rCfg.classLeadMinutes} 分钟）",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -1433,7 +1500,7 @@ fun SettingsScreen(
                                     repository.updateReminderGlobalConfig {
                                         it.copy(classLeadMinutes = lead)
                                     }
-                                    feedbackText = "已设置默认课前提前 $lead 分钟提醒"
+                                    feedbackText = "已设置课前提前 $lead 分钟提醒"
                                 }
                             }
                         )
@@ -1448,7 +1515,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "「稍后提醒」单次最大延后次数（上课前 2 分钟截止）",
+                        text = "单次提醒最多延后次数",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.weight(1f)
@@ -1483,7 +1550,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("考试提前 1 天提醒", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "开考前 24 小时发送复习与考场准备提醒",
+                            text = "开考前一天提醒考试时间与考场",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1506,7 +1573,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("考试提前 1 小时提醒", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "开考前 60 分钟提醒考场、座位号与一键路线导航",
+                            text = "开考前 1 小时提醒考场与座位号",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1527,9 +1594,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("准时优先模式 (Exact Alarm)", style = MaterialTheme.typography.bodyMedium)
+                        Text("使用精确闹钟", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "使用系统精确闹钟确保课前与稍后提醒准点送达",
+                            text = "避免系统省电策略延迟上课提醒",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1550,9 +1617,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("锁屏通知隐藏具体课程与教室", style = MaterialTheme.typography.bodyMedium)
+                        Text("锁屏隐藏课程与教室名称", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "锁屏状态下仅显示「有一门课程即将开始」，解锁后显示教室详情",
+                            text = "锁屏时只提示有课，解锁后显示详情",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1572,7 +1639,7 @@ fun SettingsScreen(
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = prefs.lastReminderReconcileSummary
-                            ?: "当前活跃计划：${activeReminderTasks.size} 项",
+                            ?: "待触发提醒：${activeReminderTasks.size} 项",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium
@@ -1583,7 +1650,7 @@ fun SettingsScreen(
                             .atZone(HAUT_ZONE_ID)
                             .format(AUDIT_TIME_FMT)
                         Text(
-                            text = "最近计划触发：$nextTimeStr · 状态 ${nextTask.status.name} (延后 ${nextTask.snoozeCount}/${nextTask.maxSnoozes})",
+                            text = "下次提醒：$nextTimeStr（已延后 ${nextTask.snoozeCount}/${nextTask.maxSnoozes} 次）",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1603,13 +1670,13 @@ fun SettingsScreen(
                                     reason = "USER_MANUAL_REBUILD",
                                     forceRescheduleAlarms = true
                                 )
-                                feedbackText = "已重建未来 7 天提醒计划：共排程 ${report.activeScheduledCount} 项"
+                                feedbackText = "已刷新提醒：共安排 ${report.activeScheduledCount} 项"
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("重排提醒计划", maxLines = 1, softWrap = false)
+                        Text("刷新提醒", maxLines = 1, softWrap = false)
                     }
 
                     FilledTonalButton(
@@ -1622,9 +1689,9 @@ fun SettingsScreen(
                                 scope.launch {
                                     val sent = reminderCoordinator.triggerTestReminder()
                                     feedbackText = if (sent) {
-                                        "已发送测试提醒通知，请下拉通知栏体验「去教室」操作"
+                                        "已发送测试通知"
                                     } else {
-                                        "发送失败：请先在系统设置中开启通知权限"
+                                        "发送失败，请先开启通知权限"
                                     }
                                 }
                             }
@@ -1632,7 +1699,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("发送测试提醒", maxLines = 1, softWrap = false)
+                        Text("测试通知", maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -1644,12 +1711,12 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "提醒调度自检摘要 (${prefs.reminderDiagnosticLogs.size})",
+                            text = "提醒记录 (${prefs.reminderDiagnosticLogs.size})",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         TextButton(onClick = { expandReminderDiagnostics = !expandReminderDiagnostics }) {
-                            Text(if (expandReminderDiagnostics) "收起日志" else "展开日志")
+                            Text(if (expandReminderDiagnostics) "收起" else "展开")
                         }
                     }
                     AnimatedVisibility(visible = expandReminderDiagnostics) {
@@ -1677,10 +1744,80 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text("显示宿舍水电服务", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.utilitiesEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setCampusServiceFeatureFlag(utilitiesEnabled = enabled) }
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示图书馆馆藏查询", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.libraryNativeEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setCampusServiceFeatureFlag(libraryNativeEnabled = enabled) }
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示图书馆座位预约", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.librarySeatEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setCampusServiceFeatureFlag(librarySeatEnabled = enabled) }
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("显示自习专注计时", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.focusEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setCampusServiceFeatureFlag(focusEnabled = enabled) }
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("在「今天」页显示自习专注快捷栏", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.showTodayFocusQuickPill,
+                        onCheckedChange = { enabled ->
+                            scope.launch { repository.setCampusServiceFeatureFlag(showTodayFocusQuickPill = enabled) }
+                        }
+                    )
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    thickness = 0.6.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("自动动态同步教务（课表与考试）", style = MaterialTheme.typography.bodyMedium)
+                        Text("启动时自动更新课表与考试", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "启动应用时自动拉取教务最新排课、期初/期中/期末考试与成绩",
+                            text = "打开应用时自动从教务系统获取最新课表、考试和成绩",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1701,9 +1838,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("系统壁纸动态取色 (Material You)", style = MaterialTheme.typography.bodyMedium)
+                        Text("跟随系统壁纸颜色", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "开启后跟随 Android 12+ 壁纸色彩，关闭则使用工大蓝主题",
+                            text = "开启后使用系统壁纸配色，关闭则使用默认蓝色",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1724,9 +1861,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("成绩与学籍隐私护盾", style = MaterialTheme.typography.bodyMedium)
+                        Text("隐藏成绩与学号", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "隐藏绩点分值并开启系统级防截屏保护 (FLAG_SECURE)",
+                            text = "隐藏绩点和分数，并禁止在应用内截屏",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1752,7 +1889,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("打开初始化向导", maxLines = 1, softWrap = false)
+                        Text("重新进入引导页", maxLines = 1, softWrap = false)
                     }
 
                     Button(
@@ -1768,7 +1905,7 @@ fun SettingsScreen(
                 }
             }
 
-            // 9. 预置版本检测与 GitHub Release 在线直装更新模块
+            // 9. 版本更新
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1777,11 +1914,11 @@ fun SettingsScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = "版本检测与在线直装更新",
+                            text = "版本更新",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "基于 GitHub Release API 自动检测并直接拉取最新 APK 安装包",
+                            text = "检查新版本并下载安装包",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1813,9 +1950,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("启动时自动从 GitHub 检测新版本", style = MaterialTheme.typography.bodyMedium)
+                        Text("启动时自动检查更新", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "发现新版本时自动弹窗提醒，免去手动进 Release 页面下载",
+                            text = "有新版本时弹窗提示",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1833,8 +1970,8 @@ fun SettingsScreen(
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = releaseStatusMessage
-                            ?: if (isCheckingRelease) "正在连接 GitHub Releases API 检测最新版本..."
-                            else "当前已安装版本：v$currentInstalledVersion · Android ${Build.VERSION.RELEASE}",
+                            ?: if (isCheckingRelease) "正在检查新版本..."
+                            else "当前版本：v$currentInstalledVersion · Android ${Build.VERSION.RELEASE}",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
                         color = if (releaseInfoState?.hasNewerVersion == true) {
@@ -1847,7 +1984,7 @@ fun SettingsScreen(
                     releaseInfoState?.let { info ->
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "最新 Release：${info.releaseTitle} (${info.tagName}) · 发布日期 ${info.publishedAt.ifBlank { "最新" }}",
+                            text = "最新版本：${info.releaseTitle} (${info.tagName}) · ${info.publishedAt.ifBlank { "最新" }}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1888,18 +2025,18 @@ fun SettingsScreen(
                         onClick = {
                             scope.launch {
                                 isCheckingRelease = true
-                                releaseStatusMessage = "正在从 GitHub Release API 检测最新版本..."
+                                releaseStatusMessage = "正在检查更新..."
                                 val res = GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion)
                                 isCheckingRelease = false
                                 res.onSuccess { info ->
                                     releaseInfoState = info
                                     releaseStatusMessage = if (info.hasNewerVersion) {
-                                        "检测到新版本 ${info.tagName}！点击右侧按钮即可直接拉取并安装。"
+                                        "发现新版本 ${info.tagName}，点击右侧按钮下载安装。"
                                     } else {
-                                        "当前 v$currentInstalledVersion 已是最新版本（远端 Release: ${info.tagName}）。"
+                                        "当前 v$currentInstalledVersion 已是最新版本。"
                                     }
                                 }.onFailure { err ->
-                                    releaseStatusMessage = "检测失败：${err.message ?: "请检查网络连接"}"
+                                    releaseStatusMessage = "检查失败：${err.message ?: "请检查网络连接"}"
                                 }
                             }
                         },
@@ -1907,7 +2044,7 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            text = if (isCheckingRelease) "正在检测..." else "检测更新",
+                            text = if (isCheckingRelease) "正在检查..." else "检查更新",
                             maxLines = 1,
                             softWrap = false
                         )
@@ -1921,24 +2058,24 @@ fun SettingsScreen(
                                 GitHubReleaseUpdater.triggerInstallApk(context, readyFile)
                                     .onSuccess { installed ->
                                         releaseStatusMessage = if (installed) {
-                                            "已唤起系统安装器，请确认安装。"
+                                            "已打开安装界面，请确认安装。"
                                         } else {
-                                            "请在系统设置中开启「允许安装未知应用」后再次点击安装。"
+                                            "请先允许「安装未知应用」后再点击安装。"
                                         }
                                     }
                                     .onFailure { err ->
-                                        releaseStatusMessage = "唤起安装器失败：${err.message}"
+                                        releaseStatusMessage = "无法打开安装器：${err.message}"
                                     }
                             } else {
                                 scope.launch {
                                     isDownloadingApk = true
                                     apkDownloadProgress = 0f
-                                    releaseStatusMessage = "正在获取最新 Release APK 下载地址..."
+                                    releaseStatusMessage = "正在获取下载地址..."
                                     val targetInfo = releaseInfoState
                                         ?: GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion).getOrNull()
                                     if (targetInfo == null) {
                                         isDownloadingApk = false
-                                        releaseStatusMessage = "无法从 GitHub 获取最新 Release 信息，请检查网络后重试。"
+                                        releaseStatusMessage = "获取版本信息失败，请检查网络后重试。"
                                         return@launch
                                     }
                                     releaseInfoState = targetInfo
@@ -1951,7 +2088,7 @@ fun SettingsScreen(
                                                 val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
                                                 val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
                                                 releaseStatusMessage =
-                                                    "正在拉取 ${targetInfo.tagName} 安装包：${(apkDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
+                                                    "正在下载 ${targetInfo.tagName}：${(apkDownloadProgress * 100).toInt()}% ($dlMb / $totalMb MB)"
                                             }
                                         }
                                     )
@@ -1961,16 +2098,16 @@ fun SettingsScreen(
                                         GitHubReleaseUpdater.triggerInstallApk(context, apkFile)
                                             .onSuccess { installed ->
                                                 releaseStatusMessage = if (installed) {
-                                                    "拉取完成！已自动调起系统安装程序。"
+                                                    "下载完成，正在打开安装界面。"
                                                 } else {
-                                                    "APK 拉取完成！请开启「允许安装未知应用」后再次点击此按钮完成安装。"
+                                                    "下载完成，请允许「安装未知应用」后点击安装。"
                                                 }
                                             }
                                             .onFailure { err ->
-                                                releaseStatusMessage = "安装调起失败：${err.message}"
+                                                releaseStatusMessage = "打开安装失败：${err.message}"
                                             }
                                     }.onFailure { err ->
-                                        releaseStatusMessage = "拉取 APK 失败：${err.message ?: "请检查网络"}"
+                                        releaseStatusMessage = "下载失败：${err.message ?: "请检查网络"}"
                                     }
                                 }
                             }
@@ -1980,10 +2117,10 @@ fun SettingsScreen(
                     ) {
                         Text(
                             text = when {
-                                isDownloadingApk -> "正在拉取..."
-                                downloadedApkFile?.exists() == true -> "立即安装 APK"
-                                releaseInfoState?.hasNewerVersion == true -> "直接拉取新版本"
-                                else -> "直接拉取最新包"
+                                isDownloadingApk -> "正在下载..."
+                                downloadedApkFile?.exists() == true -> "安装更新"
+                                releaseInfoState?.hasNewerVersion == true -> "下载新版本"
+                                else -> "下载安装包"
                             },
                             maxLines = 1,
                             softWrap = false
@@ -1997,7 +2134,7 @@ fun SettingsScreen(
         }
     }
 
-    // 弹窗 1：编辑个人学籍名片
+    // 弹窗 1：编辑个人信息
     if (showEditProfileDialog) {
         var nameInput by remember(studentProfile) { mutableStateOf(studentProfile?.displayName ?: "") }
         var schoolIdInput by remember(studentProfile) { mutableStateOf(studentProfile?.schoolId ?: "") }
@@ -2006,7 +2143,7 @@ fun SettingsScreen(
 
         AlertDialog(
             onDismissRequest = { showEditProfileDialog = false },
-            title = { Text("编辑个人学籍名片") },
+            title = { Text("编辑个人信息") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -2049,7 +2186,7 @@ fun SettingsScreen(
                                 )
                             )
                             showEditProfileDialog = false
-                            feedbackText = "已保存个人学籍名片。"
+                            feedbackText = "已保存个人信息。"
                         }
                     },
                     shape = RoundedCornerShape(8.dp)
@@ -2256,7 +2393,7 @@ fun SettingsScreen(
             onDismissRequest = { showWipeConfirmDialog = false },
             title = { Text("清除个人数据") },
             text = {
-                Text("将清空本地课表、成绩、学籍名片、网页登录状态与小组件配置。")
+                Text("将清空本地课表、成绩、个人信息、登录状态与小组件配置。")
             },
             confirmButton = {
                 Button(
@@ -2286,7 +2423,7 @@ fun SettingsScreen(
         )
     }
 
-    // 弹窗 6：自定义写入预置 QQ 频道邀请链接
+    // 弹窗 6：修改 QQ 频道邀请链接
     val channelToEdit = editingChannelItem
     if (channelToEdit != null) {
         var channelUrlInput by remember(channelToEdit, prefs.customChannelUrls) {
@@ -2298,18 +2435,18 @@ fun SettingsScreen(
 
         AlertDialog(
             onDismissRequest = { editingChannelItem = null },
-            title = { Text("配置「${channelToEdit.title}」链接") },
+            title = { Text("修改「${channelToEdit.title}」链接") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "可填入正式 QQ 频道邀请链接（如 https://pd.qq.com/s/xxxx 或 mqqapi:// 协议链接），保存后点击卡片即直接跳转。",
+                        text = "填入 QQ 频道邀请链接（如 https://pd.qq.com/s/xxxx），保存后点击即可打开。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
                         value = channelUrlInput,
                         onValueChange = { channelUrlInput = it },
-                        label = { Text("QQ 频道邀请链接") },
+                        label = { Text("QQ 频道链接") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2321,7 +2458,7 @@ fun SettingsScreen(
                         scope.launch {
                             repository.saveCustomChannelUrl(channelToEdit.id, channelUrlInput.trim())
                             editingChannelItem = null
-                            feedbackText = "已更新「${channelToEdit.title}」跳转链接。"
+                            feedbackText = "已更新「${channelToEdit.title}」链接。"
                         }
                     },
                     shape = RoundedCornerShape(8.dp)
@@ -2337,7 +2474,7 @@ fun SettingsScreen(
         )
     }
 
-    // 弹窗 7：修改社团纳新 QQ 群号
+    // 弹窗 7：修改社团 QQ 群号
     val clubToEdit = editingClubItem
     if (clubToEdit != null) {
         var groupNoInput by remember(clubToEdit, prefs.customClubGroupNumbers) {
@@ -2349,18 +2486,18 @@ fun SettingsScreen(
 
         AlertDialog(
             onDismissRequest = { editingClubItem = null },
-            title = { Text("更新「${clubToEdit.name}」纳新群号") },
+            title = { Text("修改「${clubToEdit.name}」群号") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "若该社团更新了本学期最新迎新 QQ 群号，可在此直接修改保存，点击一键加群将自动跳转新群号。",
+                        text = "输入最新社团 QQ 群号，保存后点击加群即可跳转。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
                         value = groupNoInput,
                         onValueChange = { groupNoInput = it },
-                        label = { Text("社团 QQ 群号") },
+                        label = { Text("QQ 群号") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2372,7 +2509,7 @@ fun SettingsScreen(
                         scope.launch {
                             repository.saveCustomClubGroupNumber(clubToEdit.id, groupNoInput.trim())
                             editingClubItem = null
-                            feedbackText = "已更新「${clubToEdit.name}」QQ 群号为 ${groupNoInput.trim()}。"
+                            feedbackText = "已更新「${clubToEdit.name}」群号为 ${groupNoInput.trim()}。"
                         }
                     },
                     shape = RoundedCornerShape(8.dp)
@@ -2397,7 +2534,7 @@ private fun copyTextToClipboard(context: Context, label: String, text: String) {
 }
 
 /**
- * 一键唤醒手机 QQ 群资料卡或复制社团群号：
+ * 唤醒手机 QQ 群资料卡或复制社团群号：
  * 使用官方 `mqqapi://card/show_pslcard?src_type=internal&version=1&uin=<群号>&card_type=group&source=qrcode` 协议直达加群。
  */
 private fun joinOrCopyClubQqGroup(
@@ -2415,14 +2552,14 @@ private fun joinOrCopyClubQqGroup(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
-        "已复制群号 $cleanNo 并正在拉起手机 QQ 打开「$clubName」群资料卡..."
+        "已复制群号 $cleanNo，正在打开手机 QQ..."
     }.getOrElse {
-        "已复制「$clubName」群号 $cleanNo 到剪贴板（未检测到手机 QQ，可粘贴群号搜索加入）"
+        "已复制群号 $cleanNo 到剪贴板"
     }
 }
 
 /**
- * 快速跳转加入预置 QQ 频道：
+ * 跳转加入 QQ 频道：
  * 同时将频道邀请链接复制到剪贴板，并通过系统 ACTION_VIEW 直接调起 QQ 频道或浏览器落地页。
  */
 private fun jumpToPresetQqChannel(
@@ -2437,9 +2574,9 @@ private fun jumpToPresetQqChannel(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
-        "正在跳转进入「$channelTitle」..."
+        "正在打开「$channelTitle」..."
     }.getOrElse {
-        "已复制「$channelTitle」频道链接：$cleanUrl"
+        "已复制「$channelTitle」链接：$cleanUrl"
     }
 }
 
@@ -2451,8 +2588,8 @@ private fun StudentDigitalIdCard(
     onEditProfile: () -> Unit,
     onSyncNow: () -> Unit
 ) {
-    val displayName = profile?.displayName?.takeIf { it.isNotBlank() } ?: "工大学子"
-    val rawSchoolId = profile?.schoolId?.takeIf { it.isNotBlank() } ?: "点击右侧同步教务绑定学号"
+    val displayName = profile?.displayName?.takeIf { it.isNotBlank() } ?: "未设置姓名"
+    val rawSchoolId = profile?.schoolId?.takeIf { it.isNotBlank() } ?: "同步教务后自动显示学号"
     val displaySchoolId = if (privacyMasked && rawSchoolId.length >= 8) {
         rawSchoolId.take(4) + "****" + rawSchoolId.takeLast(3)
     } else {
@@ -2507,7 +2644,7 @@ private fun StudentDigitalIdCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         XPeachStatusBadge(
-                            text = if (profile != null) "已认证" else "未同步",
+                            text = if (profile != null) "已绑定" else "未同步",
                             containerColor = if (profile != null) {
                                 MaterialTheme.colorScheme.primaryContainer
                             } else {
@@ -2561,7 +2698,7 @@ private fun StudentDigitalIdCard(
                 text = if (lastAudit != null) {
                     "上次同步：${AUDIT_TIME_FMT.format(lastAudit.importedAt)}"
                 } else {
-                    "支持正方教务直连同步课表与成绩"
+                    "尚未同步教务数据"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2570,7 +2707,7 @@ private fun StudentDigitalIdCard(
                 overflow = TextOverflow.Ellipsis
             )
             XPeachFilterPill(
-                label = "立即同步",
+                label = "同步教务",
                 selected = true,
                 onClick = onSyncNow
             )

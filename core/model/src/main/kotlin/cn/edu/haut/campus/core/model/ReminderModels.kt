@@ -47,9 +47,9 @@ enum class ReminderSchedulerState {
 }
 
 enum class ReminderAccuracyMode(val label: String) {
-    EXACT("准时优先"),
-    INEXACT("省电/非精确"),
-    NONE("未调度");
+    EXACT("精确闹钟"),
+    INEXACT("普通提醒"),
+    NONE("未设置");
 
     companion object {
         fun fromName(raw: String): ReminderAccuracyMode =

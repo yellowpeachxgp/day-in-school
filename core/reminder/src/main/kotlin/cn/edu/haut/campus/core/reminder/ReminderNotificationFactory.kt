@@ -266,7 +266,7 @@ object ReminderNotificationFactory {
             .setContentText("08:00–09:40 · 31号教学楼204（20 分钟后开始）")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "08:00–09:40 · 31号教学楼204（20 分钟后开始）\n通知渠道与快捷操作按钮已就绪，点击「去教室」可直接联动校园地图。"
+                    "08:00–09:40 · 31号教学楼204（20 分钟后开始）\n点击「去教室」可在地图中查看路线。"
                 )
             )
             .setPriority(NotificationCompat.PRIORITY_HIGH)

@@ -219,17 +219,22 @@ fun CampusMapScreen(
     var hasLocationPermission by remember {
         mutableStateOf(CampusMapNavigator.hasLocationPermission(context))
     }
+    var locationRefreshEpoch by remember { mutableIntStateOf(0) }
+    var isFollowingUser by remember { mutableStateOf(initialClassroomQuery.isNullOrBlank()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         hasLocationPermission = grants.values.any { it } || CampusMapNavigator.hasLocationPermission(context)
+        isFollowingUser = true
+        locationRefreshEpoch++
     }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasLocationPermission = CampusMapNavigator.hasLocationPermission(context)
+                locationRefreshEpoch++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -237,7 +242,7 @@ fun CampusMapScreen(
     }
 
     // 实时 GPS 定位流与电子罗盘朝向传感器流
-    val userLocationFlow = remember(hasLocationPermission, context) {
+    val userLocationFlow = remember(hasLocationPermission, context, locationRefreshEpoch) {
         CampusMapNavigator.observeUserLocation(context)
     }
     val userLocation by userLocationFlow.collectAsState(initial = null)
@@ -261,9 +266,22 @@ fun CampusMapScreen(
     var mapCenterLonGcj by remember { mutableStateOf(defaultCenterGcj.second) }
     var mapZoom by remember { mutableFloatStateOf(16.2f) }
 
+    // 当处于定位跟随模式时，用户坐标变化即实时同步更新地图视口中心
+    LaunchedEffect(userLocation?.latitude, userLocation?.longitude, isFollowingUser) {
+        val loc = userLocation
+        if (isFollowingUser && loc != null && loc.isInsideLianhuajieCampus) {
+            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(loc.latitude, loc.longitude)
+            mapCenterLatGcj = glat
+            mapCenterLonGcj = glon
+        }
+    }
+
     LaunchedEffect(resetTrigger) {
         if (resetTrigger > 0) {
             expandRouteSteps = false
+            manualOriginBuilding = null
+            isFollowingUser = true
+            locationRefreshEpoch++
             if (userLocation?.isInsideLianhuajieCampus == true) {
                 val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
                     userLocation!!.latitude,
@@ -284,6 +302,7 @@ fun CampusMapScreen(
         if (resolution?.building != null) {
             val b = resolution.building!!
             selectedBuilding = b
+            isFollowingUser = false
             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
             mapCenterLatGcj = glat
             mapCenterLonGcj = glon
@@ -331,17 +350,20 @@ fun CampusMapScreen(
             .fillMaxSize()
             .background(Color(0xFFF2EFE9))
     ) {
-        // 1. 底层全屏实景瓦片地图 + 电子罗盘朝向扇形 + 校园路网动态折线
+        // 1. 底层全屏瓦片地图
         RealCampusTileMap(
             buildings = buildings,
             selectedBuilding = targetBuilding,
-            userLocation = userLocation,
+            userLocation = if (manualOriginBuilding == null) userLocation else null,
             deviceHeadingDegrees = effectiveHeadingDegrees,
             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
             centerLatGcj = mapCenterLatGcj,
             centerLonGcj = mapCenterLonGcj,
             zoom = mapZoom,
             onViewportChange = { newLat, newLon, newZoom ->
+                if (abs(newLat - mapCenterLatGcj) > 1e-5 || abs(newLon - mapCenterLonGcj) > 1e-5) {
+                    isFollowingUser = false
+                }
                 mapCenterLatGcj = newLat
                 mapCenterLonGcj = newLon
                 mapZoom = newZoom
@@ -355,7 +377,7 @@ fun CampusMapScreen(
             }
         )
 
-        // 2. 顶部悬浮搜索栏、分类筛选与实时朝向罗盘徽章
+        // 2. 顶部悬浮搜索栏、分类筛选与朝向胶囊
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -380,7 +402,7 @@ fun CampusMapScreen(
                         onValueChange = { searchQuery = it },
                         placeholder = {
                             Text(
-                                text = "搜索教室或楼宇（如 1204、图书馆）",
+                                text = "搜教室或地点（如 1204、图书馆）",
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -416,7 +438,7 @@ fun CampusMapScreen(
                     )
                 }
 
-                // 实时电子罗盘朝向指示胶囊
+                // 朝向指示胶囊
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
@@ -429,6 +451,9 @@ fun CampusMapScreen(
                                     Manifest.permission.ACCESS_COARSE_LOCATION
                                 )
                             )
+                        } else {
+                            isFollowingUser = true
+                            locationRefreshEpoch++
                         }
                     }
                 ) {
@@ -448,9 +473,9 @@ fun CampusMapScreen(
                             text = if (headingInt != null) {
                                 "${CampusMapNavigator.bearingToCompassLabel(headingInt)} ${headingInt}°"
                             } else if (!hasLocationPermission) {
-                                "授权定位"
+                                "开启定位"
                             } else {
-                                "罗盘就绪"
+                                "朝向"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -498,7 +523,7 @@ fun CampusMapScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "确认归属：",
+                            text = "选择教学楼：",
                             style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             softWrap = false
@@ -513,6 +538,7 @@ fun CampusMapScreen(
                                     scope.launch {
                                         repository.confirmBuildingAliasForRoom(searchQuery, candidate.id)
                                         selectedBuilding = candidate
+                                        isFollowingUser = false
                                         val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
                                             candidate.latitude,
                                             candidate.longitude
@@ -550,6 +576,7 @@ fun CampusMapScreen(
                 icon = Icons.Default.ZoomOutMap,
                 contentDescription = "全览路线",
                 onClick = {
+                    isFollowingUser = false
                     if (navigationPlan != null) {
                         val (origLat, origLon) = CampusMapNavigator.wgs84ToGcj02(
                             navigationPlan.originLatitude,
@@ -580,33 +607,37 @@ fun CampusMapScreen(
                                 Manifest.permission.ACCESS_COARSE_LOCATION
                             )
                         )
-                    } else if (userLocation?.isInsideLianhuajieCampus == true) {
-                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
-                            userLocation!!.latitude,
-                            userLocation!!.longitude
-                        )
-                        mapCenterLatGcj = glat
-                        mapCenterLonGcj = glon
-                        mapZoom = 16.9f
                     } else {
-                        mapCenterLatGcj = defaultCenterGcj.first
-                        mapCenterLonGcj = defaultCenterGcj.second
-                        mapZoom = 16.2f
+                        manualOriginBuilding = null
+                        isFollowingUser = true
+                        locationRefreshEpoch++
+                        if (userLocation?.isInsideLianhuajieCampus == true) {
+                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                userLocation!!.latitude,
+                                userLocation!!.longitude
+                            )
+                            mapCenterLatGcj = glat
+                            mapCenterLonGcj = glon
+                            mapZoom = 16.9f
+                        } else {
+                            mapCenterLatGcj = defaultCenterGcj.first
+                            mapCenterLonGcj = defaultCenterGcj.second
+                            mapZoom = 16.2f
+                        }
                     }
                 }
             )
         }
 
-        // 4. 底部悬浮楼宇快选与动态路网导航面板（预留底部悬浮椭圆导航栏间距）
+        // 4. 底部楼宇选择与路线面板
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 86.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 横向快选地标条（一指滑动即可切换目的地，不遮挡地图主视野）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -620,6 +651,7 @@ fun CampusMapScreen(
                         selected = isSelected,
                         onClick = {
                             selectedBuilding = b
+                            isFollowingUser = false
                             inAppNavigationActive = true
                             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
                             mapCenterLatGcj = glat
@@ -642,6 +674,12 @@ fun CampusMapScreen(
                     onToggleExpandSteps = { expandRouteSteps = !expandRouteSteps },
                     onSelectOriginBuilding = { origin ->
                         manualOriginBuilding = origin
+                        if (origin == null) {
+                            isFollowingUser = true
+                            locationRefreshEpoch++
+                        } else {
+                            isFollowingUser = false
+                        }
                         inAppNavigationActive = true
                     },
                     onToggleInAppNavigation = {
@@ -671,18 +709,17 @@ private fun FloatingRouteBottomSheet(
     onToggleInAppNavigation: () -> Unit,
     onOpenExternalMap: () -> Unit
 ) {
-    // 计算用户当前朝向与路线初始方向之间的偏角提示
     val headingHint = remember(deviceHeadingDegrees, plan.bearingDegrees) {
         if (deviceHeadingDegrees == null) {
-            "方向：${plan.compassDirectionLabel} (${plan.bearingDegrees}°)"
+            "方向：${plan.compassDirectionLabel}"
         } else {
             var diff = (plan.bearingDegrees - deviceHeadingDegrees.roundToInt()) % 360
             if (diff > 180) diff -= 360
             if (diff < -180) diff += 360
             when {
-                abs(diff) <= 22 -> "当前朝向正对路线方向"
-                diff > 22 -> "请向右转约 ${abs(diff)}° 对准路线"
-                else -> "请向左转约 ${abs(diff)}° 对准路线"
+                abs(diff) <= 22 -> "正对方向"
+                diff > 22 -> "右转约 ${abs(diff)}°"
+                else -> "左转约 ${abs(diff)}°"
             }
         }
     }
@@ -713,7 +750,7 @@ private fun FloatingRouteBottomSheet(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     XPeachStatusBadge(
-                        text = "步行 ${plan.estimatedWalkDistanceMeters}m · ${plan.estimatedWalkMinutes}分钟"
+                        text = "步行 ${plan.estimatedWalkDistanceMeters}m · 约${plan.estimatedWalkMinutes}分钟"
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
@@ -727,7 +764,7 @@ private fun FloatingRouteBottomSheet(
             }
 
             XPeachFilterPill(
-                label = if (expandRouteSteps) "收起路线" else "分步详情 (${plan.steps.size})",
+                label = if (expandRouteSteps) "收起" else "路线详情",
                 selected = expandRouteSteps,
                 onClick = onToggleExpandSteps
             )
@@ -752,7 +789,7 @@ private fun FloatingRouteBottomSheet(
                     softWrap = false
                 )
                 XPeachFilterPill(
-                    label = if (hasLiveGps) "实时定位" else "南门",
+                    label = if (hasLiveGps) "我的位置" else "南门",
                     selected = manualOriginBuilding == null,
                     onClick = { onSelectOriginBuilding(null) }
                 )
@@ -843,7 +880,7 @@ private fun FloatingRouteBottomSheet(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (inAppNavigationActive) "隐藏路线折线" else "显示动态路线",
+                    text = if (inAppNavigationActive) "隐藏路线" else "显示路线",
                     maxLines = 1,
                     softWrap = false
                 )
