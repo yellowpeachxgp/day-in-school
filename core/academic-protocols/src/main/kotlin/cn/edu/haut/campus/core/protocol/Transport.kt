@@ -82,22 +82,41 @@ class GatewayUrlPolicy(
 
     fun resolve(currentUrl: String, location: String, purpose: RequestPurpose = RequestPurpose.READ): String {
         val base = validate(currentUrl, RequestPurpose.READ)
+        val trimmed = location.trim()
+        if (trimmed.any { it.isISOControl() } || '\\' in trimmed) throw refuse()
         val target = try {
-            val relative = URI(location.trim())
+            val relative = URI(trimmed)
             if (relative.rawFragment != null) throw refuse()
-            if (!relative.isAbsolute && relative.rawAuthority == null &&
+            val resolved = if (!relative.isAbsolute && relative.rawAuthority == null &&
                 relative.rawPath.isEmpty() && relative.rawQuery != null
             ) {
-                currentUrl.substringBefore('?') + "?" + relative.rawQuery
+                URI(currentUrl.substringBefore('?') + "?" + relative.rawQuery)
             } else {
-                base.resolve(relative).toString()
+                base.resolve(relative)
             }
+            upgradeAllowedHttpRedirect(resolved)
         } catch (_: TransportFailure) {
             throw refuse()
         } catch (_: Exception) {
             throw refuse()
         }
         return validate(target, purpose).toString()
+    }
+
+    private fun upgradeAllowedHttpRedirect(uri: URI): String {
+        val host = uri.host?.lowercase(Locale.ROOT)
+        if (uri.scheme == "http" && host != null && host in hosts && uri.rawUserInfo == null && uri.port in setOf(-1, 80)) {
+            return buildString {
+                append("https://")
+                append(host)
+                if (!uri.rawPath.isNullOrEmpty()) append(uri.rawPath)
+                if (uri.rawQuery != null) {
+                    append('?')
+                    append(uri.rawQuery)
+                }
+            }
+        }
+        return uri.toString()
     }
 
     fun allows(url: String): Boolean = runCatching { validate(url) }.isSuccess

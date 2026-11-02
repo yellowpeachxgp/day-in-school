@@ -153,17 +153,19 @@ object OfficialServiceRoutePolicy {
         return when (scheme) {
             "https" -> if (uri.port == -1 || uri.port == 443) uri.toASCIIString() else null
             "http" -> if (uri.port == -1 || uri.port == 80) {
-                runCatching {
-                    URI(
-                        "https",
-                        null,
-                        host,
-                        -1,
-                        uri.rawPath,
-                        uri.rawQuery,
-                        uri.rawFragment
-                    ).toASCIIString()
-                }.getOrNull()
+                buildString {
+                    append("https://")
+                    append(host)
+                    if (!uri.rawPath.isNullOrEmpty()) append(uri.rawPath)
+                    if (uri.rawQuery != null) {
+                        append('?')
+                        append(uri.rawQuery)
+                    }
+                    if (uri.rawFragment != null) {
+                        append('#')
+                        append(uri.rawFragment)
+                    }
+                }
             } else {
                 null
             }

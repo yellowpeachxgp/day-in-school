@@ -28,14 +28,34 @@ object HautAcademicUrlPolicy {
 
     fun resolve(location: String, currentUrl: String): String {
         val base = validate(currentUrl)
+        val trimmed = location.trim()
+        if (trimmed.any { it.isISOControl() } || '\\' in trimmed) reject()
         val target = try {
-            val relative = URI(location.trim())
+            val relative = URI(trimmed)
             if (relative.rawFragment != null) reject()
-            if (!relative.isAbsolute && relative.rawAuthority == null && relative.rawPath.isEmpty() && relative.rawQuery != null) {
-                currentUrl.substringBefore('?') + "?" + relative.rawQuery
-            } else base.resolve(relative).toString()
+            val resolved = if (!relative.isAbsolute && relative.rawAuthority == null && relative.rawPath.isEmpty() && relative.rawQuery != null) {
+                URI(currentUrl.substringBefore('?') + "?" + relative.rawQuery)
+            } else {
+                base.resolve(relative)
+            }
+            upgradeOfficialHttpRedirect(resolved)
         } catch (_: Exception) { reject() }
         return validate(target).toString()
+    }
+
+    private fun upgradeOfficialHttpRedirect(uri: URI): String {
+        if (uri.scheme == "http" && uri.host in hosts && uri.rawUserInfo == null && uri.port in setOf(-1, 80)) {
+            return buildString {
+                append("https://")
+                append(uri.host)
+                if (!uri.rawPath.isNullOrEmpty()) append(uri.rawPath)
+                if (uri.rawQuery != null) {
+                    append('?')
+                    append(uri.rawQuery)
+                }
+            }
+        }
+        return uri.toString()
     }
 
     private fun reject(): Nothing = throw AcademicReadException(

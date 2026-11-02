@@ -83,6 +83,30 @@ class AcademicReadSafetyTest {
         )
         bad.forEach { raw -> rejected("UNTRUSTED_REDIRECT") { HautAcademicUrlPolicy.validate(raw) } }
         assertEquals("https://mapp.haut.edu.cn/cas/login?x=1", HautAcademicUrlPolicy.resolve("?x=1", "https://mapp.haut.edu.cn/cas/login"))
+        assertEquals(
+            "https://mapp.haut.edu.cn/cas/login?service=http%3A%2F%2Fjwglxt.haut.edu.cn%2Fsso%2Fjhlogin",
+            HautAcademicUrlPolicy.resolve(
+                "http://mapp.haut.edu.cn/cas/login?service=http%3A%2F%2Fjwglxt.haut.edu.cn%2Fsso%2Fjhlogin",
+                "https://jwglxt.haut.edu.cn/sso/jhlogin"
+            )
+        )
+        assertEquals(
+            "https://jwglxt.haut.edu.cn/sso/jhlogin?ticket=ST-1",
+            HautAcademicUrlPolicy.resolve(
+                "http://jwglxt.haut.edu.cn/sso/jhlogin?ticket=ST-1",
+                "https://mapp.haut.edu.cn/cas/login"
+            )
+        )
+        assertEquals(
+            "https://jwglxt.haut.edu.cn/sso/jhlogin;jsessionid=ABC123",
+            HautAcademicUrlPolicy.resolve(
+                "http://jwglxt.haut.edu.cn/sso/jhlogin;jsessionid=ABC123",
+                "https://jwglxt.haut.edu.cn/sso/jhlogin?ticket=ST-1"
+            )
+        )
+        rejected("UNTRUSTED_REDIRECT") {
+            HautAcademicUrlPolicy.resolve("http://evil.test/cas/login", "https://jwglxt.haut.edu.cn/sso/jhlogin")
+        }
     }
     @Test fun `凭据只可提交认证路径`() {
         HautAcademicUrlPolicy.validate("https://mapp.haut.edu.cn/cas/login", credentialPost = true)
