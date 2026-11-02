@@ -203,13 +203,19 @@ interface CampusDao {
         UtilityMeterEntity::class,
         UtilityReadingEntity::class,
         FocusSessionEntity::class,
-        UnscheduledAcademicCourseEntity::class
+        UnscheduledAcademicCourseEntity::class,
+        CloudIdentityBindingEntity::class,
+        LibraryBookingPlanEntity::class,
+        ParcelItemEntity::class,
+        ParcelSourceConnectionEntity::class,
+        InstalledExtensionPluginEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
     abstract fun campusDao(): CampusDao
     abstract fun reminderDao(): ReminderDao
     abstract fun utilityAndFocusDao(): UtilityAndFocusDao
+    abstract fun cloudAndParcelDao(): CloudAndParcelDao
 }

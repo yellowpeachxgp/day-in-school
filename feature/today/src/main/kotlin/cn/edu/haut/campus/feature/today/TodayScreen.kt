@@ -133,6 +133,7 @@ fun TodayScreen(
     onNavigateToLibrarySeats: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToParcelHub: () -> Unit = {},
     onNavigateToGrades: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
@@ -156,6 +157,7 @@ fun TodayScreen(
     val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
     val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
     val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
+    val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
     val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
     val reminderOverrides by repository.reminderEventOverridesFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
@@ -507,6 +509,7 @@ fun TodayScreen(
                 onlineRooms = onlineRooms,
                 utilityMeters = utilityMeters,
                 utilityReadings = utilityReadings,
+                parcelItems = parcelItems,
                 cardOrder = prefs.homeCardOrder,
                 hiddenCards = prefs.hiddenHomeCards,
                 fullWidthCards = prefs.fullWidthHomeCards,
@@ -518,7 +521,8 @@ fun TodayScreen(
                 onNavigateToLibrarySeats = onNavigateToLibrarySeats,
                 onNavigateToLibraryCatalog = onNavigateToLibraryCatalog,
                 onNavigateToEmptyClassrooms = onNavigateToEmptyClassrooms,
-                onNavigateToCommunity = onNavigateToCommunity
+                onNavigateToCommunity = onNavigateToCommunity,
+                onNavigateToParcelHub = onNavigateToParcelHub
             )
 
             Spacer(modifier = Modifier.height(92.dp))
@@ -1217,6 +1221,7 @@ private val HOME_CARD_META: List<Pair<String, String>> = listOf(
     "STUDY_FOCUS" to "自习专注",
     "DORM_ELECTRICITY" to "宿舍水电",
     "LIBRARY_SEAT" to "座位预约",
+    "PARCEL_HUB" to "Parcel Hub 快递",
     "LIBRARY_CATALOG" to "馆藏检索",
     "EMPTY_CLASSROOM" to "空教室查询",
     "CAMPUS_COMMUNITY" to "社团与频道"
@@ -1236,6 +1241,7 @@ private fun TodayCampusBentoSection(
     onlineRooms: List<cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain>,
     utilityMeters: List<cn.edu.haut.campus.core.model.UtilityMeterDomain>,
     utilityReadings: List<cn.edu.haut.campus.core.model.UtilityReadingDomain>,
+    parcelItems: List<cn.edu.haut.campus.core.database.ParcelItemEntity>,
     cardOrder: List<String>,
     hiddenCards: Set<String>,
     fullWidthCards: Set<String>,
@@ -1247,7 +1253,8 @@ private fun TodayCampusBentoSection(
     onNavigateToLibrarySeats: () -> Unit,
     onNavigateToLibraryCatalog: () -> Unit,
     onNavigateToEmptyClassrooms: () -> Unit,
-    onNavigateToCommunity: () -> Unit
+    onNavigateToCommunity: () -> Unit,
+    onNavigateToParcelHub: () -> Unit
 ) {
     // 顶部板块栏：左标题 + 右侧「定制卡片」按钮
     Row(
@@ -1404,10 +1411,26 @@ private fun TodayCampusBentoSection(
         "LIBRARY_SEAT" to HomeModularCardSpec(
             id = "LIBRARY_SEAT",
             title = "座位预约",
-            badgeText = "图书馆",
-            subtitle = "实时余位与在线选座",
+            badgeText = "双引擎",
+            subtitle = "本机免费 / 云端托管 T-30m·T-5m·T",
             onClick = onNavigateToLibrarySeats
         ),
+        "PARCEL_HUB" to run {
+            val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
+            val firstWaiting = parcelItems.firstOrNull { it.status == "READY_FOR_PICKUP" }
+            HomeModularCardSpec(
+                id = "PARCEL_HUB",
+                title = "快递聚合",
+                badgeText = if (waitingCount > 0) "待取 $waitingCount" else "Parcel Hub",
+                subtitle = if (firstWaiting != null) {
+                    "${firstWaiting.pickupCode ?: "待取件"} · ${firstWaiting.stationName ?: firstWaiting.itemTitle ?: firstWaiting.trackingNumber}"
+                } else {
+                    "短信解析 · 多来源导入 · 驿站取件码"
+                },
+                highlighted = waitingCount > 0,
+                onClick = onNavigateToParcelHub
+            )
+        },
         "LIBRARY_CATALOG" to HomeModularCardSpec(
             id = "LIBRARY_CATALOG",
             title = "馆藏检索",

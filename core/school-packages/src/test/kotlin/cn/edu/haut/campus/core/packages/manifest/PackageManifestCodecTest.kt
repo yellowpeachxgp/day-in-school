@@ -131,4 +131,41 @@ class PackageManifestCodecTest {
         )
         assertTrue("UNVERIFIED：规范化形式不应包含换行", !canonicalA.contains('\n'))
     }
+
+    @Test
+    fun v2扩展清单与v1历史清单均可解析并阻断ZipSlip路径() {
+        val adaptedFromV1 = cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(
+            SyntheticPackages.manifest(bundle)
+        )
+        assertEquals("dis-campus-plugin/v1", adaptedFromV1.manifestFormat)
+        assertEquals(SyntheticPackages.PACKAGE_ID, adaptedFromV1.id)
+
+        val v2Raw = """
+            {
+              "manifestFormat": "dis-extension/v2",
+              "id": "cn.edu.haut.plugin.hello-campus",
+              "name": "Hello Campus 参考插件",
+              "version": "2.0.0",
+              "kind": "service-connector",
+              "hostCompatibility": { "minHostApi": 2, "maxHostApi": 3 },
+              "capabilities": ["CAMPUS_CARD_STATUS", "PARCEL_STATION_INFO"],
+              "permissions": ["campus.service.read", "ui.card.render"],
+              "files": { "cards/hello.json": "${bundle.files.single().sha256}" },
+              "signature": {
+                "algorithm": "Ed25519",
+                "keyId": "dis-dev-2026",
+                "value": "dGVzdC1zaWduYXR1cmU="
+              }
+            }
+        """.trimIndent()
+        val parsedV2 = cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(v2Raw)
+        assertEquals("dis-extension/v2", parsedV2.manifestFormat)
+        assertEquals("cn.edu.haut.plugin.hello-campus", parsedV2.id)
+        assertEquals(2, parsedV2.capabilities.size)
+
+        val zipSlipRaw = v2Raw.replace("cards/hello.json", "../etc/passwd")
+        assertPackageError(PackageError.UNSAFE_PATH) {
+            cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(zipSlipRaw)
+        }
+    }
 }

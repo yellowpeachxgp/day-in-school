@@ -32,15 +32,24 @@ class UniversalDatabaseMigrationTest {
     }
 
     @Test
-    fun `迁移到 v5 保留 v4 全部表的字段与记录且重复打开不改变数据`() {
+    fun `迁移到 v5 与 v6 保留 v4 全部表的字段与记录且重复打开不改变数据`() {
         val before = createVersionFourDatabase()
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(5, sqlite.version)
+            assertEquals(6, sqlite.version)
             assertEquals(before, snapshot(sqlite))
-            sqlite.query("SELECT COUNT(*) FROM unscheduled_academic_courses").use { cursor ->
-                assertTrue(cursor.moveToFirst())
-                assertEquals(0, cursor.getInt(0))
+            for (tableName in listOf(
+                "unscheduled_academic_courses",
+                "cloud_identity_binding",
+                "library_booking_plans",
+                "parcel_items",
+                "parcel_source_connections",
+                "installed_extension_plugins"
+            )) {
+                sqlite.query("SELECT COUNT(*) FROM $tableName").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
             }
         }
         withRoom { database ->
@@ -103,7 +112,7 @@ class UniversalDatabaseMigrationTest {
 
         assertEquals(4, source.oldVersion)
         assertEquals(4, evidence.oldVersion)
-        assertEquals(5, evidence.newVersion)
+        assertEquals(6, evidence.newVersion)
         assertEquals(before.keys, source.tableCounts.keys)
         assertEquals(source.serializedTableCounts, evidence.serializedTableCounts)
         factory.open(profile).databaseForAdoption().close()
@@ -112,7 +121,7 @@ class UniversalDatabaseMigrationTest {
             null,
             SQLiteDatabase.OPEN_READONLY
         ).use { database ->
-            assertEquals(5, database.version)
+            assertEquals(6, database.version)
             assertEquals(before, snapshot(database))
         }
     }
@@ -124,7 +133,7 @@ class UniversalDatabaseMigrationTest {
 
     private fun openRoom(): HautDatabase =
         Room.databaseBuilder(context, HautDatabase::class.java, databaseName)
-            .addMigrations(MIGRATION_4_5)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
             .allowMainThreadQueries()
             .build()
 

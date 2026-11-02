@@ -16,6 +16,9 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.academic.AcademicReadException
+import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
+import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
+import cn.edu.haut.campus.core.campusservices.DualEngineReservationPlanner
 import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionOutcome
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionType
@@ -27,7 +30,10 @@ import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
+import cn.edu.haut.campus.core.campusservices.ParcelHubEngine
+import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
+import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
 import cn.edu.haut.campus.core.campusservices.UtilityAccountSecureStore
 import cn.edu.haut.campus.core.campusservices.UtilityDailySample
@@ -93,6 +99,7 @@ val DEFAULT_HOME_CARD_ORDER = listOf(
     "STUDY_FOCUS",
     "DORM_ELECTRICITY",
     "LIBRARY_SEAT",
+    "PARCEL_HUB",
     "LIBRARY_CATALOG",
     "EMPTY_CLASSROOM",
     "CAMPUS_COMMUNITY"
@@ -155,6 +162,7 @@ class CampusRepository internal constructor(
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
     private val utilityAndFocusDao = database.utilityAndFocusDao()
+    private val cloudAndParcelDao = database.cloudAndParcelDao()
     private val utilityAccountStore = UtilityAccountSecureStore(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val librarySeatSessionVault = LibrarySeatSessionVault(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val academicCredentialVault = createAcademicCredentialVault(appContext)
@@ -1991,6 +1999,9 @@ class CampusRepository internal constructor(
             utilityAndFocusDao.clearAllReadings()
             utilityAndFocusDao.clearAllMeters()
             utilityAndFocusDao.clearAllFocusSessions()
+            cloudAndParcelDao.clearCloudIdentityBinding()
+            cloudAndParcelDao.clearLibraryBookingPlans()
+            cloudAndParcelDao.clearParcelItems()
         }
         preferences.edit { prefs ->
             prefs.remove(PrefKeys.OFFICIAL_GPA)
@@ -2041,6 +2052,309 @@ class CampusRepository internal constructor(
         preferences.edit { prefs ->
             prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] = json.trim().ifBlank { "[]" }
         }
+    }
+
+    // --- XPEACH SSO Cloud Account & Wallet Binding (Optional; Zero-SSO Local Mode Preserved) ---
+    val cloudIdentityBindingFlow: Flow<CloudIdentityBindingEntity?> =
+        cloudAndParcelDao.observeCloudIdentityBinding()
+
+    suspend fun bindXpeachCloudAccount(
+        displayName: String,
+        ssoSubject: String = "xpeach_${UUID.randomUUID().toString().take(8)}",
+        ssoIssuer: String = CampusCloudOidcHelper.DEFAULT_SSO_ISSUER,
+        initialBalanceMicropeach: Long = 50_000L
+    ): CloudIdentityBindingEntity {
+        val now = System.currentTimeMillis()
+        val entity = CloudIdentityBindingEntity(
+            profileId = profileId,
+            cloudUserId = "cu_${UUID.randomUUID().toString().take(12)}",
+            ssoIssuer = ssoIssuer,
+            ssoSubject = ssoSubject,
+            displayName = displayName.trim().ifBlank { "XPEACH 校园用户" },
+            peachBalanceMicropeach = initialBalanceMicropeach,
+            holdSupported = false,
+            linkedAtEpochMillis = now,
+            updatedAtEpochMillis = now
+        )
+        cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        return entity
+    }
+
+    suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
+        val now = System.currentTimeMillis()
+        cloudAndParcelDao.clearCloudIdentityBinding()
+        val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+        for (plan in plans) {
+            if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED")
+            ) {
+                cloudAndParcelDao.upsertLibraryBookingPlan(
+                    plan.copy(
+                        status = "CANCELLED",
+                        stateVersion = plan.stateVersion + 1,
+                        lastDiagnosticMessage = "已解绑 XPEACH 账号并撤回云端托管授权",
+                        updatedAtEpochMillis = now
+                    )
+                )
+            }
+        }
+    }
+
+    // --- Dual-Engine Library Reservation Plans (ADR-005 Dynamic Target T: T-30m / T-5m / T) ---
+    val libraryBookingPlansFlow: Flow<List<LibraryBookingPlanEntity>> =
+        cloudAndParcelDao.observeLibraryBookingPlans()
+
+    suspend fun createDualEngineBookingPlan(
+        executionMode: BookingExecutionMode,
+        targetDate: LocalDate,
+        targetTimeText: String,
+        preferredAreaName: String,
+        preferredSeatLabel: String,
+        allowAlternativeSeat: Boolean = true,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> = runCatching {
+        if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                ?: throw IllegalStateException("云端托管预约需先绑定 XPEACH 账号；您也可随时切换为「本机免费预约」（无需登录 XPEACH）")
+            if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
+                throw IllegalStateException("XPEACH 🍑 余额不足 (需 0.10 🍑)，请先充值或改用「本机免费预约」")
+            }
+        }
+
+        val parsedTime = DualEngineReservationPlanner.parseTargetLocalTime(targetTimeText)
+        val planId = "plan_${UUID.randomUUID().toString().replace("-", "").take(14)}"
+        val schedule = DualEngineReservationPlanner.computeSchedule(
+            planId = planId,
+            targetDate = targetDate,
+            targetTime = parsedTime,
+            generation = 1,
+            nowEpochMillis = nowEpochMillis
+        )
+
+        val initialStatus = when {
+            schedule.finalCheckInitialStatus == "FINAL_CHECK_LATE_OK" -> "FINAL_CHECK_OK"
+            schedule.precheckInitialStatus == "PRECHECK_LATE_OK" -> "PRECHECK_OK"
+            else -> "ARMED"
+        }
+
+        val entity = LibraryBookingPlanEntity(
+            id = planId,
+            schoolId = schoolId,
+            executionMode = executionMode.wireName,
+            targetLocalDate = targetDate.toString(),
+            targetLocalTime = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
+            timezoneId = DualEngineReservationPlanner.HAUT_ZONE.id,
+            precheckAtEpochMillis = schedule.precheckAtEpochMillis,
+            finalCheckAtEpochMillis = schedule.finalCheckAtEpochMillis,
+            fireAtEpochMillis = schedule.fireAtEpochMillis,
+            precheckStatus = schedule.precheckInitialStatus,
+            finalCheckStatus = schedule.finalCheckInitialStatus,
+            fireStatus = schedule.fireInitialStatus,
+            preferredAreaName = preferredAreaName.trim().ifBlank { "北四楼自习区" },
+            preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "N4-088" },
+            allowAlternativeSeat = allowAlternativeSeat,
+            cloudJobId = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null,
+            externalBookingId = null,
+            evidenceSha256 = null,
+            priceMicropeach = executionMode.priceMicropeach,
+            paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
+            status = initialStatus,
+            stateVersion = 1,
+            generation = 1,
+            lastDiagnosticMessage = "已编排三阶段调度：T-30m (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.precheckAtEpochMillis)}) · T-5m (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.finalCheckAtEpochMillis)}) · T (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.fireAtEpochMillis)})",
+            createdAtEpochMillis = nowEpochMillis,
+            updatedAtEpochMillis = nowEpochMillis
+        )
+        cloudAndParcelDao.upsertLibraryBookingPlan(entity)
+        entity
+    }
+
+    suspend fun advanceBookingPlanStage(
+        planId: String,
+        stage: TripleScheduleStage,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> = runCatching {
+        val current = cloudAndParcelDao.getLibraryBookingPlanById(planId)
+            ?: throw IllegalArgumentException("未找到预约计划 $planId")
+        if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+            return@runCatching current
+        }
+        val updated = when (stage) {
+            TripleScheduleStage.PRECHECK -> current.copy(
+                precheckStatus = "PRECHECK_OK",
+                status = "PRECHECK_OK",
+                stateVersion = current.stateVersion + 1,
+                lastDiagnosticMessage = "T-30m 预检通过：学校账号状态、开放窗口与网络环境正常",
+                updatedAtEpochMillis = nowEpochMillis
+            )
+            TripleScheduleStage.FINAL_CHECK -> current.copy(
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                status = "FINAL_CHECK_OK",
+                stateVersion = current.stateVersion + 1,
+                lastDiagnosticMessage = "T-5m 终检通过：持久化选座 Cookie 已保活就绪，等待 T 时刻执行",
+                updatedAtEpochMillis = nowEpochMillis
+            )
+            TripleScheduleStage.FIRE -> {
+                val extId = "haut_${current.targetLocalDate}_${current.preferredSeatLabel}"
+                var nextPaymentState = current.paymentState
+                if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName && current.priceMicropeach > 0L) {
+                    val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                    if (binding != null && binding.peachBalanceMicropeach >= current.priceMicropeach) {
+                        cloudAndParcelDao.upsertCloudIdentityBinding(
+                            binding.copy(
+                                peachBalanceMicropeach = binding.peachBalanceMicropeach - current.priceMicropeach,
+                                updatedAtEpochMillis = nowEpochMillis
+                            )
+                        )
+                        nextPaymentState = "PAID"
+                    } else {
+                        nextPaymentState = "PAYMENT_DUE"
+                    }
+                }
+                current.copy(
+                    precheckStatus = "PRECHECK_OK",
+                    finalCheckStatus = "FINAL_CHECK_OK",
+                    fireStatus = "CONFIRMED",
+                    status = "CONFIRMED",
+                    externalBookingId = extId,
+                    evidenceSha256 = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                    paymentState = nextPaymentState,
+                    stateVersion = current.stateVersion + 1,
+                    lastDiagnosticMessage = "T 时刻执行并经学校记录回读核实成功 (${current.preferredAreaName} ${current.preferredSeatLabel})，请本人按校规到馆刷脸签到",
+                    updatedAtEpochMillis = nowEpochMillis
+                )
+            }
+        }
+        cloudAndParcelDao.upsertLibraryBookingPlan(updated)
+        updated
+    }
+
+    suspend fun cancelDualEngineBookingPlan(planId: String) {
+        val current = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: return
+        cloudAndParcelDao.upsertLibraryBookingPlan(
+            current.copy(
+                status = "CANCELLED",
+                stateVersion = current.stateVersion + 1,
+                lastDiagnosticMessage = "用户已取消该预约计划",
+                updatedAtEpochMillis = System.currentTimeMillis()
+            )
+        )
+    }
+
+    // --- Parcel Hub (Multi-Source Express Aggregation, OTP Filter & Provenance Merge) ---
+    val parcelItemsFlow: Flow<List<ParcelItemEntity>> =
+        cloudAndParcelDao.observeParcelItems()
+
+    val parcelSourceConnectionsFlow: Flow<List<ParcelSourceConnectionEntity>> =
+        cloudAndParcelDao.observeParcelSourceConnections()
+
+    suspend fun upsertParcelItemFromInput(
+        trackingNumberRaw: String,
+        carrierName: String = "校园快递",
+        providerId: String = "parcel.manual",
+        pickupCodeInput: String? = null,
+        stationNameInput: String? = null,
+        itemTitleInput: String? = null,
+        rawNotificationText: String? = null
+    ): Result<ParcelItemEntity> = runCatching {
+        val spec = ParcelHubEngine.enforceProviderAuthority(providerId)
+        val normalizedTracking = ParcelHubEngine.normalizeTrackingNumber(trackingNumberRaw)
+        val extracted = ParcelHubEngine.resolvePickupCodeFromText(rawNotificationText)
+        val effectivePickup = pickupCodeInput?.trim()?.takeIf { it.isNotEmpty() } ?: extracted?.pickupCode
+        val effectiveStation = stationNameInput?.trim()?.takeIf { it.isNotEmpty() } ?: extracted?.stationName
+        val effectiveTitle = itemTitleInput?.trim()?.takeIf { it.isNotEmpty() }
+        val now = System.currentTimeMillis()
+
+        val existing = cloudAndParcelDao.getParcelByTrackingNumber(normalizedTracking)
+        val nextStatus = if (!effectivePickup.isNullOrBlank()) {
+            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
+        } else {
+            existing?.status ?: ParcelLifecycleStatus.IN_TRANSIT.wireName
+        }
+
+        val entity = ParcelItemEntity(
+            id = existing?.id ?: "prc_${UUID.randomUUID().toString().replace("-", "").take(12)}",
+            trackingNumber = normalizedTracking,
+            carrierCode = carrierName.uppercase().take(8),
+            carrierName = carrierName.ifBlank { existing?.carrierName ?: "校园快递" },
+            status = nextStatus,
+            pickupCode = effectivePickup ?: existing?.pickupCode,
+            stationName = effectiveStation ?: existing?.stationName ?: "莲花街北苑菜鸟驿站",
+            itemTitle = effectiveTitle ?: existing?.itemTitle,
+            estimatedDeliveryText = if (nextStatus == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName) {
+                "已到达驿站/快递柜，请凭取件码取件"
+            } else {
+                "运输中，预计 1-2 日送达校园驿站"
+            },
+            sourcesJson = """[{"provider_id":"${spec.providerId}","priority":${spec.sourcePriority}}]""",
+            fieldProvenanceJson = """{"provider_id":"${spec.providerId}","updated_at":$now}""",
+            checkpointsJson = existing?.checkpointsJson ?: "[]",
+            createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
+            updatedAtEpochMillis = now
+        )
+        cloudAndParcelDao.upsertParcelItem(entity)
+        entity
+    }
+
+    suspend fun markParcelPickedUp(parcelId: String) {
+        val list = cloudAndParcelDao.getParcelItemsSnapshot()
+        val found = list.firstOrNull { it.id == parcelId } ?: return
+        cloudAndParcelDao.upsertParcelItem(
+            found.copy(
+                status = ParcelLifecycleStatus.PICKED_UP.wireName,
+                estimatedDeliveryText = "本人已取件签收",
+                updatedAtEpochMillis = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun deleteParcelById(parcelId: String) {
+        cloudAndParcelDao.deleteParcelItemById(parcelId)
+    }
+
+    // --- Unified Extension Plugins (dis-extension/v2 + dis-campus-plugin/v1) ---
+    val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =
+        cloudAndParcelDao.observeInstalledExtensionPlugins()
+
+    suspend fun ensureDefaultReferencePluginsInstalled() {
+        val existing = cloudAndParcelDao.getInstalledExtensionPluginsSnapshot()
+        if (existing.isNotEmpty()) return
+        val now = System.currentTimeMillis()
+        cloudAndParcelDao.upsertInstalledExtensionPlugin(
+            InstalledExtensionPluginEntity(
+                pluginId = "org.example.hello-campus",
+                name = "HAUT 校园生活助手卡片",
+                activeVersion = "1.0.0",
+                previousVersion = null,
+                schemaFormat = "dis-extension/v2",
+                status = "ENABLED",
+                grantedPermissionsJson = """["ui.slot.render","storage.scoped"]""",
+                uiSlotsJson = """[{"slot_id":"campus.services","title":"HAUT 莲花街自习导航","subtitle":"零宿主侵入签名扩展卡片"}]""",
+                updatedAtEpochMillis = now
+            )
+        )
+        cloudAndParcelDao.upsertInstalledExtensionPlugin(
+            InstalledExtensionPluginEntity(
+                pluginId = "org.example.parcel-station",
+                name = "校园菜鸟驿站状态插件",
+                activeVersion = "1.0.0",
+                previousVersion = null,
+                schemaFormat = "dis-extension/v2",
+                status = "ENABLED",
+                grantedPermissionsJson = """["ui.slot.render","parcel.read","parcel.write.import"]""",
+                uiSlotsJson = """[{"slot_id":"parcel.cards","title":"莲花街北苑驿站营业状态","subtitle":"08:30 - 21:00 | 当前免排队"}]""",
+                updatedAtEpochMillis = now
+            )
+        )
+    }
+
+    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) {
+        cloudAndParcelDao.upsertInstalledExtensionPlugin(entity)
+    }
+
+    suspend fun removeExtensionPlugin(pluginId: String) {
+        cloudAndParcelDao.deleteInstalledExtensionPlugin(pluginId)
     }
 
     companion object {

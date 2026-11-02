@@ -189,6 +189,8 @@ fun SettingsScreen(
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
     onNavigateToSchoolCenter: () -> Unit = {},
+    onNavigateToParcelHub: () -> Unit = {},
+    onNavigateToXpeachCloud: () -> Unit = {},
     activeSchool: SchoolProfile = SchoolDirectory.hautProfile(),
     activeProfileLabel: String = "原有身份",
     resetTrigger: Int = 0
@@ -498,16 +500,77 @@ fun SettingsScreen(
                 // =========================================================================
 
                 // 1. 数字学生证 / 个人学籍名片
+                val cloudBinding by repository.cloudIdentityBindingFlow.collectAsState(initial = null)
+                val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
+                val extensionPlugins by repository.installedExtensionPluginsFlow.collectAsState(initial = emptyList())
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        onClick = onNavigateToSchoolCenter
+                    ) {
+                        Text("学校与能力", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "多校身份与扩展包(${extensionPlugins.size})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    XPeachCard(
+                        modifier = Modifier.weight(1f),
+                        onClick = onNavigateToXpeachCloud
+                    ) {
+                        val peachFormatted = cloudBinding?.let {
+                            "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
+                        }
+                        Text(
+                            text = if (peachFormatted != null) "XPEACH · ${peachFormatted}🍑" else "XPEACH 云与插件",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (cloudBinding != null) {
+                                "已绑定 ${cloudBinding?.displayName} · 托管与插件"
+                            } else {
+                                "可选绑定 · 云端预约与插件中心"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = onNavigateToSchoolCenter
+                    onClick = onNavigateToParcelHub
                 ) {
-                    Text("学校与能力", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "离线查找学校，查看各项功能的适配与核验状态",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Parcel Hub 快递聚合中心", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "取件短信解析（验证码严密过滤） · 多来源导入 · 校园驿站关联",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = if (waitingCount > 0) "待取 $waitingCount 件" else "共 ${parcelItems.size} 件",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
 
                 StudentDigitalIdCard(

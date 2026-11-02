@@ -148,9 +148,11 @@ import cn.edu.haut.campus.feature.settings.DormElectricityScreen
 import cn.edu.haut.campus.feature.settings.EmptyClassroomScreen
 import cn.edu.haut.campus.feature.settings.LibraryCatalogScreen
 import cn.edu.haut.campus.feature.settings.LibrarySeatBookingScreen
+import cn.edu.haut.campus.feature.settings.ParcelHubScreen
 import cn.edu.haut.campus.feature.settings.SettingsScreen
 import cn.edu.haut.campus.feature.settings.SchoolCenterScreen
 import cn.edu.haut.campus.feature.settings.StudyFocusScreen
+import cn.edu.haut.campus.feature.settings.XPeachCloudAccountScreen
 import cn.edu.haut.campus.feature.timetable.TimetableScreen
 import cn.edu.haut.campus.feature.today.TodayScreen
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -567,6 +569,18 @@ fun HautCampusRootApp(
                     onBack = { overlayScreen = null }
                 )
             }
+            "parcel_hub" -> {
+                ParcelHubScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "xpeach_cloud" -> {
+                XPeachCloudAccountScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
             "onboarding" -> {
                 OnboardingWelcomeScreen(
                     repository = repository,
@@ -616,6 +630,7 @@ fun HautCampusRootApp(
                                 onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                                 onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
                                 resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
                             )
@@ -666,6 +681,8 @@ fun HautCampusRootApp(
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                                 onNavigateToCommunity = { overlayScreen = "community" },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                                onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
+                                onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
                                 activeSchool = activeSession.school,
                                 activeProfileLabel = activeSession.label,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0

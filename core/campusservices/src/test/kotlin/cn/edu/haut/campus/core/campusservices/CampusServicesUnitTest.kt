@@ -570,4 +570,107 @@ class CampusServicesUnitTest {
         assertTrue(gateSignInPendingOutcome.message.contains("刷脸入馆"))
         assertTrue(gateSignInPendingOutcome.message.contains("签退释放"))
     }
+
+    @Test
+    fun dualEngineReservationPlanner_computesArbitraryTargetTAndThreeAlarms() {
+        val zone = ZoneId.of("Asia/Shanghai")
+        val earlyNow = LocalDateTime.of(2026, 11, 2, 20, 0).atZone(zone).toInstant().toEpochMilli()
+        val targetDate = java.time.LocalDate.of(2026, 11, 3)
+
+        listOf("07:00", "08:45", "12:10", "20:59").forEach { targetT ->
+            val parsedTime = DualEngineReservationPlanner.parseTargetLocalTime(targetT)
+            val calc = DualEngineReservationPlanner.computeSchedule(
+                planId = "plan_test_$targetT",
+                targetDate = targetDate,
+                targetTime = parsedTime,
+                nowEpochMillis = earlyNow
+            )
+            assertEquals(calc.fireAtEpochMillis - 30 * 60_000L, calc.precheckAtEpochMillis)
+            assertEquals(calc.fireAtEpochMillis - 5 * 60_000L, calc.finalCheckAtEpochMillis)
+            assertEquals("ARMED", calc.precheckInitialStatus)
+            assertEquals("ARMED", calc.finalCheckInitialStatus)
+            assertEquals("ARMED", calc.fireInitialStatus)
+            assertEquals(3, calc.alarmSpecs.size)
+            assertEquals(3, calc.alarmSpecs.map { it.requestCode }.distinct().size)
+            assertEquals(
+                listOf(TripleScheduleStage.PRECHECK, TripleScheduleStage.FINAL_CHECK, TripleScheduleStage.FIRE),
+                calc.alarmSpecs.map { it.stage }
+            )
+        }
+
+        // Out-of-window rejection
+        try {
+            DualEngineReservationPlanner.computeSchedule(
+                planId = "plan_invalid",
+                targetDate = targetDate,
+                targetTime = DualEngineReservationPlanner.parseTargetLocalTime("06:30"),
+                nowEpochMillis = earlyNow
+            )
+            fail("Expected out-of-window rejection for 06:30")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message!!.contains("窗口"))
+        }
+
+        // Late creation between T-30m and T-5m immediately marks precheckInitialStatus = PRECHECK_LATE_OK
+        val target0845 = LocalDateTime.of(2026, 11, 3, 8, 45).atZone(zone).toInstant().toEpochMilli()
+        val lateNow = target0845 - 20 * 60_000L
+        val lateCalc = DualEngineReservationPlanner.computeSchedule(
+            planId = "plan_late",
+            targetDate = targetDate,
+            targetTime = DualEngineReservationPlanner.parseTargetLocalTime("08:45"),
+            nowEpochMillis = lateNow
+        )
+        assertEquals("PRECHECK_LATE_OK", lateCalc.precheckInitialStatus)
+        assertEquals("ARMED", lateCalc.finalCheckInitialStatus)
+    }
+
+    @Test
+    fun parcelHubEngine_blocksOtpSmsAndEnforcesProviderAuthorityMatrix() {
+        // OTP / verification SMS must NEVER be extracted as pickup code
+        val otpSms = "【工商银行】您的登录验证码为 384920，切勿向他人泄露。"
+        assertEquals(null, ParcelHubEngine.resolvePickupCodeFromText(otpSms))
+
+        // Real campus station SMS extracts pickup code + station name
+        val stationSms = "【菜鸟驿站】您的顺丰包裹已到莲花街南苑菜鸟驿站，请凭取件码 4-12-3086 取件。"
+        val extracted = ParcelHubEngine.resolvePickupCodeFromText(stationSms)
+        assertNotNull(extracted)
+        assertEquals("4-12-3086", extracted!!.pickupCode)
+        assertEquals("SHELF_CODE", extracted.codeType)
+
+        // Unofficial platform live sync is fail-closed in production
+        try {
+            ParcelHubEngine.enforceProviderAuthority(
+                providerId = "parcel.taobao.cainiao",
+                isBackgroundPoll = false,
+                isProduction = true,
+                sandboxOverride = false
+            )
+            fail("Expected SecurityException for parcel.taobao.cainiao in production")
+        } catch (expected: SecurityException) {
+            assertTrue(expected.message!!.contains("RESEARCH_SANDBOX_ONLY"))
+        }
+
+        // Manual import & SMS local rule are allowed
+        ParcelHubEngine.enforceProviderAuthority("parcel.manual", isBackgroundPoll = false, isProduction = true)
+        ParcelHubEngine.enforceProviderAuthority("parcel.notification-parser", isBackgroundPoll = false, isProduction = true)
+    }
+
+    @Test
+    fun campusCloudOidcHelper_generatesValidPkceAndIdempotencyKeys() {
+        val tx = CampusCloudOidcHelper.buildLocalOrRemoteTransaction(
+            installEphemeralId = "inst_test_12345678",
+            cloudBaseUrl = "https://cloud.xpeach.codes"
+        )
+        assertEquals("S256", tx.pkce.codeChallengeMethod)
+        assertTrue(tx.pkce.codeVerifier.length >= 43)
+        assertTrue(tx.authorizeUrl.contains("code_challenge_method=S256"))
+        assertEquals(
+            "dis:reservation:ord-123:debit:v1",
+            CampusCloudOidcHelper.buildDebitIdempotencyKey("ord-123")
+        )
+        assertEquals(
+            "dis:reservation:ord-123:refund:v1",
+            CampusCloudOidcHelper.buildRefundIdempotencyKey("ord-123")
+        )
+    }
 }
