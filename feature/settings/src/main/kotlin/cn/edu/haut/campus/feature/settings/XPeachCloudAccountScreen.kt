@@ -86,6 +86,7 @@ fun XPeachCloudAccountScreen(
 
     LaunchedEffect(repository) {
         repository.ensureDefaultReferencePluginsInstalled()
+        repository.refreshXpeachWalletBalance()
     }
 
     Column(
@@ -237,10 +238,19 @@ fun XPeachCloudAccountScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilledTonalButton(
-                                onClick = { showBindDialog = true },
+                                onClick = {
+                                    scope.launch {
+                                        val refreshed = repository.refreshXpeachWalletBalance()
+                                        if (refreshed != null) {
+                                            feedbackBanner = "已同步 XPeach 主站最新余额：🍑 %.2f".format(refreshed)
+                                        } else {
+                                            showBindDialog = true
+                                        }
+                                    }
+                                },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text("刷新余额")
+                                Text("同步 🍑 余额")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -254,7 +264,7 @@ fun XPeachCloudAccountScreen(
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text("网页版后台")
+                                Text("网页版中心")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -338,7 +348,7 @@ fun XPeachCloudAccountScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "${plugin.pluginId} · v${plugin.activeVersion} · ${plugin.schemaFormat}",
+                                    text = "版本 v${plugin.activeVersion}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -358,12 +368,6 @@ fun XPeachCloudAccountScreen(
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "授权范围：${plugin.grantedPermissionsJson}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilledTonalButton(
                                 onClick = {
@@ -375,22 +379,22 @@ fun XPeachCloudAccountScreen(
                                                 updatedAtEpochMillis = System.currentTimeMillis()
                                             )
                                         )
-                                        feedbackBanner = "插件 ${plugin.pluginId} 状态已切换为 $next"
+                                        feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
                                     }
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text(if (plugin.status == "ENABLED") "停用插件" else "启用插件")
+                                Text(if (plugin.status == "ENABLED") "停用" else "启用")
                             }
                             TextButton(
                                 onClick = {
                                     scope.launch {
                                         repository.removeExtensionPlugin(plugin.pluginId)
-                                        feedbackBanner = "已卸载插件 ${plugin.pluginId}"
+                                        feedbackBanner = "已移除「${plugin.name}」"
                                     }
                                 }
                             ) {
-                                Text("卸载", color = MaterialTheme.colorScheme.error)
+                                Text("移除", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -408,7 +412,7 @@ fun XPeachCloudAccountScreen(
                 scope.launch {
                     val saved = repository.saveVerifiedXpeachCloudAccount(profile)
                     showBindDialog = false
-                    feedbackBanner = "已通过 XPEACH SSO 认证绑定：${saved.displayName} (余额 %.2f 🍑)".format(
+                    feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
                         saved.peachBalanceMicropeach / 10_000.0
                     )
                 }
@@ -417,33 +421,33 @@ fun XPeachCloudAccountScreen(
     }
 
     if (showInstallPluginDialog) {
-        var pluginIdInput by remember { mutableStateOf("org.example.custom-campus-card") }
-        var pluginNameInput by remember { mutableStateOf("自定义校园扩展卡片") }
+        var pluginIdInput by remember { mutableStateOf("campus.custom.card") }
+        var pluginNameInput by remember { mutableStateOf("自定义校园服务卡片") }
         var versionInput by remember { mutableStateOf("1.0.0") }
 
         AlertDialog(
             onDismissRequest = { showInstallPluginDialog = false },
-            title = { Text("零宿主修改安装 dis-extension/v2 插件") },
+            title = { Text("添加扩展功能") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = pluginIdInput,
-                        onValueChange = { pluginIdInput = it },
-                        label = { Text("Plugin ID (反向域名)") },
+                        value = pluginNameInput,
+                        onValueChange = { pluginNameInput = it },
+                        label = { Text("扩展名称") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = pluginNameInput,
-                        onValueChange = { pluginNameInput = it },
-                        label = { Text("插件名称") },
+                        value = pluginIdInput,
+                        onValueChange = { pluginIdInput = it },
+                        label = { Text("扩展标识") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = versionInput,
                         onValueChange = { versionInput = it },
-                        label = { Text("SemVer 版本号") },
+                        label = { Text("版本号") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -467,11 +471,11 @@ fun XPeachCloudAccountScreen(
                                 )
                             )
                             showInstallPluginDialog = false
-                            feedbackBanner = "已安装并激活插件 ${pluginIdInput.trim()}@${versionInput.trim()}"
+                            feedbackBanner = "已添加「${pluginNameInput.trim()}」"
                         }
                     }
                 ) {
-                    Text("验签并安装")
+                    Text("确认添加")
                 }
             },
             dismissButton = {

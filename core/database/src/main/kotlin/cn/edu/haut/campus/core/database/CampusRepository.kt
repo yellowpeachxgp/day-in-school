@@ -2094,6 +2094,19 @@ class CampusRepository internal constructor(
         return entity
     }
 
+    suspend fun refreshXpeachWalletBalance(): Double? = withContext(Dispatchers.IO) {
+        val current = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withContext null
+        val token = cachedCloudAccessToken
+        if (token.isBlank()) return@withContext null
+        val livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token) ?: return@withContext null
+        val updated = current.copy(
+            peachBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong(),
+            updatedAtEpochMillis = System.currentTimeMillis()
+        )
+        cloudAndParcelDao.upsertCloudIdentityBinding(updated)
+        livePeach
+    }
+
     suspend fun bindXpeachCloudAccount(
         displayName: String,
         ssoSubject: String = "xpeach_${UUID.randomUUID().toString().take(8)}",
@@ -2780,7 +2793,7 @@ class CampusRepository internal constructor(
                 schemaFormat = "dis-extension/v2",
                 status = "ENABLED",
                 grantedPermissionsJson = """["ui.slot.render","storage.scoped"]""",
-                uiSlotsJson = """[{"slot_id":"campus.services","title":"HAUT 莲花街自习导航","subtitle":"零宿主侵入签名扩展卡片"}]""",
+                uiSlotsJson = """[{"slot_id":"campus.services","title":"HAUT 莲花街自习导航","subtitle":"校园自习区域快捷指南"}]""",
                 updatedAtEpochMillis = now
             )
         )

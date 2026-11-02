@@ -159,9 +159,12 @@ object CampusCloudOidcHelper {
         val cloudUserId = sessionData.getString("cloud_user_id")
         val ssoIssuer = sessionData.optString("sso_issuer", DEFAULT_SSO_ISSUER)
         val ssoSubject = sessionData.getString("sso_subject")
-        val displayName = sessionData.optString("display_name").ifBlank { ssoSubject }
+        val displayName = sessionData.optString("username").ifBlank {
+            sessionData.optString("display_name").ifBlank { ssoSubject }
+        }
 
-        var micropeachBalance = 50_000L
+        var peachBalance = sessionData.optDouble("peach_balance", 0.0)
+        if (peachBalance.isNaN()) peachBalance = 0.0
         var holdSupported = false
         runCatching {
             val walletRaw = httpJsonRequest(
@@ -173,17 +176,21 @@ object CampusCloudOidcHelper {
             val walletRoot = JSONObject(walletRaw)
             if (walletRoot.optBoolean("ok", false)) {
                 val wData = walletRoot.getJSONObject("data")
-                micropeachBalance = wData.optLong("micropeach_balance", 50_000L)
+                if (wData.has("peach_balance")) {
+                    val livePeach = wData.optDouble("peach_balance", peachBalance)
+                    if (!livePeach.isNaN()) peachBalance = livePeach
+                }
                 holdSupported = wData.optBoolean("hold_supported", false)
             }
         }
+        val storedBalanceUnits = kotlin.math.round(peachBalance * 10_000.0).toLong()
 
         return XpeachCloudAccountProfile(
             cloudUserId = cloudUserId,
             ssoIssuer = ssoIssuer,
             ssoSubject = ssoSubject,
             displayName = displayName,
-            peachBalanceMicropeach = micropeachBalance,
+            peachBalanceMicropeach = storedBalanceUnits,
             holdSupported = holdSupported,
             linkedAtEpochMillis = System.currentTimeMillis(),
             accessToken = accessToken,
@@ -191,8 +198,33 @@ object CampusCloudOidcHelper {
         )
     }
 
+    /**
+     * 从 Campus Cloud 实时拉取 XPeach 主站最新 🍑 余额
+     */
+    fun fetchLivePeachBalance(
+        accessToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Double? {
+        if (accessToken.isBlank()) return null
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val walletRaw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/me/wallet",
+                bodyJson = null,
+                bearerToken = accessToken
+            )
+            val walletRoot = JSONObject(walletRaw)
+            if (!walletRoot.optBoolean("ok", false)) return null
+            val wData = walletRoot.getJSONObject("data")
+            val v = wData.optDouble("peach_balance", Double.NaN)
+            if (v.isNaN()) null else v
+        }.getOrNull()
+    }
+
     fun extractCallbackTicketAndTxn(url: String?): Pair<String, String>? {
-        if (url.isNullOrBlank() || !url.contains("/app-link/auth/callback")) return null
+        if (url.isNullOrBlank()) return null
+        if (!url.contains("/app-link/auth/callback") && !url.startsWith("dayinschool://auth/callback")) return null
         return runCatching {
             val uri = Uri.parse(url)
             val ticket = uri.getQueryParameter("ticket")?.trim().orEmpty()
@@ -239,14 +271,25 @@ object CampusCloudOidcHelper {
                     bearerToken = accessToken
                 )
             }
+            val consentRaw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/me/consents",
+                bodyJson = JSONObject().put("school_id", "haut").toString(),
+                bearerToken = accessToken
+            )
+            val consentId = JSONObject(consentRaw).optJSONObject("data")?.optString("id").orEmpty()
+            val localTime = targetExecuteAtIso.substringAfter('T', "07:00:00").take(8).let {
+                if (it.length == 5) "$it:00" else if (it.length == 8) it else "07:00:00"
+            }
             val planBody = JSONObject()
-                .put("school_id", "haut")
-                .put("binding_id", bindId)
-                .put("mode", "CLOUD_HOSTED")
-                .put("target_date", targetDate)
-                .put("target_execute_at", targetExecuteAtIso)
+                .put("school_binding_id", bindId)
+                .put("consent_id", consentId)
+                .put("area_name", preferredAreaName)
+                .put("candidate_seats", JSONArray().put(preferredSeatLabel))
                 .put("preferred_area_ids", JSONArray().put(preferredAreaName))
                 .put("preferred_seat_ids", JSONArray().put(preferredSeatLabel))
+                .put("target_local_date", targetDate)
+                .put("target_local_time", localTime)
                 .toString()
             val planRaw = httpJsonRequest(
                 method = "POST",
@@ -255,7 +298,7 @@ object CampusCloudOidcHelper {
                 bearerToken = accessToken,
                 extraHeaders = mapOf("Idempotency-Key" to planIdempotencyKey)
             )
-            JSONObject(planRaw).optJSONObject("data")?.optJSONObject("plan")?.optString("id")
+            JSONObject(planRaw).optJSONObject("data")?.optString("plan_id")
         }.getOrNull()
     }
 
