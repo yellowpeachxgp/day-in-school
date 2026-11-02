@@ -137,33 +137,52 @@ class PackageManifestCodecTest {
         val adaptedFromV1 = cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(
             SyntheticPackages.manifest(bundle)
         )
-        assertEquals("dis-campus-plugin/v1", adaptedFromV1.manifestFormat)
-        assertEquals(SyntheticPackages.PACKAGE_ID, adaptedFromV1.id)
+        assertEquals("dis-extension/v2", adaptedFromV1.schemaVersion)
+        assertEquals("dis-campus-plugin/v1", adaptedFromV1.legacySchemaVersion)
+        assertEquals(SyntheticPackages.PACKAGE_ID, adaptedFromV1.pluginId)
 
         val v2Raw = """
             {
-              "manifestFormat": "dis-extension/v2",
-              "id": "cn.edu.haut.plugin.hello-campus",
+              "schema_version": "dis-extension/v2",
+              "plugin_id": "cn.edu.haut.plugin.hello-campus",
               "name": "Hello Campus 参考插件",
               "version": "2.0.0",
-              "kind": "service-connector",
-              "hostCompatibility": { "minHostApi": 2, "maxHostApi": 3 },
-              "capabilities": ["CAMPUS_CARD_STATUS", "PARCEL_STATION_INFO"],
-              "permissions": ["campus.service.read", "ui.card.render"],
-              "files": { "cards/hello.json": "${bundle.files.single().sha256}" },
-              "signature": {
-                "algorithm": "Ed25519",
-                "keyId": "dis-dev-2026",
-                "value": "dGVzdC1zaWduYXR1cmU="
-              }
+              "min_host_api": 2,
+              "max_host_api": 3,
+              "permissions": ["ui.slot.render", "storage.scoped"],
+              "allowed_origins": ["https://campus.yellowpeachxgp.com"],
+              "ui_slots": [
+                {
+                  "slot_id": "campus.services",
+                  "card_id": "hello.card",
+                  "title": "Hello Campus",
+                  "subtitle": "参考插件卡片",
+                  "action_command": "ping"
+                }
+              ],
+              "commands": [
+                {
+                  "name": "ping",
+                  "description": "Ping command",
+                  "required_permission": "ui.slot.render"
+                }
+              ],
+              "entry_artifacts": [
+                {
+                  "path": "dist/index.mjs",
+                  "sha256": "${bundle.files.single().sha256}",
+                  "size_bytes": 128
+                }
+              ]
             }
         """.trimIndent()
         val parsedV2 = cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(v2Raw)
-        assertEquals("dis-extension/v2", parsedV2.manifestFormat)
-        assertEquals("cn.edu.haut.plugin.hello-campus", parsedV2.id)
-        assertEquals(2, parsedV2.capabilities.size)
+        assertEquals("dis-extension/v2", parsedV2.schemaVersion)
+        assertEquals("cn.edu.haut.plugin.hello-campus", parsedV2.pluginId)
+        assertEquals(1, parsedV2.uiSlots.size)
+        assertEquals(1, parsedV2.commands.size)
 
-        val zipSlipRaw = v2Raw.replace("cards/hello.json", "../etc/passwd")
+        val zipSlipRaw = v2Raw.replace("dist/index.mjs", "../etc/passwd")
         assertPackageError(PackageError.UNSAFE_PATH) {
             cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2Codec.parseOrAdapt(zipSlipRaw)
         }
