@@ -540,6 +540,7 @@ fun HautCampusRootApp(
             }
             "library_seats" -> {
                 LibrarySeatBookingScreen(
+                    repository = repository,
                     onBack = { overlayScreen = null }
                 )
             }

@@ -359,4 +359,44 @@ class CampusServicesUnitTest {
             hautDefaultStatus.state
         )
     }
+
+    @Test
+    fun hautLibrarySeatAuthClient_parsesTokenAndUserInfoAndBuildsSyncScript() {
+        val sampleJwt = "eyJhbGciOiJIUzUxMiJ9.eyJsb2dpbl91c2VyX2tleSI6ImQxMDhjZDQzIn0.sig12345"
+        assertEquals(
+            sampleJwt,
+            HautLibrarySeatAuthClient.normalizeRawToken("Bearer $sampleJwt")
+        )
+        assertEquals(
+            sampleJwt,
+            HautLibrarySeatAuthClient.extractTokenFromUrl(
+                "https://wslib.haut.edu.cn/h5/index.html?token=$sampleJwt#/seatPage/SelectRoom/SelectRoom"
+            )
+        )
+
+        val authUrl = OfficialServiceRoutePolicy.buildAuthenticatedSeatBookingUrl(sampleJwt)
+        assertEquals(
+            "https://wslib.haut.edu.cn/h5/index.html?token=$sampleJwt#/seatPage/SelectRoom/SelectRoom",
+            authUrl
+        )
+        assertTrue(OfficialServiceRoutePolicy.isAllowedMainFrameUrl(authUrl))
+
+        val okUserInfoJson = """
+            {"msg":"成功","code":200,"data":{"cardNo":"5508025","userName":"张三","department":"信息科学与工程学院","userNo":"231040600206","breakNum":"0"}}
+        """.trimIndent()
+        val parsedUser = HautLibrarySeatAuthClient.parseUserInfoResponse(okUserInfoJson)
+        assertNotNull(parsedUser)
+        assertEquals("231040600206", parsedUser!!.userNo)
+        assertEquals("张三", parsedUser.userName)
+
+        val expiredJson = """
+            {"msg":"请求访问：/spacelink/api/h5user/my/userinfo，认证失败，无法访问系统资源","code":401}
+        """.trimIndent()
+        assertEquals(null, HautLibrarySeatAuthClient.parseUserInfoResponse(expiredJson))
+
+        val syncScript = OfficialWebScripts.buildLibraryTokenSyncScript(sampleJwt, navigateToSelectRoom = true)
+        assertTrue(syncScript.contains("localStorage.setItem('hzd_token', bearer)"))
+        assertTrue(syncScript.contains("getApp().globalData.token = bearer"))
+        assertTrue(syncScript.contains("#/seatPage/SelectRoom/SelectRoom"))
+    }
 }

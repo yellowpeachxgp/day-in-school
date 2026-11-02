@@ -74,6 +74,11 @@ internal class OfficialAcademicCookieJar(val host: String) {
         check(uri.host == host) { "认证会话来源不匹配" }
         manager.put(uri, headers)
     }
+    fun cookieValue(name: String): String? =
+        manager.cookieStore.cookies
+            .lastOrNull { it.name.equals(name, ignoreCase = true) }
+            ?.value
+            ?.takeIf { it.isNotBlank() }
 }
 
 /** 完整分页只在终止证据和去重计数均成立后返回，任何中途失败都不发布部分列表。 */

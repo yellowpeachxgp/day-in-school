@@ -209,6 +209,20 @@ object HautLiveAcademicClient {
 
             if (!nextLocation.isNullOrBlank()) throw AcademicReadException("UNTRUSTED_REDIRECT", "学校认证跳转次数过多，请重新登录")
 
+            // 4.1 同步统一身份认证 CASTGC Cookie 到系统 WebView CookieManager，使图书馆预约等校内服务共享持久 SSO
+            runCatching {
+                val castgc = casCookies.cookieValue("CASTGC")
+                if (!castgc.isNullOrBlank()) {
+                    val cm = CookieManager.getInstance()
+                    cm.setAcceptCookie(true)
+                    cm.setCookie(
+                        "https://mapp.haut.edu.cn/cas/",
+                        "CASTGC=$castgc; Path=/cas/; Secure; HttpOnly"
+                    )
+                    cm.flush()
+                }
+            }
+
             // 5. 拉取当前选定学期个人课表 JSON 与官方周次校历
             val primaryBody = fetchTermTimetableJsonText(xnm = xnm, xqm = xqm, cookieJar = jwCookies)
                 ?: error("课表接口响应异常，请确认教务系统服务可用")

@@ -183,6 +183,16 @@ object OfficialServiceRoutePolicy {
     }
 
     /**
+     * 构造携带有效登录 Token 的图书馆选座入口 URL（当无 Token 时回退至默认选座入口）。
+     */
+    fun buildAuthenticatedSeatBookingUrl(rawToken: String?): String {
+        val clean = HautLibrarySeatAuthClient.normalizeRawToken(rawToken)
+        if (clean.isBlank()) return SEAT_BOOKING_ENTRY_URL
+        val encoded = java.net.URLEncoder.encode(clean, java.nio.charset.StandardCharsets.UTF_8.name())
+        return "https://$WSLIB_HOST$SEAT_BOOKING_BASE_PATH?token=$encoded#/seatPage/SelectRoom/SelectRoom"
+    }
+
+    /**
      * 判断是否为学校统一身份认证站点（`https://mapp.haut.edu.cn`）。
      */
     fun isSchoolCasAuthUrl(rawUrl: String?): Boolean {
@@ -198,20 +208,69 @@ object OfficialWebScripts {
     const val SEAT_SELECTION_HASH = "#/seatPage/SelectRoom/SelectRoom"
 
     /**
-     * 当用户从 `mapp.haut.edu.cn` 完成统一身份认证返回 `wslib.haut.edu.cn/h5/index.html` 首页时，
-     * 仅在未处于 `seatPage` 子路由时执行一次性路由跳转至选座列表。
+     * 构造将持久化/后台重登获得的 `wslib` Token 同步注入 Uni-App `localStorage` 与 `getApp().globalData` 的脚本。
+     *
+     * 根因修复说明：
+     * `wslib.haut.edu.cn/h5/static/js/index.5bfd61d0.js` 在初始化时先将 `localStorage["hzd_token"]` 的旧值赋给
+     * `getApp().globalData.token`，然后延迟 200ms (`setTimeout(..., 200)`) 才把 URL 中的新 `?token=...` 写入 `globalData.token`；
+     * 若在此 200ms 窗口内立即发起选座或跳转路由，`myRequest` 会读取到旧的失效 `globalData.token` 并弹出「登录已失效请重新登录」。
+     * 此脚本在页面启动与完成时同步覆写 `localStorage`、`uni.setStorageSync` 与 `getApp().globalData.token`，彻底消除竞态。
      */
-    const val LIBRARY_RETURN_TO_SEATS_SCRIPT = """
-        (function() {
-            if (location.origin === 'https://wslib.haut.edu.cn' &&
-                location.pathname === '/h5/index.html' &&
-                !location.hash.startsWith('#/seatPage/')) {
-                location.hash = '#/seatPage/SelectRoom/SelectRoom';
-                return true;
-            }
-            return false;
-        })();
-    """
+    fun buildLibraryTokenSyncScript(
+        rawToken: String?,
+        navigateToSelectRoom: Boolean = false
+    ): String {
+        val clean = HautLibrarySeatAuthClient.normalizeRawToken(rawToken)
+        val navigateLiteral = if (navigateToSelectRoom) "true" else "false"
+        return """
+            (function() {
+                try {
+                    if (location.origin !== 'https://wslib.haut.edu.cn') return false;
+                    var rawToken = '$clean';
+                    if (!rawToken) {
+                        var m = /[?&]token=([^&#;]+)/.exec(location.href);
+                        if (m && m[1]) {
+                            rawToken = decodeURIComponent(m[1].replace(/\+/g, '%20')).replace(/^Bearer\s+/i, '').trim();
+                        }
+                    }
+                    if (rawToken) {
+                        var bearer = 'Bearer ' + rawToken;
+                        try {
+                            localStorage.setItem('hzd_token', bearer);
+                            localStorage.setItem('hzd_isLogin', JSON.stringify({type: 'boolean', data: true}));
+                        } catch (_) {}
+                        try {
+                            if (typeof uni !== 'undefined' && typeof uni.setStorageSync === 'function') {
+                                uni.setStorageSync('hzd_token', bearer);
+                                uni.setStorageSync('hzd_isLogin', true);
+                            }
+                        } catch (_) {}
+                        try {
+                            if (typeof getApp === 'function' && getApp() && getApp().globalData) {
+                                getApp().globalData.token = bearer;
+                                getApp().globalData.isLogin = true;
+                            }
+                        } catch (_) {}
+                    }
+                    if ($navigateLiteral &&
+                        location.pathname === '/h5/index.html' &&
+                        !location.hash.startsWith('#/seatPage/')) {
+                        location.hash = '#/seatPage/SelectRoom/SelectRoom';
+                    }
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            })();
+        """.trimIndent()
+    }
+
+    /**
+     * 当用户从 `mapp.haut.edu.cn` 完成统一身份认证返回 `wslib.haut.edu.cn/h5/index.html` 首页时，
+     * 先同步提取并写入 URL 中的 `?token=`，再执行一次性路由跳转至选座列表。
+     */
+    val LIBRARY_RETURN_TO_SEATS_SCRIPT: String =
+        buildLibraryTokenSyncScript(rawToken = null, navigateToSelectRoom = true)
 
     /**
      * 用户主动点击底部「继续选座」按钮时强制切回选座区域列表。
@@ -224,6 +283,29 @@ object OfficialWebScripts {
                 return true;
             }
             return false;
+        })();
+    """
+
+    /**
+     * 检测页面是否弹出了「登录已失效请重新登录」模态框，并可在后台静默重登启动时自动关闭该弹窗。
+     */
+    const val LIBRARY_DETECT_AND_DISMISS_EXPIRED_MODAL_SCRIPT = """
+        (function() {
+            try {
+                if (location.origin !== 'https://wslib.haut.edu.cn') return 'NONE';
+                var modals = document.querySelectorAll('uni-modal, .uni-modal');
+                for (var i = 0; i < modals.length; i++) {
+                    var el = modals[i];
+                    var txt = (el.innerText || el.textContent || '');
+                    if (txt.indexOf('登录已失效') >= 0 || txt.indexOf('重新登录') >= 0) {
+                        el.style.display = 'none';
+                        return 'EXPIRED_MODAL';
+                    }
+                }
+                return 'OK';
+            } catch (e) {
+                return 'ERR';
+            }
         })();
     """
 }

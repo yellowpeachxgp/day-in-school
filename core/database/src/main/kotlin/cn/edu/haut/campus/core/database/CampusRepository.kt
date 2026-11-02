@@ -16,6 +16,12 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.academic.AcademicReadException
+import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
+import cn.edu.haut.campus.core.campusservices.LibrarySeatAuthException
+import cn.edu.haut.campus.core.campusservices.LibrarySeatRefreshSource
+import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
+import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
+import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
@@ -146,8 +152,10 @@ class CampusRepository internal constructor(
     private val reminderDao = database.reminderDao()
     private val utilityAndFocusDao = database.utilityAndFocusDao()
     private val utilityAccountStore = UtilityAccountSecureStore(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
+    private val librarySeatSessionVault = LibrarySeatSessionVault(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val academicCredentialVault = createAcademicCredentialVault(appContext)
     private val academicCredentialMutex = Mutex()
+    private val librarySeatAuthMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -273,6 +281,7 @@ class CampusRepository internal constructor(
     init {
         registerBeforeWipeHook("campus_services_account_and_web_wipe") {
             runCatching { utilityAccountStore.wipeAll() }
+            runCatching { librarySeatSessionVault.clear() }
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
     }
@@ -1218,6 +1227,173 @@ class CampusRepository internal constructor(
                 }
             )
         }
+        }
+    }
+
+    /**
+     * 读取本地加密持久化的图书馆座位预约会话快照（不发起网络请求）。
+     */
+    fun readCachedLibrarySeatSession(): LibrarySeatSessionSnapshot? =
+        librarySeatSessionVault.readSnapshot()
+
+    /**
+     * 清理本地加密持久化的图书馆座位预约会话快照。
+     */
+    suspend fun clearLibrarySeatSession() = withContext(Dispatchers.IO) {
+        librarySeatSessionVault.clear()
+    }
+
+    /**
+     * 当用户在 WebView 内手动完成统一身份认证（如输入验证码后）跳转回 `wslib.haut.edu.cn/h5/index.html?token=...` 时，
+     * 自动捕获并持久化最新 Token 与 `CASTGC` Cookie 到本地 AES-256-GCM 加密仓。
+     */
+    suspend fun captureLibrarySeatWebToken(rawToken: String): LibrarySeatSessionSnapshot? = withContext(Dispatchers.IO) {
+        if (!isSessionActive || !supportsHautServices) return@withContext null
+        val clean = HautLibrarySeatAuthClient.normalizeRawToken(rawToken)
+        if (clean.isBlank()) return@withContext null
+        librarySeatAuthMutex.withLock {
+            val userInfo = HautLibrarySeatAuthClient.validateTokenOnline(clean) ?: return@withLock null
+            val casTgc = HautLibrarySeatAuthClient.extractCastgcFromWebView()
+                ?: librarySeatSessionVault.readSnapshot()?.casTgcCookie
+            val snapshot = LibrarySeatSessionSnapshot(
+                rawToken = clean,
+                casTgcCookie = casTgc,
+                casJsessionId = librarySeatSessionVault.readSnapshot()?.casJsessionId,
+                userInfo = userInfo,
+                updatedAtEpochMs = System.currentTimeMillis(),
+                refreshSource = LibrarySeatRefreshSource.WEBVIEW_CAPTURE
+            )
+            librarySeatSessionVault.saveSnapshot(snapshot)
+            snapshot
+        }
+    }
+
+    /**
+     * 确保图书馆座位预约拥有有效的持久化会话（三级保活）：
+     * 1. 若持久化 Token 在线校验有效（且 `forceRefresh == false`），直接复用并同步 Cookie；
+     * 2. 若 Token 失效，尝试使用持久化的 `CASTGC` Cookie 静默换取新 Token；
+     * 3. 若 `CASTGC` Cookie 亦失效，自动从加密数据库 (`AcademicCredentialVault`) 读取学号与密码执行后台登录，
+     *    并持久化新 Cookie 与 Token。
+     */
+    suspend fun ensureLibrarySeatSession(
+        forceRefresh: Boolean = false
+    ): LibrarySeatSessionState = withContext(Dispatchers.IO) {
+        requireActiveSession()
+        if (!supportsHautServices) {
+            return@withContext LibrarySeatSessionState.AuthError("当前学校暂不支持工大图书馆空间预约服务")
+        }
+        migrateLegacyAcademicCredentialsIfNeeded()
+        librarySeatAuthMutex.withLock {
+            val cached = librarySeatSessionVault.readSnapshot()
+
+            // Level 1: 校验已持久化的 wslib Token
+            if (!forceRefresh && cached != null) {
+                val verifiedUser = HautLibrarySeatAuthClient.validateTokenOnline(cached.rawToken)
+                if (verifiedUser != null) {
+                    HautLibrarySeatAuthClient.syncCasCookiesToWebView(
+                        casTgcCookie = cached.casTgcCookie,
+                        casJsessionId = cached.casJsessionId
+                    )
+                    val refreshed = cached.copy(
+                        userInfo = verifiedUser,
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                        refreshSource = LibrarySeatRefreshSource.CACHED_TOKEN
+                    )
+                    librarySeatSessionVault.saveSnapshot(refreshed)
+                    return@withLock LibrarySeatSessionState.Authenticated(refreshed)
+                }
+            }
+
+            // Level 2: 使用持久化的 CASTGC Cookie 静默换取新 Token
+            val candidateCastgc = cached?.casTgcCookie ?: HautLibrarySeatAuthClient.extractCastgcFromWebView()
+            if (!candidateCastgc.isNullOrBlank()) {
+                val exchanged = HautLibrarySeatAuthClient.tryExchangeTokenWithPersistedCookie(
+                    casTgcCookie = candidateCastgc,
+                    casJsessionId = cached?.casJsessionId
+                )
+                if (exchanged != null) {
+                    librarySeatSessionVault.saveSnapshot(exchanged)
+                    return@withLock LibrarySeatSessionState.Authenticated(exchanged)
+                }
+            }
+
+            // Level 3: 从加密凭据仓读取用户学号与统一认证密码执行后台自动重登
+            val credentialPair: Pair<String, String>? = academicCredentialMutex.withLock {
+                val prefs = preferences.data.first()
+                val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
+                val readResult = academicCredentialVault.read(academicCredentialScope(accountId))
+                if (readResult !is AcademicCredentialReadResult.Available) {
+                    return@withLock null
+                }
+                readResult.credentials.use { creds ->
+                    creds.studentId to creds.passwordPlain
+                }
+            }
+
+            if (credentialPair == null) {
+                return@withLock LibrarySeatSessionState.CredentialsRequired(
+                    "尚未保存统一身份认证凭据；绑定后将加密保存在本地数据库中，Cookie 失效时自动后台登录"
+                )
+            }
+
+            val loginResult = HautLibrarySeatAuthClient.loginWithCredentials(
+                studentId = credentialPair.first,
+                passwordPlain = credentialPair.second
+            )
+            loginResult.fold(
+                onSuccess = { snapshot ->
+                    librarySeatSessionVault.saveSnapshot(snapshot)
+                    LibrarySeatSessionState.Authenticated(snapshot)
+                },
+                onFailure = { error ->
+                    val authError = error as? LibrarySeatAuthException
+                    LibrarySeatSessionState.AuthError(
+                        message = error.message ?: "自动后台登录图书馆预约系统未完成",
+                        requiresManualVerification = authError?.requiresManualVerification == true
+                    )
+                }
+            )
+        }
+    }
+
+    /**
+     * 在图书馆座位预约页绑定/更新统一身份认证账号密码（加密存入 `AcademicCredentialVault`），并立即执行后台登录与 Cookie 持久化。
+     */
+    suspend fun saveLibrarySeatCredentialsAndLogin(
+        studentId: String,
+        passwordPlain: String
+    ): LibrarySeatSessionState = withContext(Dispatchers.IO) {
+        requireActiveSession()
+        val cleanId = studentId.trim()
+        if (cleanId.isBlank() || passwordPlain.isBlank()) {
+            return@withContext LibrarySeatSessionState.AuthError("请输入学号和统一身份认证密码")
+        }
+        val prefs = preferences.data.first()
+        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
+        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
+        saveAuthorizedSyncCredentials(
+            studentId = cleanId,
+            passwordPlain = passwordPlain,
+            xnm = xnm,
+            xqm = xqm
+        )
+        librarySeatAuthMutex.withLock {
+            HautLibrarySeatAuthClient.loginWithCredentials(
+                studentId = cleanId,
+                passwordPlain = passwordPlain
+            ).fold(
+                onSuccess = { snapshot ->
+                    librarySeatSessionVault.saveSnapshot(snapshot)
+                    LibrarySeatSessionState.Authenticated(snapshot)
+                },
+                onFailure = { error ->
+                    val authError = error as? LibrarySeatAuthException
+                    LibrarySeatSessionState.AuthError(
+                        message = error.message ?: "统一身份认证登录失败，请核对学号和密码",
+                        requiresManualVerification = authError?.requiresManualVerification == true
+                    )
+                }
+            )
         }
     }
 
