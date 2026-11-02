@@ -67,7 +67,7 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon :core:model:test :core:domain:test :core:academic-protocols:test :core:school-packages:test :core:academic-plan:test :core:selection:test testDebugUnitTest lintDebug lintRelease :app:assembleRelease --stacktrace
+          ./gradlew --no-daemon :core:model:test :core:domain:test :core:academic-protocols:test :core:school-packages:test :core:academic-plan:test :core:selection:test testDebugUnitTest lintDebug lintRelease :app:assembleDebug :app:assembleRelease --stacktrace
           git diff --exit-code -- core/database/schemas
           test -z "$(git ls-files --others --exclude-standard core/database/schemas)"
 
@@ -77,7 +77,9 @@ jobs:
         run: |
           mkdir -p release-assets
           REL_APK="release-assets/day-in-school-v${RELEASE_VERSION}-release.apk"
+          DBG_APK="release-assets/day-in-school-v${RELEASE_VERSION}-debug.apk"
           cp app/build/outputs/apk/release/app-release.apk "$REL_APK"
+          cp app/build/outputs/apk/debug/app-debug.apk "$DBG_APK"
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$REL_APK" > release-assets/APK_SIGNATURE.txt
