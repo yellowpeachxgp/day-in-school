@@ -82,10 +82,12 @@ fun XPeachCloudAccountScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showBindDialog by remember { mutableStateOf(false) }
     var showInstallPluginDialog by remember { mutableStateOf(false) }
+    var isSyncingSnapshot by remember { mutableStateOf(false) }
     var feedbackBanner by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(repository) {
         repository.ensureDefaultReferencePluginsInstalled()
+        runCatching { repository.syncWithCampusCloud() }
         repository.refreshXpeachWalletBalance()
     }
 
@@ -236,13 +238,36 @@ fun XPeachCloudAccountScreen(
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            enabled = !isSyncingSnapshot,
+                            onClick = {
+                                scope.launch {
+                                    isSyncingSnapshot = true
+                                    val snap = repository.syncWithCampusCloud().getOrNull()
+                                    val refreshed = repository.refreshXpeachWalletBalance()
+                                    isSyncingSnapshot = false
+                                    if (snap != null || refreshed != null) {
+                                        val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
+                                        feedbackBanner = "已完成云端双向同步（🍑 余额 %.2f · 抢座与快递已对齐）".format(bal)
+                                    } else {
+                                        showBindDialog = true
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (isSyncingSnapshot) "正在同步云端数据…" else "立即双向同步（🍑 余额 / 抢座 / 快递）")
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilledTonalButton(
                                 onClick = {
                                     scope.launch {
                                         val refreshed = repository.refreshXpeachWalletBalance()
                                         if (refreshed != null) {
-                                            feedbackBanner = "已同步 XPeach 主站最新余额：🍑 %.2f".format(refreshed)
+                                            feedbackBanner = "已同步 XPeach 主站最新余额：%.2f 🍑".format(refreshed)
                                         } else {
                                             showBindDialog = true
                                         }
@@ -250,7 +275,7 @@ fun XPeachCloudAccountScreen(
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text("同步 🍑 余额")
+                                Text("刷新 🍑 余额")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -281,24 +306,47 @@ fun XPeachCloudAccountScreen(
                     }
                 }
 
-                val cloudOrders = bookingPlans.filter { it.executionMode == "CLOUD_HOSTED" }
-                if (cloudOrders.isNotEmpty()) {
+                val cloudPlans = bookingPlans.filter { it.executionMode == "CLOUD_HOSTED" }
+                if (cloudPlans.isNotEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "我的云端代抢记录 (${cloudOrders.size})",
+                            text = "我的云端抢座与 🍑 账单 (${cloudPlans.size})",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        for (order in cloudOrders) {
+                        for (plan in cloudPlans) {
+                            val friendlyStatus = when (plan.status) {
+                                "CONFIRMED" -> "✅ 已成功抢到座位"
+                                "FINAL_CHECK_OK" -> "⚡ 就绪检查通过，等待准点抢座"
+                                "PRECHECK_OK" -> "🛡️ 已完成登录保活，等待开抢"
+                                "ARMED" -> "⏰ 云端定时任务待命（未抢成不扣 🍑）"
+                                "CANCELLED" -> "已取消（未扣 🍑）"
+                                else -> plan.lastDiagnosticMessage ?: "处理中"
+                            }
+                            val payLabel = when (plan.paymentState) {
+                                "PAID" -> "已结算 (${plan.priceMicropeach / 10_000.0} 🍑)"
+                                "REFUNDED" -> "已退回 🍑"
+                                "DEBIT_PENDING" -> "抢成后扣 0.1 🍑"
+                                "PAYMENT_DUE" -> "余额不足待补缴"
+                                else -> "免费"
+                            }
                             XPeachWell(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime} · ${plan.preferredAreaName} ${plan.preferredSeatLabel}号",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    XPeachStatusBadge(text = payLabel)
+                                }
                                 Text(
-                                    text = "${order.targetLocalDate} ${order.targetLocalTime} · ${order.preferredAreaName} ${order.preferredSeatLabel}号",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "状态：${order.lastDiagnosticMessage ?: order.status}",
+                                    text = friendlyStatus,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

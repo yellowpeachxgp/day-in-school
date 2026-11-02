@@ -138,6 +138,24 @@
                 android:resource="@xml/widget_week_info" />
         </receiver>
 
+        <!-- 5. 快递取件码 Parcel 4x2 小组件 -->
+        <receiver
+            android:name="cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider"
+            android:exported="true"
+            android:label="快递取件码 Parcel (4×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_parcel_pickup_info" />
+        </receiver>
+
         <!-- 5. 课程与考试智能提醒到期广播接收器 -->
         <receiver
             android:name="cn.edu.haut.campus.core.reminder.ReminderFireReceiver"

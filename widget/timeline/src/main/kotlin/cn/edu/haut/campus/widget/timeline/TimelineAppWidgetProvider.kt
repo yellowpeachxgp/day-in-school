@@ -192,9 +192,10 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 } ?: "今日课程已全部结束"
             )
 
+            val defaultTargetTab = if (!snapshot.hasImportedCourses) "importer" else "today"
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
-                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
+                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, defaultTargetTab)
             }
             if (launchIntent != null) {
                 val pi = PendingIntent.getActivity(

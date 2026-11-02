@@ -195,6 +195,16 @@ object WidgetRefreshCoordinator {
     fun showSwitching(context: Context, ids: IntArray) {
         if (ids.isEmpty()) return
         val views = RemoteViews(context.packageName, R.layout.widget_account_switching)
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        if (launchIntent != null) {
+            val pi = PendingIntent.getActivity(
+                context,
+                9900 + ids.first(),
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.widget_switching_root, pi)
+        }
         AppWidgetManager.getInstance(context).updateAppWidget(ids, views)
     }
 

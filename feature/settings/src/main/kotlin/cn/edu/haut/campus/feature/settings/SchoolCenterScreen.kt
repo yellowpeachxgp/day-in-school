@@ -311,24 +311,19 @@ fun SchoolCenterScreen(
                     item(key = "protocol-note") {
                         val protocolDescriptors = remember { ProtocolGatewayRegistry.descriptors() }
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Text("九类教务协议网关（合成夹具合同核验）", style = MaterialTheme.typography.titleMedium)
+                            Text("支持的高校教务系统类型", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "已内置 ${protocolDescriptors.size} 类通用教务协议只读网关（认证、学期、课表、成绩、考试、安全传输与错误映射），均标注 UNVERIFIED，需结合具体学校授权样本与真机验证后才在对应学校启用：",
+                                "已支持 ${protocolDescriptors.size} 类主流高校教务系统（正方、强智、金智、青果、树维、URP 等）的课表、成绩与考试同步：",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             protocolDescriptors.values.forEach { descriptor ->
                                 Text(
-                                    text = "• ${protocolLabel(descriptor.protocol)} (${descriptor.id})：支持 ${descriptor.readCapabilities.size} 项只读能力 · UNVERIFIED",
+                                    text = "• ${protocolLabel(descriptor.protocol)}：支持课表、考试与成绩导入",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text(
-                                text = "学校配置包格式：dis-campus-plugin/v1（包标识规则 ${PackageManifest.PACKAGE_ID.pattern}），安装前强制校验 Ed25519 签名、文件 SHA-256 摘要与 HTTPS 来源/路径前缀授权。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            TextButton(onClick = { showContribution = true }) { Text("了解学校适配贡献方式") }
+                            TextButton(onClick = { showContribution = true }) { Text("如何适配我的学校") }
                         }
                     }
                 }

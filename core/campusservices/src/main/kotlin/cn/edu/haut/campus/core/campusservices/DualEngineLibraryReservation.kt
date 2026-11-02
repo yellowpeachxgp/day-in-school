@@ -36,6 +36,9 @@ enum class BookingExecutionMode(
         priceMicropeach = 0L
     );
 
+    val pricePeach: Double
+        get() = priceMicropeach.toDouble() / 10_000.0
+
     companion object {
         fun fromWire(raw: String?): BookingExecutionMode =
             entries.firstOrNull { it.wireName.equals(raw, ignoreCase = true) } ?: LOCAL_DEVICE
@@ -43,9 +46,9 @@ enum class BookingExecutionMode(
 }
 
 enum class TripleScheduleStage(val wireName: String, val leadSeconds: Long, val label: String) {
-    PRECHECK("PRECHECK", 1800L, "T-30m 预检"),
-    FINAL_CHECK("FINAL_CHECK", 300L, "T-5m 终检"),
-    FIRE("FIRE", 0L, "T 准时执行")
+    PRECHECK("PRECHECK", 1800L, "开抢前30分钟自动保活"),
+    FINAL_CHECK("FINAL_CHECK", 300L, "开抢前5分钟就绪检查"),
+    FIRE("FIRE", 0L, "准点自动抢座")
 }
 
 data class LocalAlarmIntentSpec(

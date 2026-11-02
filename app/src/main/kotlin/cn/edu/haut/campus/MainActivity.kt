@@ -318,7 +318,23 @@ class MainActivity : ComponentActivity() {
         val tab = intent?.getStringExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB)
         val room = intent?.getStringExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM)
         if (!tab.isNullOrBlank()) {
-            deepLinkTab = tab
+            if (tab in setOf(
+                    "parcel_hub",
+                    "importer",
+                    "library_seats",
+                    "electricity",
+                    "library_catalog",
+                    "focus",
+                    "empty_classrooms",
+                    "community",
+                    "xpeach_cloud",
+                    "school_center"
+                )
+            ) {
+                deepLinkOverlayRoute = tab
+            } else {
+                deepLinkTab = tab
+            }
         }
         if (!room.isNullOrBlank()) {
             deepLinkRoomQuery = room
@@ -414,6 +430,22 @@ fun HautCampusRootApp(
             res?.onSuccess {
                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
             }
+        }
+    }
+
+    // 打开应用时静默双向同步 XPeach 云端快照（🍑 余额、云端抢座、跨端包裹）及已绑定的小米快递取件码
+    LaunchedEffect(repository, prefs.hasCompletedOnboarding) {
+        if (prefs.hasCompletedOnboarding) {
+            runCatching {
+                val xiaomiAccounts = repository.getXiaomiAccounts()
+                if (xiaomiAccounts.any { it.enabled && it.phones.isNotEmpty() }) {
+                    repository.syncXiaomiExpressPackages()
+                }
+            }
+            runCatching {
+                repository.syncWithCampusCloud()
+            }
+            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
         }
     }
 

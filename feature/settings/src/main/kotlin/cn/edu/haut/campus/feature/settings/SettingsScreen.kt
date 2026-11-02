@@ -1083,11 +1083,9 @@ fun SettingsScreen(
                             widgetCompactDefault = checked
                             scope.launch {
                                 for (id in 0..20) {
+                                    val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
                                     repository.saveWidgetConfig(
-                                        WidgetInstanceConfig(
-                                            appWidgetId = id,
-                                            widgetType = WidgetType.NEXT_CLASS_2X2,
-                                            themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
+                                        existing.copy(
                                             compact = checked,
                                             privacyMode = widgetPrivacyDefault
                                         )
@@ -1111,11 +1109,9 @@ fun SettingsScreen(
                             widgetPrivacyDefault = checked
                             scope.launch {
                                 for (id in 0..20) {
+                                    val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
                                     repository.saveWidgetConfig(
-                                        WidgetInstanceConfig(
-                                            appWidgetId = id,
-                                            widgetType = WidgetType.NEXT_CLASS_2X2,
-                                            themeStyle = WidgetThemeStyle.DYNAMIC_SYSTEM,
+                                        existing.copy(
                                             compact = widgetCompactDefault,
                                             privacyMode = checked
                                         )
@@ -1193,6 +1189,18 @@ fun SettingsScreen(
                     ) {
                         Text("添加 4×4 周课表", maxLines = 1, softWrap = false)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Button(
+                    onClick = {
+                        requestPin("4×2 快递取件码", "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider")
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("📦 添加 4×2 快递取件码桌面小组件", maxLines = 1, softWrap = false)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))

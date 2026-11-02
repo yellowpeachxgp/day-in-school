@@ -459,7 +459,8 @@ enum class WidgetType(val label: String, val gridSpec: String) {
     NEXT_CLASS_2X2("下一节课 Mini", "2×2"),
     TODAY_4X2("今日课程 Today", "4×2"),
     TIMELINE_4X4("日程时间轴 Timeline", "4×4"),
-    WEEK_4X4("周课表 Week", "4×4")
+    WEEK_4X4("周课表 Week", "4×4"),
+    PARCEL_4X2("快递取件码 Parcel", "4×2")
 }
 
 enum class WidgetThemeStyle(val label: String) {

@@ -516,16 +516,37 @@ fun ParcelHubScreen(
                         } else {
                             for ((station, list) in byStation) {
                                 XPeachWell(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                    Text(
-                                        text = "$station（共 ${list.size} 件待取）",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "取件码汇总：" + list.mapNotNull { it.pickupCode }.joinToString(" 、 "),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "📍 $station（共 ${list.size} 件待取）",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = "取件码汇总：" + list.mapNotNull { it.pickupCode }.joinToString(" 、 "),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        if (list.isNotEmpty() && list.first().stationName != null) {
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    scope.launch {
+                                                        val count = repository.markAllStationParcelsPickedUp(station)
+                                                        feedbackBanner = "已将「$station」的 $count 件快递全部标记为已取件"
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("本驿站全取")
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -556,64 +577,18 @@ fun ParcelHubScreen(
                         }
                     }
 
-                    val enabledParcelPlugins = plugins.filter {
-                        it.status == "ENABLED" && it.uiSlotsJson.contains("parcel.cards")
-                    }
-                    if (enabledParcelPlugins.isNotEmpty()) {
-                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "校园常用快递驿站指南",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "校园驿站营业时间",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            for (plugin in enabledParcelPlugins) {
-                                XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = plugin.name,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "莲花街北苑菜鸟驿站 · 营业时间 08:30 - 21:00 · 当前免排队",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    for (spec in ParcelHubEngine.PROVIDER_AUTHORITY_MATRIX.values) {
-                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = spec.displayName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                XPeachStatusBadge(
-                                    text = spec.authorityStatus.label,
-                                    containerColor = when (spec.authorityStatus) {
-                                        ParcelAuthorityStatus.PRODUCTION_ENABLED -> MaterialTheme.colorScheme.primaryContainer
-                                        ParcelAuthorityStatus.MANUAL_IMPORT_ONLY -> MaterialTheme.colorScheme.secondaryContainer
-                                        else -> MaterialTheme.colorScheme.errorContainer
-                                    },
-                                    contentColor = when (spec.authorityStatus) {
-                                        ParcelAuthorityStatus.PRODUCTION_ENABLED -> MaterialTheme.colorScheme.primary
-                                        ParcelAuthorityStatus.MANUAL_IMPORT_ONLY -> MaterialTheme.colorScheme.onSecondaryContainer
-                                        else -> MaterialTheme.colorScheme.onErrorContainer
-                                    }
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = spec.description,
+                                text = "📍 莲花街校区：北苑菜鸟驿站、南苑菜鸟驿站、西区快递中心（日常营业 08:30–21:00）\n" +
+                                    "📍 嵩山路校区：校区菜鸟驿站与丰巢智能柜\n" +
+                                    "💡 小贴士：你还可以把「4×2 快递取件码」小组件添加到手机桌面，站在货架前无需打开 App 即可一眼看到取件码。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -683,12 +658,10 @@ fun ParcelHubScreen(
     }
 
     if (showAddDialog) {
-        var trackingInput by remember { mutableStateOf("SF" + (10000000..99999999).random()) }
+        var trackingInput by remember { mutableStateOf("") }
         var carrierInput by remember { mutableStateOf("顺丰速运") }
         var titleInput by remember { mutableStateOf("") }
-        var smsInput by remember {
-            mutableStateOf("【菜鸟驿站】您的包裹已到莲花街北苑菜鸟驿站，请凭取件码 12-3-4056 到店取件。")
-        }
+        var smsInput by remember { mutableStateOf("") }
 
         val previewExtracted = remember(smsInput) {
             ParcelHubEngine.resolvePickupCodeFromText(smsInput)
@@ -696,76 +669,83 @@ fun ParcelHubScreen(
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
-            title = { Text("添加包裹 / 短信取件码解析") },
+            title = { Text("添加快递 / 粘贴取件短信") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = trackingInput,
-                        onValueChange = { trackingInput = it },
-                        label = { Text("运单号 (相同运单号自动去重合并)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = carrierInput,
-                        onValueChange = { carrierInput = it },
-                        label = { Text("承运商名称") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = titleInput,
-                        onValueChange = { titleInput = it },
-                        label = { Text("商品名称/备注 (选填)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
                         value = smsInput,
                         onValueChange = { smsInput = it },
-                        label = { Text("粘贴取件短信或通知全文 (选填)") },
+                        label = { Text("粘贴取件短信全文（推荐，自动识别取件码与驿站）") },
+                        placeholder = { Text("例如：【菜鸟驿站】您的包裹已到莲花街北苑菜鸟驿站，请凭取件码 3-2-1048 取件") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (smsInput.isNotBlank()) {
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             if (previewExtracted != null) {
                                 Text(
-                                    text = "✅ 已识别取件码：${previewExtracted.pickupCode} · 驿站：${previewExtracted.stationName ?: "默认驿站"}",
+                                    text = "✅ 已识别取件码：${previewExtracted.pickupCode} · 驿站：${previewExtracted.stationName ?: "校园驿站"}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             } else {
                                 Text(
-                                    text = "🛡️ 未识别到取件码（若包含银行/登录验证码已自动安全拦截）",
+                                    text = "未在短信中识别到取件码（可直接在下方填写单号与备注）",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
+                    OutlinedTextField(
+                        value = trackingInput,
+                        onValueChange = { trackingInput = it },
+                        label = { Text("快递单号（粘贴短信后可留空自动生成）") },
+                        placeholder = { Text("如 SF1234567890") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = carrierInput,
+                        onValueChange = { carrierInput = it },
+                        label = { Text("快递公司") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = titleInput,
+                        onValueChange = { titleInput = it },
+                        label = { Text("物品备注（选填，如：教材 / 耳机）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             },
             confirmButton = {
                 Button(
+                    enabled = trackingInput.isNotBlank() || previewExtracted != null,
                     onClick = {
                         scope.launch {
+                            val resolvedTracking = trackingInput.trim().ifBlank {
+                                val codePart = previewExtracted?.pickupCode?.replace(Regex("[^A-Za-z0-9]"), "") ?: "PKG"
+                                "SMS-$codePart-${System.currentTimeMillis() % 10000}"
+                            }
                             repository.upsertParcelItemFromInput(
-                                trackingNumberRaw = trackingInput,
-                                carrierName = carrierInput,
+                                trackingNumberRaw = resolvedTracking,
+                                carrierName = carrierInput.trim().ifBlank { "校园快递" },
                                 providerId = if (smsInput.isNotBlank()) "parcel.notification-parser" else "parcel.manual",
                                 itemTitleInput = titleInput,
                                 rawNotificationText = smsInput
                             ).onSuccess { saved ->
                                 showAddDialog = false
-                                feedbackBanner = "已保存包裹 ${saved.trackingNumber}" +
-                                    (saved.pickupCode?.let { " · 取件码 $it" } ?: "")
+                                feedbackBanner = "已保存快递" +
+                                    (saved.pickupCode?.let { " · 取件码 $it" } ?: " ${saved.trackingNumber}")
                             }.onFailure { err ->
                                 feedbackBanner = err.message ?: "保存失败"
                             }
                         }
                     }
                 ) {
-                    Text("保存聚合")
+                    Text("保存快递")
                 }
             },
             dismissButton = {

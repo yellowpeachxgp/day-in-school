@@ -7,6 +7,7 @@ import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider
 import cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider
+import cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider
 import cn.edu.haut.campus.widget.today.TodayAppWidgetProvider
 import cn.edu.haut.campus.widget.week.WeekAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +24,8 @@ class HautCampusApplication : Application() {
             NextClassAppWidgetProvider::class.java,
             TodayAppWidgetProvider::class.java,
             TimelineAppWidgetProvider::class.java,
-            WeekAppWidgetProvider::class.java
+            WeekAppWidgetProvider::class.java,
+            ParcelAppWidgetProvider::class.java
         )
         val sessions = AccountSessionCoordinator.getInstance(this)
         sessions.registerLifecycleHook(

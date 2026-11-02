@@ -101,6 +101,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
             views.setTextColor(R.id.tv_focus_status, accentArgb)
             views.setTextColor(R.id.tv_focus_meta, accentArgb)
             views.setTextColor(R.id.tv_sub_1_room, accentArgb)
+            views.setTextColor(R.id.tv_sub_2_room, accentArgb)
 
             val weekText = day.teachingWeek?.let { "第 $it 教学周" } ?: "非教学周"
             views.setTextViewText(
@@ -187,18 +188,26 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 }
             } else {
                 views.setViewVisibility(R.id.chronometer_today, View.GONE)
-                views.setTextViewText(R.id.tv_focus_status, "今日结课")
+                views.setTextViewText(R.id.tv_focus_status, if (!snapshot.hasImportedCourses) "未同步" else "今日结课")
                 views.setTextViewText(R.id.tv_focus_time, "")
                 views.setTextViewText(
                     R.id.tv_focus_title,
-                    if (day.items.isEmpty()) "今天没有课程安排" else "今日 ${day.items.size} 节课已结束"
+                    when {
+                        !snapshot.hasImportedCourses -> "点击导入本学期课表"
+                        day.items.isEmpty() -> "今天没有课程安排"
+                        else -> "今日 ${day.items.size} 节课已结束"
+                    }
                 )
                 val hint = day.nextClassDayHint
                 views.setTextViewText(
                     R.id.tv_focus_meta,
-                    hint?.let {
-                        "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}"
-                    } ?: (day.calendarNotice ?: "自主安排学习与休息")
+                    if (!snapshot.hasImportedCourses) {
+                        "登录教务系统即可一键同步课表与考试"
+                    } else {
+                        hint?.let {
+                            "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}"
+                        } ?: (day.calendarNotice ?: "自主安排学习与休息")
+                    }
                 )
                 views.setTextViewText(
                     R.id.tv_sub_1,
@@ -213,9 +222,10 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.tv_sub_2_room, "点击打开")
             }
 
+            val defaultTargetTab = if (!snapshot.hasImportedCourses) "importer" else "today"
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
-                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "today")
+                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, defaultTargetTab)
             }
             if (launchIntent != null) {
                 val pi = PendingIntent.getActivity(

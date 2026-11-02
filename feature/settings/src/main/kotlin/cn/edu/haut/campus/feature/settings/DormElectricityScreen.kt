@@ -139,63 +139,33 @@ fun DormElectricityScreen(
             }
 
             if (selectedTab == 0) {
-                // 1. 账号与传输门控卡片
+                // 1. 校园卡学号绑定与寝室电费查询卡片
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    val activeAcc = accountReadState as? UtilityAccountReadResult.Active
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "完美校园·智能水电只读查询",
+                            text = "寝室电费在线查询",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusBadge(
-                            text = if (prefs.allowUnverifiedUtilityTransport) "已开启在线查询" else "待核验门控"
+                            text = if (activeAcc != null) "已绑定学号" else "输入学号即查"
                         )
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "仅查询本人在完美校园已绑定的宿舍水电。请求采用 HTTPS POST 请求体传输，账号通过 Android Keystore 加密保存。",
+                        text = "输入你的学号（校园卡号），即可自动查询你在完美校园已绑定的寝室剩余电费与每日用电量。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "允许发起智能水电在线请求",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "租户代码(43)需配合已绑房间账号实测；关闭时仅使用本地缓存或手工台账",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = prefs.allowUnverifiedUtilityTransport,
-                                onCheckedChange = { allowed ->
-                                    scope.launch {
-                                        repository.setAllowUnverifiedUtilityTransport(allowed)
-                                    }
-                                }
-                            )
-                        }
-                    }
-
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    val activeAcc = accountReadState as? UtilityAccountReadResult.Active
                     if (activeAcc != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -203,7 +173,7 @@ fun DormElectricityScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "当前保存账号：${activeAcc.maskedAccount}",
+                                text = "当前绑定学号：${activeAcc.maskedAccount}",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -213,11 +183,11 @@ fun DormElectricityScreen(
                                         repository.clearUtilityAccountAndOnlineCache()
                                         accountReadState = repository.readUtilityAccountResult()
                                         accountInput = ""
-                                        statusBanner = "已清除水电账号与在线房间缓存。"
+                                        statusBanner = "已解除学号绑定并清除缓存。"
                                     }
                                 }
                             ) {
-                                Text("清除账号与缓存")
+                                Text("更换或解绑")
                             }
                         }
                     }
@@ -227,8 +197,8 @@ fun DormElectricityScreen(
                         onValueChange = { accountInput = it },
                         label = {
                             Text(
-                                if (activeAcc != null) "输入新校园卡账号（留空则使用已保存账号）"
-                                else "本人校园卡账号（通常为学号）"
+                                if (activeAcc != null) "输入新学号可更换绑定（留空直接刷新当前寝室）"
+                                else "输入你的学号 / 校园卡号"
                             )
                         },
                         singleLine = true,
@@ -247,10 +217,11 @@ fun DormElectricityScreen(
                             onClick = {
                                 scope.launch {
                                     isQuerying = true
-                                    statusBanner = "正在查询已绑定房间水电..."
+                                    statusBanner = "正在查询寝室剩余电费..."
+                                    repository.setAllowUnverifiedUtilityTransport(true)
                                     val res = repository.saveAndRefreshOnlineUtilities(
                                         rawAccount = accountInput.takeIf { it.isNotBlank() },
-                                        allowUnverified = prefs.allowUnverifiedUtilityTransport
+                                        allowUnverified = true
                                     )
                                     accountReadState = repository.readUtilityAccountResult()
                                     if (accountInput.isNotBlank() && res.isSuccess) {
@@ -259,9 +230,9 @@ fun DormElectricityScreen(
                                     isQuerying = false
                                     res.onSuccess { snapshots ->
                                         val okCount = snapshots.count { !it.failed }
-                                        statusBanner = "查询完成：共读取 ${snapshots.size} 个绑定房间（$okCount 个成功）。"
+                                        statusBanner = "已更新寝室水电（共读取 ${snapshots.size} 个房间，$okCount 个成功）。"
                                     }.onFailure { err ->
-                                        statusBanner = err.message ?: "查询失败，请检查网络或确认已在完美校园绑定房间"
+                                        statusBanner = err.message ?: "查询未成功，请确认已在完美校园 App 绑定过宿舍房间"
                                     }
                                 }
                             },
@@ -273,7 +244,7 @@ fun DormElectricityScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text(if (isQuerying) "查询中..." else "查询已绑房间")
+                            Text(if (isQuerying) "正在查询..." else "立即查询寝室电费")
                         }
                         if (isQuerying) {
                             CircularProgressIndicator(

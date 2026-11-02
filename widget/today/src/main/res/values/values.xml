@@ -11,4 +11,5 @@
     <color name="today_widget_sub_stroke">#E8EEF6</color>
     <color name="today_widget_badge_bg">#E6F0FF</color>
     <string name="widget_today_desc">展示今天日期、教学周、当前/下节课及随后两节课程与完整教室</string>
+    <string name="widget_parcel_desc">实时展示校园驿站待取快递数量、驿站位置与大号取件码，点击一键直达快递中心</string>
 </resources>

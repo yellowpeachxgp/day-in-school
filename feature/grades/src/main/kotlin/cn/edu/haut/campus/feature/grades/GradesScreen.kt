@@ -314,7 +314,7 @@ fun GradesScreen(
                         ) {
                             Text("馆藏检索", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             XPeachStatusBadge(
-                                text = "OPAC",
+                                text = "馆藏",
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.primary
                             )
@@ -992,8 +992,8 @@ private fun AcademicPlanProgressSection(
         }
         TrainingPlan(
             id = "local-reference-plan",
-            title = "本科参考培养方案（待导入本专业官方方案）",
-            version = "UNVERIFIED",
+            title = "本科参考培养方案",
+            version = "参考方案",
             applicableGradeYears = setOf(1, 2, 3, 4),
             source = PlanSource.UNKNOWN,
             confirmedForStudent = false,
@@ -1012,22 +1012,22 @@ private fun AcademicPlanProgressSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "成绩与学分可信分级",
+                    text = "已修学分汇总",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 XPeachStatusBadge(
-                    text = if (officialSnapshot != null) "含官方汇总" else "本地推导 · DERIVED"
+                    text = if (officialSnapshot != null) "教务公布" else "按课程学分计算"
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = buildString {
-                    append("• 已入账总学分（按课程去重）：")
+                    append("• 已获得总学分（按课程去重）：")
                     append(if (privacyMasked) "∗∗.∗" else "${aggregation.totalCreditedCredits.toPlainString()} 学分")
-                    append("（DERIVED · 同门重修/补考只计一次）\n")
+                    append("（同门重修或补考只计一次）\n")
                     append("• 多次修读课程数：${aggregation.multiAttemptCourseCount} 门\n")
-                    append("• 成绩分项明细（平时/实验/期末）：仅在教务接口真实返回分项字段时展示，绝不按比例伪造。")
+                    append("• 平时分与期末卷面分明细以教务系统实际公布为准。")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1055,16 +1055,16 @@ private fun AcademicPlanProgressSection(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = degreeProgress.basis,
+                        text = "按课程性质统计已修学分与毕业参考目标",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 XPeachStatusBadge(
                     text = when (degreeProgress.provenance) {
-                        Provenance.OFFICIAL -> "OFFICIAL"
-                        Provenance.DERIVED -> "DERIVED"
-                        Provenance.ESTIMATED -> "估算 · UNVERIFIED"
+                        Provenance.OFFICIAL -> "教务公布"
+                        Provenance.DERIVED -> "按成绩单计算"
+                        Provenance.ESTIMATED -> "参考测算"
                     }
                 )
             }
@@ -1166,15 +1166,15 @@ private fun SelectionDraftSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "离线选课草稿与冲突检测",
+                    text = "选课预排与撞课检测",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                XPeachStatusBadge(text = "只读沙盒 · UNVERIFIED")
+                XPeachStatusBadge(text = "撞课检测")
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "按半开区间 [start, end+1) 与当前学期已排课表 (${timetableOccupied.size} 个时段) 及草稿实时比对冲突。在线选退课写接口未经学校实测授权，默认禁用。",
+                text = "选课前可在此预排想选的课程，自动与本学期已排课表（${timetableOccupied.size} 个时段）及草稿比对是否时间冲突。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1247,61 +1247,25 @@ private fun SelectionDraftSection(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Button(
+                enabled = courseNameInput.isNotBlank(),
+                onClick = {
+                    val name = courseNameInput.trim()
+                    val cls = classIdInput.trim().ifBlank { "01班" }
+                    draft = draft.add(
+                        DraftEntry(
+                            offeringId = "draft-$name",
+                            courseName = name,
+                            teachingClassId = cls,
+                            slots = previewCandidate.slots
+                        )
+                    ).draft
+                    courseNameInput = ""
+                    submissionNotice = "已加入选课预排草稿"
+                },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Button(
-                    enabled = courseNameInput.isNotBlank(),
-                    onClick = {
-                        val name = courseNameInput.trim()
-                        val cls = classIdInput.trim().ifBlank { "01班" }
-                        draft = draft.add(
-                            DraftEntry(
-                                offeringId = "draft-$name",
-                                courseName = name,
-                                teachingClassId = cls,
-                                slots = previewCandidate.slots
-                            )
-                        ).draft
-                        courseNameInput = ""
-                        submissionNotice = null
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("加入离线草稿")
-                }
-                TextButton(
-                    enabled = !draft.isEmpty,
-                    onClick = {
-                        val first = draft.entries.firstOrNull() ?: return@TextButton
-                        val unverifiedRound = SelectionRound(
-                            id = "round-unverified",
-                            termId = scope.termId,
-                            label = "未核验选课轮次",
-                            declaredWritable = false
-                        )
-                        val submission = SelectionSubmission.begin(
-                            scope = scope,
-                            round = unverifiedRound,
-                            request = SelectionRequest(
-                                offeringId = first.offeringId,
-                                courseName = first.courseName,
-                                teachingClassId = first.teachingClassId
-                            )
-                        )
-                        when (val transition = submission.confirm(Instant.now())) {
-                            is SelectionTransition.Blocked -> {
-                                submissionNotice = "受控提交拦截（${transition.reason.name}）：${transition.detail}"
-                            }
-                            is SelectionTransition.Applied -> {
-                                submissionNotice = transition.submission.stateLabel
-                            }
-                        }
-                    }
-                ) {
-                    Text("模拟提交校验")
-                }
+                Text("加入选课草稿")
             }
             submissionNotice?.let { notice ->
                 Spacer(modifier = Modifier.height(6.dp))

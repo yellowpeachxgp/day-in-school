@@ -13,6 +13,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -739,7 +740,7 @@ fun TimetableScreen(
 
     if (showAddCourseDialog) {
         var newName by remember { mutableStateOf("") }
-        var newRoom by remember { mutableStateOf("1号教学楼1106") }
+        var newRoom by remember { mutableStateOf("") }
         var newTeacher by remember { mutableStateOf("") }
         var newWeekday by remember { mutableIntStateOf(today.dayOfWeek.value) }
         var newStartPeriod by remember { mutableStateOf("1") }
@@ -748,57 +749,106 @@ fun TimetableScreen(
 
         AlertDialog(
             onDismissRequest = { showAddCourseDialog = false },
-            title = { Text("添加课程") },
+            title = { Text("添加自定义课程") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = newName,
                         onValueChange = { newName = it },
                         label = { Text("课程名称") },
+                        placeholder = { Text("例如：高等数学 / 英语口语") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = newRoom,
                         onValueChange = { newRoom = it },
-                        label = { Text("教室") },
+                        label = { Text("上课教室") },
+                        placeholder = { Text("例如：5号教学楼5204") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = newTeacher,
                         onValueChange = { newTeacher = it },
-                        label = { Text("教师") },
+                        label = { Text("任课教师（选填）") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = newWeekday.toString(),
-                            onValueChange = { newWeekday = (it.toIntOrNull() ?: 1).coerceIn(1, 7) },
-                            label = { Text("星期") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = newStartPeriod,
-                            onValueChange = { newStartPeriod = it },
-                            label = { Text("起始节") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = newEndPeriod,
-                            onValueChange = { newEndPeriod = it },
-                            label = { Text("结束节") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
+                    Text(
+                        text = "点选星期：",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+                        for (d in 1..7) {
+                            XPeachFilterPill(
+                                label = dayLabels[d - 1],
+                                selected = newWeekday == d,
+                                onClick = { newWeekday = d }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "点选节次：",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                            XPeachFilterPill(
+                                label = "${sp}-${ep}节",
+                                selected = newStartPeriod == sp && newEndPeriod == ep,
+                                onClick = {
+                                    newStartPeriod = sp
+                                    newEndPeriod = ep
+                                }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "上课周次：",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((label, expr) in listOf(
+                            "全周 1-16周" to "1-16周",
+                            "单周" to "1,3,5,7,9,11,13,15周",
+                            "双周" to "2,4,6,8,10,12,14,16周",
+                            "前8周" to "1-8周",
+                            "后8周" to "9-16周"
+                        )) {
+                            XPeachFilterPill(
+                                label = label,
+                                selected = newWeeks == expr,
+                                onClick = { newWeeks = expr }
+                            )
+                        }
                     }
                     OutlinedTextField(
                         value = newWeeks,
                         onValueChange = { newWeeks = it },
-                        label = { Text("周次") },
+                        label = { Text("自定义周次范围") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

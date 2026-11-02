@@ -66,6 +66,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -158,6 +159,7 @@ fun TodayScreen(
     val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
     val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
     val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
+    val bookingPlans by repository.libraryBookingPlansFlow.collectAsState(initial = emptyList())
     val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
     val reminderOverrides by repository.reminderEventOverridesFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
@@ -356,6 +358,66 @@ fun TodayScreen(
                 }
             }
 
+            // 1.5 动态待取快递弹出提醒卡（有待取快递时自动在主页显著弹出，按驿站聚合超大取件码，全部取完自动收起）
+            val pendingPickups = remember(parcelItems) {
+                parcelItems.filter {
+                    it.status == "READY_FOR_PICKUP" || (!it.pickupCode.isNullOrBlank() && it.status != "PICKED_UP")
+                }
+            }
+            AnimatedVisibility(
+                visible = pendingPickups.isNotEmpty(),
+                enter = expandVertically(tween(240, easing = FastOutSlowInEasing)) + fadeIn(tween(200)),
+                exit = shrinkVertically(tween(200)) + fadeOut(tween(150))
+            ) {
+                TodayExpressPickupHeroCard(
+                    pendingPickups = pendingPickups,
+                    onMarkPickedUp = { parcelId ->
+                        scope.launch {
+                            repository.markParcelPickedUp(parcelId)
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        }
+                    },
+                    onMarkStationAllPickedUp = { stationName ->
+                        scope.launch {
+                            repository.markAllStationParcelsPickedUp(stationName)
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        }
+                    },
+                    onSyncParcels = {
+                        scope.launch {
+                            dynamicSyncBanner = "正在同步快递与云端包裹..."
+                            runCatching { repository.syncXiaomiExpressPackages() }
+                            runCatching { repository.syncWithCampusCloud() }
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            dynamicSyncBanner = "已更新最新快递取件码"
+                        }
+                    },
+                    onOpenParcelHub = onNavigateToParcelHub
+                )
+            }
+
+            // 1.6 动态今日图书馆座位 / 自动抢座状态卡（有已约座位或待执行抢座计划时自动展示）
+            val activeSeatPlans = remember(bookingPlans) {
+                bookingPlans.filter {
+                    it.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CONFIRMED")
+                }
+            }
+            AnimatedVisibility(
+                visible = activeSeatPlans.isNotEmpty(),
+                enter = expandVertically(tween(220, easing = FastOutSlowInEasing)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+            ) {
+                TodayLibrarySeatDynamicCard(
+                    activePlans = activeSeatPlans,
+                    onOpenLibrarySeats = onNavigateToLibrarySeats,
+                    onCancelPlan = { planId ->
+                        scope.launch {
+                            repository.cancelDualEngineBookingPlan(planId)
+                        }
+                    }
+                )
+            }
+
             // 2. 上半部分：唯一「当天课表卡片」（合并当前/下一节课状态与行内一键去教室，移除顶部重复大卡）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 val heroItem = snapshot.activeOrNextClass
@@ -510,6 +572,7 @@ fun TodayScreen(
                 utilityMeters = utilityMeters,
                 utilityReadings = utilityReadings,
                 parcelItems = parcelItems,
+                bookingPlans = bookingPlans,
                 cardOrder = prefs.homeCardOrder,
                 hiddenCards = prefs.hiddenHomeCards,
                 fullWidthCards = prefs.fullWidthHomeCards,
@@ -1221,11 +1284,269 @@ private val HOME_CARD_META: List<Pair<String, String>> = listOf(
     "STUDY_FOCUS" to "自习专注",
     "DORM_ELECTRICITY" to "宿舍水电",
     "LIBRARY_SEAT" to "座位预约",
-    "PARCEL_HUB" to "Parcel Hub 快递",
+    "PARCEL_HUB" to "我的快递",
     "LIBRARY_CATALOG" to "馆藏检索",
     "EMPTY_CLASSROOM" to "空教室查询",
     "CAMPUS_COMMUNITY" to "社团与频道"
 )
+
+@Composable
+private fun TodayExpressPickupHeroCard(
+    pendingPickups: List<cn.edu.haut.campus.core.database.ParcelItemEntity>,
+    onMarkPickedUp: (String) -> Unit,
+    onMarkStationAllPickedUp: (String) -> Unit,
+    onSyncParcels: () -> Unit,
+    onOpenParcelHub: () -> Unit
+) {
+    val groupedByStation = remember(pendingPickups) {
+        pendingPickups.groupBy {
+            it.stationName?.takeIf { s -> s.isNotBlank() } ?: "校园快递驿站"
+        }
+    }
+
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f),
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    XPeachStatusBadge(
+                        text = "待取 ${pendingPickups.size} 件",
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Text(
+                        text = "待取快递提醒",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    XPeachFilterPill(
+                        label = "同步",
+                        selected = false,
+                        onClick = onSyncParcels
+                    )
+                    XPeachFilterPill(
+                        label = "全部快递",
+                        selected = true,
+                        onClick = onOpenParcelHub
+                    )
+                }
+            }
+
+            groupedByStation.entries.forEach { (stationName, stationParcels) ->
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "📍 $stationName (${stationParcels.size}件)",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (stationParcels.size > 1 && stationParcels.first().stationName != null) {
+                                XPeachFilterPill(
+                                    label = "本驿站全取",
+                                    selected = false,
+                                    onClick = { onMarkStationAllPickedUp(stationName) }
+                                )
+                            }
+                        }
+
+                        stationParcels.take(4).forEach { parcel ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                    .clickable(onClick = onOpenParcelHub)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = parcel.pickupCode?.takeIf { it.isNotBlank() } ?: "待出取件码",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val carrier = parcel.carrierName.ifBlank { "快递" }
+                                    val desc = parcel.itemTitle?.takeIf { it.isNotBlank() }
+                                        ?: "尾号 ${parcel.trackingNumber.takeLast(6)}"
+                                    Text(
+                                        text = "$carrier · $desc",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                XPeachFilterPill(
+                                    label = "已取件",
+                                    selected = true,
+                                    onClick = { onMarkPickedUp(parcel.id) }
+                                )
+                            }
+                        }
+
+                        if (stationParcels.size > 4) {
+                            Text(
+                                text = "还有 ${stationParcels.size - 4} 件待取包裹，点击查看全部",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable(onClick = onOpenParcelHub)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayLibrarySeatDynamicCard(
+    activePlans: List<cn.edu.haut.campus.core.database.LibraryBookingPlanEntity>,
+    onOpenLibrarySeats: () -> Unit,
+    onCancelPlan: (String) -> Unit
+) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    XPeachStatusBadge(
+                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已约上座位" else "自动抢座待命",
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Text(
+                        text = "图书馆座位与抢座动态",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                XPeachFilterPill(
+                    label = "抢座管理",
+                    selected = false,
+                    onClick = onOpenLibrarySeats
+                )
+            }
+
+            activePlans.take(2).forEach { plan ->
+                val firstSeat = plan.preferredSeatLabel.split(",")
+                    .map { it.trim() }
+                    .firstOrNull { it.isNotEmpty() } ?: "自动优选"
+                val statusLabel = when (plan.status) {
+                    "CONFIRMED" -> "✅ 已成功预约座位"
+                    "FINAL_CHECK_OK" -> "⚡ 开抢前就绪检查通过，等待准点抢座"
+                    "PRECHECK_OK" -> "🛡️ 已完成自动登录保活，等待开抢"
+                    else -> "⏰ 已设定自动抢座计划"
+                }
+                val engineLabel = if (plan.executionMode == "CLOUD_HOSTED") {
+                    "☁️ 云端托管抢座"
+                } else {
+                    "📱 本机定时抢座"
+                }
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "💺 ${plan.preferredAreaName} · $firstSeat 号座",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $engineLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = statusLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            XPeachFilterPill(
+                                label = "查看",
+                                selected = true,
+                                onClick = onOpenLibrarySeats
+                            )
+                            if (plan.status != "CONFIRMED") {
+                                XPeachFilterPill(
+                                    label = "取消",
+                                    selected = false,
+                                    onClick = { onCancelPlan(plan.id) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun TodayCampusBentoSection(
@@ -1242,6 +1563,7 @@ private fun TodayCampusBentoSection(
     utilityMeters: List<cn.edu.haut.campus.core.model.UtilityMeterDomain>,
     utilityReadings: List<cn.edu.haut.campus.core.model.UtilityReadingDomain>,
     parcelItems: List<cn.edu.haut.campus.core.database.ParcelItemEntity>,
+    bookingPlans: List<cn.edu.haut.campus.core.database.LibraryBookingPlanEntity>,
     cardOrder: List<String>,
     hiddenCards: Set<String>,
     fullWidthCards: Set<String>,
@@ -1408,24 +1730,44 @@ private fun TodayCampusBentoSection(
             subtitle = elecSub,
             onClick = onNavigateToElectricity
         ),
-        "LIBRARY_SEAT" to HomeModularCardSpec(
-            id = "LIBRARY_SEAT",
-            title = "座位预约",
-            badgeText = "双引擎",
-            subtitle = "本机免费 / 云端托管 T-30m·T-5m·T",
-            onClick = onNavigateToLibrarySeats
-        ),
+        "LIBRARY_SEAT" to run {
+            val activePlan = bookingPlans.firstOrNull {
+                it.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CONFIRMED")
+            }
+            if (activePlan != null) {
+                val seatNo = activePlan.preferredSeatLabel.split(",").firstOrNull()?.trim() ?: "优选座"
+                HomeModularCardSpec(
+                    id = "LIBRARY_SEAT",
+                    title = "座位预约",
+                    badgeText = if (activePlan.status == "CONFIRMED") "已约座" else "待开抢",
+                    subtitle = "${activePlan.preferredAreaName} · ${seatNo}号 (${activePlan.targetLocalTime})",
+                    highlighted = true,
+                    onClick = onNavigateToLibrarySeats
+                )
+            } else {
+                HomeModularCardSpec(
+                    id = "LIBRARY_SEAT",
+                    title = "座位预约",
+                    badgeText = "智能抢座",
+                    subtitle = "点选区域与座位号 · 准点自动抢座",
+                    onClick = onNavigateToLibrarySeats
+                )
+            }
+        },
         "PARCEL_HUB" to run {
-            val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
-            val firstWaiting = parcelItems.firstOrNull { it.status == "READY_FOR_PICKUP" }
+            val waitingParcels = parcelItems.filter {
+                it.status == "READY_FOR_PICKUP" || (!it.pickupCode.isNullOrBlank() && it.status != "PICKED_UP")
+            }
+            val waitingCount = waitingParcels.size
+            val firstWaiting = waitingParcels.firstOrNull()
             HomeModularCardSpec(
                 id = "PARCEL_HUB",
-                title = "快递聚合",
-                badgeText = if (waitingCount > 0) "待取 $waitingCount" else "Parcel Hub",
+                title = "我的快递",
+                badgeText = if (waitingCount > 0) "待取 $waitingCount" else "取件码",
                 subtitle = if (firstWaiting != null) {
                     "${firstWaiting.pickupCode ?: "待取件"} · ${firstWaiting.stationName ?: firstWaiting.itemTitle ?: firstWaiting.trackingNumber}"
                 } else {
-                    "短信解析 · 多来源导入 · 驿站取件码"
+                    "手机号同步小米快递 · 短信识别取件码"
                 },
                 highlighted = waitingCount > 0,
                 onClick = onNavigateToParcelHub
@@ -1434,7 +1776,7 @@ private fun TodayCampusBentoSection(
         "LIBRARY_CATALOG" to HomeModularCardSpec(
             id = "LIBRARY_CATALOG",
             title = "馆藏检索",
-            badgeText = "OPAC",
+            badgeText = "馆藏",
             subtitle = "书目搜索与在馆状态",
             onClick = onNavigateToLibraryCatalog
         ),
