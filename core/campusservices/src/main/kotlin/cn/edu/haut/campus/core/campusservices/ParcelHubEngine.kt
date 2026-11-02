@@ -83,12 +83,12 @@ object ParcelHubEngine {
         ),
         "parcel.xiaomi.personal-assistant" to ParcelProviderSpec(
             providerId = "parcel.xiaomi.personal-assistant",
-            displayName = "小米智能助理包裹快照",
-            authorityStatus = ParcelAuthorityStatus.MANUAL_IMPORT_ONLY,
+            displayName = "小米智能助理 (手机号绑定快递聚合)",
+            authorityStatus = ParcelAuthorityStatus.PRODUCTION_ENABLED,
             allowBackgroundCloudPoll = false,
             allowClientImport = true,
-            sourcePriority = 65,
-            description = "仅支持用户手动导入包裹快照，严禁云端后台轮询"
+            sourcePriority = 95,
+            description = "支持应用内登录小米账号并通过短信验证码绑定收件手机号，直接拉取手机号名下菜鸟/顺丰/京东/小米等全渠道快递"
         ),
         "parcel.jd.orders" to ParcelProviderSpec(
             providerId = "parcel.jd.orders",

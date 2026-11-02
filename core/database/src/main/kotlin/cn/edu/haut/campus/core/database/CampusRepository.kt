@@ -39,6 +39,13 @@ import cn.edu.haut.campus.core.campusservices.UtilityAccountSecureStore
 import cn.edu.haut.campus.core.campusservices.UtilityDailySample
 import cn.edu.haut.campus.core.campusservices.UtilitySamplingPolicy
 import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
+import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
+import cn.edu.haut.campus.core.campusservices.XiaomiAccountSecureVault
+import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
+import cn.edu.haut.campus.core.campusservices.XiaomiExpressApi
+import cn.edu.haut.campus.core.campusservices.XiaomiPassportClient
+import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
+import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
@@ -165,6 +172,7 @@ class CampusRepository internal constructor(
     private val cloudAndParcelDao = database.cloudAndParcelDao()
     private val utilityAccountStore = UtilityAccountSecureStore(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val librarySeatSessionVault = LibrarySeatSessionVault(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
+    private val xiaomiAccountVault = XiaomiAccountSecureVault(appContext, scopeId = accountProfile.id)
     private val academicCredentialVault = createAcademicCredentialVault(appContext)
     private val academicCredentialMutex = Mutex()
     private val librarySeatAuthMutex = Mutex()
@@ -294,6 +302,7 @@ class CampusRepository internal constructor(
         registerBeforeWipeHook("campus_services_account_and_web_wipe") {
             runCatching { utilityAccountStore.wipeAll() }
             runCatching { librarySeatSessionVault.clear() }
+            runCatching { xiaomiAccountVault.saveAccounts(emptyList()) }
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
     }
@@ -2311,6 +2320,326 @@ class CampusRepository internal constructor(
 
     suspend fun deleteParcelById(parcelId: String) {
         cloudAndParcelDao.deleteParcelItemById(parcelId)
+    }
+
+    // --- Xiaomi Smart Assistant Account, Phone Number SMS Binding & Express Sync ---
+    fun getXiaomiAccounts(): List<XiaomiAccountCredential> =
+        xiaomiAccountVault.readAccounts()
+
+    suspend fun saveXiaomiAccountFromWebLogin(
+        token: String,
+        cUserId: String,
+        accountId: String,
+        detectedPhones: List<String>
+    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(token.isNotBlank()) { "小米 serviceToken 不能为空" }
+            val effectiveAccountId = accountId.trim().ifBlank { cUserId.trim() }
+            require(effectiveAccountId.isNotBlank()) { "小米账号标识不能为空" }
+            val oaid = XiaomiExpressApi.probeIdentifier(appContext, "getOAID")
+            val vaid = XiaomiExpressApi.probeIdentifier(appContext, "getVAID")
+            val credId = "xiaomi_$effectiveAccountId"
+            val cleanPhones = detectedPhones
+                .map { it.trim() }
+                .filter { XiaomiPassportClient.isValidMainlandPhone(it) }
+                .distinct()
+            val list = xiaomiAccountVault.upsertAccount(
+                XiaomiAccountCredential(
+                    id = credId,
+                    label = "小米账号",
+                    token = token.trim(),
+                    cUserId = cUserId.trim().ifBlank { effectiveAccountId },
+                    accountId = effectiveAccountId,
+                    oaid = oaid,
+                    vaid = vaid,
+                    phones = cleanPhones,
+                    enabled = true,
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            val saved = list.first { it.id == credId || it.accountId == effectiveAccountId }
+            cloudAndParcelDao.upsertParcelSourceConnection(
+                ParcelSourceConnectionEntity(
+                    id = saved.id,
+                    providerId = "parcel.xiaomi.personal-assistant",
+                    accountAlias = "${saved.label} · ${saved.maskedPhonesSummary}",
+                    authorityStatus = "PRODUCTION_ENABLED",
+                    status = "ACTIVE",
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            saved
+        }
+    }
+
+    suspend fun sendXiaomiPhoneVerificationCode(
+        accountIdOrId: String,
+        phone: String
+    ): Result<XiaomiApiSimpleResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cred = xiaomiAccountVault.readAccounts()
+                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
+                ?: throw IllegalStateException("未找到对应的小米登录账号，请先完成小米账号登录")
+            XiaomiExpressApi.sendVerificationCode(appContext, cred, phone)
+        }
+    }
+
+    suspend fun verifyAndBindXiaomiPhone(
+        accountIdOrId: String,
+        phone: String,
+        verificationCode: String
+    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanPhone = phone.trim()
+            require(XiaomiPassportClient.isValidMainlandPhone(cleanPhone)) {
+                "请输入有效的 11 位中国大陆手机号"
+            }
+            require(verificationCode.trim().isNotEmpty()) {
+                "请输入短信验证码"
+            }
+            val cred = xiaomiAccountVault.readAccounts()
+                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
+                ?: throw IllegalStateException("未找到对应的小米登录账号")
+            val checkRes = XiaomiExpressApi.checkVerificationCode(
+                appContext,
+                cred,
+                cleanPhone,
+                verificationCode.trim()
+            )
+            if (!checkRes.ok) {
+                throw IllegalStateException("验证码校验失败: ${checkRes.message}")
+            }
+            val nextPhones = (cred.phones + cleanPhone).distinct()
+            val bindRes = XiaomiExpressApi.bindPhone(
+                appContext,
+                cred,
+                cleanPhone,
+                nextPhones,
+                bind = true
+            )
+            if (!bindRes.ok) {
+                throw IllegalStateException("绑定手机号失败: ${bindRes.message}")
+            }
+            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, nextPhones)
+                ?: throw IllegalStateException("更新本地手机号列表失败")
+            cloudAndParcelDao.upsertParcelSourceConnection(
+                ParcelSourceConnectionEntity(
+                    id = updated.id,
+                    providerId = "parcel.xiaomi.personal-assistant",
+                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
+                    authorityStatus = "PRODUCTION_ENABLED",
+                    status = "ACTIVE",
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            updated
+        }
+    }
+
+    suspend fun addXiaomiPhoneDirectly(
+        accountIdOrId: String,
+        phone: String
+    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanPhone = phone.trim()
+            require(XiaomiPassportClient.isValidMainlandPhone(cleanPhone)) {
+                "请输入有效的 11 位中国大陆手机号"
+            }
+            val cred = xiaomiAccountVault.readAccounts()
+                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
+                ?: throw IllegalStateException("未找到对应的小米登录账号")
+            val nextPhones = (cred.phones + cleanPhone).distinct()
+            runCatching {
+                XiaomiExpressApi.bindPhone(appContext, cred, cleanPhone, nextPhones, bind = true)
+            }
+            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, nextPhones)
+                ?: throw IllegalStateException("保存收件手机号失败")
+            cloudAndParcelDao.upsertParcelSourceConnection(
+                ParcelSourceConnectionEntity(
+                    id = updated.id,
+                    providerId = "parcel.xiaomi.personal-assistant",
+                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
+                    authorityStatus = "PRODUCTION_ENABLED",
+                    status = "ACTIVE",
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            updated
+        }
+    }
+
+    suspend fun unbindXiaomiPhone(
+        accountIdOrId: String,
+        phone: String
+    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanPhone = phone.trim()
+            val cred = xiaomiAccountVault.readAccounts()
+                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
+                ?: throw IllegalStateException("未找到对应的小米登录账号")
+            val remaining = cred.phones.filterNot { it == cleanPhone }
+            runCatching {
+                XiaomiExpressApi.bindPhone(appContext, cred, cleanPhone, remaining, bind = false)
+            }
+            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, remaining)
+                ?: throw IllegalStateException("解绑手机号更新失败")
+            cloudAndParcelDao.upsertParcelSourceConnection(
+                ParcelSourceConnectionEntity(
+                    id = updated.id,
+                    providerId = "parcel.xiaomi.personal-assistant",
+                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
+                    authorityStatus = "PRODUCTION_ENABLED",
+                    status = "ACTIVE",
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            updated
+        }
+    }
+
+    suspend fun removeXiaomiAccount(accountIdOrId: String) = withContext(Dispatchers.IO) {
+        val current = xiaomiAccountVault.readAccounts()
+            .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
+        xiaomiAccountVault.removeAccount(accountIdOrId)
+        if (current != null) {
+            cloudAndParcelDao.deleteParcelSourceConnection(current.id)
+        } else {
+            cloudAndParcelDao.deleteParcelSourceConnection(accountIdOrId)
+        }
+    }
+
+    suspend fun syncXiaomiExpressPackages(): Result<XiaomiSyncSummary> = withContext(Dispatchers.IO) {
+        runCatching {
+            val accounts = xiaomiAccountVault.readAccounts().filter { it.enabled }
+            if (accounts.isEmpty()) {
+                throw IllegalStateException("尚未登录小米账号，请先点击「手机号/扫码登录小米账号」")
+            }
+            val activeWithPhones = accounts.filter { it.phones.isNotEmpty() }
+            if (activeWithPhones.isEmpty()) {
+                throw IllegalStateException("已登录小米账号，但尚未绑定收件手机号。请点击「绑定/管理收件手机号」添加手机号后再同步")
+            }
+            var totalFetched = 0
+            var readyCount = 0
+            val now = System.currentTimeMillis()
+            for (cred in activeWithPhones) {
+                val remoteItems = XiaomiExpressApi.fetchExpressList(appContext, cred)
+                for (dto in remoteItems) {
+                    val normalizedTracking = runCatching {
+                        ParcelHubEngine.normalizeTrackingNumber(dto.mailNo)
+                    }.getOrElse { dto.mailNo.trim().uppercase() }
+                    val existing = cloudAndParcelDao.getParcelByTrackingNumber(normalizedTracking)
+                    val mergedPickup = dto.pickupCode ?: existing?.pickupCode
+                    val mergedStation = dto.stationName ?: existing?.stationName ?: "校园快递服务点"
+                    val effectiveStatus = when {
+                        existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
+                            ParcelLifecycleStatus.PICKED_UP.wireName
+                        !mergedPickup.isNullOrBlank() && dto.lifecycleStatus != ParcelLifecycleStatus.PICKED_UP ->
+                            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
+                        else -> dto.lifecycleStatus.wireName
+                    }
+                    if (effectiveStatus == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName) {
+                        readyCount++
+                    }
+                    val checkpointsArr = org.json.JSONArray()
+                    for (pt in dto.checkpoints) {
+                        checkpointsArr.put(
+                            org.json.JSONObject()
+                                .put("desc", pt.desc)
+                                .put("time", pt.time)
+                        )
+                    }
+                    val provenanceObj = org.json.JSONObject()
+                        .put("provider_id", "parcel.xiaomi.personal-assistant")
+                        .put("xiaomi_account_id", cred.id)
+                        .put("cp_code", dto.cpCode)
+                        .put("provider", dto.provider)
+                        .put("state_num", dto.stateNum)
+                        .put("latest_time", dto.latestTime)
+                        .put("phone", dto.phone ?: cred.phones.firstOrNull().orEmpty())
+                        .put("query_channel", dto.queryChannel)
+                        .put("updated_at", now)
+
+                    val entity = ParcelItemEntity(
+                        id = existing?.id ?: "prc_${UUID.randomUUID().toString().replace("-", "").take(12)}",
+                        trackingNumber = normalizedTracking,
+                        carrierCode = dto.cpCode.uppercase().take(12),
+                        carrierName = dto.companyName.ifBlank { existing?.carrierName ?: "小米快递" },
+                        status = effectiveStatus,
+                        pickupCode = mergedPickup,
+                        stationName = mergedStation,
+                        itemTitle = existing?.itemTitle ?: "${dto.companyName} · ${dto.stateName.ifBlank { dto.lifecycleStatus.label }}",
+                        estimatedDeliveryText = dto.latestText.ifBlank {
+                            if ( dto.latestTime.isNotBlank() ) "更新于 ${dto.latestTime}" else "来自小米智能助理"
+                        },
+                        sourcesJson = """[{"provider_id":"parcel.xiaomi.personal-assistant","priority":95,"account":"${cred.id}"}]""",
+                        fieldProvenanceJson = provenanceObj.toString(),
+                        checkpointsJson = if (checkpointsArr.length() > 0) checkpointsArr.toString() else (existing?.checkpointsJson ?: "[]"),
+                        createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
+                        updatedAtEpochMillis = now
+                    )
+                    cloudAndParcelDao.upsertParcelItem(entity)
+                    totalFetched++
+                }
+            }
+            val totalPhones = activeWithPhones.sumOf { it.phones.size }
+            XiaomiSyncSummary(
+                accountCount = activeWithPhones.size,
+                phoneCount = totalPhones,
+                fetchedParcelCount = totalFetched,
+                readyPickupCount = readyCount,
+                message = "小米智能助理同步成功：已查询 ${activeWithPhones.size} 个账号（共 $totalPhones 个手机号），同步 $totalFetched 件快递（待取 $readyCount 件）"
+            )
+        }
+    }
+
+    suspend fun fetchXiaomiParcelDetail(parcelId: String): Result<List<XiaomiTrackPoint>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val parcel = cloudAndParcelDao.getParcelItemsSnapshot().firstOrNull { it.id == parcelId }
+                ?: throw IllegalArgumentException("未找到该包裹记录")
+            val prov = runCatching { org.json.JSONObject(parcel.fieldProvenanceJson) }.getOrNull()
+            val accountId = prov?.optString("xiaomi_account_id").orEmpty()
+            val accounts = xiaomiAccountVault.readAccounts()
+            val cred = accounts.firstOrNull { it.id == accountId || it.accountId == accountId }
+                ?: accounts.firstOrNull { it.enabled && it.phones.isNotEmpty() }
+                ?: throw IllegalStateException("未找到可用的小米登录账号")
+            val detail = XiaomiExpressApi.fetchExpressDetail(
+                context = appContext,
+                cred = cred,
+                mailNo = parcel.trackingNumber,
+                cpCode = prov?.optString("cp_code")?.takeIf { it.isNotBlank() } ?: parcel.carrierCode,
+                companyName = parcel.carrierName,
+                provider = prov?.optString("provider"),
+                stateNum = prov?.optInt("state_num", 0) ?: 0,
+                latestTime = prov?.optString("latest_time"),
+                phone = prov?.optString("phone")?.takeIf { it.isNotBlank() } ?: cred.phones.firstOrNull(),
+                queryChannel = prov?.optString("query_channel")
+            )
+            if (detail.points.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                for (pt in detail.points) {
+                    arr.put(org.json.JSONObject().put("desc", pt.desc).put("time", pt.time))
+                }
+                val latestDesc = detail.points.firstOrNull()?.desc ?: parcel.estimatedDeliveryText
+                val extracted = ParcelHubEngine.resolvePickupCodeFromText(
+                    detail.points.joinToString(" ") { it.desc }
+                )
+                cloudAndParcelDao.upsertParcelItem(
+                    parcel.copy(
+                        pickupCode = extracted?.pickupCode ?: parcel.pickupCode,
+                        stationName = extracted?.stationName ?: parcel.stationName,
+                        status = when {
+                            detail.isReceived -> ParcelLifecycleStatus.PICKED_UP.wireName
+                            extracted != null -> ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
+                            else -> parcel.status
+                        },
+                        estimatedDeliveryText = latestDesc,
+                        checkpointsJson = arr.toString(),
+                        updatedAtEpochMillis = System.currentTimeMillis()
+                    )
+                )
+            }
+            detail.points
+        }
     }
 
     // --- Unified Extension Plugins (dis-extension/v2 + dis-campus-plugin/v1) ---

@@ -650,9 +650,18 @@ class CampusServicesUnitTest {
             assertTrue(expected.message!!.contains("RESEARCH_SANDBOX_ONLY"))
         }
 
-        // Manual import & SMS local rule are allowed
+        // Manual import, SMS local rule & Xiaomi personal assistant are allowed
         ParcelHubEngine.enforceProviderAuthority("parcel.manual", isBackgroundPoll = false, isProduction = true)
         ParcelHubEngine.enforceProviderAuthority("parcel.notification-parser", isBackgroundPoll = false, isProduction = true)
+        ParcelHubEngine.enforceProviderAuthority("parcel.xiaomi.personal-assistant", isBackgroundPoll = false, isProduction = true)
+
+        // Xiaomi phone URL extraction & MiuiExpressCrypto round-trip
+        val loginUrlWithPhone = "https://account.xiaomi.com/fe/service/login?_user=13812345678&sid=assistant"
+        assertEquals("13812345678", XiaomiPassportClient.extractPhoneFromUrl(loginUrlWithPhone))
+        assertEquals("138****5678", XiaomiPassportClient.maskPhone("13812345678"))
+        val plainBody = """{"info":{"limit":29,"phones":["13812345678"]}}"""
+        val encrypted = MiuiExpressCrypto.encode(plainBody)
+        assertEquals(plainBody, MiuiExpressCrypto.decode(encrypted))
     }
 
     @Test
