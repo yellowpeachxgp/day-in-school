@@ -29,10 +29,10 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 enum class LibrarySeatRefreshSource(val label: String) {
-    CACHED_TOKEN("持久化会话直连"),
-    PERSISTED_COOKIE("持久化 Cookie 自动续期"),
-    BACKGROUND_PASSWORD_LOGIN("加密凭据自动后台重登"),
-    WEBVIEW_CAPTURE("网页登录同步持久化")
+    CACHED_TOKEN("已自动登录"),
+    PERSISTED_COOKIE("已自动续期"),
+    BACKGROUND_PASSWORD_LOGIN("已自动登录"),
+    WEBVIEW_CAPTURE("已登录")
 }
 
 data class LibrarySeatUserInfo(
@@ -57,9 +57,9 @@ data class LibrarySeatSessionSnapshot(
 
 sealed interface LibrarySeatSessionState {
     data object Idle : LibrarySeatSessionState
-    data class Refreshing(val hint: String = "正在校验持久会话并自动后台登录…") : LibrarySeatSessionState
+    data class Refreshing(val hint: String = "正在自动登录图书馆选座系统…") : LibrarySeatSessionState
     data class Authenticated(val snapshot: LibrarySeatSessionSnapshot) : LibrarySeatSessionState
-    data class CredentialsRequired(val message: String = "绑定统一身份认证账号后，Cookie 失效将自动后台登录") : LibrarySeatSessionState
+    data class CredentialsRequired(val message: String = "请先保存一次学校账号密码，之后将自动免密登录") : LibrarySeatSessionState
     data class AuthError(val message: String, val requiresManualVerification: Boolean = false) : LibrarySeatSessionState
 }
 
@@ -275,6 +275,46 @@ data class AutomatedSeatBookingResult(
     val seatTitle: String,
     val evidenceSha256: String,
     val diagnosticMessage: String
+)
+
+data class LibraryStudyRegionItem(
+    val id: Long,
+    val regionName: String,
+    val buildingId: String = "",
+    val buildingName: String = "",
+    val layerId: String = "",
+    val layerName: String = "",
+    val openTime: String = "07:00",
+    val closeTime: String = "22:00",
+    val totalSeats: Int = 0,
+    val availableSeats: Int = 0,
+    val isOpen: Boolean = true
+)
+
+data class LibrarySeatItem(
+    val id: Long,
+    val seatName: String,
+    val seatStatus: Int
+) {
+    val isAvailable: Boolean
+        get() = seatStatus == 2
+
+    val statusLabel: String
+        get() = when (seatStatus) {
+            2 -> "空闲"
+            1 -> "使用中"
+            else -> "不可选"
+        }
+}
+
+data class LibraryRegionSeatsSnapshot(
+    val regionId: Long,
+    val regionName: String,
+    val bookingDate: String,
+    val startTime: String,
+    val endTime: String,
+    val canSetTime: Boolean,
+    val seats: List<LibrarySeatItem>
 )
 
 data class LibrarySeatOverviewSnapshot(
@@ -818,12 +858,196 @@ object HautLibrarySeatAuthClient {
     }
 
     /**
-     * 在 T 时刻执行智能自动选座并执行权威回读核实 (Readback Verification)。
+     * 自动识别并拉取全馆自习区域列表（依次调用 `/seatbook/layout/building`、`/seatbook/layout/layer` 与 `/seatbook/layout/region`）。
+     */
+    suspend fun fetchLibraryStudyRegions(
+        rawToken: String,
+        bookingDate: String
+    ): Result<List<LibraryStudyRegionItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanToken = normalizeRawToken(rawToken)
+            if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+
+            val buildingRaw = executeAuthenticatedApiGet(
+                url = "$WSLIB_API_BASE_URL/seatbook/layout/building",
+                cleanToken = cleanToken
+            )
+            val buildingRoot = JSONObject(buildingRaw)
+            if (buildingRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+            val builderArr = buildingRoot.optJSONArray("builderInfo")
+                ?: buildingRoot.optJSONObject("data")?.optJSONArray("builderInfo")
+
+            val resultList = mutableListOf<LibraryStudyRegionItem>()
+            val startTimeParam = URLEncoder.encode("$bookingDate 00:00:00", "UTF-8")
+            val endTimeParam = URLEncoder.encode("$bookingDate 23:59:59", "UTF-8")
+
+            if (builderArr != null && builderArr.length() > 0) {
+                for (bIdx in 0 until builderArr.length()) {
+                    val bObj = builderArr.optJSONObject(bIdx) ?: continue
+                    val buildingId = bObj.optString("id").trim()
+                    val buildingName = bObj.optString("buildingName").trim()
+                    if (buildingId.isEmpty()) continue
+
+                    // 拉取该场馆全部楼层的自习区（layerid 为空代表全部楼层）
+                    val regionUrl = "$WSLIB_API_BASE_URL/seatbook/layout/region?buildingId=${URLEncoder.encode(buildingId, "UTF-8")}&layerid=&starttime=$startTimeParam&endtime=$endTimeParam"
+                    val regionRaw = runCatching {
+                        executeAuthenticatedApiGet(url = regionUrl, cleanToken = cleanToken)
+                    }.getOrDefault("")
+                    val regionRoot = runCatching { JSONObject(regionRaw) }.getOrNull()
+                    val regionArr = regionRoot?.optJSONArray("regionList")
+                        ?: regionRoot?.optJSONObject("data")?.optJSONArray("regionList")
+
+                    if (regionArr != null && regionArr.length() > 0) {
+                        for (rIdx in 0 until regionArr.length()) {
+                            val rObj = regionArr.optJSONObject(rIdx) ?: continue
+                            val regionId = rObj.optLong("id", -1L).takeIf { it > 0L } ?: continue
+                            val regionName = rObj.optString("regionName").trim()
+                            if (regionName.isEmpty()) continue
+                            val totalNum = rObj.optInt("num", 0)
+                            val canNum = rObj.optInt("cannum", 0)
+                            val openDate = rObj.optString("openDate", "07:00").trim()
+                            val closeDate = rObj.optString("closeDate", "22:00").trim()
+                            val isOpen = rObj.optInt("isOpen", 1) != 0
+                            val layerName = rObj.optString("layerName").trim()
+                            resultList.add(
+                                LibraryStudyRegionItem(
+                                    id = regionId,
+                                    regionName = regionName,
+                                    buildingId = buildingId,
+                                    buildingName = buildingName,
+                                    layerName = layerName,
+                                    openTime = openDate,
+                                    closeTime = closeDate,
+                                    totalSeats = totalNum,
+                                    availableSeats = canNum,
+                                    isOpen = isOpen
+                                )
+                            )
+                        }
+                    } else {
+                        // 若空 layerid 未返回，则逐楼层拉取
+                        val layerUrl = "$WSLIB_API_BASE_URL/seatbook/layout/layer?buildingid=${URLEncoder.encode(buildingId, "UTF-8")}"
+                        val layerRaw = runCatching {
+                            executeAuthenticatedApiGet(url = layerUrl, cleanToken = cleanToken)
+                        }.getOrDefault("")
+                        val layerRoot = runCatching { JSONObject(layerRaw) }.getOrNull()
+                        val layerArr = layerRoot?.optJSONArray("layerList")
+                            ?: layerRoot?.optJSONObject("data")?.optJSONArray("layerList")
+                        if (layerArr != null) {
+                            for (lIdx in 0 until layerArr.length()) {
+                                val lObj = layerArr.optJSONObject(lIdx) ?: continue
+                                val layerId = lObj.optString("id").trim()
+                                val layerName = lObj.optString("layerName").trim()
+                                if (layerId.isEmpty()) continue
+                                val lRegionUrl = "$WSLIB_API_BASE_URL/seatbook/layout/region?buildingId=${URLEncoder.encode(buildingId, "UTF-8")}&layerid=${URLEncoder.encode(layerId, "UTF-8")}&starttime=$startTimeParam&endtime=$endTimeParam"
+                                val lRegionRaw = runCatching {
+                                    executeAuthenticatedApiGet(url = lRegionUrl, cleanToken = cleanToken)
+                                }.getOrDefault("")
+                                val lRegionRoot = runCatching { JSONObject(lRegionRaw) }.getOrNull()
+                                val lRegionArr = lRegionRoot?.optJSONArray("regionList")
+                                    ?: lRegionRoot?.optJSONObject("data")?.optJSONArray("regionList")
+                                    ?: continue
+                                for (rIdx in 0 until lRegionArr.length()) {
+                                    val rObj = lRegionArr.optJSONObject(rIdx) ?: continue
+                                    val regionId = rObj.optLong("id", -1L).takeIf { it > 0L } ?: continue
+                                    val regionName = rObj.optString("regionName").trim()
+                                    if (regionName.isEmpty()) continue
+                                    resultList.add(
+                                        LibraryStudyRegionItem(
+                                            id = regionId,
+                                            regionName = regionName,
+                                            buildingId = buildingId,
+                                            buildingName = buildingName,
+                                            layerId = layerId,
+                                            layerName = layerName,
+                                            openTime = rObj.optString("openDate", "07:00").trim(),
+                                            closeTime = rObj.optString("closeDate", "22:00").trim(),
+                                            totalSeats = rObj.optInt("num", 0),
+                                            availableSeats = rObj.optInt("cannum", 0),
+                                            isOpen = rObj.optInt("isOpen", 1) != 0
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            resultList.distinctBy { it.id }
+        }
+    }
+
+    /**
+     * 读取指定自习区域 (`regionId`) 在目标日期的默认时段与全部下属座位列表 (`/seatbook/layout/getDefaultTime` & `/seatbook/layout/query`)。
+     */
+    suspend fun fetchLibraryRegionSeats(
+        rawToken: String,
+        regionId: Long,
+        bookingDate: String
+    ): Result<LibraryRegionSeatsSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanToken = normalizeRawToken(rawToken)
+            if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+
+            val defaultTimeUrl = "$WSLIB_API_BASE_URL/seatbook/layout/getDefaultTime?regionid=$regionId&bookingdate=${URLEncoder.encode(bookingDate, "UTF-8")}"
+            val defaultTimeRaw = executeAuthenticatedApiGet(url = defaultTimeUrl, cleanToken = cleanToken)
+            val dtRoot = runCatching { JSONObject(defaultTimeRaw) }.getOrNull()
+            if (dtRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+
+            val startDate = dtRoot?.optString("startDate")?.takeIf { it.isNotBlank() } ?: bookingDate
+            val endDate = dtRoot?.optString("endDate")?.takeIf { it.isNotBlank() } ?: bookingDate
+            val startTime = dtRoot?.optString("startTime")?.takeIf { it.isNotBlank() } ?: "07:00"
+            val endTime = dtRoot?.optString("endTime")?.takeIf { it.isNotBlank() } ?: "22:00"
+            val canSetTime = (dtRoot?.optInt("isCanSetTime", 0) ?: 0) != 0
+
+            val startFull = if (startTime.count { it == ':' } == 1) "$startDate $startTime:00" else "$startDate $startTime"
+            val endFull = if (endTime.count { it == ':' } == 1) "$endDate $endTime:00" else "$endDate $endTime"
+
+            val queryUrl = "$WSLIB_API_BASE_URL/seatbook/layout/query?starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}&regionid=$regionId"
+            val queryRaw = executeAuthenticatedApiGet(url = queryUrl, cleanToken = cleanToken)
+            val qRoot = JSONObject(queryRaw)
+            if (qRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+
+            val layoutName = qRoot.optJSONObject("layout")?.optString("regionName").orEmpty()
+            val seatArr = qRoot.optJSONArray("seatList")
+                ?: qRoot.optJSONObject("data")?.optJSONArray("seatList")
+            val seats = mutableListOf<LibrarySeatItem>()
+            if (seatArr != null) {
+                for (i in 0 until seatArr.length()) {
+                    val sObj = seatArr.optJSONObject(i) ?: continue
+                    val seatId = sObj.optLong("id", -1L).takeIf { it > 0L } ?: continue
+                    val seatName = sObj.optString("seatName").trim()
+                    if (seatName.isEmpty()) continue
+                    val status = sObj.optInt("seatStatus", 2)
+                    seats.add(
+                        LibrarySeatItem(
+                            id = seatId,
+                            seatName = seatName,
+                            seatStatus = status
+                        )
+                    )
+                }
+            }
+            LibraryRegionSeatsSnapshot(
+                regionId = regionId,
+                regionName = layoutName,
+                bookingDate = startDate,
+                startTime = startTime,
+                endTime = endTime,
+                canSetTime = canSetTime,
+                seats = seats.sortedWith(compareBy({ it.seatName.length }, { it.seatName }))
+            )
+        }
+    }
+
+    /**
+     * 执行自动选座并核实结果。
      *
      * 流程：
-     * 1. 先拉取当前有效预约概览（若用户在网页或前置窗口已有生效座位，直接权威确认并返回真实 bookingId）；
-     * 2. 根据用户最近常用座位记录或指定区域/座位号匹配真实 seatId 与 buildingLayerRegionId；
-     * 3. 向 wslib.haut.edu.cn 提交选座请求，并再次调用 `/seatbook/user/my/crrentbooking` 进行权威回读核实。
+     * 1. 先检查是否已有生效座位；
+     * 2. 自动根据所选自习室 (`preferredAreaName`) 与座位号 (`preferredSeatLabel`) 查询真实 `regionId`、开放时段及下属空闲 `seatId`；
+     * 3. 按首选、备选顺序依次向 `/seatbook/user/addbooking?channel=1003&seatid=...&starttime=...&endtime=...` 提交选座；
+     * 4. 再次调用 `/seatbook/user/my/crrentbooking` 确认选座结果。
      */
     suspend fun executeAutomatedSeatBooking(
         rawToken: String,
@@ -846,41 +1070,99 @@ object HautLibrarySeatAuthClient {
                     bookingId = existingActive.bookingId.toString(),
                     seatTitle = existingActive.displaySeatTitle,
                     evidenceSha256 = digest,
-                    diagnosticMessage = "T 时刻权威回读确认：已锁定有效预约座位 ${existingActive.displaySeatTitle} (编号 #${existingActive.bookingId}，时段 ${existingActive.timeWindowText})"
+                    diagnosticMessage = "您已有生效中的座位：${existingActive.displaySeatTitle}（时段 ${existingActive.timeWindowText}）"
                 )
             }
 
-            // 从历史记录中匹配用户目标区域/座位对应的真实 seatId 与 regionId
             val candidateSeatNames = preferredSeatLabel
-                .split(",", "，", " ")
-                .map { it.trim() }
+                .split(",", "，", " ", "、")
+                .map { it.trim().removeSuffix("号座").removeSuffix("号") }
                 .filter { it.isNotEmpty() }
-            val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
-                candidateSeatNames.any { cand ->
-                    rec.seatName.equals(cand, ignoreCase = true) ||
-                        rec.seatName.endsWith(cand, ignoreCase = true)
-                } || (preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim()))
-            } ?: preOverview?.recentHistory?.firstOrNull { it.seatId != null && it.seatId > 0L }
 
-            val targetSeatId = matchedHistorical?.seatId
-            val targetRegionId = matchedHistorical?.buildingLayerRegionId
+            // 1. 尝试从实时区域列表匹配 regionId
+            val regions = fetchLibraryStudyRegions(cleanToken, targetDate).getOrNull().orEmpty()
+            val matchedRegion = regions.firstOrNull {
+                it.regionName.equals(preferredAreaName.trim(), ignoreCase = true) ||
+                    it.regionName.contains(preferredAreaName.trim()) ||
+                    preferredAreaName.trim().contains(it.regionName)
+            } ?: regions.firstOrNull { it.isOpen && it.availableSeats > 0 }
+
             var apiRawMessage = ""
+            var bookedIdFromApi: Long? = null
 
-            if (targetSeatId != null && targetSeatId > 0L) {
-                val bookingUrl = buildString {
-                    append("$WSLIB_API_BASE_URL/seatbook/user/addbooking?seatid=$targetSeatId&channelType=1003")
-                    if (targetRegionId != null && targetRegionId > 0L) {
-                        append("&regionid=$targetRegionId")
+            if (matchedRegion != null) {
+                val roomSnapshot = fetchLibraryRegionSeats(
+                    rawToken = cleanToken,
+                    regionId = matchedRegion.id,
+                    bookingDate = targetDate
+                ).getOrNull()
+
+                if (roomSnapshot != null && roomSnapshot.seats.isNotEmpty()) {
+                    val startFull = if (roomSnapshot.startTime.count { it == ':' } == 1) {
+                        "${roomSnapshot.bookingDate} ${roomSnapshot.startTime}:00"
+                    } else {
+                        "${roomSnapshot.bookingDate} ${roomSnapshot.startTime}"
+                    }
+                    val endFull = if (roomSnapshot.endTime.count { it == ':' } == 1) {
+                        "${roomSnapshot.bookingDate} ${roomSnapshot.endTime}:00"
+                    } else {
+                        "${roomSnapshot.bookingDate} ${roomSnapshot.endTime}"
+                    }
+
+                    // 优先按用户点选的首选/备选顺序找空闲座位，若都被占则尝试该自习室其他空闲座位
+                    val orderedCandidates = mutableListOf<LibrarySeatItem>()
+                    for (wanted in candidateSeatNames) {
+                        roomSnapshot.seats.firstOrNull { s ->
+                            s.isAvailable && (
+                                s.seatName.equals(wanted, ignoreCase = true) ||
+                                    s.seatName.trimStart('0').equals(wanted.trimStart('0'), ignoreCase = true) ||
+                                    s.seatName.endsWith(wanted, ignoreCase = true)
+                                )
+                        }?.let { orderedCandidates.add(it) }
+                    }
+                    if (orderedCandidates.isEmpty()) {
+                        roomSnapshot.seats.filter { it.isAvailable }.take(2).forEach { orderedCandidates.add(it) }
+                    }
+
+                    for (seat in orderedCandidates.distinctBy { it.id }.take(3)) {
+                        val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
+                        val respText = runCatching {
+                            executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
+                        }.getOrDefault("")
+                        val respObj = runCatching { JSONObject(respText) }.getOrNull()
+                        val code = respObj?.optInt("code", -1) ?: -1
+                        apiRawMessage = respObj?.optString("msg").orEmpty()
+                        if (code == 200) {
+                            bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
+                            break
+                        }
                     }
                 }
-                val respText = runCatching {
-                    executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
-                }.getOrDefault("")
-                val respObj = runCatching { JSONObject(respText) }.getOrNull()
-                apiRawMessage = respObj?.optString("msg").orEmpty()
             }
 
-            // 执行权威回读核实
+            // 2. 若实时列表未能命中（如非开放查询时段），回退使用历史常坐记录的真实 seatId 尝试预约
+            if (bookedIdFromApi == null) {
+                val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
+                    candidateSeatNames.any { cand ->
+                        rec.seatName.equals(cand, ignoreCase = true) ||
+                            rec.seatName.endsWith(cand, ignoreCase = true)
+                    } || (preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim()))
+                } ?: preOverview?.recentHistory?.firstOrNull { it.seatId != null && it.seatId > 0L }
+
+                val targetSeatId = matchedHistorical?.seatId
+                if (targetSeatId != null && targetSeatId > 0L) {
+                    val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode("$targetDate 07:00:00", "UTF-8")}&endtime=${URLEncoder.encode("$targetDate 22:00:00", "UTF-8")}"
+                    val respText = runCatching {
+                        executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
+                    }.getOrDefault("")
+                    val respObj = runCatching { JSONObject(respText) }.getOrNull()
+                    if (apiRawMessage.isBlank()) {
+                        apiRawMessage = respObj?.optString("msg").orEmpty()
+                    }
+                }
+            }
+
+            // 3. 重新拉取当前预约确认是否成功锁定座位
             val postOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
             val confirmedRecord = postOverview?.currentBooking?.takeIf { it.isActive }
             if (confirmedRecord != null) {
@@ -892,7 +1174,7 @@ object HautLibrarySeatAuthClient {
                     bookingId = confirmedRecord.bookingId.toString(),
                     seatTitle = confirmedRecord.displaySeatTitle,
                     evidenceSha256 = digest,
-                    diagnosticMessage = "T 时刻自动抢座并经学校接口权威回读成功：${confirmedRecord.displaySeatTitle} (#${confirmedRecord.bookingId})"
+                    diagnosticMessage = "抢座成功！已为您预约 ${confirmedRecord.displaySeatTitle}，请按规定时间刷脸入馆签到"
                 )
             }
 
@@ -901,16 +1183,16 @@ object HautLibrarySeatAuthClient {
                 .digest("$fallbackId|$cleanToken".toByteArray(StandardCharsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
             val detailHint = if (apiRawMessage.isNotBlank()) {
-                "学校接口返回：$apiRawMessage"
+                "图书馆系统提示：$apiRawMessage"
             } else {
-                "已完成 T 时刻抢座指令投递 ($preferredAreaName $preferredSeatLabel)"
+                "已提交选座请求（$preferredAreaName ${candidateSeatNames.joinToString("/")}）"
             }
             AutomatedSeatBookingResult(
-                confirmed = true,
-                bookingId = fallbackId,
+                confirmed = bookedIdFromApi != null,
+                bookingId = bookedIdFromApi?.toString() ?: fallbackId,
                 seatTitle = "$preferredAreaName · ${candidateSeatNames.firstOrNull() ?: preferredSeatLabel}",
                 evidenceSha256 = digest,
-                diagnosticMessage = "$detailHint · 请按校规在规定时间内刷脸入馆签到"
+                diagnosticMessage = detailHint
             )
         }
     }

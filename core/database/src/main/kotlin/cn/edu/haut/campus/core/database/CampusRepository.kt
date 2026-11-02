@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.campusservices.DualEngineReservationPlanner
 import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
+import cn.edu.haut.campus.core.campusservices.LibraryRegionSeatsSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionOutcome
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionType
 import cn.edu.haut.campus.core.campusservices.LibrarySeatAuthException
@@ -29,6 +30,7 @@ import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionExpiredException
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
+import cn.edu.haut.campus.core.campusservices.LibraryStudyRegionItem
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
 import cn.edu.haut.campus.core.campusservices.ParcelHubEngine
 import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
@@ -2216,12 +2218,49 @@ class CampusRepository internal constructor(
             status = initialStatus,
             stateVersion = 1,
             generation = 1,
-            lastDiagnosticMessage = "已编排三阶段调度：T-30m (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.precheckAtEpochMillis)}) · T-5m (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.finalCheckAtEpochMillis)}) · T (${DualEngineReservationPlanner.formatEpochToShanghaiHms(schedule.fireAtEpochMillis)})",
+            lastDiagnosticMessage = "已设置好定时抢座：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 准时为您抢座（系统会提前自动保持登录）",
             createdAtEpochMillis = nowEpochMillis,
             updatedAtEpochMillis = nowEpochMillis
         )
         cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         entity
+    }
+
+    suspend fun fetchLibraryStudyRegions(
+        bookingDate: String
+    ): Result<List<LibraryStudyRegionItem>> {
+        val currentToken = readCachedLibrarySeatSession()?.rawToken
+            ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return Result.failure(IllegalStateException("请先登录图书馆账号"))
+        val firstAttempt = HautLibrarySeatAuthClient.fetchLibraryStudyRegions(currentToken, bookingDate)
+        if (firstAttempt.isSuccess) return firstAttempt
+        val err = firstAttempt.exceptionOrNull()
+        if (err is LibrarySeatSessionExpiredException) {
+            val refreshed = ensureLibrarySeatSession(forceRefresh = true)
+            if (refreshed is LibrarySeatSessionState.Authenticated) {
+                return HautLibrarySeatAuthClient.fetchLibraryStudyRegions(refreshed.snapshot.rawToken, bookingDate)
+            }
+        }
+        return firstAttempt
+    }
+
+    suspend fun fetchLibraryRegionSeats(
+        regionId: Long,
+        bookingDate: String
+    ): Result<LibraryRegionSeatsSnapshot> {
+        val currentToken = readCachedLibrarySeatSession()?.rawToken
+            ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return Result.failure(IllegalStateException("请先登录图书馆账号"))
+        val firstAttempt = HautLibrarySeatAuthClient.fetchLibraryRegionSeats(currentToken, regionId, bookingDate)
+        if (firstAttempt.isSuccess) return firstAttempt
+        val err = firstAttempt.exceptionOrNull()
+        if (err is LibrarySeatSessionExpiredException) {
+            val refreshed = ensureLibrarySeatSession(forceRefresh = true)
+            if (refreshed is LibrarySeatSessionState.Authenticated) {
+                return HautLibrarySeatAuthClient.fetchLibraryRegionSeats(refreshed.snapshot.rawToken, regionId, bookingDate)
+            }
+        }
+        return firstAttempt
     }
 
     suspend fun advanceBookingPlanStage(
@@ -2239,9 +2278,9 @@ class CampusRepository internal constructor(
                 val sessionState = ensureLibrarySeatSession(forceRefresh = false)
                 val diag = when (sessionState) {
                     is LibrarySeatSessionState.Authenticated ->
-                        "T-30m 预检通过：已核验 ${sessionState.snapshot.userInfo.userName.ifBlank { sessionState.snapshot.userInfo.userNo }} 持久登录态 (${sessionState.snapshot.refreshSource.label})"
+                        "已提前为您检查登录状态（${sessionState.snapshot.userInfo.userName.ifBlank { sessionState.snapshot.userInfo.userNo }} 已在线）"
                     else ->
-                        "T-30m 预检通过：预约窗口与调度配置校验正常（建议提前绑定统一认证凭据以启用无感续期）"
+                        "已检查抢座时间配置（建议先保存学校账号密码以便自动登录）"
                 }
                 current.copy(
                     precheckStatus = "PRECHECK_OK",
@@ -2255,9 +2294,9 @@ class CampusRepository internal constructor(
                 val sessionState = ensureLibrarySeatSession(forceRefresh = true)
                 val diag = when (sessionState) {
                     is LibrarySeatSessionState.Authenticated ->
-                        "T-5m 终检通过：已刷新最新 wslib 选座令牌 (${sessionState.snapshot.refreshSource.label})，等待 T=${current.targetLocalTime} 准点抢座"
+                        "已为您刷新最新登录状态，等待 ${current.targetLocalTime} 准点开抢"
                     else ->
-                        "T-5m 终检完成：本地调度计时器已就绪，等待 T=${current.targetLocalTime} 准点执行"
+                        "倒计时已就绪，等待 ${current.targetLocalTime} 准点开抢"
                 }
                 current.copy(
                     precheckStatus = "PRECHECK_OK",
@@ -2286,7 +2325,7 @@ class CampusRepository internal constructor(
                 val evidenceHash = liveBooking?.evidenceSha256
                     ?: (UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""))
                 val diagMsg = liveBooking?.diagnosticMessage
-                    ?: "T 时刻执行并经学校记录回读核实成功 (${current.preferredAreaName} ${current.preferredSeatLabel})，请本人按校规到馆刷脸签到"
+                    ?: "已为您抢到 ${current.preferredAreaName} ${current.preferredSeatLabel}，请按规定时间到馆刷脸签到"
 
                 var nextPaymentState = current.paymentState
                 if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName && current.priceMicropeach > 0L) {

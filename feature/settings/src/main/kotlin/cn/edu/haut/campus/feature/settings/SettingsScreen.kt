@@ -512,9 +512,9 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         onClick = onNavigateToSchoolCenter
                     ) {
-                        Text("学校与能力", style = MaterialTheme.typography.titleMedium)
+                        Text("切换学校", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "多校身份与扩展包(${extensionPlugins.size})",
+                            "${activeSchool.displayName} · 扩展功能(${extensionPlugins.size})",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -528,16 +528,16 @@ fun SettingsScreen(
                             "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
                         }
                         Text(
-                            text = if (peachFormatted != null) "XPEACH · ${peachFormatted}🍑" else "XPEACH 云与插件",
+                            text = if (peachFormatted != null) "云账号 · ${peachFormatted}🍑" else "云账号与代抢",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = if (cloudBinding != null) {
-                                "已绑定 ${cloudBinding?.displayName} · 托管与插件"
+                                "已登录 ${cloudBinding?.displayName}"
                             } else {
-                                "可选绑定 · 云端预约与插件中心"
+                                "关机自动代抢图书馆座位"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -558,9 +558,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Parcel Hub 快递聚合中心", style = MaterialTheme.typography.titleMedium)
+                            Text("我的快递与取件码", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                text = "取件短信解析（验证码严密过滤） · 多来源导入 · 校园驿站关联",
+                                text = "绑定手机号自动同步快递 · 驿站取件码集中查看",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

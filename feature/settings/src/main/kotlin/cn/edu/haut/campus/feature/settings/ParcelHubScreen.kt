@@ -125,8 +125,8 @@ fun ParcelHubScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "Parcel Hub 快递聚合中心",
-            subtitle = "小米账号手机号绑定同步 · 取件码智能提取 · 严禁误抓验证码",
+            title = "我的快递与取件码",
+            subtitle = "绑定手机号自动查快递 · 驿站取件码集中查看",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -145,9 +145,9 @@ fun ParcelHubScreen(
         ) {
             XPeachSegmentedTabs(
                 items = listOf(
-                    "包裹看板 (${parcels.size})",
-                    "小米账号与手机号 (${xiaomiAccounts.size})",
-                    "驿站与数据源"
+                    "我的快递 (${parcels.size})",
+                    "手机号绑定 (${xiaomiAccounts.size})",
+                    "校园驿站汇总"
                 ),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
@@ -357,16 +357,16 @@ fun ParcelHubScreen(
                 1 -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "通过手机号连接小米账号 · 获取全渠道快递",
+                            text = "绑定手机号 · 自动查全网快递",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "工作原理（完整移植自 ExpressAssistant）：\n" +
-                                "1. 点击下方「手机号 / 扫码登录小米账号」，在内置安全页面中使用【手机号+短信验证码】、【手机号+密码】或【小米账号扫码】完成登录，自动签发加密 serviceToken 并识别登录手机号。\n" +
-                                "2. 点击账号卡片上的「绑定 / 管理收件手机号」，可通过小米官方短信验证码接口（/cpa/express/phone/sendVerificationCode & bind）绑定任意收件手机号（支持绑定多个手机号）。\n" +
-                                "3. 点击「立即同步快递」，直接通过小米智能助理加密接口（/cpa/express/v2/getList & query）拉取绑定手机号名下的菜鸟裹裹、顺丰、京东、中通、圆通、韵达、申通、极兔及小米商城快递。",
+                            text = "使用方法（只需 3 步）：\n" +
+                                "1. 点击下方「手机号 / 扫码登录小米账号」，用手机号或扫码完成登录。\n" +
+                                "2. 点击「绑定 / 管理收件手机号」，把你平时买东西用的收件手机号绑上（支持绑定多个手机号）。\n" +
+                                "3. 点击「立即同步快递」，即可自动拉取菜鸟裹裹、顺丰、京东、中通、圆通、韵达、申通、极兔等快递和驿站取件码。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -395,7 +395,7 @@ fun ParcelHubScreen(
                                     enabled = !syncingXiaomi,
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Text(if (syncingXiaomi) "正在同步小米快递…" else "立即同步全部手机号快递")
+                                    Text(if (syncingXiaomi) "正在同步快递…" else "立即同步全部快递")
                                 }
                             }
                         }
@@ -404,13 +404,13 @@ fun ParcelHubScreen(
                     if (xiaomiAccounts.isEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "当前尚未绑定小米账号",
+                                text = "当前尚未登录小米账号",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "点击上方「手机号 / 扫码登录小米账号」即可直接用手机号+验证码登录并绑定收件号码。",
+                                text = "点击上方「手机号 / 扫码登录小米账号」即可直接用手机号验证码登录并绑定收件号码。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -431,7 +431,7 @@ fun ParcelHubScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "小米 UserID: ${acc.accountId} · 已绑手机号 (${acc.phones.size} 个)：${acc.maskedPhonesSummary}",
+                                        text = "账号 ID: ${acc.accountId} · 已绑手机号 (${acc.phones.size} 个)：${acc.maskedPhonesSummary}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -459,7 +459,7 @@ fun ParcelHubScreen(
                                     onClick = { phoneManageAccount = acc },
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Text("绑定 / 管理收件手机号 (短信验证)")
+                                    Text("绑定 / 管理收件手机号")
                                 }
                                 FilledTonalButton(
                                     onClick = {
@@ -501,7 +501,7 @@ fun ParcelHubScreen(
                 else -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "本地规则顺路取件简报 (零外部 AI 依赖)",
+                            text = "按驿站集中查看取件码",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -509,7 +509,7 @@ fun ParcelHubScreen(
                         val byStation = readyParcels.groupBy { it.stationName ?: "默认校园驿站" }
                         if (byStation.isEmpty()) {
                             Text(
-                                text = "当前暂无待取包裹，另有 ${inTransitParcels.size} 件在途包裹、${pickedUpParcels.size} 件已签收包裹。",
+                                text = "当前没有待取快递，另有 ${inTransitParcels.size} 件在途、${pickedUpParcels.size} 件已取件。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -539,12 +539,12 @@ fun ParcelHubScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Opt-in 快递 AI 助理授权开关",
+                                    text = "智能取件路线建议",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "默认关闭；仅在显式开启字段级授权后，才允许向 AI 摘要服务发送脱敏驿站与状态字段。",
+                                    text = "开启后可根据你的下课地点与宿舍位置，推荐顺路取快递的驿站顺序。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -562,7 +562,7 @@ fun ParcelHubScreen(
                     if (enabledParcelPlugins.isNotEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "已激活扩展槽位 (parcel.cards · dis-extension/v2)",
+                                text = "校园驿站营业时间",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -570,7 +570,7 @@ fun ParcelHubScreen(
                             for (plugin in enabledParcelPlugins) {
                                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                     Text(
-                                        text = "${plugin.name} (${plugin.pluginId}@${plugin.activeVersion})",
+                                        text = plugin.name,
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.SemiBold
                                     )
