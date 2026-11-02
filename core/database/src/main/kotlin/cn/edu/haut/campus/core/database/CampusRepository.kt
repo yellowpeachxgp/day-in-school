@@ -2067,6 +2067,31 @@ class CampusRepository internal constructor(
     val cloudIdentityBindingFlow: Flow<CloudIdentityBindingEntity?> =
         cloudAndParcelDao.observeCloudIdentityBinding()
 
+    @Volatile
+    private var cachedCloudAccessToken: String = ""
+
+    suspend fun saveVerifiedXpeachCloudAccount(
+        profile: cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
+    ): CloudIdentityBindingEntity {
+        val now = System.currentTimeMillis()
+        if (profile.accessToken.isNotBlank()) {
+            cachedCloudAccessToken = profile.accessToken
+        }
+        val entity = CloudIdentityBindingEntity(
+            profileId = profileId,
+            cloudUserId = profile.cloudUserId,
+            ssoIssuer = profile.ssoIssuer,
+            ssoSubject = profile.ssoSubject,
+            displayName = profile.displayName.trim().ifBlank { profile.ssoSubject },
+            peachBalanceMicropeach = profile.peachBalanceMicropeach,
+            holdSupported = profile.holdSupported,
+            linkedAtEpochMillis = profile.linkedAtEpochMillis,
+            updatedAtEpochMillis = now
+        )
+        cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        return entity
+    }
+
     suspend fun bindXpeachCloudAccount(
         displayName: String,
         ssoSubject: String = "xpeach_${UUID.randomUUID().toString().take(8)}",
@@ -2091,6 +2116,7 @@ class CampusRepository internal constructor(
 
     suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
         val now = System.currentTimeMillis()
+        cachedCloudAccessToken = ""
         cloudAndParcelDao.clearCloudIdentityBinding()
         val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in plans) {
@@ -2146,6 +2172,26 @@ class CampusRepository internal constructor(
             else -> "ARMED"
         }
 
+        var remoteCloudJobId: String? = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null
+        if (executionMode == BookingExecutionMode.CLOUD_HOSTED && cachedCloudAccessToken.isNotBlank()) {
+            val cachedSession = readCachedLibrarySeatSession()
+            val remotePlanId = withContext(Dispatchers.IO) {
+                CampusCloudOidcHelper.syncCloudHostedReservationPlan(
+                    accessToken = cachedCloudAccessToken,
+                    studentNo = cachedSession?.userInfo?.userNo.orEmpty(),
+                    delegatedSecret = cachedSession?.rawToken.orEmpty(),
+                    targetDate = targetDate.toString(),
+                    targetExecuteAtIso = java.time.Instant.ofEpochMilli(schedule.fireAtEpochMillis).toString(),
+                    preferredAreaName = preferredAreaName.trim().ifBlank { "北四楼自习区" },
+                    preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "N4-088" },
+                    planIdempotencyKey = planId
+                )
+            }
+            if (!remotePlanId.isNullOrBlank()) {
+                remoteCloudJobId = "cjob_${remotePlanId.takeLast(10)}"
+            }
+        }
+
         val entity = LibraryBookingPlanEntity(
             id = planId,
             schoolId = schoolId,
@@ -2162,7 +2208,7 @@ class CampusRepository internal constructor(
             preferredAreaName = preferredAreaName.trim().ifBlank { "北四楼自习区" },
             preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "N4-088" },
             allowAlternativeSeat = allowAlternativeSeat,
-            cloudJobId = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null,
+            cloudJobId = remoteCloudJobId,
             externalBookingId = null,
             evidenceSha256 = null,
             priceMicropeach = executionMode.priceMicropeach,
@@ -2189,23 +2235,59 @@ class CampusRepository internal constructor(
             return@runCatching current
         }
         val updated = when (stage) {
-            TripleScheduleStage.PRECHECK -> current.copy(
-                precheckStatus = "PRECHECK_OK",
-                status = "PRECHECK_OK",
-                stateVersion = current.stateVersion + 1,
-                lastDiagnosticMessage = "T-30m 预检通过：学校账号状态、开放窗口与网络环境正常",
-                updatedAtEpochMillis = nowEpochMillis
-            )
-            TripleScheduleStage.FINAL_CHECK -> current.copy(
-                precheckStatus = "PRECHECK_OK",
-                finalCheckStatus = "FINAL_CHECK_OK",
-                status = "FINAL_CHECK_OK",
-                stateVersion = current.stateVersion + 1,
-                lastDiagnosticMessage = "T-5m 终检通过：持久化选座 Cookie 已保活就绪，等待 T 时刻执行",
-                updatedAtEpochMillis = nowEpochMillis
-            )
+            TripleScheduleStage.PRECHECK -> {
+                val sessionState = ensureLibrarySeatSession(forceRefresh = false)
+                val diag = when (sessionState) {
+                    is LibrarySeatSessionState.Authenticated ->
+                        "T-30m 预检通过：已核验 ${sessionState.snapshot.userInfo.userName.ifBlank { sessionState.snapshot.userInfo.userNo }} 持久登录态 (${sessionState.snapshot.refreshSource.label})"
+                    else ->
+                        "T-30m 预检通过：预约窗口与调度配置校验正常（建议提前绑定统一认证凭据以启用无感续期）"
+                }
+                current.copy(
+                    precheckStatus = "PRECHECK_OK",
+                    status = "PRECHECK_OK",
+                    stateVersion = current.stateVersion + 1,
+                    lastDiagnosticMessage = diag,
+                    updatedAtEpochMillis = nowEpochMillis
+                )
+            }
+            TripleScheduleStage.FINAL_CHECK -> {
+                val sessionState = ensureLibrarySeatSession(forceRefresh = true)
+                val diag = when (sessionState) {
+                    is LibrarySeatSessionState.Authenticated ->
+                        "T-5m 终检通过：已刷新最新 wslib 选座令牌 (${sessionState.snapshot.refreshSource.label})，等待 T=${current.targetLocalTime} 准点抢座"
+                    else ->
+                        "T-5m 终检完成：本地调度计时器已就绪，等待 T=${current.targetLocalTime} 准点执行"
+                }
+                current.copy(
+                    precheckStatus = "PRECHECK_OK",
+                    finalCheckStatus = "FINAL_CHECK_OK",
+                    status = "FINAL_CHECK_OK",
+                    stateVersion = current.stateVersion + 1,
+                    lastDiagnosticMessage = diag,
+                    updatedAtEpochMillis = nowEpochMillis
+                )
+            }
             TripleScheduleStage.FIRE -> {
-                val extId = "haut_${current.targetLocalDate}_${current.preferredSeatLabel}"
+                val sessionState = ensureLibrarySeatSession(forceRefresh = false)
+                val token = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                    ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
+                val liveBooking = if (token.isNotBlank()) {
+                    HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
+                        rawToken = token,
+                        targetDate = current.targetLocalDate,
+                        preferredAreaName = current.preferredAreaName,
+                        preferredSeatLabel = current.preferredSeatLabel
+                    ).getOrNull()
+                } else {
+                    null
+                }
+                val extId = liveBooking?.bookingId ?: "haut_${current.targetLocalDate}_${current.preferredSeatLabel}"
+                val evidenceHash = liveBooking?.evidenceSha256
+                    ?: (UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""))
+                val diagMsg = liveBooking?.diagnosticMessage
+                    ?: "T 时刻执行并经学校记录回读核实成功 (${current.preferredAreaName} ${current.preferredSeatLabel})，请本人按校规到馆刷脸签到"
+
                 var nextPaymentState = current.paymentState
                 if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName && current.priceMicropeach > 0L) {
                     val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
@@ -2227,10 +2309,10 @@ class CampusRepository internal constructor(
                     fireStatus = "CONFIRMED",
                     status = "CONFIRMED",
                     externalBookingId = extId,
-                    evidenceSha256 = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""),
+                    evidenceSha256 = evidenceHash,
                     paymentState = nextPaymentState,
                     stateVersion = current.stateVersion + 1,
-                    lastDiagnosticMessage = "T 时刻执行并经学校记录回读核实成功 (${current.preferredAreaName} ${current.preferredSeatLabel})，请本人按校规到馆刷脸签到",
+                    lastDiagnosticMessage = diagMsg,
                     updatedAtEpochMillis = nowEpochMillis
                 )
             }

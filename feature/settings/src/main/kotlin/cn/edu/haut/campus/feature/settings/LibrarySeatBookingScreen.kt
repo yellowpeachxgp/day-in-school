@@ -46,6 +46,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -60,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,15 +93,22 @@ import cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy
 import cn.edu.haut.campus.core.campusservices.OfficialWebScripts
 import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
+import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
+import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
+import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.designsystem.XPeachWell
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
@@ -154,6 +163,7 @@ fun LibrarySeatBookingScreen(
     var showBindCredentialDialog by remember { mutableStateOf(false) }
     var showRecordsDialog by remember { mutableStateOf(false) }
     var showDualEnginePlanDialog by remember { mutableStateOf(false) }
+    var selectedBookingViewMode by remember { mutableIntStateOf(0) }
     var lastSilentReloginAttemptMs by remember { mutableLongStateOf(0L) }
     val bookingPlans = repository?.libraryBookingPlansFlow?.collectAsState(initial = emptyList())?.value.orEmpty()
     val cloudBinding = repository?.cloudIdentityBindingFlow?.collectAsState(initial = null)?.value
@@ -258,16 +268,37 @@ fun LibrarySeatBookingScreen(
         actionFeedbackBanner = null
     }
 
-    // 1 秒级实时倒计时与后台状态同步（确保选座后 5 分钟免入馆取消倒计时实时跳动，且整 5 分钟闸机签到同步后立即刷新按钮）
-    LaunchedEffect(repository, sessionState) {
-        if (repository == null || sessionState !is LibrarySeatSessionState.Authenticated) return@LaunchedEffect
+    // 1 秒级实时倒计时与后台状态同步（确保选座后 5 分钟免入馆取消倒计时实时跳动，且自动触发 T-30m / T-5m / T 三阶段抢座计划）
+    LaunchedEffect(repository, sessionState, bookingPlans) {
+        if (repository == null) return@LaunchedEffect
         var tickCount = 0
         while (isActive) {
             delay(1_000L)
-            nowEpochMs = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            nowEpochMs = now
             tickCount++
-            if (tickCount % 10 == 0 && !isRefreshingOverview && !isExecutingSeatAction) {
+            if (sessionState is LibrarySeatSessionState.Authenticated && tickCount % 10 == 0 && !isRefreshingOverview && !isExecutingSeatAction) {
                 refreshSeatOverviewAsync()
+            }
+            for (plan in bookingPlans) {
+                if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED")) continue
+                when {
+                    now >= plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK") -> {
+                        val updated = repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FIRE).getOrNull()
+                        if (updated?.status == "CONFIRMED") {
+                            actionFeedbackBanner = true to (updated.lastDiagnosticMessage ?: "自动抢座成功！")
+                            refreshSeatOverviewAsync()
+                        } else if (updated?.status == "FAILED") {
+                            actionFeedbackBanner = false to (updated.lastDiagnosticMessage ?: "自动抢座未命中")
+                        }
+                    }
+                    now >= plan.finalCheckAtEpochMillis && now < plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK") -> {
+                        repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FINAL_CHECK)
+                    }
+                    now >= plan.precheckAtEpochMillis && now < plan.finalCheckAtEpochMillis && plan.status == "ARMED" -> {
+                        repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.PRECHECK)
+                    }
+                }
             }
         }
     }
@@ -319,9 +350,12 @@ fun LibrarySeatBookingScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        val activePlanCount = bookingPlans.count { it.status !in setOf("CANCELLED", "CONFIRMED", "FAILED") }
         XPeachTopBar(
             title = "图书馆座位预约",
-            subtitle = if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(currentUrl)) {
+            subtitle = if (selectedBookingViewMode == 1) {
+                "双引擎自动化抢座工作台 (T-30m / T-5m / T)"
+            } else if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(currentUrl)) {
                 "统一身份认证 (mapp.haut.edu.cn)"
             } else {
                 "学校官方空间预约系统 (wslib.haut.edu.cn)"
@@ -335,15 +369,34 @@ fun LibrarySeatBookingScreen(
             },
             actions = {
                 if (repository != null) {
-                    val activePlanCount = bookingPlans.count { it.status !in setOf("CANCELLED", "CONFIRMED", "FAILED") }
                     XPeachFilterPill(
-                        label = if (activePlanCount > 0) "双引擎定时 ($activePlanCount)" else "双引擎定时",
-                        selected = activePlanCount > 0,
-                        onClick = { showDualEnginePlanDialog = true }
+                        label = if (activePlanCount > 0) "🤖 自动抢座 ($activePlanCount)" else "🤖 自动抢座",
+                        selected = selectedBookingViewMode == 1 || activePlanCount > 0,
+                        onClick = {
+                            selectedBookingViewMode = if (selectedBookingViewMode == 1) 0 else 1
+                        }
                     )
                 }
             }
         )
+
+        if (repository != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                XPeachSegmentedTabs(
+                    items = listOf(
+                        "🌐 网页实时选座",
+                        if (activePlanCount > 0) "🤖 智能定时抢座 ($activePlanCount)" else "🤖 智能定时自动抢座"
+                    ),
+                    selectedIndex = selectedBookingViewMode,
+                    onSelect = { selectedBookingViewMode = it }
+                )
+            }
+        }
 
         if (repository != null) {
             AnimatedContent(
@@ -815,195 +868,209 @@ fun LibrarySeatBookingScreen(
             }
         }
 
-        if (isLoading || !initialWebLoadReady) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
-
-        if (initialWebLoadReady) {
-            AndroidView(
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        SchoolWebSessionManager.configureHardenedSchoolWebView(this, supportZoom = true)
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): Boolean {
-                                val targetUrl = request?.url?.toString().orEmpty()
-                                val tokenInTarget = HautLibrarySeatAuthClient.extractTokenFromUrl(targetUrl)
-                                if (!tokenInTarget.isNullOrBlank()) {
-                                    activeToken = tokenInTarget
-                                    scope.launch {
-                                        repository?.captureLibrarySeatWebToken(tokenInTarget)?.let { snap ->
-                                            sessionState = LibrarySeatSessionState.Authenticated(snap)
-                                            refreshSeatOverviewAsync()
-                                        }
-                                    }
-                                }
-                                if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(targetUrl)) {
-                                    pendingReturnToSeatSelection = true
-                                    val now = System.currentTimeMillis()
-                                    val manualCaptchaRequired =
-                                        (sessionState as? LibrarySeatSessionState.AuthError)?.requiresManualVerification == true
-                                    if (repository != null &&
-                                        prefs?.hasSavedCredentials == true &&
-                                        !manualCaptchaRequired &&
-                                        now - lastSilentReloginAttemptMs > 15_000L
-                                    ) {
-                                        lastSilentReloginAttemptMs = now
-                                        triggerSilentSessionEnsure(
-                                            forceRefresh = true,
-                                            reasonHint = "Cookie 已过期，正在后台自动重登…"
-                                        )
-                                        return true
-                                    }
-                                }
-                                return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
-                            }
-
-                            override fun shouldInterceptRequest(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): WebResourceResponse? {
-                                return SafeWebNavigationPolicy.interceptSubresourceIfBlocked(
-                                    request = request,
-                                    allowCatalogCovers = false
-                                )
-                            }
-
-                            override fun onReceivedSslError(
-                                view: WebView?,
-                                handler: SslErrorHandler?,
-                                error: SslError?
-                            ) {
-                                SafeWebNavigationPolicy.cancelOnSslError(handler, error)
-                            }
-
-                            override fun onPageStarted(
-                                view: WebView?,
-                                url: String?,
-                                favicon: android.graphics.Bitmap?
-                            ) {
-                                super.onPageStarted(view, url, favicon)
-                                isLoading = true
-                                if (!url.isNullOrBlank()) {
-                                    currentUrl = url
-                                }
-                                val tokenInUrl = HautLibrarySeatAuthClient.extractTokenFromUrl(url)
-                                if (!tokenInUrl.isNullOrBlank()) {
-                                    activeToken = tokenInUrl
-                                    scope.launch {
-                                        repository?.captureLibrarySeatWebToken(tokenInUrl)?.let { snap ->
-                                            sessionState = LibrarySeatSessionState.Authenticated(snap)
-                                            refreshSeatOverviewAsync()
-                                        }
-                                    }
-                                }
-                                if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(url)) {
-                                    pendingReturnToSeatSelection = true
-                                    val now = System.currentTimeMillis()
-                                    val manualCaptchaRequired =
-                                        (sessionState as? LibrarySeatSessionState.AuthError)?.requiresManualVerification == true
-                                    if (repository != null &&
-                                        prefs?.hasSavedCredentials == true &&
-                                        !manualCaptchaRequired &&
-                                        now - lastSilentReloginAttemptMs > 15_000L
-                                    ) {
-                                        lastSilentReloginAttemptMs = now
-                                        view?.stopLoading()
-                                        triggerSilentSessionEnsure(
-                                            forceRefresh = true,
-                                            reasonHint = "Cookie 已过期，正在后台自动重登…"
-                                        )
-                                        return
-                                    }
-                                }
-                                // 在 wslib 页面脚本执行前预先写入持久化 Token 到 localStorage，防止首屏读取到旧失效 Token
-                                if (url?.startsWith("https://wslib.haut.edu.cn") == true && !activeToken.isNullOrBlank()) {
-                                    view?.evaluateJavascript(
-                                        OfficialWebScripts.buildLibraryTokenSyncScript(
-                                            rawToken = activeToken,
-                                            navigateToSelectRoom = false
-                                        ),
-                                        null
-                                    )
-                                }
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                isLoading = false
-                                if (!url.isNullOrBlank()) {
-                                    currentUrl = url
-                                }
-                                val shouldJumpToSelectRoom = pendingReturnToSeatSelection &&
-                                    OfficialServiceRoutePolicy.isLibrarySeatIndexDocument(url)
-                                if (shouldJumpToSelectRoom) {
-                                    pendingReturnToSeatSelection = false
-                                }
-                                if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
-                                    view?.evaluateJavascript(
-                                        OfficialWebScripts.buildLibraryTokenSyncScript(
-                                            rawToken = activeToken,
-                                            navigateToSelectRoom = shouldJumpToSelectRoom
-                                        ),
-                                        null
-                                    )
-                                    // 用户在网页内完成预约或切换页面后，自动同步顶部原生座位控制台状态
-                                    refreshSeatOverviewAsync()
-                                }
-                                SchoolWebSessionManager.persistCookiesAsync()
-                            }
-
-                            override fun doUpdateVisitedHistory(
-                                view: WebView?,
-                                url: String?,
-                                isReload: Boolean
-                            ) {
-                                super.doUpdateVisitedHistory(view, url, isReload)
-                                if (!url.isNullOrBlank()) {
-                                    currentUrl = url
-                                }
-                                // uni-app 选座 H5 采用 #/seatPage/... 单页 Hash 路由切换，不会触发 onPageFinished；
-                                // 在路由变更（如选座成功跳转 AddBeatStatus 或进入 SeatBooking）时立即同步原生座位控制台与倒计时。
-                                if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
-                                    view?.evaluateJavascript(
-                                        OfficialWebScripts.buildLibraryTokenSyncScript(
-                                            rawToken = activeToken,
-                                            navigateToSelectRoom = false
-                                        ),
-                                        null
-                                    )
-                                    refreshSeatOverviewAsync()
-                                }
-                            }
-                        }
-                        val initialEntryUrl = OfficialServiceRoutePolicy.buildAuthenticatedSeatBookingUrl(activeToken)
-                        loadUrl(initialEntryUrl)
-                        webViewRef = this
-                    }
-                },
+        if (selectedBookingViewMode == 1 && repository != null) {
+            AutomatedLibrarySeatBookingWorkbench(
+                repository = repository,
+                seatOverview = seatOverview,
+                bookingPlans = bookingPlans,
+                hasBoundCloudAccount = cloudBinding != null,
+                onRefreshSeatOverview = { refreshSeatOverviewAsync() },
+                onFeedback = { ok, msg -> actionFeedbackBanner = ok to msg },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            if (isLoading || !initialWebLoadReady) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            if (initialWebLoadReady) {
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            SchoolWebSessionManager.configureHardenedSchoolWebView(this, supportZoom = true)
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): Boolean {
+                                    val targetUrl = request?.url?.toString().orEmpty()
+                                    val tokenInTarget = HautLibrarySeatAuthClient.extractTokenFromUrl(targetUrl)
+                                    if (!tokenInTarget.isNullOrBlank()) {
+                                        activeToken = tokenInTarget
+                                        scope.launch {
+                                            repository?.captureLibrarySeatWebToken(tokenInTarget)?.let { snap ->
+                                                sessionState = LibrarySeatSessionState.Authenticated(snap)
+                                                refreshSeatOverviewAsync()
+                                            }
+                                        }
+                                    }
+                                    if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(targetUrl)) {
+                                        pendingReturnToSeatSelection = true
+                                        val now = System.currentTimeMillis()
+                                        val manualCaptchaRequired =
+                                            (sessionState as? LibrarySeatSessionState.AuthError)?.requiresManualVerification == true
+                                        if (repository != null &&
+                                            prefs?.hasSavedCredentials == true &&
+                                            !manualCaptchaRequired &&
+                                            now - lastSilentReloginAttemptMs > 15_000L
+                                        ) {
+                                            lastSilentReloginAttemptMs = now
+                                            triggerSilentSessionEnsure(
+                                                forceRefresh = true,
+                                                reasonHint = "Cookie 已过期，正在后台自动重登…"
+                                            )
+                                            return true
+                                        }
+                                    }
+                                    return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
+                                }
+
+                                override fun shouldInterceptRequest(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): WebResourceResponse? {
+                                    return SafeWebNavigationPolicy.interceptSubresourceIfBlocked(
+                                        request = request,
+                                        allowCatalogCovers = false
+                                    )
+                                }
+
+                                override fun onReceivedSslError(
+                                    view: WebView?,
+                                    handler: SslErrorHandler?,
+                                    error: SslError?
+                                ) {
+                                    SafeWebNavigationPolicy.cancelOnSslError(handler, error)
+                                }
+
+                                override fun onPageStarted(
+                                    view: WebView?,
+                                    url: String?,
+                                    favicon: android.graphics.Bitmap?
+                                ) {
+                                    super.onPageStarted(view, url, favicon)
+                                    isLoading = true
+                                    if (!url.isNullOrBlank()) {
+                                        currentUrl = url
+                                    }
+                                    val tokenInUrl = HautLibrarySeatAuthClient.extractTokenFromUrl(url)
+                                    if (!tokenInUrl.isNullOrBlank()) {
+                                        activeToken = tokenInUrl
+                                        scope.launch {
+                                            repository?.captureLibrarySeatWebToken(tokenInUrl)?.let { snap ->
+                                                sessionState = LibrarySeatSessionState.Authenticated(snap)
+                                                refreshSeatOverviewAsync()
+                                            }
+                                        }
+                                    }
+                                    if (OfficialServiceRoutePolicy.isSchoolCasAuthUrl(url)) {
+                                        pendingReturnToSeatSelection = true
+                                        val now = System.currentTimeMillis()
+                                        val manualCaptchaRequired =
+                                            (sessionState as? LibrarySeatSessionState.AuthError)?.requiresManualVerification == true
+                                        if (repository != null &&
+                                            prefs?.hasSavedCredentials == true &&
+                                            !manualCaptchaRequired &&
+                                            now - lastSilentReloginAttemptMs > 15_000L
+                                        ) {
+                                            lastSilentReloginAttemptMs = now
+                                            view?.stopLoading()
+                                            triggerSilentSessionEnsure(
+                                                forceRefresh = true,
+                                                reasonHint = "Cookie 已过期，正在后台自动重登…"
+                                            )
+                                            return
+                                        }
+                                    }
+                                    // 在 wslib 页面脚本执行前预先写入持久化 Token 到 localStorage，防止首屏读取到旧失效 Token
+                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true && !activeToken.isNullOrBlank()) {
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibraryTokenSyncScript(
+                                                rawToken = activeToken,
+                                                navigateToSelectRoom = false
+                                            ),
+                                            null
+                                        )
+                                    }
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    isLoading = false
+                                    if (!url.isNullOrBlank()) {
+                                        currentUrl = url
+                                    }
+                                    val shouldJumpToSelectRoom = pendingReturnToSeatSelection &&
+                                        OfficialServiceRoutePolicy.isLibrarySeatIndexDocument(url)
+                                    if (shouldJumpToSelectRoom) {
+                                        pendingReturnToSeatSelection = false
+                                    }
+                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibraryTokenSyncScript(
+                                                rawToken = activeToken,
+                                                navigateToSelectRoom = shouldJumpToSelectRoom
+                                            ),
+                                            null
+                                        )
+                                        // 用户在网页内完成预约或切换页面后，自动同步顶部原生座位控制台状态
+                                        refreshSeatOverviewAsync()
+                                    }
+                                    SchoolWebSessionManager.persistCookiesAsync()
+                                }
+
+                                override fun doUpdateVisitedHistory(
+                                    view: WebView?,
+                                    url: String?,
+                                    isReload: Boolean
+                                ) {
+                                    super.doUpdateVisitedHistory(view, url, isReload)
+                                    if (!url.isNullOrBlank()) {
+                                        currentUrl = url
+                                    }
+                                    // uni-app 选座 H5 采用 #/seatPage/... 单页 Hash 路由切换，不会触发 onPageFinished；
+                                    // 在路由变更（如选座成功跳转 AddBeatStatus 或进入 SeatBooking）时立即同步原生座位控制台与倒计时。
+                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibraryTokenSyncScript(
+                                                rawToken = activeToken,
+                                                navigateToSelectRoom = false
+                                            ),
+                                            null
+                                        )
+                                        refreshSeatOverviewAsync()
+                                    }
+                                }
+                            }
+                            val initialEntryUrl = OfficialServiceRoutePolicy.buildAuthenticatedSeatBookingUrl(activeToken)
+                            loadUrl(initialEntryUrl)
+                            webViewRef = this
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
-                    Text(
-                        text = "正在使用加密凭据建立持久化选座会话…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            text = "正在使用加密凭据建立持久化选座会话…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -1843,5 +1910,444 @@ fun LibrarySeatBookingScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun AutomatedLibrarySeatBookingWorkbench(
+    repository: CampusRepository,
+    seatOverview: LibrarySeatOverviewSnapshot?,
+    bookingPlans: List<LibraryBookingPlanEntity>,
+    hasBoundCloudAccount: Boolean,
+    onRefreshSeatOverview: () -> Unit,
+    onFeedback: (Boolean, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val recentRecord = remember(seatOverview) {
+        seatOverview?.currentBooking ?: seatOverview?.recentHistory?.firstOrNull()
+    }
+    var selectedMode by remember { mutableStateOf(BookingExecutionMode.LOCAL_DEVICE) }
+    var useTomorrow by remember { mutableStateOf(true) }
+    var targetTimeText by remember { mutableStateOf("07:00") }
+    var roomLabel by remember(recentRecord) {
+        mutableStateOf(recentRecord?.regionName?.takeIf { it.isNotBlank() } ?: "四楼东自习区")
+    }
+    var preferredSeatsText by remember(recentRecord) {
+        mutableStateOf(recentRecord?.seatName?.takeIf { it.isNotBlank() } ?: "036, 037, 038")
+    }
+    var isRunningImmediateBooking by remember { mutableStateOf(false) }
+
+    val targetDate = remember(useTomorrow) {
+        val base = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+        if (useTomorrow) base.plusDays(1) else base
+    }
+    val computedScheduleResult = remember(targetTimeText, targetDate) {
+        runCatching {
+            DualEngineReservationPlanner.computeSchedule(
+                planId = "preview",
+                targetDate = targetDate,
+                targetTime = DualEngineReservationPlanner.parseTargetLocalTime(targetTimeText)
+            )
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "🤖 双引擎自动化图书馆占座工作台",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "支持「T-30m 会话预检 → T-5m 终检刷新 → T 准点实弹选座」三阶段定时抢座，以及「立即按首选座位自动抢座」。底层直连 wslib.haut.edu.cn 官方接口并执行权威回读校验。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "1. 选择执行引擎",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                BookingExecutionMode.entries.forEach { mode ->
+                    XPeachFilterPill(
+                        label = mode.label,
+                        selected = selectedMode == mode,
+                        onClick = { selectedMode = mode }
+                    )
+                }
+            }
+            Text(
+                text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
+                    "⚠️ 您尚未绑定 XPEACH 统一身份账号，请先在「设置 → XPEACH 云账户与插件生态」完成 SSO 登录绑定后再创建云端关机托管计划。"
+                } else {
+                    selectedMode.subtitle
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "2. 目标区域与首选/备选座位",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                if (recentRecord != null) {
+                    TextButton(
+                        onClick = {
+                            if (recentRecord.regionName.isNotBlank()) roomLabel = recentRecord.regionName
+                            if (recentRecord.seatName.isNotBlank()) preferredSeatsText = recentRecord.seatName
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text("填入最近常去座位", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("四楼东自习区", "东区四楼北自习室", "北四楼自习区", "南三楼阅览室", "二楼自习室").forEach { presetRoom ->
+                    XPeachFilterPill(
+                        label = presetRoom,
+                        selected = roomLabel == presetRoom,
+                        onClick = { roomLabel = presetRoom }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = roomLabel,
+                onValueChange = { roomLabel = it },
+                label = { Text("目标自习区域名称（自动匹配 wslib 区域）") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+            )
+
+            OutlinedTextField(
+                value = preferredSeatsText,
+                onValueChange = { preferredSeatsText = it },
+                label = { Text("首选与备选座位号（逗号分隔，如 036, 037, 038）") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+            )
+        }
+
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "3. 目标日期与开抢时刻 T (07:00–21:30)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                XPeachFilterPill(
+                    label = "明日 (${LocalDate.now(ZoneId.of("Asia/Shanghai")).plusDays(1)})",
+                    selected = useTomorrow,
+                    onClick = { useTomorrow = true }
+                )
+                XPeachFilterPill(
+                    label = "今日 (${LocalDate.now(ZoneId.of("Asia/Shanghai"))})",
+                    selected = !useTomorrow,
+                    onClick = { useTomorrow = false }
+                )
+                listOf("07:00", "07:30", "08:00", "08:45", "12:30", "14:00", "20:59").forEach { preset ->
+                    XPeachFilterPill(
+                        label = "T=$preset",
+                        selected = targetTimeText == preset,
+                        onClick = { targetTimeText = preset }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = targetTimeText,
+                onValueChange = { targetTimeText = it.trim() },
+                label = { Text("自定义目标时刻 T (HH:mm 或 HH:mm:ss)") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+            )
+
+            computedScheduleResult.fold(
+                onSuccess = { calc ->
+                    XPeachWell(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Text(
+                            text = "三阶段精确调度时间轴 ($targetDate)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "• T-30m 预检：${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.precheckAtEpochMillis)}（自动校验 CAS Cookie 与 wslib Token）\n" +
+                                "• T-5m 终检：${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)}（强制刷新选座会话确保 0 延迟）\n" +
+                                "• T 准点开抢：${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)}（并发扫描首选座位并提交 AddStudySeat）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    Text(
+                        text = err.message ?: "时间格式不合法",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    enabled = computedScheduleResult.isSuccess,
+                    onClick = {
+                        scope.launch {
+                            val result = repository.createDualEngineBookingPlan(
+                                executionMode = selectedMode,
+                                targetDate = targetDate,
+                                targetTimeText = targetTimeText,
+                                preferredAreaName = roomLabel,
+                                preferredSeatLabel = preferredSeatsText
+                            )
+                            result.fold(
+                                onSuccess = { created ->
+                                    onFeedback(
+                                        true,
+                                        "已启动三阶段自动抢座计划：${created.targetLocalDate} T=${created.targetLocalTime} (${selectedMode.label})"
+                                    )
+                                },
+                                onFailure = { err ->
+                                    onFeedback(false, err.message ?: "创建计划失败")
+                                }
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("⏰ 创建定时抢座计划")
+                }
+
+                FilledTonalButton(
+                    enabled = !isRunningImmediateBooking && roomLabel.isNotBlank() && preferredSeatsText.isNotBlank(),
+                    onClick = {
+                        isRunningImmediateBooking = true
+                        scope.launch {
+                            val sessionRes = repository.ensureLibrarySeatSession(forceRefresh = false)
+                            if (sessionRes !is LibrarySeatSessionState.Authenticated) {
+                                isRunningImmediateBooking = false
+                                onFeedback(false, "立即抢座失败：选座会话未就绪，请先绑定统一认证账号密码")
+                                return@launch
+                            }
+                            val bookRes = withContext(Dispatchers.IO) {
+                                HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
+                                    rawToken = sessionRes.snapshot.rawToken,
+                                    targetDate = targetDate.toString(),
+                                    preferredAreaName = roomLabel,
+                                    preferredSeatLabel = preferredSeatsText
+                                )
+                            }
+                            isRunningImmediateBooking = false
+                            bookRes.fold(
+                                onSuccess = { outcome ->
+                                    onFeedback(outcome.confirmed, outcome.diagnosticMessage)
+                                    if (outcome.confirmed) {
+                                        onRefreshSeatOverview()
+                                    }
+                                },
+                                onFailure = { err ->
+                                    onFeedback(false, "自动抢座请求异常：${err.message}")
+                                }
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (isRunningImmediateBooking) "正在实弹选座…" else "⚡ 立即自动选座")
+                }
+            }
+        }
+
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "已配置的自动抢座计划 (${bookingPlans.size})",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            if (bookingPlans.isEmpty()) {
+                Text(
+                    text = "暂无定时计划。上方可创建 T-30m / T-5m / T 定时抢座计划，或直接点击「⚡ 立即自动选座」实弹占座。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                Column(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (plan in bookingPlans) {
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${plan.targetLocalDate} T=${plan.targetLocalTime} · ${plan.preferredAreaName}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                XPeachStatusBadge(
+                                    text = "${plan.executionMode} · ${plan.status}",
+                                    containerColor = when (plan.status) {
+                                        "CONFIRMED" -> MaterialTheme.colorScheme.primaryContainer
+                                        "FAILED", "CANCELLED" -> MaterialTheme.colorScheme.errorContainer
+                                        else -> MaterialTheme.colorScheme.secondaryContainer
+                                    },
+                                    contentColor = when (plan.status) {
+                                        "CONFIRMED" -> MaterialTheme.colorScheme.primary
+                                        "FAILED", "CANCELLED" -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.onSecondaryContainer
+                                    }
+                                )
+                            }
+                            Text(
+                                text = "首选座位：${plan.preferredSeatLabel}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "执行日志：${plan.lastDiagnosticMessage ?: "等待调度"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (plan.status !in setOf("CONFIRMED", "CANCELLED", "FAILED")) {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val updated = repository.advanceBookingPlanStage(
+                                                    plan.id,
+                                                    TripleScheduleStage.FIRE
+                                                ).getOrNull()
+                                                if (updated != null) {
+                                                    onFeedback(
+                                                        updated.status == "CONFIRMED",
+                                                        updated.lastDiagnosticMessage ?: "已执行自动抢座"
+                                                    )
+                                                    if (updated.status == "CONFIRMED") {
+                                                        onRefreshSeatOverview()
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("⚡ 立即触发抢座 (T)", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val nextStage = when (plan.status) {
+                                                "ARMED" -> TripleScheduleStage.PRECHECK
+                                                "PRECHECK_OK" -> TripleScheduleStage.FINAL_CHECK
+                                                else -> TripleScheduleStage.FIRE
+                                            }
+                                            scope.launch {
+                                                val updated = repository.advanceBookingPlanStage(plan.id, nextStage).getOrNull()
+                                                if (updated != null) {
+                                                    onFeedback(
+                                                        updated.status != "FAILED",
+                                                        updated.lastDiagnosticMessage ?: "阶段已推进"
+                                                    )
+                                                    if (updated.status == "CONFIRMED") {
+                                                        onRefreshSeatOverview()
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("推进下一阶段", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.cancelDualEngineBookingPlan(plan.id)
+                                                onFeedback(true, "已取消定时抢座计划")
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("取消", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

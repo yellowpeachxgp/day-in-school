@@ -1,9 +1,17 @@
 package cn.edu.haut.campus.feature.settings
 
+import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,10 +26,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,10 +46,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
+import cn.edu.haut.campus.core.campusservices.MobileAuthTransactionStart
+import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -47,7 +64,9 @@ import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun XPeachCloudAccountScreen(
@@ -144,7 +163,7 @@ fun XPeachCloudAccountScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "认证方式：Custom Tabs + S256 PKCE + 单次 App Link Ticket 兑换（零 WebView 截获 SSO 密码）",
+                            text = "点击下方按钮将直接跳转 XPEACH SSO (sso.xpeach.codes) 登录已有账号，通过 OIDC BFF + PKCE S256 自动同步您的真实昵称、UUID 与 🍑 钱包余额。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -154,25 +173,21 @@ fun XPeachCloudAccountScreen(
                                 onClick = { showBindDialog = true },
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("绑定 XPEACH 账号")
+                                Text("跳转 XPEACH SSO 登录绑定")
                             }
                             OutlinedButton(
                                 onClick = {
-                                    val txn = CampusCloudOidcHelper.buildLocalOrRemoteTransaction(
-                                        installEphemeralId = "eph_${repository.profileId}"
-                                    )
                                     runCatching {
                                         context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(txn.authorizeUrl)).apply {
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/")).apply {
                                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
                                         )
                                     }
-                                    showBindDialog = true
                                 },
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("浏览器 OIDC 登录")
+                                Text("打开云端面板")
                             }
                         }
                     }
@@ -222,6 +237,26 @@ fun XPeachCloudAccountScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(
+                                onClick = { showBindDialog = true },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("重新登录刷新")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/")).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("打开云端面板")
+                            }
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
@@ -231,7 +266,7 @@ fun XPeachCloudAccountScreen(
                                 },
                                 shape = RoundedCornerShape(8.dp)
                             ) {
-                                Text("解绑账号并撤回云端授权", color = MaterialTheme.colorScheme.error)
+                                Text("解绑", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -367,54 +402,16 @@ fun XPeachCloudAccountScreen(
     }
 
     if (showBindDialog) {
-        var displayNameInput by remember { mutableStateOf("XPEACH 校园同学") }
-        var subjectInput by remember { mutableStateOf("user_uuid_haut_2026") }
-
-        AlertDialog(
-            onDismissRequest = { showBindDialog = false },
-            title = { Text("完成 XPEACH OIDC Ticket 绑定") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "通过 Confidential Web OIDC BFF 验证单次 App Ticket 后建立绑定：",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+        XpeachSsoOidcWebViewDialog(
+            installEphemeralId = "eph_${repository.profileId}",
+            onDismiss = { showBindDialog = false },
+            onBound = { profile ->
+                scope.launch {
+                    val saved = repository.saveVerifiedXpeachCloudAccount(profile)
+                    showBindDialog = false
+                    feedbackBanner = "已通过 XPEACH SSO 认证绑定：${saved.displayName} (余额 %.2f 🍑)".format(
+                        saved.peachBalanceMicropeach / 10_000.0
                     )
-                    OutlinedTextField(
-                        value = displayNameInput,
-                        onValueChange = { displayNameInput = it },
-                        label = { Text("XPEACH 昵称") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = subjectInput,
-                        onValueChange = { subjectInput = it },
-                        label = { Text("XPEACH Subject UUID") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            val bound = repository.bindXpeachCloudAccount(
-                                displayName = displayNameInput,
-                                ssoSubject = subjectInput
-                            )
-                            showBindDialog = false
-                            feedbackBanner = "已绑定 XPEACH 账号 ${bound.displayName} (余额 5.00 🍑)"
-                        }
-                    }
-                ) {
-                    Text("确认绑定")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBindDialog = false }) {
-                    Text("取消")
                 }
             }
         )
@@ -484,5 +481,267 @@ fun XPeachCloudAccountScreen(
                 }
             }
         )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun XpeachSsoOidcWebViewDialog(
+    installEphemeralId: String,
+    onDismiss: () -> Unit,
+    onBound: (XpeachCloudAccountProfile) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var activeTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
+    var statusHint by remember { mutableStateOf("正在向 Campus Cloud 申请 OIDC + PKCE 授权事务…") }
+    var errorHint by remember { mutableStateOf<String?>(null) }
+    var isPageLoading by remember { mutableStateOf(true) }
+    var isExchanging by remember { mutableStateOf(false) }
+    var manualTicketInput by remember { mutableStateOf("") }
+    var showManualTicketEntry by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    fun handleCallbackTicket(ticket: String, txnId: String) {
+        val currentTxn = activeTxn ?: return
+        if (isExchanging) return
+        isExchanging = true
+        errorHint = null
+        statusHint = "已收到 XPEACH SSO 授权票据，正在兑换身份与 🍑 钱包…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    CampusCloudOidcHelper.exchangeMobileTicketForAccount(
+                        loginTxn = txnId.ifBlank { currentTxn.loginTxn },
+                        appTicket = ticket.trim(),
+                        codeVerifier = currentTxn.pkce.codeVerifier
+                    )
+                }
+            }
+            isExchanging = false
+            result.fold(
+                onSuccess = { profile ->
+                    onBound(profile)
+                },
+                onFailure = { err ->
+                    errorHint = "SSO 票据兑换失败：${err.message}"
+                    statusHint = "请重试登录或检查网络"
+                }
+            )
+        }
+    }
+
+    LaunchedEffect(installEphemeralId) {
+        errorHint = null
+        statusHint = "正在向 Campus Cloud 申请 OIDC + PKCE 授权事务…"
+        val res = withContext(Dispatchers.IO) {
+            runCatching {
+                CampusCloudOidcHelper.startRemoteMobileAuthTransaction(installEphemeralId = installEphemeralId)
+            }
+        }
+        res.fold(
+            onSuccess = { txn ->
+                activeTxn = txn
+                statusHint = "请在下方页面登录您的 XPEACH 统一身份账号 (sso.xpeach.codes)"
+            },
+            onFailure = { err ->
+                errorHint = "无法连接 Campus Cloud OIDC 服务：${err.message}"
+            }
+        )
+    }
+
+    Dialog(
+        onDismissRequest = { if (!isExchanging) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .height(640.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 4.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "XPEACH SSO 统一身份认证",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = statusHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = { showManualTicketEntry = !showManualTicketEntry }
+                        ) {
+                            Text(if (showManualTicketEntry) "返回内嵌登录" else "外部浏览器辅助")
+                        }
+                        TextButton(
+                            enabled = !isExchanging,
+                            onClick = onDismiss
+                        ) {
+                            Text("关闭")
+                        }
+                    }
+                }
+
+                if (isPageLoading || isExchanging || activeTxn == null) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                errorHint?.let { err ->
+                    XPeachCard(containerColor = MaterialTheme.colorScheme.errorContainer) {
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+
+                if (showManualTicketEntry) {
+                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "若您已在系统浏览器登录过 XPEACH SSO，可点击「系统浏览器打开」完成授权，随后粘贴回调页显示的 Ticket 即可完成绑定：",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                enabled = activeTxn != null,
+                                onClick = {
+                                    val url = activeTxn?.authorizeUrl ?: return@OutlinedButton
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                }
+                            ) {
+                                Text("系统浏览器打开 SSO")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = manualTicketInput,
+                            onValueChange = { manualTicketInput = it.trim() },
+                            label = { Text("粘贴回调页单次 Ticket (如 tkt_...)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            enabled = manualTicketInput.startsWith("tkt_") && activeTxn != null && !isExchanging,
+                            onClick = {
+                                val txn = activeTxn ?: return@Button
+                                handleCallbackTicket(manualTicketInput, txn.loginTxn)
+                            }
+                        ) {
+                            Text("兑换 Ticket 并绑定")
+                        }
+                    }
+                }
+
+                val txn = activeTxn
+                if (txn != null && !showManualTicketEntry) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                    ) {
+                        AndroidView(
+                            factory = { ctx ->
+                                WebView(ctx).apply {
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    settings.loadWithOverviewMode = true
+                                    settings.useWideViewPort = true
+                                    CookieManager.getInstance().setAcceptCookie(true)
+                                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+                                    webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            request: WebResourceRequest?
+                                        ): Boolean {
+                                            val url = request?.url?.toString().orEmpty()
+                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
+                                            if (pair != null) {
+                                                handleCallbackTicket(pair.first, pair.second)
+                                                return true
+                                            }
+                                            if (url.startsWith("intent://")) {
+                                                val fallbackPair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(
+                                                    url.replace("intent://", "https://")
+                                                )
+                                                if (fallbackPair != null) {
+                                                    handleCallbackTicket(fallbackPair.first, fallbackPair.second)
+                                                }
+                                                return true
+                                            }
+                                            return false
+                                        }
+
+                                        override fun onPageStarted(
+                                            view: WebView?,
+                                            url: String?,
+                                            favicon: Bitmap?
+                                        ) {
+                                            super.onPageStarted(view, url, favicon)
+                                            isPageLoading = true
+                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
+                                            if (pair != null) {
+                                                handleCallbackTicket(pair.first, pair.second)
+                                            }
+                                        }
+
+                                        override fun onPageFinished(view: WebView?, url: String?) {
+                                            super.onPageFinished(view, url)
+                                            isPageLoading = false
+                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
+                                            if (pair != null) {
+                                                handleCallbackTicket(pair.first, pair.second)
+                                            }
+                                        }
+                                    }
+                                    loadUrl(txn.authorizeUrl)
+                                    webViewRef = this
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                } else if (txn == null) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+        }
     }
 }

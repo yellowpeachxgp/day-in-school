@@ -34,6 +34,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 data class XiaomiMintResult(
@@ -321,39 +322,90 @@ object XiaomiPassportClient {
 
 object MiuiExpressCrypto {
     private const val KEY = "d101b17c77ff93cs"
+    private const val MIUI_CBC_IV = "0102030405060708"
+
+    @Volatile
+    var lastError: String = ""
+        private set
 
     fun encode(plain: String): String {
         return try {
             reflect("base64AesEncode", plain, KEY)
-        } catch (_: Throwable) {
-            aesBase64(plain)
+        } catch (t: Throwable) {
+            lastError = "encode-reflect: ${t.javaClass.simpleName}: ${t.message}"
+            aesCbcBase64(plain)
         }
     }
 
     fun decode(cipherText: String): String {
         return try {
             reflect("base6AesDecode", cipherText, KEY)
-        } catch (_: Throwable) {
-            aesDecode(cipherText)
+        } catch (t: Throwable) {
+            lastError = "decode-reflect: ${t.javaClass.simpleName}: ${t.message}"
+            runCatching { aesCbcDecode(cipherText) }.getOrElse { aesEcbDecode(cipherText) }
         }
     }
 
     private fun reflect(method: String, arg1: String, arg2: String): String {
-        val cls = Class.forName("miui.util.CoderUtils")
+        val cls = loadCoderUtilsClass()
         val m = cls.getMethod(method, String::class.java, String::class.java)
         return m.invoke(null, arg1, arg2) as? String ?: ""
     }
 
+    private fun loadCoderUtilsClass(): Class<*> {
+        runCatching { return Class.forName("miui.util.CoderUtils") }
+        val jarCandidates = listOf(
+            "/system/framework/miui.jar",
+            "/system_ext/framework/miui.jar",
+            "/product/framework/miui.jar"
+        )
+        for (jarPath in jarCandidates) {
+            runCatching {
+                val file = java.io.File(jarPath)
+                if (file.exists()) {
+                    val loader = dalvik.system.PathClassLoader(jarPath, ClassLoader.getSystemClassLoader())
+                    return loader.loadClass("miui.util.CoderUtils")
+                }
+            }
+        }
+        throw ClassNotFoundException("miui.util.CoderUtils")
+    }
+
+    /**
+     * URL query 参数 yellowpage_encparam 专用：AES/ECB/PKCS5Padding
+     */
     fun aesBase64(plain: String): String {
         val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(KEY.toByteArray(StandardCharsets.UTF_8), "AES"))
         return Base64.getEncoder().encodeToString(cipher.doFinal(plain.toByteArray(StandardCharsets.UTF_8)))
     }
 
-    private fun aesDecode(cipherText: String): String {
+    /**
+     * 请求体与响应 data 字段（与 miui.util.CoderUtils.base64AesEncode / base6AesDecode 一致）：
+     * AES/CBC/PKCS5Padding，IV = "0102030405060708"
+     */
+    fun aesCbcBase64(plain: String): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val keySpec = SecretKeySpec(KEY.toByteArray(StandardCharsets.UTF_8), "AES")
+        val ivSpec = IvParameterSpec(MIUI_CBC_IV.toByteArray(StandardCharsets.UTF_8))
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec)
+        return Base64.getEncoder().encodeToString(cipher.doFinal(plain.toByteArray(StandardCharsets.UTF_8)))
+    }
+
+    fun aesCbcDecode(cipherText: String): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val keySpec = SecretKeySpec(KEY.toByteArray(StandardCharsets.UTF_8), "AES")
+        val ivSpec = IvParameterSpec(MIUI_CBC_IV.toByteArray(StandardCharsets.UTF_8))
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
+        val clean = cipherText.replace("\n", "").replace("\r", "").trim()
+        return String(cipher.doFinal(Base64.getDecoder().decode(clean)), StandardCharsets.UTF_8)
+    }
+
+    private fun aesEcbDecode(cipherText: String): String {
         val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(KEY.toByteArray(StandardCharsets.UTF_8), "AES"))
-        return String(cipher.doFinal(Base64.getDecoder().decode(cipherText)), StandardCharsets.UTF_8)
+        val clean = cipherText.replace("\n", "").replace("\r", "").trim()
+        return String(cipher.doFinal(Base64.getDecoder().decode(clean)), StandardCharsets.UTF_8)
     }
 }
 
@@ -613,7 +665,7 @@ object XiaomiExpressApi {
             connectTimeout = 15000
             readTimeout = 15000
             setRequestProperty("Cookie", "serviceToken=${cred.token}; cUserId=${cred.cUserId}")
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Content-Type", "application/json")
         }
         conn.outputStream.use { out ->
             out.write(encryptedBody.toByteArray(StandardCharsets.UTF_8))
@@ -661,19 +713,19 @@ object XiaomiExpressApi {
             val env = JSONObject()
                 .put("terminal", "phone")
                 .put("assistantVersion", paVersionCode(context))
-                .put("launchVersion", 0)
+                .put("launchVersion", pkgVersionCode(context, "com.miui.home"))
                 .put("androidVersion", Build.VERSION.RELEASE ?: "14")
                 .put("androidSdkVersion", Build.VERSION.SDK_INT)
-                .put("miuiType", "stable")
+                .put("miuiType", miuiType())
                 .put("phoneModel", Build.MODEL ?: "Xiaomi")
                 .put("phoneDevice", Build.DEVICE ?: "xiaomi")
                 .put("connectionType", "WIFI")
-                .put("miuiVersionName", "V8")
-                .put("miuiVersion", "")
-                .put("osVersionName", "-1.0")
-                .put("osVersion", "")
-                .put("miSettingsVersionName", "")
-                .put("miSettingsVersionCode", 0)
+                .put("miuiVersionName", systemProp("ro.miui.ui.version.name") ?: "V8")
+                .put("miuiVersion", systemProp("ro.miui.ui.version.code") ?: "")
+                .put("osVersionName", systemProp("ro.mi.os.version.name") ?: "-1.0")
+                .put("osVersion", systemProp("ro.mi.os.version.code") ?: "")
+                .put("miSettingsVersionName", pkgVersionName(context, "com.xiaomi.misettings") ?: "")
+                .put("miSettingsVersionCode", pkgVersionCode(context, "com.xiaomi.misettings"))
                 .put("timeZone", TimeZone.getDefault().getDisplayName(false, 0))
                 .put("language", Locale.getDefault().language)
                 .put("country", Locale.getDefault().country)
@@ -682,10 +734,10 @@ object XiaomiExpressApi {
                 .put("reqId", UUID.randomUUID().toString().replace("-", ""))
                 .put("ip", localIp())
                 .put("cpuArchitecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
-                .put("marketVersion", 0)
+                .put("marketVersion", pkgVersionCode(context, "com.xiaomi.market"))
                 .put("os", Build.VERSION.INCREMENTAL ?: "")
                 .put("clientFlag", 0)
-                .put("hwVersion", "")
+                .put("hwVersion", systemProp("ro.boot.hwversion") ?: "")
             val time = JSONObject()
                 .put("clientTs", System.currentTimeMillis().toString())
                 .put("timeZone", TimeZone.getDefault().getDisplayName(false, 0))
@@ -697,6 +749,50 @@ object XiaomiExpressApi {
                 .toString()
         } catch (_: Throwable) {
             plain
+        }
+    }
+
+    private fun miuiType(): String {
+        return try {
+            val cls = Class.forName("miui.os.Build")
+            val isAlpha = cls.getField("IS_ALPHA_BUILD").getBoolean(null)
+            val isDev = cls.getField("IS_DEVELOPMENT_VERSION").getBoolean(null)
+            val isStable = cls.getField("IS_STABLE_VERSION").getBoolean(null)
+            when {
+                isAlpha -> "alpha"
+                isDev -> "dev"
+                isStable -> "stable"
+                else -> "custom"
+            }
+        } catch (_: Throwable) {
+            "stable"
+        }
+    }
+
+    private fun systemProp(name: String): String? {
+        return try {
+            val cls = Class.forName("android.os.SystemProperties")
+            (cls.getMethod("get", String::class.java).invoke(null, name) as? String)?.takeIf { it.isNotEmpty() }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun pkgVersionName(context: Context, pkg: String): String? {
+        return try {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(pkg, 0).versionName
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun pkgVersionCode(context: Context, pkg: String): Int {
+        return try {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(pkg, 0).versionCode
+        } catch (_: Throwable) {
+            0
         }
     }
 

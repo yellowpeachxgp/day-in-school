@@ -884,10 +884,10 @@ private fun XiaomiLoginWebViewDialog(
         withContext(Dispatchers.IO) {
             runCatching {
                 val map = XiaomiPassportClient.parseCookies(accountCookies)
-                val passToken = map["passToken"]
-                val userId = map["userId"]
-                var cUserId = map["cUserId"]
                 val stsMap = XiaomiPassportClient.parseCookies(stsCookies)
+                val passToken = map["passToken"]
+                val userId = map["userId"] ?: stsMap["userId"]
+                var cUserId = map["cUserId"] ?: stsMap["cUserId"]
                 var token = stsMap["assistant_serviceToken"] ?: stsMap["serviceToken"]
                 var finalAccountId = userId.orEmpty()
 
@@ -896,6 +896,14 @@ private fun XiaomiLoginWebViewDialog(
                     token = minted.token
                     cUserId = minted.cUserId
                     finalAccountId = minted.accountId
+                } else if (cUserId.isNullOrBlank() && !passToken.isNullOrBlank() && finalAccountId.isNotBlank()) {
+                    runCatching {
+                        val minted = XiaomiPassportClient.mint(map, finalAccountId)
+                        if (cUserId.isNullOrBlank()) cUserId = minted.cUserId
+                    }
+                }
+                if (finalAccountId.isBlank()) {
+                    finalAccountId = cUserId.orEmpty()
                 }
                 val phones = XiaomiPassportClient.autoDetectPhones(
                     phoneFromUrl = phoneFromUrl,

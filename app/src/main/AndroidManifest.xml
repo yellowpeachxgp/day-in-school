@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <queries>
+        <package android:name="com.miui.personalassistant" />
+        <package android:name="com.xiaomi.account" />
+        <package android:name="com.miui.home" />
+        <package android:name="com.xiaomi.misettings" />
+        <package android:name="com.xiaomi.market" />
         <package android:name="com.tencent.mobileqq" />
         <package android:name="com.tencent.tim" />
         <intent>
@@ -33,6 +38,11 @@
         android:roundIcon="@drawable/ic_launcher_vector"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- 小米/HyperOS 系统共享库：启用后才能通过 Class.forName("miui.util.CoderUtils") 调用小米智能助理原生加解密；非小米机型 required=false 自动跳过 -->
+        <uses-library
+            android:name="com.miui.system"
+            android:required="false" />
 
         <activity
             android:name=".MainActivity"
