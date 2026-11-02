@@ -202,6 +202,14 @@ class ReminderCoordinator internal constructor(
             reconcileSummary = summary
         )
 
+        runCatching {
+            syncLiveCourseNotification(
+                now = now,
+                currentEvents = currentEvents,
+                globalConfig = globalConfig
+            )
+        }
+
         ReconcileReport(
             reason = reason,
             activeScheduledCount = remainingActive.size,
@@ -217,6 +225,16 @@ class ReminderCoordinator internal constructor(
         expectedGeneration: Int,
         now: Instant = Instant.now()
     ) {
+        if (taskId == LIVE_COURSE_BOUNDARY_TASK_ID) {
+            runCatching {
+                val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
+                val exams = repository.getExamSchedulesSnapshot()
+                val globalConfig = repository.getReminderConfigSnapshot()
+                val currentEvents = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
+                syncLiveCourseNotification(now, currentEvents, globalConfig)
+            }
+            return
+        }
         val nowMs = now.toEpochMilli()
         val reminderDao = repository.reminderDao()
 
@@ -329,6 +347,13 @@ class ReminderCoordinator internal constructor(
             repository.appendReminderDiagnosticLog(
                 message = "已发送提醒：${currentEvent.displayTitle} (第${task.snoozeCount + 1}次提醒)"
             )
+            runCatching {
+                syncLiveCourseNotification(
+                    now = now,
+                    currentEvents = currentEvents,
+                    globalConfig = globalConfig
+                )
+            }
         } else {
             reminderDao.markTerminal(
                 taskId = taskId,
@@ -608,10 +633,123 @@ class ReminderCoordinator internal constructor(
             accountScope = accountScope,
             lockscreenPrivate = config.lockscreenPrivate
         )
+        runCatching {
+            val now = Instant.now()
+            val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
+            val exams = repository.getExamSchedulesSnapshot()
+            val events = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
+                .filter { !it.isCancelled }
+                .sortedBy { it.startAt }
+            val liveCandidate = events.firstOrNull { event ->
+                val endAt = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
+                now.isBefore(endAt)
+            } ?: ReminderEvent(
+                eventKey = "demo_live_course",
+                courseId = "demo_live_course",
+                type = cn.edu.haut.campus.core.model.ReminderEventType.CLASS,
+                displayTitle = "算法设计与分析（实况预览）",
+                startAt = now.plus(Duration.ofMinutes(18)),
+                endAt = now.plus(Duration.ofMinutes(113)),
+                locationText = "莲花街校区 1号教学楼1104",
+                buildingId = "b_t1",
+                seatNumber = null,
+                isCancelled = false,
+                revision = "v1"
+            )
+            ReminderNotificationFactory.postOrUpdateLiveCourseNotification(
+                context = appContext,
+                accountScope = accountScope,
+                event = liveCandidate,
+                nextEventTitleAndRoom = "计算机网络 · 2号教学楼2302",
+                lockscreenPrivate = config.lockscreenPrivate,
+                now = now
+            )
+        }
         repository.appendReminderDiagnosticLog(
-            if (ok) "已发送测试提醒通知" else "发送测试提醒失败：请检查系统通知权限"
+            if (ok) "已发送测试提醒通知与课程实时实况倒计时通知" else "发送测试提醒失败：请检查系统通知权限"
         )
         return ok
+    }
+
+    /**
+     * 同步刷新「课程实时实况通知」：
+     * - 若当前有正在进行的课程（startAt <= now < endAt）或即将开始的课程（距离 startAt <= max(45min, classLeadMinutes)），
+     *   调用原生 Notification Chronometer 发布/更新实时倒计时实况卡片，并在边界点（startAt / endAt）注册精确切换闹钟。
+     */
+    private fun syncLiveCourseNotification(
+        now: Instant,
+        currentEvents: List<ReminderEvent>,
+        globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig
+    ) {
+        if (!globalConfig.enabled) {
+            ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
+            alarmScheduler.cancel(LIVE_COURSE_BOUNDARY_TASK_ID, 1)
+            return
+        }
+        val leadWindowMinutes = maxOf(45L, globalConfig.classLeadMinutes.toLong())
+        val activeOrUpcoming = currentEvents
+            .filter { !it.isCancelled }
+            .sortedBy { it.startAt }
+            .firstOrNull { event ->
+                val endAt = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
+                val inClass = !now.isBefore(event.startAt) && now.isBefore(endAt)
+                val preClass = now.isBefore(event.startAt) &&
+                    Duration.between(now, event.startAt).toMinutes() <= leadWindowMinutes
+                inClass || preClass
+            }
+
+        if (activeOrUpcoming == null) {
+            ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
+            alarmScheduler.cancel(LIVE_COURSE_BOUNDARY_TASK_ID, 1)
+            return
+        }
+
+        val nextCourse = currentEvents
+            .filter { !it.isCancelled && it.startAt.isAfter(activeOrUpcoming.startAt) }
+            .minByOrNull { it.startAt }
+            ?.let { nxt ->
+                val t = nxt.startAt.atZone(HAUT_ZONE_ID).toLocalTime()
+                val rm = nxt.locationText?.takeIf { it.isNotBlank() } ?: "教室待定"
+                "${nxt.displayTitle} (${"%02d:%02d".format(t.hour, t.minute)} · $rm)"
+            }
+
+        ReminderNotificationFactory.postOrUpdateLiveCourseNotification(
+            context = appContext,
+            accountScope = accountScope,
+            event = activeOrUpcoming,
+            nextEventTitleAndRoom = nextCourse,
+            lockscreenPrivate = globalConfig.lockscreenPrivate,
+            now = now
+        )
+
+        val endInstant = activeOrUpcoming.endAt ?: activeOrUpcoming.startAt.plus(Duration.ofMinutes(95))
+        val nextBoundaryInstant = if (now.isBefore(activeOrUpcoming.startAt)) {
+            activeOrUpcoming.startAt
+        } else {
+            endInstant
+        }
+        if (nextBoundaryInstant.isAfter(now)) {
+            val boundaryTask = ReminderTaskDomain(
+                id = LIVE_COURSE_BOUNDARY_TASK_ID,
+                taskKey = LIVE_COURSE_BOUNDARY_TASK_ID,
+                eventKey = activeOrUpcoming.eventKey,
+                eventType = activeOrUpcoming.type,
+                reminderKind = ReminderKind.CLASS_BEFORE,
+                eventRevision = activeOrUpcoming.revision,
+                policyRevision = "v1",
+                eventStartAtEpochMs = activeOrUpcoming.startAt.toEpochMilli(),
+                originalScheduledAtEpochMs = nextBoundaryInstant.toEpochMilli(),
+                scheduledAtEpochMs = nextBoundaryInstant.toEpochMilli(),
+                status = ReminderTaskStatus.PENDING,
+                schedulerState = ReminderSchedulerState.NONE,
+                generation = 1,
+                snoozeCount = 0,
+                maxSnoozes = 0,
+                createdAtEpochMs = now.toEpochMilli(),
+                updatedAtEpochMs = now.toEpochMilli()
+            )
+            alarmScheduler.schedule(boundaryTask, preferExact = globalConfig.preciseReminderPreferred)
+        }
     }
 
     suspend fun cancelAllActiveAlarmsAndNotifications() {
@@ -677,6 +815,7 @@ class ReminderCoordinator internal constructor(
     }
 
     companion object {
+        const val LIVE_COURSE_BOUNDARY_TASK_ID = "__live_course_boundary__"
         @Volatile private var INSTANCE: ReminderCoordinator? = null
 
         fun bind(context: Context, session: ActiveSession): ReminderCoordinator = synchronized(this) {

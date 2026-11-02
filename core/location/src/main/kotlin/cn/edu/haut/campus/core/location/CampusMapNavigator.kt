@@ -46,7 +46,9 @@ data class UserGeoLocation(
     val provider: String,
     val timestampMillis: Long,
     val isInsideLianhuajieCampus: Boolean,
-    val distanceToCampusCenterMeters: Int
+    val distanceToCampusCenterMeters: Int,
+    val isInsideSongshanluCampus: Boolean = false,
+    val distanceToSongshanluCenterMeters: Int = Int.MAX_VALUE
 )
 
 /**
@@ -97,6 +99,11 @@ object CampusMapNavigator {
     const val CAMPUS_CENTER_LAT = 34.831200
     const val CAMPUS_CENTER_LNG = 113.544200
     private const val CAMPUS_GEOFENCE_RADIUS_METERS = 3000
+
+    // 河南工业大学嵩山路校区真实中心点（WGS-84，郑州市二七区嵩山南路140号）
+    const val SONGSHANLU_CENTER_LAT = 34.737500
+    const val SONGSHANLU_CENTER_LNG = 113.619500
+    private const val SONGSHANLU_GEOFENCE_RADIUS_METERS = 2000
 
     private const val EARTH_RADIUS_M = 6378245.0
     private const val EE = 0.00669342162296594323
@@ -279,6 +286,15 @@ object CampusMapNavigator {
         dLat = (dLat * 180.0) / ((EARTH_RADIUS_M * (1 - EE)) / (magic * sqrtMagic) * PI)
         dLon = (dLon * 180.0) / (EARTH_RADIUS_M / sqrtMagic * cos(radLat) * PI)
         return (lat + dLat) to (lon + dLon)
+    }
+
+    /**
+     * 将国内高德瓦片使用的 GCJ-02 坐标反算为标准 WGS-84 坐标（供电子区划地图点选圈定校区使用）。
+     */
+    fun gcj02ToWgs84(gcjLat: Double, gcjLon: Double): Pair<Double, Double> {
+        if (outOfChina(gcjLat, gcjLon)) return gcjLat to gcjLon
+        val (gLat, gLon) = wgs84ToGcj02(gcjLat, gcjLon)
+        return (gcjLat * 2.0 - gLat) to (gcjLon * 2.0 - gLon)
     }
 
     private fun outOfChina(lat: Double, lon: Double): Boolean {
@@ -596,6 +612,12 @@ object CampusMapNavigator {
             CAMPUS_CENTER_LAT,
             CAMPUS_CENTER_LNG
         )
+        val distToSongshanlu = calculateDistanceMeters(
+            latitude,
+            longitude,
+            SONGSHANLU_CENTER_LAT,
+            SONGSHANLU_CENTER_LNG
+        )
         return UserGeoLocation(
             latitude = latitude,
             longitude = longitude,
@@ -604,12 +626,14 @@ object CampusMapNavigator {
             provider = provider ?: "fused",
             timestampMillis = maxOf(time, emittedAtMs),
             isInsideLianhuajieCampus = distToCampus <= CAMPUS_GEOFENCE_RADIUS_METERS,
-            distanceToCampusCenterMeters = distToCampus
+            distanceToCampusCenterMeters = distToCampus,
+            isInsideSongshanluCampus = distToSongshanlu <= SONGSHANLU_GEOFENCE_RADIUS_METERS,
+            distanceToSongshanluCenterMeters = distToSongshanlu
         )
     }
 
     /**
-     * 莲花街校区步行路线计算。
+     * 校区步行路线计算（同时支持莲花街校区精细路网、嵩山路校区及自定义电子区划校区步行导航）。
      */
     fun buildInAppNavigationPlan(
         userLocation: UserGeoLocation?,
@@ -618,16 +642,32 @@ object CampusMapNavigator {
         allBuildings: List<Building>,
         rawClassroom: String? = null
     ): InAppNavigationPlan {
-        val useLiveGps = userLocation != null && userLocation.isInsideLianhuajieCampus
+        val isSongshanluTarget = destinationBuilding.campusId.contains("songshan", ignoreCase = true)
+        val isLianhuajieTarget = destinationBuilding.campusId.isBlank() ||
+            destinationBuilding.campusId.contains("lianhuajie", ignoreCase = true)
+        val useLiveGps = userLocation != null && when {
+            isSongshanluTarget -> userLocation.isInsideSongshanluCampus
+            isLianhuajieTarget -> userLocation.isInsideLianhuajieCampus
+            else -> calculateDistanceMeters(
+                userLocation.latitude,
+                userLocation.longitude,
+                destinationBuilding.latitude,
+                destinationBuilding.longitude
+            ) <= 3000
+        }
+        val defaultOriginLat = if (isSongshanluTarget) SONGSHANLU_CENTER_LAT else CAMPUS_CENTER_LAT
+        val defaultOriginLng = if (isSongshanluTarget) SONGSHANLU_CENTER_LNG else CAMPUS_CENTER_LNG
         val originLat = when {
             useLiveGps -> userLocation!!.latitude
             fallbackOriginBuilding != null -> fallbackOriginBuilding.latitude
-            else -> CAMPUS_CENTER_LAT
+            !isLianhuajieTarget && !isSongshanluTarget -> allBuildings.firstOrNull()?.latitude ?: destinationBuilding.latitude
+            else -> defaultOriginLat
         }
         val originLng = when {
             useLiveGps -> userLocation!!.longitude
             fallbackOriginBuilding != null -> fallbackOriginBuilding.longitude
-            else -> CAMPUS_CENTER_LNG
+            !isLianhuajieTarget && !isSongshanluTarget -> allBuildings.firstOrNull()?.longitude ?: destinationBuilding.longitude
+            else -> defaultOriginLng
         }
         val originLabel = when {
             useLiveGps -> {
@@ -639,6 +679,8 @@ object CampusMapNavigator {
                 }
             }
             fallbackOriginBuilding != null -> fallbackOriginBuilding.name
+            isSongshanluTarget -> "嵩山路校区东门"
+            !isLianhuajieTarget -> allBuildings.firstOrNull()?.name ?: "校区中心"
             else -> "莲花街南门"
         }
 
@@ -657,14 +699,43 @@ object CampusMapNavigator {
         )
         val compass = bearingToCompassLabel(bearing)
 
-        // 使用校区真实路网执行 Dijkstra 最短路径规划
-        val (routePoints, roadDistanceMeters, roadSteps) = computeRoadNetworkRoute(
-            originLat = originLat,
-            originLng = originLng,
-            originLabel = originLabel,
-            destinationBuilding = destinationBuilding,
-            rawClassroom = rawClassroom
-        )
+        val (routePoints, roadDistanceMeters, roadSteps) = if (isLianhuajieTarget) {
+            computeRoadNetworkRoute(
+                originLat = originLat,
+                originLng = originLng,
+                originLabel = originLabel,
+                destinationBuilding = destinationBuilding,
+                rawClassroom = rawClassroom
+            )
+        } else {
+            val midLat = (originLat + destinationBuilding.latitude) / 2.0
+            val midLng = destinationBuilding.longitude
+            val pts = listOf(
+                RouteGeoPoint(originLat, originLng, originLabel),
+                RouteGeoPoint(midLat, midLng, "校区主干道"),
+                RouteGeoPoint(destinationBuilding.latitude, destinationBuilding.longitude, destinationBuilding.name)
+            )
+            val estMeters = (straightMeters * 1.18).roundToInt().coerceAtLeast(25)
+            val steps = listOf(
+                InAppNavigationStep(
+                    stepIndex = 1,
+                    title = "从 $originLabel 出发，沿校区主干道向$compass",
+                    detail = "步行约 $estMeters 米前往 ${destinationBuilding.name}",
+                    distanceMeters = estMeters
+                ),
+                InAppNavigationStep(
+                    stepIndex = 2,
+                    title = "到达 ${destinationBuilding.name}",
+                    detail = if (!rawClassroom.isNullOrBlank()) {
+                        "由 ${destinationBuilding.entrances.firstOrNull() ?: "正门"} 进入前往 $rawClassroom"
+                    } else {
+                        destinationBuilding.description
+                    },
+                    distanceMeters = 15
+                )
+            )
+            Triple(pts, estMeters, steps)
+        }
 
         val walkMeters = roadDistanceMeters.coerceAtLeast(straightMeters)
         val walkMinutes = (walkMeters / 72.0).roundToInt().coerceAtLeast(1)

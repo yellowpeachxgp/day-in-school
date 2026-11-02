@@ -2,11 +2,16 @@ package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.AcademicProtocolFamily
 import cn.edu.haut.campus.core.model.AcademicSystemProfile
+import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CampusProfile
+import cn.edu.haut.campus.core.model.CustomCampusZone
+import cn.edu.haut.campus.core.model.CustomCampusZoneCodec
+import cn.edu.haut.campus.core.model.GeoPoint
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.SchoolProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,5 +74,57 @@ class SchoolDirectoryTest {
     fun `只有源码证据时不把学校能力标记为可用`() {
         val school = SchoolDirectory.hautProfile()
         assertTrue(school.academicSystems.single().capabilityStatuses.values.none { it.isAvailable })
+    }
+
+    @Test
+    fun `河南工业大学内置莲花街与嵩山路双校区并支持教室文本识别`() {
+        val school = SchoolDirectory.hautProfile()
+        assertEquals(
+            listOf(SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID, SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID),
+            school.campuses.map { it.id }
+        )
+        assertEquals(
+            SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID,
+            ClassroomBuildingResolver.detectCampusHint(listOf("嵩山路校区 嵩山1教204"))
+        )
+        assertEquals(
+            SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID,
+            ClassroomBuildingResolver.detectCampusHint(listOf("莲花街校区 1号教学楼1104"))
+        )
+        val resolvedSongshan = ClassroomBuildingResolver.resolve(
+            rawRoom = "嵩山1教302",
+            buildings = ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS,
+            aliases = ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES
+        )
+        assertEquals(BuildingMatchStatus.EXACT_VERIFIED, resolvedSongshan.status)
+        assertEquals("b_ss_t1", resolvedSongshan.building?.id)
+    }
+
+    @Test
+    fun `支持电子区划多边形射线法识别与校区适配JSON导入导出`() {
+        val zone = CustomCampusZone(
+            campusId = "custom-east",
+            campusName = "东校区",
+            schoolName = "示例大学",
+            centerLatitude = 34.7800,
+            centerLongitude = 113.6800,
+            polygonVertices = listOf(
+                GeoPoint(34.7750, 113.6750),
+                GeoPoint(34.7750, 113.6850),
+                GeoPoint(34.7850, 113.6850),
+                GeoPoint(34.7850, 113.6750)
+            ),
+            buildings = ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS.take(2)
+        )
+        assertTrue(zone.containsWgs84Point(34.7800, 113.6800))
+        assertFalse(zone.containsWgs84Point(34.8312, 113.5442))
+
+        val json = CustomCampusZoneCodec.encodeList(listOf(zone), pretty = true)
+        val decoded = CustomCampusZoneCodec.decodeList(json)
+        assertEquals(1, decoded.size)
+        assertEquals("custom-east", decoded.single().campusId)
+        assertEquals("东校区", decoded.single().campusName)
+        assertEquals(4, decoded.single().polygonVertices.size)
+        assertEquals(2, decoded.single().buildings.size)
     }
 }

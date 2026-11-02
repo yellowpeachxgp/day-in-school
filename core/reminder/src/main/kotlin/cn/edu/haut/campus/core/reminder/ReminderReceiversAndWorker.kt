@@ -103,6 +103,9 @@ class SnoozeActionReceiver : BroadcastReceiver() {
                                     expectedGeneration = generation
                                 )
                             }
+                            ACTION_DISMISS_LIVE_COURSE -> {
+                                ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
+                            }
                         }
                     }
                 }
@@ -117,6 +120,7 @@ class SnoozeActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_SNOOZE_REMINDER = "cn.edu.haut.campus.action.SNOOZE_REMINDER"
         const val ACTION_DISMISS_REMINDER = "cn.edu.haut.campus.action.DISMISS_REMINDER"
+        const val ACTION_DISMISS_LIVE_COURSE = "cn.edu.haut.campus.action.DISMISS_LIVE_COURSE"
         const val EXTRA_TASK_ID = "extra_snooze_task_id"
         const val EXTRA_GENERATION = "extra_snooze_generation"
         const val EXTRA_SNOOZE_CHOICE = "extra_snooze_choice"

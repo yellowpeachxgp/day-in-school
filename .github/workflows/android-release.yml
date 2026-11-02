@@ -67,7 +67,7 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon :core:model:test :core:domain:test testDebugUnitTest lintDebug lintRelease :app:assembleRelease --stacktrace
+          ./gradlew --no-daemon :core:model:test :core:domain:test :core:academic-protocols:test :core:school-packages:test :core:academic-plan:test :core:selection:test testDebugUnitTest lintDebug lintRelease :app:assembleRelease --stacktrace
           git diff --exit-code -- core/database/schemas
           test -z "$(git ls-files --others --exclude-standard core/database/schemas)"
 

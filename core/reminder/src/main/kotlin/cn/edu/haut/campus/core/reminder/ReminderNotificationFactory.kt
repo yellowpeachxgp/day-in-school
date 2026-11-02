@@ -30,6 +30,7 @@ object ReminderNotificationFactory {
 
     const val CHANNEL_CLASS_REMINDERS = "class_reminders_v1"
     const val CHANNEL_EXAM_REMINDERS = "exam_reminders_v1"
+    const val CHANNEL_LIVE_COURSE = "live_course_ongoing_v1"
     const val CHANNEL_REMINDER_STATUS = "reminder_status_v1"
 
     const val EXTRA_REMINDER_NAV_ACTION = "extra_reminder_nav_action"
@@ -43,6 +44,7 @@ object ReminderNotificationFactory {
     const val NAV_ACTION_OPEN_MAP = "OPEN_MAP"
 
     private const val TEST_NOTIFICATION_ID = 990101
+    private const val LIVE_COURSE_NOTIFICATION_ID = 990102
     private val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
     fun ensureChannels(context: Context) {
@@ -66,6 +68,16 @@ object ReminderNotificationFactory {
             enableVibration(true)
         }
 
+        val liveCourseChannel = NotificationChannel(
+            CHANNEL_LIVE_COURSE,
+            "课程实时实况通知",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "基于 Android 原生 Chronometer 的课前实时倒计时与课中下课倒计时常驻实况卡片"
+            enableVibration(false)
+            setShowBadge(true)
+        }
+
         val statusChannel = NotificationChannel(
             CHANNEL_REMINDER_STATUS,
             "提醒状态反馈",
@@ -75,7 +87,9 @@ object ReminderNotificationFactory {
             setShowBadge(false)
         }
 
-        manager.createNotificationChannels(listOf(classChannel, examChannel, statusChannel))
+        manager.createNotificationChannels(
+            listOf(classChannel, examChannel, liveCourseChannel, statusChannel)
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -152,6 +166,7 @@ object ReminderNotificationFactory {
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(title)
             .setContentText(body)
+            .setSubText(roomPart)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
@@ -159,6 +174,14 @@ object ReminderNotificationFactory {
             .setOnlyAlertOnce(false)
             .setWhen(event.startAt.toEpochMilli())
             .setShowWhen(true)
+            .setUsesChronometer(event.startAt.isAfter(now))
+            .setChronometerCountDown(true)
+
+        builder.extras.putBoolean("android.requestPromotedOngoing", true)
+        builder.extras.putString(
+            "android.shortCriticalText",
+            if (minutesUntilStart > 0) "${minutesUntilStart}分后" else "即将开始"
+        )
 
         if (contentIntent != null) {
             builder.setContentIntent(contentIntent)
@@ -310,6 +333,162 @@ object ReminderNotificationFactory {
         }.getOrDefault(false)
     }
 
+    /**
+     * 调用 Android 原生 Notification SDK 发布/更新「课程实时实况通知」：
+     * - 课前阶段（now < startAt）：启用硬件级 `setUsesChronometer(true)` + `setChronometerCountDown(true)` 精准倒计时至上课时刻；
+     * - 课中阶段（startAt <= now < endAt）：自动切换倒计时至下课时刻 `endAt`，并展示原生课程进度条与下一节课预览；
+     * - 适配 Android 16 / API 34+ 状态栏实况胶囊（`setShortCriticalText` + `android.requestPromotedOngoing`）。
+     */
+    @SuppressLint("MissingPermission")
+    fun postOrUpdateLiveCourseNotification(
+        context: Context,
+        accountScope: AccountBackgroundScope,
+        event: ReminderEvent,
+        nextEventTitleAndRoom: String? = null,
+        lockscreenPrivate: Boolean = false,
+        now: Instant = Instant.now()
+    ): Boolean {
+        if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
+        ensureChannels(context)
+
+        val endInstant = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
+        if (!now.isBefore(endInstant)) {
+            cancelLiveCourseNotification(context)
+            return false
+        }
+
+        val isInClass = !now.isBefore(event.startAt)
+        val targetCountdownEpochMs = if (isInClass) {
+            endInstant.toEpochMilli()
+        } else {
+            event.startAt.toEpochMilli()
+        }
+
+        val startLocalTime = event.startAt.atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FORMATTER)
+        val endLocalTime = endInstant.atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FORMATTER)
+        val roomPart = event.locationText?.takeIf { it.isNotBlank() } ?: "教室待定"
+
+        val totalMinutes = Duration.between(event.startAt, endInstant).toMinutes().toInt().coerceAtLeast(1)
+        val elapsedMinutes = Duration.between(event.startAt, now).toMinutes().toInt().coerceIn(0, totalMinutes)
+        val remainingMinutes = if (isInClass) {
+            Duration.between(now, endInstant).toMinutes().coerceAtLeast(1L)
+        } else {
+            Duration.between(now, event.startAt).toMinutes().coerceAtLeast(1L)
+        }
+
+        val title = if (isInClass) {
+            "正在上课 · ${event.displayTitle}"
+        } else {
+            "即将上课 · ${event.displayTitle}"
+        }
+
+        val statusSummary = if (isInClass) {
+            "$startLocalTime–$endLocalTime · $roomPart · 距下课约 ${remainingMinutes} 分钟"
+        } else {
+            "$startLocalTime–$endLocalTime · $roomPart · ${remainingMinutes} 分钟后上课"
+        }
+
+        val expandedBody = buildString {
+            append(statusSummary)
+            if (!nextEventTitleAndRoom.isNullOrBlank()) {
+                append("\n下一节：").append(nextEventTitleAndRoom)
+            }
+        }
+
+        val shortChipText = if (isInClass) {
+            "下课 ${remainingMinutes}m"
+        } else {
+            "上课 ${remainingMinutes}m"
+        }
+
+        val contentIntent = buildAppLaunchPendingIntent(
+            context = context,
+            accountScope = accountScope,
+            requestKey = "live_course_tap:${event.eventKey}",
+            navAction = NAV_ACTION_OPEN_TODAY,
+            taskId = null,
+            eventKey = event.eventKey,
+            buildingId = event.buildingId,
+            roomText = event.locationText
+        )
+        val mapIntent = buildAppLaunchPendingIntent(
+            context = context,
+            accountScope = accountScope,
+            requestKey = "live_course_map:${event.eventKey}",
+            navAction = NAV_ACTION_OPEN_MAP,
+            taskId = null,
+            eventKey = event.eventKey,
+            buildingId = event.buildingId,
+            roomText = event.locationText
+        )
+        val dismissLiveIntent = buildDismissLiveCoursePendingIntent(context, accountScope)
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_LIVE_COURSE)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle(title)
+            .setContentText(statusSummary)
+            .setSubText(if (isInClass) "课中实况 · $roomPart" else "课前实况 · $roomPart")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(expandedBody))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(false)
+            .setWhen(targetCountdownEpochMs)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setChronometerCountDown(true)
+            .setVisibility(
+                if (lockscreenPrivate) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC
+            )
+
+        builder.extras.putBoolean("android.requestPromotedOngoing", true)
+        builder.extras.putString("android.shortCriticalText", shortChipText)
+
+        if (isInClass) {
+            builder.setProgress(totalMinutes, elapsedMinutes, false)
+        } else {
+            val leadWindow = 45
+            val waitProgress = (leadWindow - remainingMinutes.toInt()).coerceIn(0, leadWindow)
+            builder.setProgress(leadWindow, waitProgress, false)
+        }
+
+        if (contentIntent != null) {
+            builder.setContentIntent(contentIntent)
+        }
+        if (mapIntent != null) {
+            builder.addAction(0, "去教室", mapIntent)
+        }
+        if (dismissLiveIntent != null) {
+            builder.addAction(0, "关闭实况", dismissLiveIntent)
+        }
+
+        if (lockscreenPrivate) {
+            val publicVersion: Notification = NotificationCompat.Builder(context, CHANNEL_LIVE_COURSE)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(if (isInClass) "日在校园 · 课程进行中" else "日在校园 · 课程即将开始")
+                .setContentText("解锁查看实时课程进度与教室位置")
+                .setWhen(targetCountdownEpochMs)
+                .setShowWhen(true)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+            builder.setPublicVersion(publicVersion)
+        }
+
+        return runCatching {
+            NotificationManagerCompat.from(context).notify(LIVE_COURSE_NOTIFICATION_ID, builder.build())
+            true
+        }.getOrDefault(false)
+    }
+
+    fun cancelLiveCourseNotification(context: Context) {
+        runCatching {
+            NotificationManagerCompat.from(context).cancel(LIVE_COURSE_NOTIFICATION_ID)
+        }
+    }
+
     fun cancelNotificationForTask(context: Context, taskId: String) {
         val stableId = (taskId.hashCode() and 0x7FFFFFFF).coerceAtLeast(1000)
         runCatching {
@@ -350,6 +529,25 @@ object ReminderNotificationFactory {
         }
         accountScope.attach(intent)
         val requestCode = ("snooze:$taskId:$generation:${choice.actionCode}".hashCode() and 0x7FFFFFFF)
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun buildDismissLiveCoursePendingIntent(
+        context: Context,
+        accountScope: AccountBackgroundScope
+    ): PendingIntent? {
+        val intent = Intent(context, SnoozeActionReceiver::class.java).apply {
+            action = SnoozeActionReceiver.ACTION_DISMISS_LIVE_COURSE
+            data = Uri.parse("reminder://dismiss_live_course/${accountScope.profileId}")
+            putExtra(SnoozeActionReceiver.EXTRA_TASK_ID, "live_course")
+        }
+        accountScope.attach(intent)
+        val requestCode = ("dismiss_live:${accountScope.profileId}".hashCode() and 0x7FFFFFFF)
         return PendingIntent.getBroadcast(
             context,
             requestCode,

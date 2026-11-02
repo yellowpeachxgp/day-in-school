@@ -131,7 +131,9 @@ data class AppPreferencesState(
     val allowUnverifiedUtilityTransport: Boolean = false,
     val lastUtilitySampleEpochMillis: Long? = null,
     val selectedFocusMinutes: Int = 25,
-    val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig()
+    val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
+    val selectedCampusId: String = "auto",
+    val customCampusZonesJson: String = "[]"
 )
 
 class CampusRepository internal constructor(
@@ -264,6 +266,8 @@ class CampusRepository internal constructor(
         val PROXY_PORT = intPreferencesKey("network_proxy_port_v1")
         val PROXY_AUTO_FALLBACK = booleanPreferencesKey("network_proxy_auto_fallback_v1")
         val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
+        val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
+        val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
     }
 
     init {
@@ -361,7 +365,9 @@ class CampusRepository internal constructor(
             allowUnverifiedUtilityTransport = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
             lastUtilitySampleEpochMillis = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS],
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
-            networkProxyConfig = extractNetworkProxyConfig(prefs)
+            networkProxyConfig = extractNetworkProxyConfig(prefs),
+            selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
+            customCampusZonesJson = prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
         )
     }.flowOn(Dispatchers.IO)
 
@@ -423,10 +429,22 @@ class CampusRepository internal constructor(
         dao.observeGradeAttempts().map { list -> list.map { it.toDomain() } }
 
     val buildingsFlow: Flow<List<Building>> =
-        dao.observeBuildings().map { list -> list.map { it.toDomain() } }
+        combine(dao.observeBuildings(), preferences.data) { list, prefs ->
+            val base = list.map { it.toDomain() }
+            val songshan = if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS else emptyList()
+            val customZones = cn.edu.haut.campus.core.model.CustomCampusZoneCodec.decodeList(
+                prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
+            )
+            val customBuildings = customZones.flatMap { it.buildings }
+            (base + songshan + customBuildings).distinctBy { it.id }
+        }
 
     val buildingAliasesFlow: Flow<List<BuildingAlias>> =
-        dao.observeBuildingAliases().map { list -> list.map { it.toDomain() } }
+        dao.observeBuildingAliases().map { list ->
+            val base = list.map { it.toDomain() }
+            val songshan = if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES else emptyList()
+            (base + songshan).distinctBy { it.id }
+        }
 
     val widgetConfigsFlow: Flow<List<WidgetInstanceConfig>> =
         dao.observeWidgetConfigs().map { list -> list.map { it.toDomain() } }
@@ -1745,7 +1763,9 @@ class CampusRepository internal constructor(
         val periods = dao.getPeriodTimesSnapshot().map { it.toDomain() }
         val calOverrides = dao.getCalendarOverridesSnapshot().map { it.toDomain() }
         val occOverrides = dao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
-        val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val buildings = (dao.getBuildingsSnapshot().map { it.toDomain() } +
+            (if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS else emptyList()))
+            .distinctBy { it.id }
         return DirectScheduleData(
             term = term,
             courses = courses,
@@ -1755,6 +1775,18 @@ class CampusRepository internal constructor(
             occurrenceOverrides = occOverrides,
             buildings = buildings
         )
+    }
+
+    suspend fun setSelectedCampusId(campusId: String) {
+        preferences.edit { prefs ->
+            prefs[PrefKeys.SELECTED_CAMPUS_ID] = campusId.trim().ifBlank { "auto" }
+        }
+    }
+
+    suspend fun saveCustomCampusZonesJson(json: String) {
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] = json.trim().ifBlank { "[]" }
+        }
     }
 
     companion object {

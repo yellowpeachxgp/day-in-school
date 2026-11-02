@@ -93,6 +93,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.XPeachBrandLight
@@ -105,6 +111,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.location.CampusGeofenceRecognizer
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
 import cn.edu.haut.campus.core.location.InAppNavigationPlan
@@ -112,8 +119,12 @@ import cn.edu.haut.campus.core.location.UserGeoLocation
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusCategory
+import cn.edu.haut.campus.core.model.CustomCampusZone
+import cn.edu.haut.campus.core.model.CustomCampusZoneCodec
+import cn.edu.haut.campus.core.model.GeoPoint
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.SchoolProfile
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -223,11 +234,18 @@ fun CampusMapScreen(
         )
     }
 
+    val preferences by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val rules by repository.rulesFlow.collectAsState(initial = emptyList())
+    val exams by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val aliases by repository.buildingAliasesFlow.collectAsState(initial = emptyList())
     val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
     val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
     val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
+
+    val customZones = remember(preferences.customCampusZonesJson) {
+        CustomCampusZoneCodec.decodeList(preferences.customCampusZonesJson)
+    }
 
     var isFullScreenMap by remember(initialClassroomQuery) {
         mutableStateOf(!initialClassroomQuery.isNullOrBlank())
@@ -244,6 +262,18 @@ fun CampusMapScreen(
     var manualOriginBuilding by remember { mutableStateOf<Building?>(null) }
     var inAppNavigationActive by remember { mutableStateOf(true) }
     var expandRouteSteps by remember { mutableStateOf(false) }
+
+    // 电子区划自定义圈定校区与校区适配 JSON 导入导出状态
+    var isDrawingZoneMode by remember { mutableStateOf(false) }
+    var drawingZoneVertices by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var drawingZoneBuildings by remember { mutableStateOf<List<Building>>(emptyList()) }
+    var drawingZoneName by remember { mutableStateOf("") }
+    var drawingSchoolName by remember { mutableStateOf(activeSchool.displayName) }
+    var showZoneImportExportDialog by remember { mutableStateOf(false) }
+    var zoneAdaptationJsonInput by remember { mutableStateOf("") }
+    var zoneAdaptationFeedback by remember { mutableStateOf<String?>(null) }
+    var pendingPinPoint by remember { mutableStateOf<GeoPoint?>(null) }
+    var pendingPinName by remember { mutableStateOf("") }
 
     var hasLocationPermission by remember {
         mutableStateOf(CampusMapNavigator.hasLocationPermission(context))
@@ -282,23 +312,88 @@ fun CampusMapScreen(
     val sensorHeadingDegrees by deviceHeadingFlow.collectAsState(initial = null)
     val effectiveHeadingDegrees = sensorHeadingDegrees ?: userLocation?.bearingDegrees
 
+    // 融合 GPS 电子区划、莲花街/嵩山路围栏与课表教室文本的校区自动识别结果
+    val classroomHints = remember(rules, exams, initialClassroomQuery) {
+        buildList {
+            if (!initialClassroomQuery.isNullOrBlank()) add(initialClassroomQuery)
+            rules.forEach { add(it.rawRoom) }
+            exams.forEach {
+                add(it.rawRoom)
+                add(it.campusName)
+            }
+        }
+    }
+    val detectedCampus = remember(userLocation, customZones, classroomHints, preferences.selectedCampusId) {
+        CampusGeofenceRecognizer.detectActiveCampus(
+            userLocation = userLocation,
+            customZones = customZones,
+            classroomHints = classroomHints,
+            manualCampusId = preferences.selectedCampusId
+        )
+    }
+
+    val activeCampusPolygon = remember(detectedCampus) {
+        val cz = detectedCampus.customZone
+        when {
+            cz != null -> cz.polygonVertices
+            detectedCampus.campusId == SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value ||
+                detectedCampus.campusId == "songshanlu" -> ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
+            else -> ClassroomBuildingResolver.HAUT_LIANHUAJIE_POLYGON
+        }
+    }
+
+    val campusBuildings = remember(buildings, detectedCampus) {
+        val cz = detectedCampus.customZone
+        when {
+            cz != null -> {
+                cz.buildings.ifEmpty {
+                    buildings.filter { it.campusId == detectedCampus.campusId }
+                }
+            }
+            detectedCampus.campusId == SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value ||
+                detectedCampus.campusId == "songshanlu" -> {
+                buildings.filter { it.campusId.contains("songshan", ignoreCase = true) }
+            }
+            else -> {
+                buildings.filter {
+                    it.campusId.isBlank() || it.campusId.contains("lianhuajie", ignoreCase = true)
+                }
+            }
+        }
+    }
+
     val resolution = remember(searchQuery, buildings, aliases) {
         if (searchQuery.isBlank()) null
         else ClassroomBuildingResolver.resolve(searchQuery, buildings, aliases)
     }
 
     // 真实地图视口中心（GCJ-02 坐标）与缩放级别
-    val defaultCenterGcj = remember {
-        CampusMapNavigator.wgs84ToGcj02(CampusMapNavigator.CAMPUS_CENTER_LAT, CampusMapNavigator.CAMPUS_CENTER_LNG)
+    val defaultCenterGcj = remember(detectedCampus.centerLatitude, detectedCampus.centerLongitude) {
+        CampusMapNavigator.wgs84ToGcj02(detectedCampus.centerLatitude, detectedCampus.centerLongitude)
     }
     var mapCenterLatGcj by remember { mutableStateOf(defaultCenterGcj.first) }
     var mapCenterLonGcj by remember { mutableStateOf(defaultCenterGcj.second) }
     var mapZoom by remember { mutableFloatStateOf(16.2f) }
 
+    // 切换校区（莲花街 / 嵩山路 / 自定义电子区划）时自动平移地图视口至目标校区中心
+    LaunchedEffect(detectedCampus.campusId) {
+        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+            detectedCampus.centerLatitude,
+            detectedCampus.centerLongitude
+        )
+        mapCenterLatGcj = glat
+        mapCenterLonGcj = glon
+        selectedBuilding = campusBuildings.firstOrNull()
+        manualOriginBuilding = null
+    }
+
     // 当处于定位跟随模式时，用户坐标变化即实时同步更新地图视口中心
     LaunchedEffect(userLocation?.latitude, userLocation?.longitude, isFollowingUser) {
         val loc = userLocation
-        if (isFollowingUser && loc != null && loc.isInsideLianhuajieCampus) {
+        if (isFollowingUser && loc != null &&
+            (loc.isInsideLianhuajieCampus || loc.isInsideSongshanluCampus ||
+                detectedCampus.customZone?.containsWgs84Point(loc.latitude, loc.longitude) == true)
+        ) {
             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(loc.latitude, loc.longitude)
             mapCenterLatGcj = glat
             mapCenterLonGcj = glon
@@ -312,7 +407,7 @@ fun CampusMapScreen(
             manualOriginBuilding = null
             isFollowingUser = true
             locationRefreshEpoch++
-            if (userLocation?.isInsideLianhuajieCampus == true) {
+            if (userLocation?.isInsideLianhuajieCampus == true || userLocation?.isInsideSongshanluCampus == true) {
                 val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
                     userLocation!!.latitude,
                     userLocation!!.longitude
@@ -328,7 +423,7 @@ fun CampusMapScreen(
         }
     }
 
-    LaunchedEffect(resolution, buildings) {
+    LaunchedEffect(resolution, campusBuildings) {
         if (resolution?.building != null) {
             val b = resolution.building!!
             selectedBuilding = b
@@ -337,13 +432,13 @@ fun CampusMapScreen(
             mapCenterLatGcj = glat
             mapCenterLonGcj = glon
             inAppNavigationActive = true
-        } else if (selectedBuilding == null && buildings.isNotEmpty()) {
-            selectedBuilding = buildings.first()
+        } else if (selectedBuilding == null && campusBuildings.isNotEmpty()) {
+            selectedBuilding = campusBuildings.first()
         }
     }
 
-    val filteredBuildings = remember(buildings, selectedCategory, searchQuery, resolution) {
-        buildings.filter { b ->
+    val filteredBuildings = remember(campusBuildings, selectedCategory, searchQuery, resolution) {
+        campusBuildings.filter { b ->
             val catOk = selectedCategory == null || b.category == selectedCategory
             val textOk = searchQuery.isBlank() ||
                 b.name.contains(searchQuery, ignoreCase = true) ||
@@ -359,18 +454,203 @@ fun CampusMapScreen(
         targetBuilding,
         userLocation,
         manualOriginBuilding,
-        buildings,
+        campusBuildings,
         searchQuery
     ) {
         if (targetBuilding == null) null
         else CampusMapNavigator.buildInAppNavigationPlan(
             userLocation = if (manualOriginBuilding == null) userLocation else null,
             fallbackOriginBuilding = manualOriginBuilding
-                ?: buildings.firstOrNull { it.id == "b_gate_south" }
-                ?: buildings.firstOrNull(),
+                ?: campusBuildings.firstOrNull { it.category == CampusCategory.GATE }
+                ?: campusBuildings.firstOrNull(),
             destinationBuilding = targetBuilding,
-            allBuildings = buildings,
+            allBuildings = campusBuildings,
             rawClassroom = searchQuery.takeIf { it.isNotBlank() }
+        )
+    }
+
+    if (showZoneImportExportDialog) {
+        val currentExportJson = remember(detectedCampus, customZones, drawingZoneVertices, drawingZoneName, drawingZoneBuildings) {
+            when {
+                drawingZoneVertices.size >= 3 -> {
+                    val avgLat = drawingZoneVertices.map { it.latitude }.average()
+                    val avgLng = drawingZoneVertices.map { it.longitude }.average()
+                    CustomCampusZoneCodec.encodeZone(
+                        CustomCampusZone(
+                            campusId = "custom-${(drawingZoneName.ifBlank { "我的校区" }).hashCode().toUInt().toString(16)}",
+                            campusName = drawingZoneName.ifBlank { "我的自定义校区" },
+                            schoolName = drawingSchoolName.ifBlank { activeSchool.displayName },
+                            centerLatitude = avgLat,
+                            centerLongitude = avgLng,
+                            polygonVertices = drawingZoneVertices,
+                            buildings = drawingZoneBuildings
+                        ),
+                        pretty = true
+                    )
+                }
+                detectedCampus.customZone != null -> {
+                    CustomCampusZoneCodec.encodeZone(detectedCampus.customZone!!, pretty = true)
+                }
+                customZones.isNotEmpty() -> {
+                    CustomCampusZoneCodec.encodeList(customZones, pretty = true)
+                }
+                else -> {
+                    val isSongshan = detectedCampus.campusId.contains("songshan", ignoreCase = true)
+                    CustomCampusZoneCodec.encodeZone(
+                        CustomCampusZone(
+                            campusId = detectedCampus.campusId,
+                            campusName = detectedCampus.campusName,
+                            schoolName = activeSchool.displayName,
+                            centerLatitude = detectedCampus.centerLatitude,
+                            centerLongitude = detectedCampus.centerLongitude,
+                            polygonVertices = if (isSongshan) {
+                                ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
+                            } else {
+                                ClassroomBuildingResolver.HAUT_LIANHUAJIE_POLYGON
+                            },
+                            buildings = campusBuildings.take(8)
+                        ),
+                        pretty = true
+                    )
+                }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showZoneImportExportDialog = false },
+            title = { Text("上传/导入或导出校区电子区划适配") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "若你的校区不在内置列表中，可在全屏地图上通过「电子区划圈定」点选多边形边界，或在此直接粘贴/导出校区适配 JSON（兼容标准 GeoJSON Polygon 坐标数组）与同学共享：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = zoneAdaptationJsonInput.ifBlank { currentExportJson },
+                        onValueChange = { zoneAdaptationJsonInput = it },
+                        label = { Text("校区适配 JSON / GeoJSON") },
+                        minLines = 6,
+                        maxLines = 10,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (zoneAdaptationFeedback != null) {
+                        Text(
+                            text = zoneAdaptationFeedback!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                val textToCopy = zoneAdaptationJsonInput.ifBlank { currentExportJson }
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                cm?.setPrimaryClip(ClipData.newPlainText("campus_zone_json", textToCopy))
+                                zoneAdaptationFeedback = "已复制校区适配 JSON 到剪贴板，可直接分享或上传至社区仓库"
+                            }
+                        ) {
+                            Text("复制当前适配 JSON")
+                        }
+                        if (customZones.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        repository.saveCustomCampusZonesJson("[]")
+                                        repository.setSelectedCampusId("auto")
+                                        zoneAdaptationFeedback = "已清空本地自定义校区电子区划"
+                                    }
+                                }
+                            ) {
+                                Text("清空自定义")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val raw = zoneAdaptationJsonInput.ifBlank { currentExportJson }
+                        val parsed = CustomCampusZoneCodec.decodeList(raw)
+                        if (parsed.isEmpty()) {
+                            zoneAdaptationFeedback = "未能解析出有效的校区电子区划，请检查 JSON 或坐标格式"
+                        } else {
+                            val merged = (parsed + customZones).distinctBy { it.campusId }
+                            scope.launch {
+                                repository.saveCustomCampusZonesJson(
+                                    CustomCampusZoneCodec.encodeList(merged, pretty = false)
+                                )
+                                repository.setSelectedCampusId(parsed.first().campusId)
+                                zoneAdaptationFeedback = "已成功导入「${parsed.first().campusName}」电子区划（${parsed.first().polygonVertices.size} 个边界顶点，${parsed.first().buildings.size} 处建筑）"
+                                showZoneImportExportDialog = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("导入并启用该校区")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showZoneImportExportDialog = false }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
+
+    if (pendingPinPoint != null) {
+        val pt = pendingPinPoint!!
+        AlertDialog(
+            onDismissRequest = { pendingPinPoint = null },
+            title = { Text("添加自定义校区地标建筑") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "坐标：${"%.5f".format(pt.latitude)}, ${"%.5f".format(pt.longitude)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = pendingPinName,
+                        onValueChange = { pendingPinName = it },
+                        label = { Text("建筑或地标名称（如：综合教学楼、南门）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = pendingPinName.trim().ifBlank { "自定义教学楼${drawingZoneBuildings.size + 1}" }
+                        val newBuilding = Building(
+                            id = "custom_b_${System.currentTimeMillis()}",
+                            campusId = "custom",
+                            name = name,
+                            shortName = name.take(6),
+                            latitude = pt.latitude,
+                            longitude = pt.longitude,
+                            category = CampusCategory.TEACHING_BUILDING,
+                            entrances = listOf("正门"),
+                            description = "${drawingZoneName.ifBlank { "自定义校区" }} · 用户标注建筑",
+                            verifiedAt = LocalDate.now()
+                        )
+                        drawingZoneBuildings = drawingZoneBuildings + newBuilding
+                        pendingPinName = ""
+                        pendingPinPoint = null
+                    }
+                ) {
+                    Text("添加地标")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPinPoint = null }) {
+                    Text("取消")
+                }
+            }
         )
     }
 
@@ -400,20 +680,14 @@ fun CampusMapScreen(
         ) {
             XPeachTopBar(
                 title = "校园",
-                subtitle = "${activeSchool.displayName} · ${activeSchool.primaryCampus?.name ?: "主校区"}",
-                badgeText = when {
-                    mapProvider == null -> "待安装地图包"
-                    userLocation?.isInsideLianhuajieCampus == true -> "校内实时定位"
-                    else -> "校园服务"
-                },
+                subtitle = "${activeSchool.displayName} · ${detectedCampus.campusName}",
+                badgeText = detectedCampus.source.label,
                 actions = {
-                    if (mapProvider != null) {
-                        XPeachIconButton(
-                            icon = Icons.Default.ZoomOutMap,
-                            contentDescription = "展开全屏地图",
-                            onClick = { isFullScreenMap = true }
-                        )
-                    }
+                    XPeachIconButton(
+                        icon = Icons.Default.ZoomOutMap,
+                        contentDescription = "展开全屏地图",
+                        onClick = { isFullScreenMap = true }
+                    )
                 }
             )
 
@@ -424,7 +698,92 @@ fun CampusMapScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (mapProvider == null) {
+                // 0. 校区智能识别与电子区划切换栏（莲花街校区 / 嵩山路校区 / 自定义电子区划）
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "当前校区：${detectedCampus.campusName}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${detectedCampus.source.label} · 支持电子地图圈定校区边界或上传校区适配",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        XPeachFilterPill(
+                            label = "自动识别",
+                            selected = preferences.selectedCampusId == "auto",
+                            onClick = { scope.launch { repository.setSelectedCampusId("auto") } }
+                        )
+                        XPeachFilterPill(
+                            label = "莲花街校区",
+                            selected = preferences.selectedCampusId == SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value,
+                            onClick = {
+                                scope.launch {
+                                    repository.setSelectedCampusId(SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value)
+                                }
+                            }
+                        )
+                        XPeachFilterPill(
+                            label = "嵩山路校区",
+                            selected = preferences.selectedCampusId == SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value,
+                            onClick = {
+                                scope.launch {
+                                    repository.setSelectedCampusId(SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value)
+                                }
+                            }
+                        )
+                        for (zone in customZones) {
+                            XPeachFilterPill(
+                                label = zone.campusName,
+                                selected = preferences.selectedCampusId == zone.campusId,
+                                onClick = {
+                                    scope.launch { repository.setSelectedCampusId(zone.campusId) }
+                                }
+                            )
+                        }
+                        XPeachFilterPill(
+                            label = "+ 电子区划圈定",
+                            selected = isDrawingZoneMode,
+                            onClick = {
+                                isDrawingZoneMode = true
+                                drawingZoneVertices = emptyList()
+                                drawingZoneBuildings = emptyList()
+                                isFullScreenMap = true
+                            }
+                        )
+                        XPeachFilterPill(
+                            label = "上传/导入校区适配",
+                            selected = false,
+                            onClick = {
+                                zoneAdaptationFeedback = null
+                                zoneAdaptationJsonInput = ""
+                                showZoneImportExportDialog = true
+                            }
+                        )
+                    }
+                }
+
+                if (mapProvider == null && customZones.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             text = "当前学校暂未安装校区地图与服务包",
@@ -490,7 +849,7 @@ fun CampusMapScreen(
                             )
                     ) {
                         RealCampusTileMap(
-                            buildings = buildings,
+                            buildings = campusBuildings,
                             selectedBuilding = targetBuilding,
                             userLocation = if (manualOriginBuilding == null) userLocation else null,
                             deviceHeadingDegrees = effectiveHeadingDegrees,
@@ -498,6 +857,7 @@ fun CampusMapScreen(
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
                             zoom = mapZoom.coerceIn(15.6f, 16.6f),
+                            campusPolygonVertices = activeCampusPolygon,
                             onViewportChange = { newLat, newLon, newZoom ->
                                 mapCenterLatGcj = newLat
                                 mapCenterLonGcj = newLon
@@ -526,7 +886,7 @@ fun CampusMapScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        for (b in buildings.take(8)) {
+                        for (b in campusBuildings.take(8)) {
                             XPeachFilterPill(
                                 label = b.shortName,
                                 selected = selectedBuilding?.id == b.id,
@@ -777,14 +1137,22 @@ fun CampusMapScreen(
     ) {
         // 1. 底层全屏瓦片地图
         RealCampusTileMap(
-            buildings = buildings,
+            buildings = if (isDrawingZoneMode) (campusBuildings + drawingZoneBuildings) else campusBuildings,
             selectedBuilding = targetBuilding,
             userLocation = if (manualOriginBuilding == null) userLocation else null,
             deviceHeadingDegrees = effectiveHeadingDegrees,
-            navigationPlan = if (inAppNavigationActive) navigationPlan else null,
+            navigationPlan = if (inAppNavigationActive && !isDrawingZoneMode) navigationPlan else null,
             centerLatGcj = mapCenterLatGcj,
             centerLonGcj = mapCenterLonGcj,
             zoom = mapZoom,
+            campusPolygonVertices = activeCampusPolygon,
+            drawingPolygonVertices = drawingZoneVertices,
+            isDrawingZoneMode = isDrawingZoneMode,
+            onTapMapWgs84 = { wgsLat, wgsLon ->
+                if (isDrawingZoneMode) {
+                    drawingZoneVertices = drawingZoneVertices + GeoPoint(wgsLat, wgsLon)
+                }
+            },
             onViewportChange = { newLat, newLon, newZoom ->
                 if (abs(newLat - mapCenterLatGcj) > 1e-5 || abs(newLon - mapCenterLonGcj) > 1e-5) {
                     isFollowingUser = false
@@ -935,7 +1303,7 @@ fun CampusMapScreen(
                 }
             }
 
-            // 分类筛选胶囊行
+            // 校区切换与分类筛选胶囊行
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -943,7 +1311,54 @@ fun CampusMapScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 XPeachFilterPill(
-                    label = "全部",
+                    label = "莲花街校区",
+                    selected = detectedCampus.campusId == SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value,
+                    onClick = {
+                        scope.launch {
+                            repository.setSelectedCampusId(SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value)
+                        }
+                    }
+                )
+                XPeachFilterPill(
+                    label = "嵩山路校区",
+                    selected = detectedCampus.campusId == SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value,
+                    onClick = {
+                        scope.launch {
+                            repository.setSelectedCampusId(SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value)
+                        }
+                    }
+                )
+                for (zone in customZones) {
+                    XPeachFilterPill(
+                        label = zone.campusName,
+                        selected = detectedCampus.campusId == zone.campusId,
+                        onClick = {
+                            scope.launch { repository.setSelectedCampusId(zone.campusId) }
+                        }
+                    )
+                }
+                XPeachFilterPill(
+                    label = if (isDrawingZoneMode) "退出电子区划" else "电子区划圈定",
+                    selected = isDrawingZoneMode,
+                    onClick = {
+                        isDrawingZoneMode = !isDrawingZoneMode
+                        if (isDrawingZoneMode && drawingZoneVertices.isEmpty()) {
+                            drawingZoneName = ""
+                            drawingZoneBuildings = emptyList()
+                        }
+                    }
+                )
+                XPeachFilterPill(
+                    label = "上传/导出适配",
+                    selected = false,
+                    onClick = {
+                        zoneAdaptationFeedback = null
+                        zoneAdaptationJsonInput = ""
+                        showZoneImportExportDialog = true
+                    }
+                )
+                XPeachFilterPill(
+                    label = "全部建筑",
                     selected = selectedCategory == null,
                     onClick = { selectedCategory = null }
                 )
@@ -955,6 +1370,85 @@ fun CampusMapScreen(
                             selectedCategory = if (selectedCategory == category) null else category
                         }
                     )
+                }
+            }
+
+            // 电子区划自定义圈定校区交互控制条
+            if (isDrawingZoneMode) {
+                XPeachCard(
+                    contentPadding = PaddingValues(12.dp),
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)
+                ) {
+                    Text(
+                        text = "电子区划圈定校区模式（已点选 ${drawingZoneVertices.size} 个边界顶点，${drawingZoneBuildings.size} 处地标）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "单指点击地图添加校区电子围栏多边形顶点（至少 3 个顶点闭合），双指或拖动平移地图；也可在当前中心点添加教学楼地标。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = drawingZoneName,
+                        onValueChange = { drawingZoneName = it },
+                        placeholder = { Text("输入自定义校区名称（如：江北校区、东校区）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val (wLat, wLon) = CampusMapNavigator.gcj02ToWgs84(mapCenterLatGcj, mapCenterLonGcj)
+                                pendingPinPoint = GeoPoint(wLat, wLon)
+                            }
+                        ) {
+                            Text("+ 在地图中心加建筑")
+                        }
+                        OutlinedButton(
+                            enabled = drawingZoneVertices.isNotEmpty(),
+                            onClick = {
+                                drawingZoneVertices = drawingZoneVertices.dropLast(1)
+                            }
+                        ) {
+                            Text("撤销顶点")
+                        }
+                        Button(
+                            enabled = drawingZoneVertices.size >= 3,
+                            onClick = {
+                                val name = drawingZoneName.trim().ifBlank { "自定义校区${customZones.size + 1}" }
+                                val id = "custom-${name.hashCode().toUInt().toString(16)}"
+                                val avgLat = drawingZoneVertices.map { it.latitude }.average()
+                                val avgLng = drawingZoneVertices.map { it.longitude }.average()
+                                val newZone = CustomCampusZone(
+                                    campusId = id,
+                                    campusName = name,
+                                    schoolName = activeSchool.displayName,
+                                    centerLatitude = avgLat,
+                                    centerLongitude = avgLng,
+                                    polygonVertices = drawingZoneVertices,
+                                    buildings = drawingZoneBuildings.map { it.copy(campusId = id) }
+                                )
+                                val merged = (listOf(newZone) + customZones).distinctBy { it.campusId }
+                                scope.launch {
+                                    repository.saveCustomCampusZonesJson(
+                                        CustomCampusZoneCodec.encodeList(merged, pretty = false)
+                                    )
+                                    repository.setSelectedCampusId(id)
+                                    isDrawingZoneMode = false
+                                }
+                            }
+                        ) {
+                            Text("保存并启用校区")
+                        }
+                    }
                 }
             }
 
@@ -1365,6 +1859,10 @@ private fun RealCampusTileMap(
     centerLatGcj: Double,
     centerLonGcj: Double,
     zoom: Float,
+    campusPolygonVertices: List<GeoPoint> = emptyList(),
+    drawingPolygonVertices: List<GeoPoint> = emptyList(),
+    isDrawingZoneMode: Boolean = false,
+    onTapMapWgs84: ((Double, Double) -> Unit)? = null,
     onViewportChange: (Double, Double, Float) -> Unit,
     onSelectBuilding: (Building) -> Unit
 ) {
@@ -1405,6 +1903,8 @@ private fun RealCampusTileMap(
     val currentTileZ by rememberUpdatedState(tileZ)
     val currentBaseTilePx by rememberUpdatedState(baseTileRenderPx)
     val currentBuildings by rememberUpdatedState(buildings)
+    val currentIsDrawingMode by rememberUpdatedState(isDrawingZoneMode)
+    val currentOnTapMapWgs84 by rememberUpdatedState(onTapMapWgs84)
     val currentOnViewportChange by rememberUpdatedState(onViewportChange)
     val currentOnSelectBuilding by rememberUpdatedState(onSelectBuilding)
 
@@ -1421,6 +1921,15 @@ private fun RealCampusTileMap(
             .fillMaxSize()
             .pointerInput(Unit) {
                 detectTapGestures { tapOffset ->
+                    if (currentIsDrawingMode && currentOnTapMapWgs84 != null) {
+                        val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, currentTileZ)
+                        val tapTx = cTx + (tapOffset.x - canvasWidthPx / 2f) / currentBaseTilePx
+                        val tapTy = cTy + (tapOffset.y - canvasHeightPx / 2f) / currentBaseTilePx
+                        val (tapGcjLat, tapGcjLon) = tileXYToLatLon(tapTx, tapTy, currentTileZ)
+                        val (wgsLat, wgsLon) = CampusMapNavigator.gcj02ToWgs84(tapGcjLat, tapGcjLon)
+                        currentOnTapMapWgs84?.invoke(wgsLat, wgsLon)
+                        return@detectTapGestures
+                    }
                     val hit = currentBuildings.minByOrNull { b ->
                         val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
                         val pt = gcjToScreenDynamic(glat, glon)
@@ -1441,7 +1950,7 @@ private fun RealCampusTileMap(
                     val tilePxNow = currentBaseTilePx
                     val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, zNow)
                     val newZoom = (currentZoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
-                        .coerceIn(14.8f, 18.5f)
+                        .coerceIn(13.5f, 18.5f)
                     val dTileX = -pan.x / tilePxNow
                     val dTileY = -pan.y / tilePxNow
                     val (newLat, newLon) = tileXYToLatLon(
@@ -1450,8 +1959,8 @@ private fun RealCampusTileMap(
                         zNow
                     )
                     currentOnViewportChange(
-                        newLat.coerceIn(34.812, 34.852),
-                        newLon.coerceIn(113.520, 113.568),
+                        newLat.coerceIn(18.0, 54.0),
+                        newLon.coerceIn(73.0, 136.0),
                         newZoom
                     )
                 }
@@ -1505,6 +2014,52 @@ private fun RealCampusTileMap(
                     }
                 }
             }
+        }
+
+        // 2.5 绘制校区电子区划（多边形边界围栏）及用户正在点选圈定的电子区划顶点
+        val activePoly = if (isDrawingZoneMode && drawingPolygonVertices.isNotEmpty()) {
+            drawingPolygonVertices
+        } else {
+            campusPolygonVertices
+        }
+        if (activePoly.size >= 2) {
+            val polyPts = activePoly.map { v ->
+                val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(v.latitude, v.longitude)
+                gcjToScreen(glat, glon)
+            }
+            val polyPath = Path().apply {
+                polyPts.forEachIndexed { idx, offset ->
+                    if (idx == 0) moveTo(offset.x, offset.y)
+                    else lineTo(offset.x, offset.y)
+                }
+                if (polyPts.size >= 3) close()
+            }
+            if (polyPts.size >= 3) {
+                drawPath(
+                    path = polyPath,
+                    color = if (isDrawingZoneMode) Color(0x280EA5E9) else Color(0x140066CC)
+                )
+            }
+            drawPath(
+                path = polyPath,
+                color = if (isDrawingZoneMode) Color(0xFF0284C7) else Color(0x880066CC),
+                style = Stroke(
+                    width = if (isDrawingZoneMode) 5f else 3f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
+                )
+            )
+            if (isDrawingZoneMode) {
+                polyPts.forEach { pt ->
+                    drawCircle(color = Color.White, radius = 9f, center = pt)
+                    drawCircle(color = Color(0xFF0284C7), radius = 6f, center = pt)
+                }
+            }
+        } else if (isDrawingZoneMode && drawingPolygonVertices.size == 1) {
+            val v = drawingPolygonVertices.first()
+            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(v.latitude, v.longitude)
+            val pt = gcjToScreen(glat, glon)
+            drawCircle(color = Color.White, radius = 10f, center = pt)
+            drawCircle(color = Color(0xFF0284C7), radius = 7f, center = pt)
         }
 
         // 3. 绘制校园路网动态规划路径（双层描边道路折线 + 沿途方向箭头 + 转向节点）

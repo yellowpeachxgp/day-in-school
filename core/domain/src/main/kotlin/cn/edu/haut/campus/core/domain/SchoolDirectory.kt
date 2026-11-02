@@ -94,6 +94,7 @@ class SchoolDirectory(
         const val MAX_QUERY_LENGTH = 256
         val HAUT_SCHOOL_ID = SchoolId("haut")
         val HAUT_LIANHUAJIE_CAMPUS_ID = CampusId("haut-lianhuajie")
+        val HAUT_SONGSHANLU_CAMPUS_ID = CampusId("haut-songshanlu")
 
         /** 仅记录仓库已存在的工大实现；无本轮授权账户与设备证据，不授予学校验证等级。 */
         fun builtIn(localOverrides: List<SchoolProfile> = emptyList()): SchoolDirectory = SchoolDirectory(
@@ -130,8 +131,14 @@ class SchoolDirectory(
                     CampusProfile(
                         id = HAUT_LIANHUAJIE_CAMPUS_ID,
                         name = "莲花街校区",
-                        aliases = listOf("lianhuajie", "lhj"),
+                        aliases = listOf("lianhuajie", "lhj", "莲花街"),
                         isPrimary = true
+                    ),
+                    CampusProfile(
+                        id = HAUT_SONGSHANLU_CAMPUS_ID,
+                        name = "嵩山路校区",
+                        aliases = listOf("songshanlu", "ssl", "嵩山路"),
+                        isPrimary = false
                     )
                 ),
                 academicSystems = listOf(
