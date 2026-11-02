@@ -219,6 +219,84 @@ class CampusServicesUnitTest {
         assertEquals("https://img.hwlsp.cn/cover/csapp.jpg", detail.coverUrl)
         assertEquals(2, detail.totalHoldingsCount)
         assertEquals(1, detail.availableHoldingsCount)
+
+        // Protocol-relative ddimg cover URL is upgraded to https://
+        assertEquals(
+            "https://img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg",
+            OfficialServiceRoutePolicy.sanitizeCoverUrl("//img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg")
+        )
+
+        // Search URL uses Huiwen OPAC strSearchType & strText parameters
+        val searchUrl = LibraryCatalogSnapshot.buildSearchUrl("数据结构", "keyword")
+        assertTrue(searchUrl.contains("strSearchType=keyword"))
+        assertTrue(searchUrl.contains("strText="))
+    }
+
+    @Test
+    fun hautLibraryOpacClient_parsesSearchAndDetailResponsesCorrectly() {
+        val sampleSearchJson = """
+            {
+              "code": 0,
+              "msg": null,
+              "data": {
+                "total": 12,
+                "dataList": [
+                  {
+                    "bibId": "m7e3788925dc6cfeb9cd7d3a74db7fae2",
+                    "title": "数据结构:C语言版",
+                    "author": "严蔚敏, 李冬梅编著",
+                    "publisher": "人民邮电出版社",
+                    "pub_year": "2022.01",
+                    "isbn": "978-7-115-57666-8",
+                    "callno": ["TP311.12-43/30-2.2"],
+                    "docTypeDesc": "中文图书",
+                    "itemCount": 2,
+                    "circCount": 1,
+                    "abstract": "数据结构经典教材",
+                    "holdings": "[{\"location\":\"总馆 - X81 八楼西书库\",\"tempLocation\":\"总馆 - 01 嵩山路流通库\",\"callNo\":\"TP311.12-43/30-2.2\",\"barCode\":\"111856016\",\"status\":\"可借\",\"dueDate\":null,\"shelfMark\":\"03架A面\"},{\"location\":\"总馆 - X81 八楼西书库\",\"tempLocation\":\"总馆 - X81 八楼西书库\",\"callNo\":\"TP311.12-43/30-2.2\",\"barCode\":\"111856017\",\"status\":\"借出\",\"dueDate\":\"2026-11-20\",\"shelfMark\":null}]"
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+
+        val pageResult = HautLibraryOpacClient.parseSearchResponse(
+            rawJson = sampleSearchJson,
+            keyword = "数据结构",
+            field = LibrarySearchField.ALL,
+            page = 1,
+            pageSize = 20
+        )
+        assertEquals(12, pageResult.totalCount)
+        assertEquals(1, pageResult.books.size)
+        val book = pageResult.books.first()
+        assertEquals("数据结构:C语言版", book.title)
+        assertEquals("m7e3788925dc6cfeb9cd7d3a74db7fae2", book.bibId)
+        assertEquals("TP311.12-43/30-2.2", book.callNo)
+        assertEquals(1, book.availableCount)
+        assertEquals(2, book.totalCount)
+        assertEquals(2, book.inlineHoldings.size)
+        assertTrue(book.inlineHoldings.first().isAvailable)
+        assertEquals("架位：03架A面", book.inlineHoldings.first().shelf)
+
+        val extendJson = """
+            {
+              "code": 0,
+              "data": {
+                "m7e3788925dc6cfeb9cd7d3a74db7fae2": [
+                  {
+                    "_id": "9787115576668",
+                    "imageUrl": "//img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg"
+                  }
+                ]
+              }
+            }
+        """.trimIndent()
+        val coverMap = HautLibraryOpacClient.parseExtend3CoverMap(extendJson)
+        assertEquals(
+            "https://img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg",
+            coverMap["m7e3788925dc6cfeb9cd7d3a74db7fae2"]
+        )
     }
 
     @Test

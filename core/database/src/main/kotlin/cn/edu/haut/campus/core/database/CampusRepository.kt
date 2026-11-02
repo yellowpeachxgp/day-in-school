@@ -1119,11 +1119,18 @@ class CampusRepository internal constructor(
             dao.clearUnscheduledCoursesForTerm(targetTermId)
             dao.upsertUnscheduledCourses(syncData.unscheduledCourses.toUnscheduledEntities(targetTermId))
         }
+        val fallbackPopulatedSiblingTermId = if (syncData.timetableCandidates.isEmpty()) {
+            syncData.additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
+                sibId != targetTermId && cands.isNotEmpty()
+            }?.key
+        } else null
+        val activateTargetTerm = fallbackPopulatedSiblingTermId == null
+
         ensureTermExistsAndUpdateCalendar(
             termId = targetTermId,
             semesterStart = syncData.semesterStart,
             totalWeeks = syncData.totalWeeks,
-            setCurrent = true
+            setCurrent = activateTargetTerm
         )
         val diff = previewCourseImportDiff(
             termId = targetTermId,
@@ -1133,9 +1140,13 @@ class CampusRepository internal constructor(
         commitCourseImportDiff(
             preview = diff,
             overwriteUserConflicts = overwriteUserConflicts,
-            setAsCurrentTerm = true
+            setAsCurrentTerm = activateTargetTerm
         )
-        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
+        if (fallbackPopulatedSiblingTermId != null) {
+            selectCurrentTerm(fallbackPopulatedSiblingTermId)
+        }
+        val activeSyncTermId = fallbackPopulatedSiblingTermId ?: targetTermId
+        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(activeSyncTermId)
         preferences.edit { prefs ->
             prefs[PrefKeys.SAVED_SYNC_XNM] = syncXnm
             prefs[PrefKeys.SAVED_SYNC_XQM] = syncXqm

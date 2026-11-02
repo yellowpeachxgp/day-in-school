@@ -84,6 +84,14 @@ data class HautLiveSyncResult(
 fun HautLiveSyncResult.syncSummaryText(): String = buildString {
     append("课表已更新（$termId）：${timetableCandidates.size} 条排课")
     if (unscheduledCourses.isNotEmpty()) append(" · ${unscheduledCourses.size} 门实践课程时间待定，不生成提醒")
+    if (timetableCandidates.isEmpty()) {
+        val fallback = additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
+            sibId != termId && cands.isNotEmpty()
+        }
+        if (fallback != null) {
+            append("\n检测到 $termId 暂未排常规课，已自动同步并切换至 ${fallback.key}（${fallback.value.size} 条排课）")
+        }
+    }
     append(if (gradesComplete) "\n成绩已完整读取：${gradeAttempts.size} 条" else "\n成绩同步未完成，已保留之前的数据")
     append(if (examsComplete) "\n考试已完整读取：${examItems.size} 场" else "\n考试同步未完成，已保留之前的数据")
 }

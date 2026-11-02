@@ -201,27 +201,72 @@ fun TimetableScreen(
 
         val pendingCourses = unscheduledCourses.filter { it.termId == term?.id }
         if (pendingCourses.isNotEmpty()) {
-            androidx.compose.material3.TextButton(onClick = { showUnscheduled = true }) {
-                Text("${pendingCourses.size} 门课程时间待定 · 查看原始安排")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f))
+                    .clickable { showUnscheduled = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${pendingCourses.size} 门实践/集中课程时间待定 · 不生成上课闹钟",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "查看明细 ▸",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
         if (showUnscheduled) {
-            androidx.compose.material3.AlertDialog(
+            AlertDialog(
                 onDismissRequest = { showUnscheduled = false },
-                title = { Text("时间待定课程") },
+                title = { Text("实践与时间待定课程 (${pendingCourses.size})") },
                 text = {
-                    androidx.compose.foundation.lazy.LazyColumn {
-                        item { Text("学校尚未提供具体星期和节次，这些课程不会生成上课提醒。请以学校后续通知为准。") }
-                        items(pendingCourses.size) { index ->
-                            val course = pendingCourses[index]
-                            Column(Modifier.padding(vertical = 10.dp)) {
-                                Text(course.name, style = MaterialTheme.typography.titleSmall)
-                                Text(listOfNotNull(course.teacher, course.rawWeeks.takeIf { it.isNotBlank() }, course.category).joinToString(" · "))
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "学校教务系统尚未为以下实践或集中环节课程分配固定星期与节次，系统不会生成误导性上课提醒。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        for (course in pendingCourses) {
+                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = course.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = listOfNotNull(
+                                        course.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                                        course.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
+                                        course.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" },
+                                        course.category.takeIf { it.isNotBlank() }
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 },
-                confirmButton = { androidx.compose.material3.TextButton(onClick = { showUnscheduled = false }) { Text("知道了") } }
+                confirmButton = {
+                    TextButton(onClick = { showUnscheduled = false }) {
+                        Text("知道了")
+                    }
+                }
             )
         }
 
@@ -280,6 +325,7 @@ fun TimetableScreen(
                     termId = term?.id,
                     courses = courses,
                     rules = rules,
+                    unscheduledCourses = pendingCourses,
                     onNavigateToImporter = onNavigateToImporter,
                     onNavigateToMapWithRoom = onNavigateToMapWithRoom
                 )
@@ -996,6 +1042,7 @@ private fun RawMasterTimetableView(
     termId: String?,
     courses: List<Course>,
     rules: List<CourseScheduleRule>,
+    unscheduledCourses: List<cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity> = emptyList(),
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
 ) {
@@ -1241,6 +1288,54 @@ private fun RawMasterTimetableView(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (unscheduledCourses.isNotEmpty()) {
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "本学期实践与集中环节课程 (${unscheduledCourses.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "以下课程在教务系统中未指定固定星期与节次，仅作原始记录展示，不触发上课提醒。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (item in unscheduledCourses) {
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = item.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                )
+                                XPeachStatusBadge(
+                                    text = item.category.takeIf { it.isNotBlank() } ?: "实践环节"
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = listOfNotNull(
+                                    item.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                                    item.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
+                                    item.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" }
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

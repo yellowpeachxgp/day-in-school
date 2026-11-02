@@ -20,7 +20,13 @@ data class CatalogBook(
     val summary: String,
     val resources: String,
     val coverUrl: String,
-    val pageGeneration: Long = 0L
+    val pageGeneration: Long = 0L,
+    val bibId: String = "",
+    val isbn: String = "",
+    val callNo: String = "",
+    val availableCount: Int = 0,
+    val totalCount: Int = 0,
+    val inlineHoldings: List<CatalogHolding> = emptyList()
 )
 
 /**
@@ -201,13 +207,30 @@ object LibraryCatalogSnapshot {
     }
 
     /**
-     * 生成安全检索 URL：对关键词做长度截断与 URI 编码。
+     * 生成安全检索 URL：对关键词做长度截断与 URI 编码（对接汇文 OPAC `/mspace/searchList?strSearchType=...&strText=...`）。
      */
-    fun buildSearchUrl(rawKeyword: String): String {
+    fun buildSearchUrl(rawKeyword: String, searchField: String = "keyword"): String {
         val clean = rawKeyword.trim().take(80)
         require(clean.isNotEmpty()) { "请输入检索关键词" }
+        val safeField = when (searchField) {
+            "all", "keyword" -> "keyword"
+            "titles", "authors", "isbns", "callno", "subjects", "publisher" -> searchField
+            else -> "keyword"
+        }
         val encoded = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
-        return "https://libspace.haut.edu.cn/mspace/searchList?keyword=$encoded&searchType=0"
+        return "https://libspace.haut.edu.cn/mspace/searchList?strSearchType=$safeField&strText=$encoded"
+    }
+
+    /**
+     * 生成馆藏详情页 URL。
+     */
+    fun buildDetailUrl(bibId: String): String {
+        val safeBibId = bibId.trim().replace(Regex("[^A-Za-z0-9_-]"), "")
+        return if (safeBibId.isNotEmpty()) {
+            "https://libspace.haut.edu.cn/mspace/searchDetailLocal/$safeBibId"
+        } else {
+            OfficialServiceRoutePolicy.CATALOG_INDEX_URL
+        }
     }
 
     /**

@@ -119,8 +119,9 @@ object OfficialServiceRoutePolicy {
      * - 强制剥离 query、fragment、userInfo 与显式端口，仅保留纯净 path
      */
     fun sanitizeCoverUrl(rawUrl: String?): String {
-        val text = rawUrl?.trim().orEmpty()
-        if (text.isEmpty() || text.length > 2048) return ""
+        val rawTrimmed = rawUrl?.trim().orEmpty()
+        if (rawTrimmed.isEmpty() || rawTrimmed.length > 2048) return ""
+        val text = if (rawTrimmed.startsWith("//")) "https:$rawTrimmed" else rawTrimmed
         val endpoint = parseHttpsEndpoint(text) ?: return ""
         if (!isAllowedCoverHost(endpoint.host)) return ""
         val rawPath = endpoint.uri.rawPath ?: return ""

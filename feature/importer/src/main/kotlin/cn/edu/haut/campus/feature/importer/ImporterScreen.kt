@@ -25,10 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
@@ -176,6 +181,7 @@ fun ImporterScreen(
 
     var studentIdInput by remember(prefs.savedStudentId) { mutableStateOf(prefs.savedStudentId ?: "") }
     var passwordInput by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     val initialTermPair = remember(currentTerm?.id, prefs.syncXnm, prefs.syncXqm) {
         currentTerm?.id?.let { HautAcademicEndpoints.fromTermId(it) }
             ?: (prefs.syncXnm to prefs.syncXqm)
@@ -320,7 +326,15 @@ fun ImporterScreen(
                             onValueChange = { passwordInput = it },
                             label = { Text("密码") },
                             singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showPassword = !showPassword }) {
+                                    Icon(
+                                        imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (showPassword) "隐藏密码" else "显示密码"
+                                    )
+                                }
+                            },
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         )

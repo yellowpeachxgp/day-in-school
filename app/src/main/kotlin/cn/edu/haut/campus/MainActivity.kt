@@ -56,10 +56,13 @@ import androidx.compose.material.icons.filled.CalendarViewWeek
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -96,6 +99,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -180,11 +184,7 @@ class MainActivity : ComponentActivity() {
                     val prefs by active.repository.preferencesFlow.collectAsState(initial = null)
                     val readyPrefs = prefs
                     SideEffect {
-                        if (readyPrefs?.gpaPrivacyShieldEnabled != false) {
-                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                        } else {
-                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                        }
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                     }
                     LaunchedEffect(active.profileId, active.generation) {
                         pendingAccountIntent?.let { pending ->
@@ -787,6 +787,7 @@ private fun OnboardingWelcomeScreen(
 
     var studentIdInput by rememberSaveable { mutableStateOf("") }
     var passwordInput by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var selectedXnm by rememberSaveable { mutableStateOf("2025") }
     var selectedXqm by rememberSaveable { mutableStateOf("12") }
     var isSyncing by remember { mutableStateOf(false) }
@@ -930,7 +931,15 @@ private fun OnboardingWelcomeScreen(
                         onValueChange = { passwordInput = it },
                         label = { Text("密码") },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(
+                                    imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showPassword) "隐藏密码" else "显示密码"
+                                )
+                            }
+                        },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1018,11 +1027,8 @@ private fun OnboardingWelcomeScreen(
                                         )
                                     }
                                     repository.setAutoSyncEnabled(saved.isSuccess)
-                                    if (saved.isFailure || syncData.syncWarnings.isNotEmpty()) {
-                                        syncStatusMessage = syncData.syncSummaryText() +
-                                            if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
-                                        return@onSuccess
-                                    }
+                                    syncStatusMessage = syncData.syncSummaryText() +
+                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
                                     repository.completeOnboarding()
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 }.onFailure { err ->
