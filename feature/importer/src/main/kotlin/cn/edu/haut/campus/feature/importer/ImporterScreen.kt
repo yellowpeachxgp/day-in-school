@@ -8,6 +8,16 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -22,6 +32,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -48,13 +60,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
+import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.academic.syncSummaryText
 import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautSessionManager
@@ -234,187 +250,70 @@ fun ImporterScreen(
                 onSelect = { selectedTab = it }
             )
 
-            if (statusBanner != null) {
-                XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                ) {
-                    Text(
-                        text = statusBanner!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+            val focusManager = LocalFocusManager.current
+
+            AnimatedVisibility(
+                visible = statusBanner != null,
+                enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+            ) {
+                statusBanner?.let { bannerMsg ->
+                    XPeachCard(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                    ) {
+                        Text(
+                            text = bannerMsg,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
 
-            when (selectedTab) {
-                0 -> {
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "教务账号登录",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            XPeachStatusBadge(text = "课表 + 考试 + 成绩")
-                        }
-
-                        if (prefs.academicReauthenticationRequired) {
-                            Text("安全凭据已失效，请重新登录；本地数据已保留", color = MaterialTheme.colorScheme.error)
-                        }
-                        if (prefs.hasSavedCredentials) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "已绑定学号 ${prefs.savedStudentId ?: ""}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Text(
-                                            text = "直接更新本学期课表、考试与成绩",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    FilledTonalButton(
-                                        enabled = !isSyncing,
-                                        onClick = {
-                                            scope.launch {
-                                                isSyncing = true
-                                                repository.selectCurrentTerm(selectedTermId)
-                                                statusBanner = "正在更新 $selectedTermId 课表、考试与成绩..."
-                                                val res = repository.performDynamicAcademicSync(force = true)
-                                                isSyncing = false
-                                                res?.onSuccess { syncData ->
-                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                    statusBanner = syncData.syncSummaryText()
-                                                }?.onFailure { err ->
-                                                    statusBanner = "更新失败：${err.message ?: "请检查网络或重新输入密码"}"
-                                                }
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text("立即更新", maxLines = 1, softWrap = false)
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        OutlinedTextField(
-                            value = studentIdInput,
-                            onValueChange = { studentIdInput = it },
-                            label = { Text("学号") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = passwordInput,
-                            onValueChange = { passwordInput = it },
-                            label = { Text("密码") },
-                            singleLine = true,
-                            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(onClick = { showPassword = !showPassword }) {
-                                    Icon(
-                                        imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                        contentDescription = if (showPassword) "隐藏密码" else "显示密码"
-                                    )
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                            for (yr in listOf("2026", "2025", "2024", "2023")) {
-                                XPeachFilterPill(
-                                    label = "$yr-${yr.toInt() + 1}",
-                                    selected = selectedXnm == yr,
-                                    onClick = {
-                                        selectedXnm = yr
-                                        scope.launch {
-                                            repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    val direction = if (targetState >= initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Start
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.End
+                    }
+                    (slideIntoContainer(
+                        towards = direction,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ) { it / 8 } + fadeIn(tween(200))) togetherWith
+                        (slideOutOfContainer(
+                            towards = direction,
+                            animationSpec = tween(190, easing = FastOutSlowInEasing)
+                        ) { it / 10 } + fadeOut(tween(140)))
+                },
+                label = "importerTabTransition",
+                modifier = Modifier.fillMaxWidth()
+            ) { targetTab ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    when (targetTab) {
+                        0 -> {
+                            val triggerDirectSync: () -> Unit = {
+                                focusManager.clearFocus()
+                                if (!isSyncing && passwordInput.isBlank() && prefs.hasSavedCredentials) {
+                                    scope.launch {
+                                        isSyncing = true
+                                        repository.selectCurrentTerm(selectedTermId)
+                                        statusBanner = "正在更新 $selectedTermId 课表、考试与成绩..."
+                                        val res = repository.performDynamicAcademicSync(force = true)
+                                        isSyncing = false
+                                        res?.onSuccess { syncData ->
+                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                            statusBanner = syncData.syncSummaryText()
+                                        }?.onFailure { err ->
+                                            statusBanner = "更新失败：${err.message ?: "请检查网络或重新输入密码"}"
                                         }
                                     }
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                            XPeachFilterPill(
-                                label = "第 1 学期",
-                                selected = selectedXqm == "3",
-                                onClick = {
-                                    selectedXqm = "3"
-                                    scope.launch {
-                                        repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
-                                    }
-                                }
-                            )
-                            XPeachFilterPill(
-                                label = "第 2 学期",
-                                selected = selectedXqm == "12",
-                                onClick = {
-                                    selectedXqm = "12"
-                                    scope.launch {
-                                        repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
-                                    }
-                                }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = rememberForAutoSync,
-                                onCheckedChange = { rememberForAutoSync = it }
-                            )
-                            Text(
-                                text = "启动时自动更新课表、考试与成绩",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Button(
-                                enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
-                                onClick = {
+                                } else if (!isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank()) {
                                     scope.launch {
                                         val plainPwd = passwordInput
                                         isSyncing = true
@@ -454,339 +353,534 @@ fun ImporterScreen(
                                             statusBanner = "同步失败：${err.message ?: "请检查网络或账号密码"}"
                                         }
                                     }
-                                },
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = if (isSyncing) "同步中..." else "开始同步",
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                            if (isSyncing) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            }
-                        }
-                    }
-                }
-
-                1 -> {
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "网页登录导入",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                            for (yr in listOf("2026", "2025", "2024", "2023")) {
-                                XPeachFilterPill(
-                                    label = "$yr-${yr.toInt() + 1}",
-                                    selected = selectedXnm == yr,
-                                    onClick = {
-                                        selectedXnm = yr
-                                        scope.launch {
-                                            repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                            XPeachFilterPill(
-                                label = "第 1 学期",
-                                selected = selectedXqm == "3",
-                                onClick = {
-                                    selectedXqm = "3"
-                                    scope.launch {
-                                        repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
-                                    }
                                 }
-                            )
-                            XPeachFilterPill(
-                                label = "第 2 学期",
-                                selected = selectedXqm == "12",
-                                onClick = {
-                                    selectedXqm = "12"
-                                    scope.launch {
-                                        repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
-                                    }
+                            }
+
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "教务账号登录",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    XPeachStatusBadge(text = "课表 + 考试 + 成绩")
                                 }
-                            )
-                        }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            FilledTonalButton(
-                                onClick = {
-                                    webViewRef?.loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("刷新登录页", maxLines = 1, softWrap = false)
-                            }
-                            Button(
-                                onClick = {
-                                    val js = """
-                                        (function() {
-                                            if (location.hostname !== 'jwglxt.haut.edu.cn') {
-                                                return JSON.stringify({ error: 'NOT_ON_JWGLXT', host: location.hostname });
-                                            }
-                                            var xhrKb = new XMLHttpRequest();
-                                            xhrKb.open('POST', '${HautAcademicEndpoints.TIMETABLE_API_PATH}', false);
-                                            xhrKb.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
-                                            xhrKb.send('xnm=$selectedXnm&xqm=$selectedXqm&kzlx=ck&xsdm=');
-                                            var xhrZc = new XMLHttpRequest();
-                                            xhrZc.open('POST', '${HautAcademicEndpoints.TERM_WEEKS_API_PATH}', false);
-                                            xhrZc.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
-                                            xhrZc.send('xnm=$selectedXnm&xqm=$selectedXqm');
-                                            return JSON.stringify({
-                                                kb: xhrKb.responseText || '',
-                                                zc: xhrZc.responseText || ''
-                                            });
-                                        })();
-                                    """.trimIndent()
-                                    webViewRef?.evaluateJavascript(js) { rawBody ->
-                                        scope.launch {
-                                            val decoded = runCatching {
-                                                JSONTokener(rawBody ?: "").nextValue() as? String
-                                            }.getOrNull().orEmpty()
-                                            val wrapper = runCatching { JSONObject(decoded) }.getOrNull()
-                                            if (wrapper?.optString("error") == "NOT_ON_JWGLXT") {
-                                                statusBanner = "请先在下方网页完成统一身份认证登录，等待页面跳转至正方教务系统后再点击「读取课表」。"
-                                                return@launch
-                                            }
-                                            val kbJson = wrapper?.optString("kb").orEmpty()
-                                            val zcJson = wrapper?.optString("zc").orEmpty()
-                                            val breakdown = runCatching {
-                                                HautZfsoftParser.parseTimetableWithBreakdown(kbJson)
-                                            }.getOrNull()
-                                            val parsed = breakdown?.allCandidates.orEmpty()
-                                            val termCal = runCatching {
-                                                HautZfsoftParser.parseTermCalendarJson(zcJson)
-                                            }.getOrNull()
-
-                                            if (parsed.isNotEmpty()) {
-                                                HautZfsoftParser.parseStudentProfileFromTimetableJson(kbJson)
-                                                    ?.let { repository.saveStudentProfile(it) }
-                                                val termId = HautAcademicEndpoints.toTermId(selectedXnm, selectedXqm)
-                                                repository.ensureTermExistsAndUpdateCalendar(
-                                                    termId = termId,
-                                                    semesterStart = termCal?.first,
-                                                    totalWeeks = termCal?.second,
-                                                    setCurrent = true
-                                                )
-                                                val preview = repository.previewCourseImportDiff(
-                                                    termId = termId,
-                                                    source = CourseSource.OFFICIAL_JW,
-                                                    candidates = parsed
-                                                )
-                                                repository.commitCourseImportDiff(
-                                                    preview = preview,
-                                                    overwriteUserConflicts = overwriteUserEdits,
-                                                    setAsCurrentTerm = true
-                                                )
-                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                diffPreview = null
-                                                statusBanner = "已从网页会话读取并保存至 $termId：共 ${parsed.size} 门课程（常规 ${breakdown?.regularCount ?: 0} / 实践 ${breakdown?.practiceCount ?: 0}）。"
-                                            } else {
-                                                statusBanner = "未在 $selectedTermId 检测到课表数据，请确认下方网页已登录进入教务系统，或切换学年/学期后重试。"
-                                            }
-                                        }
-                                    }
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("读取课表", maxLines = 1, softWrap = false)
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        HautSessionManager.clearAuthorizedSessionCookies()
-                                        SchoolWebSessionManager.clearAllSchoolWebSessions(webViewRef)
-                                        statusBanner = "已清除网页会话。"
-                                    }
-                                },
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("清除", maxLines = 1, softWrap = false)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        AndroidView(
-                            factory = { ctx ->
-                                val teachingFixScript = runCatching {
-                                    ctx.assets.open("teaching-layout.js").bufferedReader().use { it.readText() }
-                                }.getOrNull()
-                                WebView(ctx).apply {
-                                    SchoolWebSessionManager.configureHardenedSchoolWebView(this)
-                                    webViewClient = object : WebViewClient() {
-                                        override fun shouldOverrideUrlLoading(
-                                            view: WebView?,
-                                            request: WebResourceRequest?
-                                        ): Boolean {
-                                            return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
-                                        }
-
-                                        override fun onReceivedSslError(
-                                            view: WebView?,
-                                            handler: SslErrorHandler?,
-                                            error: SslError?
+                                if (prefs.academicReauthenticationRequired) {
+                                    Text("安全凭据已失效，请重新登录；本地数据已保留", color = MaterialTheme.colorScheme.error)
+                                }
+                                if (prefs.hasSavedCredentials) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            SafeWebNavigationPolicy.cancelOnSslError(handler, error)
-                                        }
-
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
-                                            if (!teachingFixScript.isNullOrBlank()) {
-                                                view?.evaluateJavascript(teachingFixScript, null)
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "已绑定学号 ${prefs.savedStudentId ?: ""}",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = "无需重输密码即可更新本学期课表、考试与成绩",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
-                                            SchoolWebSessionManager.persistCookiesAsync()
+                                            FilledTonalButton(
+                                                enabled = !isSyncing,
+                                                onClick = triggerDirectSync,
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("立即更新", maxLines = 1, softWrap = false)
+                                            }
                                         }
                                     }
-                                    loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
-                                    webViewRef = this
                                 }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(360.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-                        )
-                    }
-                }
 
-                2 -> {
-                    if (prefs.timetableInterchangeEnabled) {
-                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "大学课表文件互通 (univ-timetable/v1)",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                OutlinedTextField(
+                                    value = studentIdInput,
+                                    onValueChange = { studentIdInput = it },
+                                    label = { Text("学号") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                                    keyboardActions = KeyboardActions(
+                                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                                    ),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                                XPeachStatusBadge(text = ".md / .json")
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = passwordInput,
+                                    onValueChange = { passwordInput = it },
+                                    label = {
+                                        Text(if (prefs.hasSavedCredentials) "密码（已保存，修改账号或重新认证时填写）" else "密码")
+                                    },
+                                    singleLine = true,
+                                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = { triggerDirectSync() }
+                                    ),
+                                    trailingIcon = {
+                                        IconButton(onClick = { showPassword = !showPassword }) {
+                                            Icon(
+                                                imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                contentDescription = if (showPassword) "隐藏密码" else "显示密码"
+                                            )
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                                    for (yr in listOf("2026", "2025", "2024", "2023")) {
+                                        XPeachFilterPill(
+                                            label = "$yr-${yr.toInt() + 1}",
+                                            selected = selectedXnm == yr,
+                                            onClick = {
+                                                selectedXnm = yr
+                                                scope.launch {
+                                                    repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                                    XPeachFilterPill(
+                                        label = "第 1 学期",
+                                        selected = selectedXqm == "3",
+                                        onClick = {
+                                            selectedXqm = "3"
+                                            scope.launch {
+                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
+                                            }
+                                        }
+                                    )
+                                    XPeachFilterPill(
+                                        label = "第 2 学期",
+                                        selected = selectedXqm == "12",
+                                        onClick = {
+                                            selectedXqm = "12"
+                                            scope.launch {
+                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
+                                            }
+                                        }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = rememberForAutoSync,
+                                        onCheckedChange = { rememberForAutoSync = it }
+                                    )
+                                    Text(
+                                        text = "启动时自动更新课表、考试与成绩",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Button(
+                                        enabled = !isSyncing && studentIdInput.isNotBlank() &&
+                                            (passwordInput.isNotBlank() || prefs.hasSavedCredentials),
+                                        onClick = triggerDirectSync,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isSyncing) "同步中..." else "开始同步",
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                    if (isSyncing) {
+                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    }
+                                }
                             }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "支持导入或导出标准 univ-timetable/v1 课表文件（.md / .json）及正方 JSON。导出文件已自动剔除姓名、学号与水电账号。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
+                        }
+
+                        1 -> {
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "网页登录导入",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    XPeachStatusBadge(text = "课表 + 考试 + 成绩")
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                                    for (yr in listOf("2026", "2025", "2024", "2023")) {
+                                        XPeachFilterPill(
+                                            label = "$yr-${yr.toInt() + 1}",
+                                            selected = selectedXnm == yr,
+                                            onClick = {
+                                                selectedXnm = yr
+                                                scope.launch {
+                                                    repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
+                                    XPeachFilterPill(
+                                        label = "第 1 学期",
+                                        selected = selectedXqm == "3",
+                                        onClick = {
+                                            selectedXqm = "3"
+                                            scope.launch {
+                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
+                                            }
+                                        }
+                                    )
+                                    XPeachFilterPill(
+                                        label = "第 2 学期",
+                                        selected = selectedXqm == "12",
+                                        onClick = {
+                                            selectedXqm = "12"
+                                            scope.launch {
+                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
+                                            }
+                                        }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            webViewRef?.loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("刷新登录页", maxLines = 1, softWrap = false)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            val js = """
+                                                (function() {
+                                                    if (location.hostname !== 'jwglxt.haut.edu.cn') {
+                                                        return JSON.stringify({ error: 'NOT_ON_JWGLXT', host: location.hostname });
+                                                    }
+                                                    function postSync(path, body) {
+                                                        try {
+                                                            var xhr = new XMLHttpRequest();
+                                                            xhr.open('POST', path, false);
+                                                            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+                                                            xhr.send(body);
+                                                            return xhr.responseText || '';
+                                                        } catch (e) {
+                                                            return '';
+                                                        }
+                                                    }
+                                                    var kb = postSync('${HautAcademicEndpoints.TIMETABLE_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm&kzlx=ck&xsdm=');
+                                                    var zc = postSync('${HautAcademicEndpoints.TERM_WEEKS_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm');
+                                                    var cj = postSync('${HautAcademicEndpoints.GRADES_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=500&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
+                                                    var ks = postSync('${HautAcademicEndpoints.EXAMS_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=200&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
+                                                    return JSON.stringify({
+                                                        kb: kb,
+                                                        zc: zc,
+                                                        cj: cj,
+                                                        ks: ks
+                                                    });
+                                                })();
+                                            """.trimIndent()
+                                            webViewRef?.evaluateJavascript(js) { rawBody ->
+                                                scope.launch {
+                                                    val decoded = runCatching {
+                                                        JSONTokener(rawBody ?: "").nextValue() as? String
+                                                    }.getOrNull().orEmpty()
+                                                    val wrapper = runCatching { JSONObject(decoded) }.getOrNull()
+                                                    if (wrapper?.optString("error") == "NOT_ON_JWGLXT") {
+                                                        statusBanner = "请先在下方网页完成统一身份认证登录，等待页面跳转至正方教务系统后再点击「同步教务」。"
+                                                        return@launch
+                                                    }
+                                                    val kbJson = wrapper?.optString("kb").orEmpty()
+                                                    val zcJson = wrapper?.optString("zc").orEmpty()
+                                                    val cjJson = wrapper?.optString("cj").orEmpty()
+                                                    val ksJson = wrapper?.optString("ks").orEmpty()
+                                                    val breakdown = runCatching {
+                                                        HautZfsoftParser.parseTimetableWithBreakdown(kbJson)
+                                                    }.getOrNull()
+                                                    val parsed = breakdown?.allCandidates.orEmpty()
+                                                    val unscheduled = breakdown?.unscheduledCourses.orEmpty()
+                                                    val termCal = runCatching {
+                                                        HautZfsoftParser.parseTermCalendarJson(zcJson)
+                                                    }.getOrNull()
+                                                    val gradesRead = runCatching {
+                                                        HautZfsoftParser.parseGradesJson(cjJson)
+                                                    }
+                                                    val examsRead = runCatching {
+                                                        HautZfsoftParser.parseExamsJson(ksJson)
+                                                    }
+                                                    val gradesList = gradesRead.getOrDefault(emptyList())
+                                                    val examsList = examsRead.getOrDefault(emptyList())
+
+                                                    if (parsed.isNotEmpty() || unscheduled.isNotEmpty() || gradesList.isNotEmpty()) {
+                                                        val profile = HautZfsoftParser.parseStudentProfileFromTimetableJson(kbJson)
+                                                        val termId = HautAcademicEndpoints.toTermId(selectedXnm, selectedXqm)
+                                                        val syncData = HautLiveSyncResult(
+                                                            termId = termId,
+                                                            studentProfile = profile,
+                                                            timetableCandidates = parsed,
+                                                            gradeAttempts = gradesList,
+                                                            examItems = examsList,
+                                                            semesterStart = termCal?.first,
+                                                            totalWeeks = termCal?.second,
+                                                            regularCourseCount = breakdown?.regularCount ?: parsed.size,
+                                                            practiceCourseCount = breakdown?.practiceCount ?: 0,
+                                                            gradesComplete = cjJson.contains("\"items\"") && gradesRead.isSuccess,
+                                                            examsComplete = ksJson.contains("\"items\"") && examsRead.isSuccess,
+                                                            unscheduledCourses = unscheduled
+                                                        )
+                                                        repository.applyLiveSyncData(
+                                                            syncData = syncData,
+                                                            overwriteUserConflicts = overwriteUserEdits
+                                                        )
+                                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                        diffPreview = null
+                                                        statusBanner = syncData.syncSummaryText()
+                                                    } else {
+                                                        statusBanner = "未在 $selectedTermId 检测到教务数据，请确认下方网页已登录进入教务系统，或切换学年/学期后重试。"
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("同步教务", maxLines = 1, softWrap = false)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                HautSessionManager.clearAuthorizedSessionCookies()
+                                                SchoolWebSessionManager.clearAllSchoolWebSessions(webViewRef)
+                                                statusBanner = "已清除网页会话。"
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("清除", maxLines = 1, softWrap = false)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                AndroidView(
+                                    factory = { ctx ->
+                                        val teachingFixScript = runCatching {
+                                            ctx.assets.open("teaching-layout.js").bufferedReader().use { it.readText() }
+                                        }.getOrNull()
+                                        WebView(ctx).apply {
+                                            SchoolWebSessionManager.configureHardenedSchoolWebView(this)
+                                            webViewClient = object : WebViewClient() {
+                                                override fun shouldOverrideUrlLoading(
+                                                    view: WebView?,
+                                                    request: WebResourceRequest?
+                                                ): Boolean {
+                                                    return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
+                                                }
+
+                                                override fun onReceivedSslError(
+                                                    view: WebView?,
+                                                    handler: SslErrorHandler?,
+                                                    error: SslError?
+                                                ) {
+                                                    SafeWebNavigationPolicy.cancelOnSslError(handler, error)
+                                                }
+
+                                                override fun onPageFinished(view: WebView?, url: String?) {
+                                                    super.onPageFinished(view, url)
+                                                    if (!teachingFixScript.isNullOrBlank()) {
+                                                        view?.evaluateJavascript(teachingFixScript, null)
+                                                    }
+                                                    SchoolWebSessionManager.persistCookiesAsync()
+                                                }
+                                            }
+                                            loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
+                                            webViewRef = this
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(360.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                )
+                            }
+                        }
+
+                        2 -> {
+                            if (prefs.timetableInterchangeEnabled) {
+                                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "大学课表文件互通 (univ-timetable/v1)",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        XPeachStatusBadge(text = ".md / .json")
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "支持导入或导出标准 univ-timetable/v1 课表文件（.md / .json）及正方 JSON。导出文件已自动剔除姓名、学号与水电账号。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                openTimetableFileLauncher.launch(
+                                                    arrayOf("application/json", "text/markdown", "text/plain", "*/*")
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1.2f)
+                                        ) {
+                                            Text("选择课表文件", maxLines = 1, softWrap = false)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                exportMarkdownLauncher.launch("haut-timetable-v1.md")
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("导出 .md", maxLines = 1, softWrap = false)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                exportJsonLauncher.launch("haut-timetable-v1.json")
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("导出 .json", maxLines = 1, softWrap = false)
+                                        }
+                                    }
+                                }
+                            }
+
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "文本导入（支持 CSV / Markdown 课表 / JSON）",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = csvInputText,
+                                    onValueChange = { csvInputText = it },
+                                    minLines = 5,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Button(
                                     onClick = {
-                                        openTimetableFileLauncher.launch(
-                                            arrayOf("application/json", "text/markdown", "text/plain", "*/*")
-                                        )
+                                        scope.launch {
+                                            val termId = currentTerm?.id ?: "2025-2026-2"
+                                            val trimmed = csvInputText.trim()
+                                            val isInterchangeFormat = trimmed.startsWith("{") ||
+                                                trimmed.startsWith("[") ||
+                                                trimmed.contains("| 课程") ||
+                                                trimmed.contains("```json")
+                                            if (isInterchangeFormat) {
+                                                runCatching {
+                                                    val parsed = TimetableInterchangeAdapter.parse(trimmed)
+                                                    pendingInterchangeMeta = parsed
+                                                    diffPreview = repository.previewCourseImportDiff(
+                                                        termId = termId,
+                                                        source = CourseSource.CSV_ICS,
+                                                        candidates = parsed.candidates
+                                                    )
+                                                    statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认下方预览。"
+                                                }.onFailure { err ->
+                                                    statusBanner = "解析失败：${err.message ?: "请检查文本格式"}"
+                                                }
+                                            } else {
+                                                pendingInterchangeMeta = null
+                                                val candidates = HautZfsoftParser.parseCsvSchedule(csvInputText)
+                                                diffPreview = repository.previewCourseImportDiff(
+                                                    termId = termId,
+                                                    source = CourseSource.CSV_ICS,
+                                                    candidates = candidates
+                                                )
+                                                statusBanner = "已解析 ${candidates.size} 条 CSV 课程，请确认下方预览。"
+                                            }
+                                        }
                                     },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1.2f)
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Text("选择课表文件", maxLines = 1, softWrap = false)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        exportMarkdownLauncher.launch("haut-timetable-v1.md")
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("导出 .md", maxLines = 1, softWrap = false)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        exportJsonLauncher.launch("haut-timetable-v1.json")
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("导出 .json", maxLines = 1, softWrap = false)
+                                    Text("解析文本", maxLines = 1, softWrap = false)
                                 }
                             }
-                        }
-                    }
-
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "文本导入（支持 CSV / Markdown 课表 / JSON）",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = csvInputText,
-                            onValueChange = { csvInputText = it },
-                            minLines = 5,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    val termId = currentTerm?.id ?: "2025-2026-2"
-                                    val trimmed = csvInputText.trim()
-                                    val isInterchangeFormat = trimmed.startsWith("{") ||
-                                        trimmed.startsWith("[") ||
-                                        trimmed.contains("| 课程") ||
-                                        trimmed.contains("```json")
-                                    if (isInterchangeFormat) {
-                                        runCatching {
-                                            val parsed = TimetableInterchangeAdapter.parse(trimmed)
-                                            pendingInterchangeMeta = parsed
-                                            diffPreview = repository.previewCourseImportDiff(
-                                                termId = termId,
-                                                source = CourseSource.CSV_ICS,
-                                                candidates = parsed.candidates
-                                            )
-                                            statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认下方预览。"
-                                        }.onFailure { err ->
-                                            statusBanner = "解析失败：${err.message ?: "请检查文本格式"}"
-                                        }
-                                    } else {
-                                        pendingInterchangeMeta = null
-                                        val candidates = HautZfsoftParser.parseCsvSchedule(csvInputText)
-                                        diffPreview = repository.previewCourseImportDiff(
-                                            termId = termId,
-                                            source = CourseSource.CSV_ICS,
-                                            candidates = candidates
-                                        )
-                                        statusBanner = "已解析 ${candidates.size} 条 CSV 课程，请确认下方预览。"
-                                    }
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("解析文本", maxLines = 1, softWrap = false)
                         }
                     }
                 }

@@ -19,6 +19,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -359,8 +366,34 @@ fun LibraryCatalogScreen(
             }
         }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (showOfficialWebMode) {
+        val catalogViewStage = when {
+            showOfficialWebMode -> 3
+            selectedBook != null && activeBookDetail != null -> 2
+            isSearching || searchError != null || hasSearched -> 1
+            else -> 0
+        }
+
+        AnimatedContent(
+            targetState = catalogViewStage,
+            transitionSpec = {
+                val direction = if (targetState >= initialState) {
+                    AnimatedContentTransitionScope.SlideDirection.Start
+                } else {
+                    AnimatedContentTransitionScope.SlideDirection.End
+                }
+                (slideIntoContainer(
+                    towards = direction,
+                    animationSpec = tween(240, easing = FastOutSlowInEasing)
+                ) { it / 8 } + fadeIn(tween(190))) togetherWith
+                    (slideOutOfContainer(
+                        towards = direction,
+                        animationSpec = tween(190, easing = FastOutSlowInEasing)
+                    ) { it / 10 } + fadeOut(tween(140)))
+            },
+            label = "libraryCatalogStageTransition",
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) { stage ->
+            if (stage == 3) {
                 val initialWebUrl = remember(selectedBook?.bibId, activeQuery, selectedField) {
                     val bookBibId = selectedBook?.bibId.orEmpty()
                     when {
@@ -416,7 +449,7 @@ fun LibraryCatalogScreen(
                 ) {
                     val detailToShow = activeBookDetail
                     when {
-                        selectedBook != null && detailToShow != null -> {
+                        stage == 2 && selectedBook != null && detailToShow != null -> {
                             CatalogBookDetailView(
                                 detail = detailToShow,
                                 callNo = selectedBook?.callNo.orEmpty(),
@@ -477,7 +510,7 @@ fun LibraryCatalogScreen(
                             }
                         }
 
-                        hasSearched -> {
+                        stage == 1 && hasSearched -> {
                             if (resultBooks.isEmpty()) {
                                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                                     Text(

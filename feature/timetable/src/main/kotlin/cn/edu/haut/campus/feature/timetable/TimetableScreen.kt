@@ -1,5 +1,15 @@
 package cn.edu.haut.campus.feature.timetable
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -200,7 +210,11 @@ fun TimetableScreen(
         }
 
         val pendingCourses = unscheduledCourses.filter { it.termId == term?.id }
-        if (pendingCourses.isNotEmpty()) {
+        AnimatedVisibility(
+            visible = pendingCourses.isNotEmpty(),
+            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -270,11 +284,6 @@ fun TimetableScreen(
             )
         }
 
-        val weekDates = remember(term, selectedWeek) {
-            term?.let { TeachingWeekCalculator.datesOfTeachingWeek(it, selectedWeek) }
-                ?: (0L..6L).map { today.plusDays(it) }
-        }
-
         val currentTermRuleCount = remember(term?.id, rules) {
             rules.count { it.termId == term?.id }
         }
@@ -282,243 +291,314 @@ fun TimetableScreen(
             terms.filter { t -> t.id != term?.id && rules.any { it.termId == t.id } }
         }
 
-        if (currentTermRuleCount == 0 && otherTermsWithCourses.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
-                    .clickable { showTermSwitcherDialog = true }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${term?.displayName ?: "当前学期"}暂无排课，可切换至 ${otherTermsWithCourses.first().displayName}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = "切换学期 ▸",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+        AnimatedVisibility(
+            visible = currentTermRuleCount == 0 && otherTermsWithCourses.isNotEmpty(),
+            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+        ) {
+            val targetOtherTerm = otherTermsWithCourses.firstOrNull()
+            if (targetOtherTerm != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
+                        .clickable {
+                            if (otherTermsWithCourses.size == 1) {
+                                scope.launch {
+                                    repository.selectCurrentTerm(targetOtherTerm.id)
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                }
+                            } else {
+                                showTermSwitcherDialog = true
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${term?.displayName ?: "当前学期"}暂无排课，可切换至 ${targetOtherTerm.displayName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = if (otherTermsWithCourses.size == 1) "一键切换 ▸" else "切换学期 ▸",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
 
-        when (viewMode) {
-            1 -> {
-                TimetableWeekListView(
-                    weekDates = weekDates,
-                    today = today,
-                    weekOccurrencesMap = weekOccurrencesMap,
-                    onEditOccurrence = { editingOccurrence = it },
-                    onNavigateToMapWithRoom = onNavigateToMapWithRoom
-                )
+        AnimatedContent(
+            targetState = viewMode to selectedWeek,
+            transitionSpec = {
+                val (initMode, initWeek) = initialState
+                val (targetMode, targetWeek) = targetState
+                val forward = if (initMode != targetMode) {
+                    targetMode >= initMode
+                } else {
+                    targetWeek >= initWeek
+                }
+                val direction = if (forward) {
+                    AnimatedContentTransitionScope.SlideDirection.Start
+                } else {
+                    AnimatedContentTransitionScope.SlideDirection.End
+                }
+                (slideIntoContainer(
+                    towards = direction,
+                    animationSpec = tween(240, easing = FastOutSlowInEasing)
+                ) { it / 10 } + fadeIn(tween(190))) togetherWith
+                    (slideOutOfContainer(
+                        towards = direction,
+                        animationSpec = tween(190, easing = FastOutSlowInEasing)
+                    ) { it / 12 } + fadeOut(tween(140)))
+            },
+            label = "timetableViewWeekTransition",
+            modifier = Modifier.fillMaxSize()
+        ) { (activeMode, activeWeek) ->
+            val activeWeekDates = remember(term, activeWeek) {
+                term?.let { TeachingWeekCalculator.datesOfTeachingWeek(it, activeWeek) }
+                    ?: (0L..6L).map { today.plusDays(it) }
             }
-            2 -> {
-                RawMasterTimetableView(
-                    termDisplayName = term?.displayName ?: "当前学期",
-                    termId = term?.id,
+            val activeWeekOccurrencesMap = remember(
+                activeWeek,
+                term,
+                courses,
+                rules,
+                periodTimes,
+                calendarOverrides,
+                occurrenceOverrides,
+                buildings
+            ) {
+                val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
+                ScheduleEngine.resolveOccurrencesForTeachingWeek(
+                    teachingWeek = activeWeek,
+                    term = activeTerm,
                     courses = courses,
                     rules = rules,
-                    unscheduledCourses = pendingCourses,
-                    onNavigateToImporter = onNavigateToImporter,
-                    onNavigateToMapWithRoom = onNavigateToMapWithRoom
+                    periodTimes = periodTimes,
+                    calendarOverrides = calendarOverrides,
+                    occurrenceOverrides = occurrenceOverrides,
+                    buildings = buildings
                 )
             }
-            else -> {
-                // 极简课表卡片容器（去重框线，柔和圆角色块）
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                ) {
-                    // 顶部星期栏
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp, horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier.width(38.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${dateMonthLabel(weekDates.firstOrNull())}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
 
-                        for (date in weekDates) {
-                            val isToday = date == today
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(
-                                        if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent
-                                    )
-                                    .padding(vertical = 5.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+            when (activeMode) {
+                1 -> {
+                    TimetableWeekListView(
+                        weekDates = activeWeekDates,
+                        today = today,
+                        weekOccurrencesMap = activeWeekOccurrencesMap,
+                        onEditOccurrence = { editingOccurrence = it },
+                        onNavigateToMapWithRoom = onNavigateToMapWithRoom
+                    )
+                }
+                2 -> {
+                    RawMasterTimetableView(
+                        termDisplayName = term?.displayName ?: "当前学期",
+                        termId = term?.id,
+                        courses = courses,
+                        rules = rules,
+                        unscheduledCourses = pendingCourses,
+                        onNavigateToImporter = onNavigateToImporter,
+                        onNavigateToMapWithRoom = onNavigateToMapWithRoom
+                    )
+                }
+                else -> {
+                    // 极简课表卡片容器（去重框线，柔和圆角色块）
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                    ) {
+                        // 顶部星期栏
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.width(38.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = date.dayOfWeek.ChineseLabel.replace("周", ""),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isToday) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                Text(
-                                    text = date.format(SHORT_DATE_FMT),
-                                    fontSize = 10.sp,
-                                    color = if (isToday) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = "${dateMonthLabel(activeWeekDates.firstOrNull())}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1,
                                     softWrap = false
                                 )
                             }
-                        }
-                    }
-                    HorizontalDivider(
-                        thickness = 0.6.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                    )
 
-                    // 1-10 节无竖框轻盈网格
-                    val slotHeightDp = 58.dp
-                    val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
-                    val periodByNo = periodTimes.associateBy { it.periodNo }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 92.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.width(38.dp)
-                        ) {
-                            for (p in 1..maxPeriods) {
-                                val pt = periodByNo[p]
+                            for (date in activeWeekDates) {
+                                val isToday = date == today
                                 Column(
                                     modifier = Modifier
-                                        .height(slotHeightDp)
-                                        .fillMaxWidth(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent
+                                        )
+                                        .padding(vertical = 5.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "$p",
+                                        text = date.dayOfWeek.ChineseLabel.replace("周", ""),
                                         style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isToday) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         softWrap = false
                                     )
-                                    if (pt != null) {
-                                        Text(
-                                            text = pt.startLocalTime.format(PERIOD_TIME_FMT),
-                                            fontSize = 9.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            softWrap = false
-                                        )
-                                    }
+                                    Text(
+                                        text = date.format(SHORT_DATE_FMT),
+                                        fontSize = 10.sp,
+                                        color = if (isToday) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
                                 }
                             }
                         }
+                        HorizontalDivider(
+                            thickness = 0.6.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                        )
 
-                        for (date in weekDates) {
-                            val dayOccurrences = weekOccurrencesMap[date].orEmpty()
-                            val isToday = date == today
+                        // 1-10 节无竖框轻盈网格
+                        val slotHeightDp = 58.dp
+                        val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
+                        val periodByNo = periodTimes.associateBy { it.periodNo }
 
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(slotHeightDp * maxPeriods)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
-                                        else Color.Transparent
-                                    )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 92.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.width(38.dp)
                             ) {
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    repeat(maxPeriods) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(slotHeightDp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(0.5.dp)
-                                                    .align(Alignment.BottomCenter)
-                                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                for (p in 1..maxPeriods) {
+                                    val pt = periodByNo[p]
+                                    Column(
+                                        modifier = Modifier
+                                            .height(slotHeightDp)
+                                            .fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(
+                                            text = "$p",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        if (pt != null) {
+                                            Text(
+                                                text = pt.startLocalTime.format(PERIOD_TIME_FMT),
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
                                 }
+                            }
 
-                                for (occ in dayOccurrences) {
-                                    val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
-                                    val topOffset = slotHeightDp * (occ.startPeriod - 1)
-                                    val blockHeight = slotHeightDp * span
-                                    val baseColor = Color(occ.colorArgb)
+                            for (date in activeWeekDates) {
+                                val dayOccurrences = activeWeekOccurrencesMap[date].orEmpty()
+                                val isToday = date == today
 
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .offset(y = topOffset)
-                                            .height(blockHeight)
-                                            .padding(horizontal = 2.dp, vertical = 2.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(baseColor.copy(alpha = 0.14f))
-                                            .clickable { editingOccurrence = occ }
-                                    ) {
-                                        // 顶部柔和色条 + 紧凑文字排布
-                                        Column(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(slotHeightDp * maxPeriods)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                            else Color.Transparent
+                                        )
+                                ) {
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        repeat(maxPeriods) {
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .height(3.dp)
-                                                    .background(baseColor.copy(alpha = 0.8f))
-                                            )
-                                            Column(
-                                                verticalArrangement = Arrangement.spacedBy(2.dp),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                                    .height(slotHeightDp)
                                             ) {
-                                                Text(
-                                                    text = occ.courseName,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    lineHeight = 13.sp,
-                                                    maxLines = 3,
-                                                    overflow = TextOverflow.Ellipsis
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(0.5.dp)
+                                                        .align(Alignment.BottomCenter)
+                                                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                                                 )
-                                                Text(
-                                                    text = occ.rawRoom,
-                                                    color = baseColor,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    lineHeight = 11.sp,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis
+                                            }
+                                        }
+                                    }
+
+                                    for (occ in dayOccurrences) {
+                                        val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
+                                        val topOffset = slotHeightDp * (occ.startPeriod - 1)
+                                        val blockHeight = slotHeightDp * span
+                                        val baseColor = Color(occ.colorArgb)
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .offset(y = topOffset)
+                                                .height(blockHeight)
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(baseColor.copy(alpha = 0.14f))
+                                                .clickable { editingOccurrence = occ }
+                                        ) {
+                                            // 顶部柔和色条 + 紧凑文字排布
+                                            Column(modifier = Modifier.fillMaxSize()) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(3.dp)
+                                                        .background(baseColor.copy(alpha = 0.8f))
                                                 )
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = occ.courseName,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        lineHeight = 13.sp,
+                                                        maxLines = 3,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = occ.rawRoom,
+                                                        color = baseColor,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        lineHeight = 11.sp,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
                                             }
                                         }
                                     }

@@ -12,7 +12,16 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -430,30 +439,60 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if (feedbackText != null) {
-                XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = Color.Transparent
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            AnimatedVisibility(
+                visible = feedbackText != null,
+                enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+            ) {
+                feedbackText?.let { msg ->
+                    XPeachCard(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = Color.Transparent
                     ) {
-                        Text(
-                            text = feedbackText!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { feedbackText = null }) {
-                            Text("知道了", maxLines = 1, softWrap = false)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { feedbackText = null }) {
+                                Text("知道了", maxLines = 1, softWrap = false)
+                            }
                         }
                     }
                 }
             }
 
-            if (!showSystemSettingsMenu) {
+            AnimatedContent(
+                targetState = showSystemSettingsMenu,
+                transitionSpec = {
+                    val direction = if (targetState) {
+                        AnimatedContentTransitionScope.SlideDirection.Start
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.End
+                    }
+                    (slideIntoContainer(
+                        towards = direction,
+                        animationSpec = tween(250, easing = FastOutSlowInEasing)
+                    ) { it / 8 } + fadeIn(tween(200))) togetherWith
+                        (slideOutOfContainer(
+                            towards = direction,
+                            animationSpec = tween(200, easing = FastOutSlowInEasing)
+                        ) { it / 10 } + fadeOut(tween(140)))
+                },
+                label = "profileSettingsMenuTransition",
+                modifier = Modifier.fillMaxWidth()
+            ) { inSystemSettings ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+            if (!inSystemSettings) {
                 // =========================================================================
                 // 一级页面：「我的」—— 仅展示个人必要核心数据
                 // =========================================================================
@@ -2025,6 +2064,8 @@ fun SettingsScreen(
                     }
                 }
             }
+            }
+                }
             }
 
             // 预留底部悬浮胶囊导航栏高度

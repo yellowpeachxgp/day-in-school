@@ -1,5 +1,15 @@
 package cn.edu.haut.campus.feature.today
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -232,7 +242,11 @@ fun TodayScreen(
             badgeText = snapshot.teachingWeek?.let { "第 ${it} 周" } ?: "非教学周",
             onSubtitleClick = { showTermSwitcherDialog = true },
             actions = {
-                if (selectedDate != todayDate) {
+                AnimatedVisibility(
+                    visible = selectedDate != todayDate,
+                    enter = fadeIn(tween(180)),
+                    exit = fadeOut(tween(140))
+                ) {
                     XPeachFilterPill(
                         label = "回今天",
                         selected = true,
@@ -280,24 +294,30 @@ fun TodayScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if (dynamicSyncBanner != null) {
-                XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = Color.Transparent
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            AnimatedVisibility(
+                visible = dynamicSyncBanner != null,
+                enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+            ) {
+                dynamicSyncBanner?.let { bannerText ->
+                    XPeachCard(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = Color.Transparent
                     ) {
-                        Text(
-                            text = dynamicSyncBanner!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { dynamicSyncBanner = null }) {
-                            Text("收起", maxLines = 1, softWrap = false)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = bannerText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { dynamicSyncBanner = null }) {
+                                Text("收起", maxLines = 1, softWrap = false)
+                            }
                         }
                     }
                 }
@@ -315,16 +335,22 @@ fun TodayScreen(
                 onNextWeek = { selectedDate = selectedDate.plusWeeks(1) }
             )
 
-            if (!snapshot.calendarNotice.isNullOrBlank()) {
-                XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = Color.Transparent
-                ) {
-                    Text(
-                        text = snapshot.calendarNotice!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+            AnimatedVisibility(
+                visible = !snapshot.calendarNotice.isNullOrBlank(),
+                enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+                exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+            ) {
+                snapshot.calendarNotice?.takeIf { it.isNotBlank() }?.let { notice ->
+                    XPeachCard(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        borderColor = Color.Transparent
+                    ) {
+                        Text(
+                            text = notice,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
 
@@ -366,50 +392,104 @@ fun TodayScreen(
                     }
                 }
 
-                if (activeBreak != null) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    XPeachWell(
-                        modifier = Modifier.fillMaxWidth(),
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                    ) {
-                        Text(
-                            text = "${activeBreak.label} · ${activeBreak.startTime.format(TIME_FMT)}–${activeBreak.endTime.format(TIME_FMT)}" +
-                                (activeBreak.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        activeBreak.roomTransferText?.let { transfer ->
-                            Text(
-                                text = transfer,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                AnimatedVisibility(
+                    visible = activeBreak != null,
+                    enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+                ) {
+                    activeBreak?.let { brk ->
+                        Column {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            XPeachWell(
+                                modifier = Modifier.fillMaxWidth(),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                            ) {
+                                Text(
+                                    text = "${brk.label} · ${brk.startTime.format(TIME_FMT)}–${brk.endTime.format(TIME_FMT)}" +
+                                        (brk.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                brk.roomTransferText?.let { transfer ->
+                                    Text(
+                                        text = transfer,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (snapshot.items.isEmpty()) {
-                    EmptyDayTimelineBox(
-                        hasAnyCourses = courses.isNotEmpty(),
-                        nextClassHint = snapshot.nextClassDayHint,
-                        onJumpToDate = { selectedDate = it },
-                        onOpenImporter = onNavigateToImporter
-                    )
-                } else {
-                    MinimalistDayScheduleFlow(
-                        items = snapshot.items,
-                        breakIntervals = snapshot.breakIntervals,
-                        highlightedOccurrenceId = heroItem?.occurrence?.occurrenceId,
-                        termId = term?.id ?: "default",
-                        globalReminderEnabled = prefs.reminderConfig.enabled,
-                        defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
-                        tasksByEventKey = tasksByEventKey,
-                        overridesByScope = overridesByScope,
-                        onItemClick = { selectedOccurrenceForDetail = it },
-                        onNavigateRoom = onNavigateToMapWithRoom
-                    )
+                AnimatedContent(
+                    targetState = selectedDate,
+                    transitionSpec = {
+                        val direction = if (!targetState.isBefore(initialState)) {
+                            AnimatedContentTransitionScope.SlideDirection.Start
+                        } else {
+                            AnimatedContentTransitionScope.SlideDirection.End
+                        }
+                        (slideIntoContainer(
+                            towards = direction,
+                            animationSpec = tween(220, easing = FastOutSlowInEasing)
+                        ) { it / 10 } + fadeIn(tween(180))) togetherWith
+                            (slideOutOfContainer(
+                                towards = direction,
+                                animationSpec = tween(180, easing = FastOutSlowInEasing)
+                            ) { it / 12 } + fadeOut(tween(130)))
+                    },
+                    label = "dayScheduleTransition",
+                    modifier = Modifier.fillMaxWidth()
+                ) { dateForView ->
+                    val daySnapshot = remember(
+                        dateForView,
+                        currentNow,
+                        term,
+                        courses,
+                        rules,
+                        periodTimes,
+                        calendarOverrides,
+                        occurrenceOverrides,
+                        buildings,
+                        effectiveScale
+                    ) {
+                        ScheduleEngine.buildDayTimelineSnapshot(
+                            date = dateForView,
+                            now = currentNow,
+                            term = term,
+                            courses = courses,
+                            rules = rules,
+                            periodTimes = periodTimes,
+                            calendarOverrides = calendarOverrides,
+                            occurrenceOverrides = occurrenceOverrides,
+                            buildings = buildings,
+                            pxPerMinute = effectiveScale
+                        )
+                    }
+                    if (daySnapshot.items.isEmpty()) {
+                        EmptyDayTimelineBox(
+                            hasAnyCourses = courses.isNotEmpty(),
+                            nextClassHint = daySnapshot.nextClassDayHint,
+                            onJumpToDate = { selectedDate = it },
+                            onOpenImporter = onNavigateToImporter
+                        )
+                    } else {
+                        MinimalistDayScheduleFlow(
+                            items = daySnapshot.items,
+                            breakIntervals = daySnapshot.breakIntervals,
+                            highlightedOccurrenceId = daySnapshot.activeOrNextClass?.occurrence?.occurrenceId,
+                            termId = term?.id ?: "default",
+                            globalReminderEnabled = prefs.reminderConfig.enabled,
+                            defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
+                            tasksByEventKey = tasksByEventKey,
+                            overridesByScope = overridesByScope,
+                            onItemClick = { selectedOccurrenceForDetail = it },
+                            onNavigateRoom = onNavigateToMapWithRoom
+                        )
+                    }
                 }
             }
 

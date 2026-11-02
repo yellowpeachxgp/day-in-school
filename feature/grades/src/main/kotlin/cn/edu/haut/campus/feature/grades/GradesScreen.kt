@@ -1,6 +1,16 @@
 package cn.edu.haut.campus.feature.grades
 
 import android.content.Intent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -451,76 +461,88 @@ fun GradesScreen(
                 }
 
                 // 目标绩点与新修学分测算
-                if (showSimulatorSection) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    val baseCredits = gpaReport.gpaIncludedCredits.toFloat().coerceAtLeast(0f)
-                    val baseGpa = gpaReport.cumulativeGpa?.toFloat() ?: 3.2f
-                    val totalSimCredits = (baseCredits + simulatedNewCredits).coerceAtLeast(1f)
-                    val projectedGpa = ((baseCredits * baseGpa) + (simulatedNewCredits * simulatedNewGpa)) / totalSimCredits
+                AnimatedVisibility(
+                    visible = showSimulatorSection,
+                    enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                    exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val baseCredits = gpaReport.gpaIncludedCredits.toFloat().coerceAtLeast(0f)
+                        val baseGpa = gpaReport.cumulativeGpa?.toFloat() ?: 3.2f
+                        val totalSimCredits = (baseCredits + simulatedNewCredits).coerceAtLeast(1f)
+                        val projectedGpa = ((baseCredits * baseGpa) + (simulatedNewCredits * simulatedNewGpa)) / totalSimCredits
 
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "预计总绩点",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                Text(
+                                    text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = simulatedNewCredits,
+                                onValueChange = { simulatedNewCredits = it },
+                                valueRange = 2f..60f
+                            )
+                            Text(
+                                text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = simulatedNewGpa,
+                                onValueChange = { simulatedNewGpa = it },
+                                valueRange = 2.0f..4.5f
+                            )
+                        }
+                    }
+                }
+
+                // 可折叠趋势与分布，避免首屏视觉过载
+                AnimatedVisibility(
+                    visible = showTrendSection && gpaReport.termTrends.isNotEmpty(),
+                    enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                    exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(14.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "预计总绩点",
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                            Text(
-                                text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
-                                style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
+                            Text("学期走势", style = MaterialTheme.typography.labelLarge)
+                            XPeachSegmentedTabs(
+                                items = listOf("GPA", "均分", "学分"),
+                                selectedIndex = trendMetricIndex,
+                                onSelect = { trendMetricIndex = it },
+                                modifier = Modifier.width(164.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = simulatedNewCredits,
-                            onValueChange = { simulatedNewCredits = it },
-                            valueRange = 2f..60f
-                        )
-                        Text(
-                            text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = simulatedNewGpa,
-                            onValueChange = { simulatedNewGpa = it },
-                            valueRange = 2.0f..4.5f
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TermTrendChart(
+                            points = gpaReport.termTrends,
+                            metricIndex = trendMetricIndex,
+                            privacyMasked = privacyMasked
                         )
                     }
-                }
-
-                // 可折叠趋势与分布，避免首屏视觉过载
-                if (showTrendSection && gpaReport.termTrends.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("学期走势", style = MaterialTheme.typography.labelLarge)
-                        XPeachSegmentedTabs(
-                            items = listOf("GPA", "均分", "学分"),
-                            selectedIndex = trendMetricIndex,
-                            onSelect = { trendMetricIndex = it },
-                            modifier = Modifier.width(164.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TermTrendChart(
-                        points = gpaReport.termTrends,
-                        metricIndex = trendMetricIndex,
-                        privacyMasked = privacyMasked
-                    )
                 }
             }
 
@@ -558,205 +580,236 @@ fun GradesScreen(
                 }
             }
 
-            if (activeSubTab == 0) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            AnimatedContent(
+                targetState = activeSubTab,
+                transitionSpec = {
+                    val direction = if (targetState >= initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Start
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.End
+                    }
+                    (slideIntoContainer(
+                        towards = direction,
+                        animationSpec = tween(220, easing = FastOutSlowInEasing)
+                    ) { it / 10 } + fadeIn(tween(180))) togetherWith
+                        (slideOutOfContainer(
+                            towards = direction,
+                            animationSpec = tween(180, easing = FastOutSlowInEasing)
+                        ) { it / 12 } + fadeOut(tween(130)))
+                },
+                label = "gradesSubTabTransition",
+                modifier = Modifier.fillMaxWidth()
+            ) { currentSubTab ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    XPeachFilterPill(
-                        label = "全部性质",
-                        selected = selectedCategoryFilter == null,
-                        onClick = { selectedCategoryFilter = null }
-                    )
-                    for (cat in CourseCategory.entries) {
-                        XPeachFilterPill(
-                            label = cat.label,
-                            selected = selectedCategoryFilter == cat,
-                            onClick = { selectedCategoryFilter = cat }
-                        )
-                    }
-                }
-
-                // 3A. 聚合式课程成绩列表卡片
-                val filteredAudit = remember(gpaReport.auditItems, selectedTermFilter, selectedCategoryFilter) {
-                    gpaReport.auditItems.filter { item ->
-                        val att = item.selectedAttempt ?: return@filter false
-                        val termMatch = selectedTermFilter == null || att.termId == selectedTermFilter
-                        val catMatch = selectedCategoryFilter == null || att.category == selectedCategoryFilter
-                        termMatch && catMatch
-                    }
-                }
-
-                if (filteredAudit.isNotEmpty()) {
-                    XPeachCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        filteredAudit.forEachIndexed { index, audit ->
-                            val att = audit.selectedAttempt ?: return@forEachIndexed
+                    when (currentSubTab) {
+                        0 -> {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = att.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${att.termId} · ${att.category.label} · ${att.credits} 学分",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = if (privacyMasked) "∗∗" else att.rawGrade,
-                                        style = MaterialTheme.typography.titleLarge,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                    Text(
-                                        text = if (privacyMasked) {
-                                            "绩点 ∗.∗"
-                                        } else {
-                                            att.gradePoint?.let { "绩点 $it" } ?: att.attemptType.label
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                            }
-
-                            if (index < filteredAudit.lastIndex) {
-                                HorizontalDivider(
-                                    thickness = 0.6.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                                )
-                            }
-                        }
-                    }
-                }
-            } else if (activeSubTab == 1) {
-                // 3B. 考试安排列表（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
-                val filteredExams = remember(examSchedules, selectedTermFilter) {
-                    examSchedules.filter { selectedTermFilter == null || it.termId == selectedTermFilter }
-                }
-
-                if (filteredExams.isEmpty()) {
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "暂无考试安排，点击右上角按钮可从教务系统同步。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    XPeachCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        filteredExams.forEachIndexed { index, exam ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = exam.courseName,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        XPeachStatusBadge(
-                                            text = exam.examStageLabel,
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    Text(
-                                        text = "${exam.termId} · ${exam.rawTimeText}",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = buildString {
-                                            append(exam.rawRoom)
-                                            if (!exam.seatNumber.isNullOrBlank()) {
-                                                append(" · 座位 ${exam.seatNumber}号")
-                                            }
-                                            append(" · ${exam.examFormat}")
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
                                 XPeachFilterPill(
-                                    label = "去考场",
-                                    selected = true,
-                                    onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
+                                    label = "全部性质",
+                                    selected = selectedCategoryFilter == null,
+                                    onClick = { selectedCategoryFilter = null }
                                 )
+                                for (cat in CourseCategory.entries) {
+                                    XPeachFilterPill(
+                                        label = cat.label,
+                                        selected = selectedCategoryFilter == cat,
+                                        onClick = { selectedCategoryFilter = cat }
+                                    )
+                                }
                             }
 
-                            if (index < filteredExams.lastIndex) {
-                                HorizontalDivider(
-                                    thickness = 0.6.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                                )
+                            // 3A. 聚合式课程成绩列表卡片
+                            val filteredAudit = remember(gpaReport.auditItems, selectedTermFilter, selectedCategoryFilter) {
+                                gpaReport.auditItems.filter { item ->
+                                    val att = item.selectedAttempt ?: return@filter false
+                                    val termMatch = selectedTermFilter == null || att.termId == selectedTermFilter
+                                    val catMatch = selectedCategoryFilter == null || att.category == selectedCategoryFilter
+                                    termMatch && catMatch
+                                }
                             }
+
+                            if (filteredAudit.isNotEmpty()) {
+                                XPeachCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                                ) {
+                                    filteredAudit.forEachIndexed { index, audit ->
+                                        val att = audit.selectedAttempt ?: return@forEachIndexed
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                Text(
+                                                    text = att.name,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${att.termId} · ${att.category.label} · ${att.credits} 学分",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(
+                                                    text = if (privacyMasked) "∗∗" else att.rawGrade,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                                Text(
+                                                    text = if (privacyMasked) {
+                                                        "绩点 ∗.∗"
+                                                    } else {
+                                                        att.gradePoint?.let { "绩点 $it" } ?: att.attemptType.label
+                                                    },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
+                                        }
+
+                                        if (index < filteredAudit.lastIndex) {
+                                            HorizontalDivider(
+                                                thickness = 0.6.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            // 3B. 考试安排列表（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
+                            val filteredExams = remember(examSchedules, selectedTermFilter) {
+                                examSchedules.filter { selectedTermFilter == null || it.termId == selectedTermFilter }
+                            }
+
+                            if (filteredExams.isEmpty()) {
+                                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "暂无考试安排，点击右上角按钮可从教务系统同步。",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                XPeachCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                                ) {
+                                    filteredExams.forEachIndexed { index, exam ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 10.dp),
+                                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = exam.courseName,
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f, fill = false)
+                                                    )
+                                                    XPeachStatusBadge(
+                                                        text = exam.examStageLabel,
+                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                        contentColor = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                Text(
+                                                    text = "${exam.termId} · ${exam.rawTimeText}",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = buildString {
+                                                        append(exam.rawRoom)
+                                                        if (!exam.seatNumber.isNullOrBlank()) {
+                                                            append(" · 座位 ${exam.seatNumber}号")
+                                                        }
+                                                        append(" · ${exam.examFormat}")
+                                                    },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            XPeachFilterPill(
+                                                label = "去考场",
+                                                selected = true,
+                                                onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
+                                            )
+                                        }
+
+                                        if (index < filteredExams.lastIndex) {
+                                            HorizontalDivider(
+                                                thickness = 0.6.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        2 -> {
+                            AcademicPlanProgressSection(
+                                attempts = attempts,
+                                retakeStrategy = cn.edu.haut.campus.core.model.RetakeInclusionStrategy.HIGHEST_ATTEMPT,
+                                officialSnapshot = officialSnapshot,
+                                privacyMasked = privacyMasked
+                            )
+                        }
+                        else -> {
+                            SelectionDraftSection(
+                                termId = latestTermId ?: "2025-2026-2",
+                                courses = courses,
+                                scheduleRules = scheduleRules
+                            )
                         }
                     }
                 }
-            } else if (activeSubTab == 2) {
-                AcademicPlanProgressSection(
-                    attempts = attempts,
-                    retakeStrategy = cn.edu.haut.campus.core.model.RetakeInclusionStrategy.HIGHEST_ATTEMPT,
-                    officialSnapshot = officialSnapshot,
-                    privacyMasked = privacyMasked
-                )
-            } else {
-                SelectionDraftSection(
-                    termId = latestTermId ?: "2025-2026-2",
-                    courses = courses,
-                    scheduleRules = scheduleRules
-                )
             }
 
             Spacer(modifier = Modifier.height(92.dp))

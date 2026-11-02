@@ -10,13 +10,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -49,6 +54,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
@@ -87,6 +94,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -96,8 +104,10 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -446,181 +456,240 @@ fun HautCampusRootApp(
         }
     }
 
-    when {
-        !isHautCampus && overlayScreen in setOf("electricity", "library_catalog", "library_seats", "empty_classrooms", "community") -> {
-            SchoolCenterScreen(
-                onBack = { overlayScreen = null },
-                onOpenOfflineImporter = { overlayScreen = "importer" },
-                sessions = sessions,
-                activeSession = activeSession,
-                onSwitchProfile = onSwitchProfile
-            )
-        }
-        overlayScreen == "school_center" -> {
-            SchoolCenterScreen(
-                onBack = { overlayScreen = null },
-                onOpenOfflineImporter = { overlayScreen = "importer" },
-                sessions = sessions,
-                activeSession = activeSession,
-                onSwitchProfile = onSwitchProfile
-            )
-        }
-        overlayScreen == "importer" -> {
-            ImporterScreen(
-                repository = repository,
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "electricity" -> {
-            DormElectricityScreen(
-                repository = repository,
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "library_catalog" -> {
-            LibraryCatalogScreen(
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "library_seats" -> {
-            LibrarySeatBookingScreen(
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "focus" -> {
-            StudyFocusScreen(
-                repository = repository,
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "empty_classrooms" -> {
-            EmptyClassroomScreen(
-                repository = repository,
-                onNavigateToMapWithRoom = { room ->
-                    overlayScreen = null
-                    mapRoomQuery = room
-                    currentTab = PrimaryBottomTab.CAMPUS
-                },
-                onBack = { overlayScreen = null }
-            )
-        }
-        overlayScreen == "community" -> {
-            CampusCommunityScreen(
-                repository = repository,
-                onBack = { overlayScreen = null }
-            )
-        }
-        !prefs.hasCompletedOnboarding -> {
-            OnboardingWelcomeScreen(
-                repository = repository,
-                activeSchool = activeSession.school,
-                onOpenSchoolCenter = { overlayScreen = "school_center" },
-                onOpenAdvancedImporter = { overlayScreen = "importer" }
-            )
-        }
-        else -> {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-            ) {
-                AnimatedContent(
-                    targetState = currentTab,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(130))
+    val activeRouteKey = when {
+        !isHautCampus && overlayScreen in setOf("electricity", "library_catalog", "library_seats", "empty_classrooms", "community") -> "school_center"
+        overlayScreen != null -> overlayScreen!!
+        !prefs.hasCompletedOnboarding -> "onboarding"
+        else -> "main_tabs"
+    }
+
+    AnimatedContent(
+        targetState = activeRouteKey,
+        transitionSpec = {
+            val isOpeningOverlay = targetState != "main_tabs" && targetState != "onboarding"
+            val isClosingOverlay = initialState != "main_tabs" && initialState != "onboarding" &&
+                (targetState == "main_tabs" || targetState == "onboarding")
+            when {
+                isOpeningOverlay -> {
+                    (slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(280, easing = FastOutSlowInEasing)
+                    ) { it / 6 } + fadeIn(tween(220)) + scaleIn(
+                        initialScale = 0.96f,
+                        animationSpec = tween(280, easing = FastOutSlowInEasing)
+                    )) togetherWith (slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ) { it / 10 } + fadeOut(tween(170)) + scaleOut(
+                        targetScale = 0.96f,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ))
+                }
+                isClosingOverlay -> {
+                    (slideIntoContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(260, easing = FastOutSlowInEasing)
+                    ) { it / 10 } + fadeIn(tween(210)) + scaleIn(
+                        initialScale = 0.96f,
+                        animationSpec = tween(260, easing = FastOutSlowInEasing)
+                    )) togetherWith (slideOutOfContainer(
+                        towards = AnimatedContentTransitionScope.SlideDirection.End,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ) { it / 6 } + fadeOut(tween(170)) + scaleOut(
+                        targetScale = 0.96f,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    ))
+                }
+                else -> {
+                    (fadeIn(tween(240)) + scaleIn(
+                        initialScale = 0.97f,
+                        animationSpec = tween(240, easing = FastOutSlowInEasing)
+                    )) togetherWith fadeOut(tween(180))
+                }
+            }.using(SizeTransform(clip = false))
+        },
+        label = "rootScreenTransition",
+        modifier = Modifier.fillMaxSize()
+    ) { routeKey ->
+        when (routeKey) {
+            "school_center" -> {
+                SchoolCenterScreen(
+                    onBack = { overlayScreen = null },
+                    onOpenOfflineImporter = { overlayScreen = "importer" },
+                    sessions = sessions,
+                    activeSession = activeSession,
+                    onSwitchProfile = onSwitchProfile
+                )
+            }
+            "importer" -> {
+                ImporterScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "electricity" -> {
+                DormElectricityScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "library_catalog" -> {
+                LibraryCatalogScreen(
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "library_seats" -> {
+                LibrarySeatBookingScreen(
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "focus" -> {
+                StudyFocusScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "empty_classrooms" -> {
+                EmptyClassroomScreen(
+                    repository = repository,
+                    onNavigateToMapWithRoom = { room ->
+                        overlayScreen = null
+                        mapRoomQuery = room
+                        currentTab = PrimaryBottomTab.CAMPUS
                     },
-                    label = "mainTabTransition",
-                    modifier = Modifier.fillMaxSize()
-                ) { targetTab ->
-                    when (targetTab) {
-                        PrimaryBottomTab.TODAY -> TodayScreen(
-                            repository = repository,
-                            onNavigateToMapWithRoom = { room ->
-                                mapRoomQuery = room
-                                currentTab = PrimaryBottomTab.CAMPUS
-                            },
-                            onNavigateToImporter = { overlayScreen = "importer" },
-                            onNavigateToSettings = { currentTab = PrimaryBottomTab.PROFILE },
-                            onNavigateToFocus = { overlayScreen = "focus" },
-                            onNavigateToElectricity = { overlayScreen = "electricity" },
-                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
-                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
-                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                            onNavigateToCommunity = { overlayScreen = "community" },
-                            onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
-                            resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
-                        )
-                        PrimaryBottomTab.TIMETABLE -> TimetableScreen(
-                            repository = repository,
-                            onNavigateToImporter = { overlayScreen = "importer" },
-                            onNavigateToMapWithRoom = { room ->
-                                mapRoomQuery = room
-                                currentTab = PrimaryBottomTab.CAMPUS
-                            },
-                            resetTrigger = if (currentTab == PrimaryBottomTab.TIMETABLE) tabResetCounter else 0
-                        )
-                        PrimaryBottomTab.GRADES -> GradesScreen(
-                            repository = repository,
-                            onNavigateToImporter = { overlayScreen = "importer" },
-                            onNavigateToMapWithRoom = { room ->
-                                mapRoomQuery = room
-                                currentTab = PrimaryBottomTab.CAMPUS
-                            },
-                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
-                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
-                            onNavigateToFocus = { overlayScreen = "focus" },
-                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                            resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
-                        )
-                        PrimaryBottomTab.CAMPUS -> CampusMapScreen(
-                            repository = repository,
-                            initialClassroomQuery = mapRoomQuery,
-                            onNavigateToElectricity = { overlayScreen = "electricity" },
-                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                            onNavigateToCommunity = { overlayScreen = "community" },
-                            onNavigateToSchoolCenter = { overlayScreen = "school_center" },
-                            activeSchool = activeSession.school,
-                            resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
-                        )
-                        PrimaryBottomTab.PROFILE -> SettingsScreen(
-                            repository = repository,
-                            onBack = null,
-                            onNavigateToImporter = { overlayScreen = "importer" },
-                            onNavigateToMapWithRoom = { room ->
-                                mapRoomQuery = room
-                                currentTab = PrimaryBottomTab.CAMPUS
-                            },
-                            onNavigateToElectricity = { overlayScreen = "electricity" },
-                            onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
-                            onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
-                            onNavigateToFocus = { overlayScreen = "focus" },
-                            onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                            onNavigateToCommunity = { overlayScreen = "community" },
-                            onNavigateToSchoolCenter = { overlayScreen = "school_center" },
-                            activeSchool = activeSession.school,
-                            activeProfileLabel = activeSession.label,
-                            resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "community" -> {
+                CampusCommunityScreen(
+                    repository = repository,
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "onboarding" -> {
+                OnboardingWelcomeScreen(
+                    repository = repository,
+                    activeSchool = activeSession.school,
+                    onOpenSchoolCenter = { overlayScreen = "school_center" },
+                    onOpenAdvancedImporter = { overlayScreen = "importer" }
+                )
+            }
+            else -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                    AnimatedContent(
+                        targetState = currentTab,
+                        transitionSpec = {
+                            val direction = if (targetState.ordinal >= initialState.ordinal) {
+                                AnimatedContentTransitionScope.SlideDirection.Start
+                            } else {
+                                AnimatedContentTransitionScope.SlideDirection.End
+                            }
+                            (slideIntoContainer(
+                                towards = direction,
+                                animationSpec = tween(240, easing = FastOutSlowInEasing)
+                            ) { it / 12 } + fadeIn(animationSpec = tween(200))) togetherWith
+                                (slideOutOfContainer(
+                                    towards = direction,
+                                    animationSpec = tween(200, easing = FastOutSlowInEasing)
+                                ) { it / 14 } + fadeOut(animationSpec = tween(140)))
+                        },
+                        label = "mainTabTransition",
+                        modifier = Modifier.fillMaxSize()
+                    ) { targetTab ->
+                        when (targetTab) {
+                            PrimaryBottomTab.TODAY -> TodayScreen(
+                                repository = repository,
+                                onNavigateToMapWithRoom = { room ->
+                                    mapRoomQuery = room
+                                    currentTab = PrimaryBottomTab.CAMPUS
+                                },
+                                onNavigateToImporter = { overlayScreen = "importer" },
+                                onNavigateToSettings = { currentTab = PrimaryBottomTab.PROFILE },
+                                onNavigateToFocus = { overlayScreen = "focus" },
+                                onNavigateToElectricity = { overlayScreen = "electricity" },
+                                onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
+                                resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
+                            )
+                            PrimaryBottomTab.TIMETABLE -> TimetableScreen(
+                                repository = repository,
+                                onNavigateToImporter = { overlayScreen = "importer" },
+                                onNavigateToMapWithRoom = { room ->
+                                    mapRoomQuery = room
+                                    currentTab = PrimaryBottomTab.CAMPUS
+                                },
+                                resetTrigger = if (currentTab == PrimaryBottomTab.TIMETABLE) tabResetCounter else 0
+                            )
+                            PrimaryBottomTab.GRADES -> GradesScreen(
+                                repository = repository,
+                                onNavigateToImporter = { overlayScreen = "importer" },
+                                onNavigateToMapWithRoom = { room ->
+                                    mapRoomQuery = room
+                                    currentTab = PrimaryBottomTab.CAMPUS
+                                },
+                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                                onNavigateToFocus = { overlayScreen = "focus" },
+                                onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                                resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
+                            )
+                            PrimaryBottomTab.CAMPUS -> CampusMapScreen(
+                                repository = repository,
+                                initialClassroomQuery = mapRoomQuery,
+                                onNavigateToElectricity = { overlayScreen = "electricity" },
+                                onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                                activeSchool = activeSession.school,
+                                resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
+                            )
+                            PrimaryBottomTab.PROFILE -> SettingsScreen(
+                                repository = repository,
+                                onBack = null,
+                                onNavigateToImporter = { overlayScreen = "importer" },
+                                onNavigateToMapWithRoom = { room ->
+                                    mapRoomQuery = room
+                                    currentTab = PrimaryBottomTab.CAMPUS
+                                },
+                                onNavigateToElectricity = { overlayScreen = "electricity" },
+                                onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
+                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToFocus = { overlayScreen = "focus" },
+                                onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                                activeSchool = activeSession.school,
+                                activeProfileLabel = activeSession.label,
+                                resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
+                            )
+                        }
+                    }
+
+                    // 软键盘弹出时自动收起底部悬浮椭圆导航栏，避免挤压输入区域
+                    AnimatedVisibility(
+                        visible = !isImeVisible,
+                        enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it },
+                        exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it },
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    ) {
+                        XPeachBottomDock(
+                            currentTab = currentTab,
+                            onSelectTab = { clicked ->
+                                if (currentTab == clicked) {
+                                    tabResetCounter++
+                                } else {
+                                    currentTab = clicked
+                                }
+                            }
                         )
                     }
-                }
-
-                // 软键盘弹出时自动收起底部悬浮椭圆导航栏，避免挤压输入区域
-                AnimatedVisibility(
-                    visible = !isImeVisible,
-                    enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it },
-                    exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                    XPeachBottomDock(
-                        currentTab = currentTab,
-                        onSelectTab = { clicked ->
-                            if (currentTab == clicked) {
-                                tabResetCounter++
-                            } else {
-                                currentTab = clicked
-                            }
-                        }
-                    )
                 }
             }
         }
@@ -915,11 +984,60 @@ private fun OnboardingWelcomeScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 if (isHautSchool) {
+                    val focusManager = LocalFocusManager.current
+                    val triggerLoginAndSync: () -> Unit = {
+                        if (!isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank()) {
+                            focusManager.clearFocus()
+                            scope.launch {
+                                val plainPwd = passwordInput
+                                isSyncing = true
+                                isErrorStatus = false
+                                syncStatusMessage = "正在获取课表、考试和成绩..."
+                                val result = HautLiveAcademicClient.fetchLiveAcademicData(
+                                    studentId = studentIdInput,
+                                    passwordPlain = plainPwd,
+                                    xnm = selectedXnm,
+                                    xqm = selectedXqm
+                                )
+                                passwordInput = ""
+                                isSyncing = false
+
+                                result.onSuccess { syncData ->
+                                    val applied = runCatching {
+                                        repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
+                                    }
+                                    if (applied.isFailure) {
+                                        isErrorStatus = true
+                                        syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
+                                        return@onSuccess
+                                    }
+                                    val saved = runCatching {
+                                        repository.saveAuthorizedSyncCredentials(
+                                            studentIdInput, plainPwd, selectedXnm, selectedXqm
+                                        )
+                                    }
+                                    repository.setAutoSyncEnabled(saved.isSuccess)
+                                    syncStatusMessage = syncData.syncSummaryText() +
+                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
+                                    repository.completeOnboarding()
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                }.onFailure { err ->
+                                    isErrorStatus = true
+                                    syncStatusMessage = err.message ?: "登录或同步失败"
+                                }
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = studentIdInput,
                         onValueChange = { studentIdInput = it },
                         label = { Text("学号") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        keyboardActions = KeyboardActions(
+                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                        ),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -932,6 +1050,10 @@ private fun OnboardingWelcomeScreen(
                         label = { Text("密码") },
                         singleLine = true,
                         visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = { triggerLoginAndSync() }
+                        ),
                         trailingIcon = {
                             IconButton(onClick = { showPassword = !showPassword }) {
                                 Icon(
@@ -997,46 +1119,7 @@ private fun OnboardingWelcomeScreen(
 
                     Button(
                         enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
-                        onClick = {
-                            scope.launch {
-                                val plainPwd = passwordInput
-                                isSyncing = true
-                                isErrorStatus = false
-                                syncStatusMessage = "正在获取课表、考试和成绩..."
-                                val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                                    studentId = studentIdInput,
-                                    passwordPlain = plainPwd,
-                                    xnm = selectedXnm,
-                                    xqm = selectedXqm
-                                )
-                                passwordInput = ""
-                                isSyncing = false
-
-                                result.onSuccess { syncData ->
-                                    val applied = runCatching {
-                                        repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
-                                    }
-                                    if (applied.isFailure) {
-                                        isErrorStatus = true
-                                        syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
-                                        return@onSuccess
-                                    }
-                                    val saved = runCatching {
-                                        repository.saveAuthorizedSyncCredentials(
-                                            studentIdInput, plainPwd, selectedXnm, selectedXqm
-                                        )
-                                    }
-                                    repository.setAutoSyncEnabled(saved.isSuccess)
-                                    syncStatusMessage = syncData.syncSummaryText() +
-                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
-                                    repository.completeOnboarding()
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                }.onFailure { err ->
-                                    isErrorStatus = true
-                                    syncStatusMessage = err.message ?: "登录或同步失败"
-                                }
-                            }
-                        },
+                        onClick = triggerLoginAndSync,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {

@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -815,21 +817,25 @@ fun XPeachFilterPill(
     modifier: Modifier = Modifier,
     leadingIcon: ImageVector? = null
 ) {
-    val bg = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-    val border = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-    } else {
-        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
-    }
-    val fg = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val bg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(180),
+        label = "pillBg"
+    )
+    val border by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        },
+        animationSpec = tween(180),
+        label = "pillBorder"
+    )
+    val fg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(180),
+        label = "pillFg"
+    )
 
     Row(
         modifier = modifier
@@ -870,21 +876,25 @@ fun XPeachFilterPill(
     modifier: Modifier = Modifier,
     leadingIcon: @Composable () -> Unit
 ) {
-    val bg = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-    val border = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-    } else {
-        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
-    }
-    val fg = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val bg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(180),
+        label = "pillBgCustom"
+    )
+    val border by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        },
+        animationSpec = tween(180),
+        label = "pillBorderCustom"
+    )
+    val fg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(180),
+        label = "pillFgCustom"
+    )
 
     Row(
         modifier = modifier
@@ -928,13 +938,21 @@ fun <T> XPeachSegmentedTabs(
     ) {
         for (option in options) {
             val isSelected = option == selectedOption
+            val tabBg by animateColorAsState(
+                targetValue = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                animationSpec = tween(180),
+                label = "segTabBg"
+            )
+            val tabFg by animateColorAsState(
+                targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                animationSpec = tween(180),
+                label = "segTabFg"
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(
-                        if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent
-                    )
+                    .background(tabBg)
                     .clickable { onSelect(option) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
@@ -943,11 +961,7 @@ fun <T> XPeachSegmentedTabs(
                     text = labelProvider(option),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (isSelected) {
-                        MaterialTheme.colorScheme.onSurface
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = tabFg,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
