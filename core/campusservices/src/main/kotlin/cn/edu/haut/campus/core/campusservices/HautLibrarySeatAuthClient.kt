@@ -18,6 +18,10 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -92,11 +96,70 @@ data class LibrarySeatBookingRecord(
     val startDate: String,
     val endDate: String,
     val status: LibrarySeatBookingStatus,
+    val createTime: String? = null,
     val signInTime: String? = null,
     val signOutTime: String? = null,
     val shotLeaveTime: String? = null,
-    val longShortLeave: Int? = null
+    val longShortLeave: Int? = null,
+    val description: String? = null
 ) {
+    companion object {
+        private val SHANGHAI_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+        private val DATE_TIME_PATTERNS = listOf(
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        )
+
+        fun parseShanghaiDateTimeEpochMillis(raw: String?): Long? {
+            val text = raw?.trim().orEmpty()
+            if (text.isEmpty()) return null
+            for (fmt in DATE_TIME_PATTERNS) {
+                val parsed = runCatching { LocalDateTime.parse(text, fmt) }.getOrNull()
+                if (parsed != null) {
+                    return parsed.atZone(SHANGHAI_ZONE).toInstant().toEpochMilli()
+                }
+            }
+            return null
+        }
+
+        /**
+         * 计算河工大图书馆后台下一次整 5 分钟（`:00` / `:05` / `:10` ...）闸机刷脸自动签到同步时刻文本（如 `"20:15"`）。
+         */
+        fun computeNextGateSyncTimeText(nowEpochMs: Long = System.currentTimeMillis()): String {
+            val zdt = Instant.ofEpochMilli(nowEpochMs).atZone(SHANGHAI_ZONE)
+            val minute = zdt.minute
+            val deltaMin = 5 - (minute % 5)
+            val nextSync = zdt.plusMinutes(deltaMin.toLong()).withSecond(0).withNano(0)
+            return "%02d:%02d".format(nextSync.hour, nextSync.minute)
+        }
+    }
+
+    val startEpochMillis: Long?
+        get() = parseShanghaiDateTimeEpochMillis(startDate)
+
+    val endEpochMillis: Long?
+        get() = parseShanghaiDateTimeEpochMillis(endDate)
+
+    /**
+     * 判断当前时刻是否已达到或超过预约开始时间 `startDate`。
+     *
+     * 河工大选座系统 (`wslib.haut.edu.cn`) 规定：当日选座默认将 `startDate` 设为创建后 5 分钟；
+     * 一旦 `now >= startDate`，`/seatbook/user/cancel` 会拒绝取消并返回「当前预约已开始，不能取消预约」，
+     * 此时必须通过入馆闸机自动签到（每整 5 分钟同步一次）并调用 `/seatbook/user/signoff`（签退释放）方可退座。
+     */
+    fun hasStarted(nowEpochMs: Long = System.currentTimeMillis()): Boolean {
+        val startMs = startEpochMillis ?: return false
+        return nowEpochMs >= startMs
+    }
+
+    /**
+     * 距离预约正式开始 (`startDate`) 剩余的可直接在线取消秒数；若已开始或无法解析则返回 `0L` / `null`。
+     */
+    fun remainingSecondsBeforeStart(nowEpochMs: Long = System.currentTimeMillis()): Long? {
+        val startMs = startEpochMillis ?: return null
+        return ((startMs - nowEpochMs) / 1000L).coerceAtLeast(0L)
+    }
+
     val isActive: Boolean
         get() = status in setOf(
             LibrarySeatBookingStatus.FULFILLED,
@@ -127,7 +190,7 @@ data class LibrarySeatBookingRecord(
             LibrarySeatBookingStatus.LEARNING,
             LibrarySeatBookingStatus.LEAVING,
             LibrarySeatBookingStatus.CONTINUED_LEARNING
-        )
+        ) || (status == LibrarySeatBookingStatus.FULFILLED && hasStarted())
 
     val timeWindowText: String
         get() {
@@ -479,10 +542,12 @@ object HautLibrarySeatAuthClient {
             startDate = startDate,
             endDate = endDate,
             status = status,
+            createTime = if (obj.isNull("createTime")) null else obj.optString("createTime").trim().takeIf { it.isNotEmpty() },
             signInTime = if (obj.isNull("signInTime")) null else obj.optString("signInTime").trim().takeIf { it.isNotEmpty() },
             signOutTime = if (obj.isNull("signOutTime")) null else obj.optString("signOutTime").trim().takeIf { it.isNotEmpty() },
             shotLeaveTime = if (obj.isNull("shotLeaveTime")) null else obj.optString("shotLeaveTime").trim().takeIf { it.isNotEmpty() },
-            longShortLeave = if (obj.isNull("longShortLeave")) null else obj.optInt("longShortLeave", 0).takeIf { it > 0 }
+            longShortLeave = if (obj.isNull("longShortLeave")) null else obj.optInt("longShortLeave", 0).takeIf { it > 0 },
+            description = if (obj.isNull("descr")) null else obj.optString("descr").trim().takeIf { it.isNotEmpty() }
         )
     }
 
@@ -535,6 +600,44 @@ object HautLibrarySeatAuthClient {
     }
 
     /**
+     * 判断取消预约失败是否因为预约已达到开始时间 (`now >= startDate`，返回「当前预约已开始，不能取消预约」)。
+     */
+    fun isCancelBlockedByStartedWindow(outcome: LibrarySeatActionOutcome): Boolean {
+        if (outcome.success) return false
+        val msg = outcome.message
+        return msg.contains("已开始") || (msg.contains("不能取消") && msg.contains("预约"))
+    }
+
+    /**
+     * 当取消预约遇到「当前预约已开始，不能取消预约」且尝试自动转「签退释放」时，根据签退响应生成最终结果。
+     *
+     * 业务机制（基于河工大 `wslib.haut.edu.cn` 真实后端规则）：
+     * 1. 当日选座强制将 `startDate` 设为创建后 5 分钟；一旦到达 `startDate`，`/seatbook/user/cancel` 即拒绝取消。
+     * 2. 若同学已刷脸过馆内闸机，后台每整 5 分钟（`:00` / `:05` / `:10` ...）自动将状态置为 `已签到(2)`，此时直接转调 `/seatbook/user/signoff` 即可立即释放座位。
+     * 3. 若同学尚未刷脸入馆（或正处于开始时间与整 5 分钟闸机同步点之间的最多 4 分钟窗口），`/seatbook/user/signoff` 会返回「请先签到」，此时向用户明确展示原因与退座指引。
+     */
+    fun resolveStartedBookingCancelFallback(
+        cancelOutcome: LibrarySeatActionOutcome,
+        signOffOutcome: LibrarySeatActionOutcome,
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): LibrarySeatActionOutcome {
+        if (signOffOutcome.success) {
+            return LibrarySeatActionOutcome(
+                success = true,
+                message = "当前预约已开始，已自动为您改用「签退释放」并成功退座",
+                rawCode = 200
+            )
+        }
+        val nextSync = LibrarySeatBookingRecord.computeNextGateSyncTimeText(nowEpochMs)
+        return LibrarySeatActionOutcome(
+            success = false,
+            message = "当前预约已满 5 分钟正式开始，学校系统禁止在「开始后、未签到前」直接取消。" +
+                "若您已刷脸入馆，系统将在 $nextSync 自动同步签到，届时点「签退释放」即可退座；若尚未入馆，请刷脸过闸机自动签到后再点「签退释放」。",
+            rawCode = cancelOutcome.rawCode
+        )
+    }
+
+    /**
      * 拉取用户当前有效预约、进行中预约、最近历史预约及暂离时长规则。
      */
     suspend fun fetchSeatBookingOverview(
@@ -552,11 +655,11 @@ object HautLibrarySeatAuthClient {
 
             val inProgressBody = runCatching {
                 executeAuthenticatedApiGet(
-                    url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=10&pageNum=1",
+                    url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=15&pageNum=1",
                     cleanToken = cleanToken
                 )
             }.getOrDefault("")
-            val inProgressList = if (inProgressBody.isNotBlank()) {
+            val rawInProgressList = if (inProgressBody.isNotBlank()) {
                 parseBookingListResponse(inProgressBody)
             } else {
                 emptyList()
@@ -564,11 +667,11 @@ object HautLibrarySeatAuthClient {
 
             val historyBody = runCatching {
                 executeAuthenticatedApiGet(
-                    url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=10&pageNum=1",
+                    url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=15&pageNum=1",
                     cleanToken = cleanToken
                 )
             }.getOrDefault("")
-            val historyList = if (historyBody.isNotBlank()) {
+            val rawHistoryList = if (historyBody.isNotBlank()) {
                 parseBookingListResponse(historyBody)
             } else {
                 emptyList()
@@ -582,14 +685,21 @@ object HautLibrarySeatAuthClient {
             }.getOrDefault("")
             val (shortMin, longMin) = parseRuleLeaveMinutes(ruleBody)
 
+            // `/seatbook/user/mybookingInProgress` 会返回当日全部预约（包含已取消 status=5 / 已签退 status=6），
+            // 此处严格将活跃预约与今日已结束记录分离，保证「最近预约记录」完整展示今日已取消/已签退记录。
+            val activeInProgress = rawInProgressList.filter { it.isActive }
+            val finishedToday = rawInProgressList.filter { !it.isActive }
+            val mergedHistory = (finishedToday + rawHistoryList)
+                .distinctBy { it.bookingId }
+                .sortedByDescending { it.bookingId }
+
             val effectiveCurrent = currentRecord?.takeIf { it.isActive }
-                ?: inProgressList.firstOrNull { it.isActive }
-                ?: currentRecord
+                ?: activeInProgress.firstOrNull()
 
             LibrarySeatOverviewSnapshot(
                 currentBooking = effectiveCurrent,
-                inProgressBookings = inProgressList,
-                recentHistory = historyList,
+                inProgressBookings = activeInProgress,
+                recentHistory = mergedHistory,
                 shortLeaveMinutes = shortMin,
                 longLeaveMinutes = longMin,
                 fetchedAtEpochMs = System.currentTimeMillis()
@@ -599,6 +709,11 @@ object HautLibrarySeatAuthClient {
 
     /**
      * 执行座位控制动作（取消预约、签到、快速签到、短暂离、长暂离、暂离返回、续座、签退释放）。
+     *
+     * 当执行 [LibrarySeatActionType.CANCEL_BOOKING] 且遇到「当前预约已开始，不能取消预约」时，
+     * 自动降级尝试「签退释放 (`signoff`)」及「签到+签退」链路：
+     * - 若用户已在馆内闸机刷脸自动签到，将直接通过 `signoff` 完成座位释放；
+     * - 若仍处于待刷脸签到状态，返回明确的整 5 分钟同步时刻与闸机刷脸签退指引。
      */
     suspend fun performSeatAction(
         rawToken: String,
@@ -634,7 +749,63 @@ object HautLibrarySeatAuthClient {
                     "$WSLIB_API_BASE_URL/seatbook/user/signoff?bookingid=$bookingId"
             }
             val body = executeAuthenticatedApiGet(url = targetUrl, cleanToken = cleanToken)
-            parseActionOutcome(body, action)
+            val initialOutcome = parseActionOutcome(body, action)
+
+            if (action == LibrarySeatActionType.CANCEL_BOOKING &&
+                isCancelBlockedByStartedWindow(initialOutcome) &&
+                bookingId != null &&
+                bookingId > 0L
+            ) {
+                // 1) 先尝试直接签退释放（若后台整 5 分钟闸机任务已自动签到，此调用将直接成功释放座位）
+                val signOffUrl = "$WSLIB_API_BASE_URL/seatbook/user/signoff?bookingid=$bookingId"
+                val firstSignOffBody = runCatching {
+                    executeAuthenticatedApiGet(url = signOffUrl, cleanToken = cleanToken)
+                }.getOrDefault("")
+                val firstSignOffOutcome = parseActionOutcome(firstSignOffBody, LibrarySeatActionType.SIGN_OUT)
+                if (firstSignOffOutcome.success) {
+                    return@runCatching resolveStartedBookingCancelFallback(
+                        cancelOutcome = initialOutcome,
+                        signOffOutcome = firstSignOffOutcome
+                    )
+                }
+
+                // 2) 若尚未签到，尝试触发在线签到 + 快速签到后再尝试签退释放
+                val signInUrl = "$WSLIB_API_BASE_URL/seatbook/user/signin?bookingid=$bookingId&channelType=1003&positionType=1"
+                val signInOutcome = runCatching {
+                    parseActionOutcome(
+                        executeAuthenticatedApiGet(url = signInUrl, cleanToken = cleanToken),
+                        LibrarySeatActionType.SIGN_IN
+                    )
+                }.getOrNull()
+                val quickSignInUrl = "$WSLIB_API_BASE_URL/seatbook/user/quickSignIn?channelType=1003&positionType=1&status=1"
+                val quickSignInOutcome = if (signInOutcome?.success != true) {
+                    runCatching {
+                        parseActionOutcome(
+                            executeAuthenticatedApiGet(url = quickSignInUrl, cleanToken = cleanToken),
+                            LibrarySeatActionType.QUICK_SIGN_IN
+                        )
+                    }.getOrNull()
+                } else {
+                    null
+                }
+                if (signInOutcome?.success == true || quickSignInOutcome?.success == true) {
+                    val secondSignOffBody = runCatching {
+                        executeAuthenticatedApiGet(url = signOffUrl, cleanToken = cleanToken)
+                    }.getOrDefault("")
+                    val secondSignOffOutcome = parseActionOutcome(secondSignOffBody, LibrarySeatActionType.SIGN_OUT)
+                    return@runCatching resolveStartedBookingCancelFallback(
+                        cancelOutcome = initialOutcome,
+                        signOffOutcome = secondSignOffOutcome
+                    )
+                }
+
+                return@runCatching resolveStartedBookingCancelFallback(
+                    cancelOutcome = initialOutcome,
+                    signOffOutcome = firstSignOffOutcome
+                )
+            }
+
+            initialOutcome
         }
     }
 

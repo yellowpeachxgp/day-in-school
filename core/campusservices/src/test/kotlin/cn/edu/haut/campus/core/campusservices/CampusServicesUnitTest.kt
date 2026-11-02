@@ -420,8 +420,8 @@ class CampusServicesUnitTest {
                 "regionName": "莲花街图书馆 三楼A区",
                 "buildingLayerRegionId": 15,
                 "bookingStatus": "1",
-                "startDate": "2026-11-02 08:00:00",
-                "endDate": "2026-11-02 22:00:00"
+                "startDate": "2099-11-02 08:00:00",
+                "endDate": "2099-11-02 22:00:00"
               }
             }
         """.trimIndent()
@@ -431,10 +431,16 @@ class CampusServicesUnitTest {
         assertEquals("莲花街图书馆 三楼A区", waitingRecord.regionName)
         assertEquals("A086", waitingRecord.seatName)
         assertEquals(LibrarySeatBookingStatus.FULFILLED, waitingRecord.status)
+        assertFalse(waitingRecord.hasStarted())
         assertTrue(waitingRecord.canSignIn)
         assertTrue(waitingRecord.canCancel)
         assertFalse(waitingRecord.canLeave)
         assertFalse(waitingRecord.canSignOut)
+
+        val startedUncheckedRecord = waitingRecord.copy(startDate = "2020-01-01 08:00:00")
+        assertTrue(startedUncheckedRecord.hasStarted())
+        assertEquals(0L, startedUncheckedRecord.remainingSecondsBeforeStart())
+        assertTrue(startedUncheckedRecord.canSignOut)
 
         val studyingJson = """
             {
@@ -541,5 +547,27 @@ class CampusServicesUnitTest {
         )
         assertFalse(leaveFailOutcome.success)
         assertEquals("当前时段暂不支持长暂离", leaveFailOutcome.message)
+
+        val startedCancelBlockedOutcome = HautLibrarySeatAuthClient.parseActionOutcome(
+            rawJson = """{"code":-500,"msg":"当前预约已开始，不能取消预约"}""",
+            action = LibrarySeatActionType.CANCEL_BOOKING
+        )
+        assertFalse(startedCancelBlockedOutcome.success)
+        assertTrue(HautLibrarySeatAuthClient.isCancelBlockedByStartedWindow(startedCancelBlockedOutcome))
+
+        val autoSignOffSuccessOutcome = HautLibrarySeatAuthClient.resolveStartedBookingCancelFallback(
+            cancelOutcome = startedCancelBlockedOutcome,
+            signOffOutcome = LibrarySeatActionOutcome(success = true, message = "已成功签退并释放座位", rawCode = 200)
+        )
+        assertTrue(autoSignOffSuccessOutcome.success)
+        assertTrue(autoSignOffSuccessOutcome.message.contains("签退释放"))
+
+        val gateSignInPendingOutcome = HautLibrarySeatAuthClient.resolveStartedBookingCancelFallback(
+            cancelOutcome = startedCancelBlockedOutcome,
+            signOffOutcome = LibrarySeatActionOutcome(success = false, message = "请先签到", rawCode = 666)
+        )
+        assertFalse(gateSignInPendingOutcome.success)
+        assertTrue(gateSignInPendingOutcome.message.contains("刷脸入馆"))
+        assertTrue(gateSignInPendingOutcome.message.contains("签退释放"))
     }
 }

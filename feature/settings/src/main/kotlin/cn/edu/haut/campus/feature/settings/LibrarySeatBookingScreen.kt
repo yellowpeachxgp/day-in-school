@@ -152,6 +152,7 @@ fun LibrarySeatBookingScreen(
     var pendingActionRequest by remember { mutableStateOf<PendingSeatActionRequest?>(null) }
     var isExecutingSeatAction by remember { mutableStateOf(false) }
     var actionFeedbackBanner by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var nowEpochMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     var inputStudentId by remember(prefs?.savedStudentId) {
         mutableStateOf(prefs?.savedStudentId.orEmpty())
@@ -238,11 +239,24 @@ fun LibrarySeatBookingScreen(
         }
     }
 
-    // 自动在 5 秒后收起顶部操作反馈提示条
+    // 自动收起顶部操作反馈提示条（成功提示 5 秒，详细规则说明 9 秒）
     LaunchedEffect(actionFeedbackBanner) {
-        if (actionFeedbackBanner != null) {
-            delay(5_000L)
-            actionFeedbackBanner = null
+        val current = actionFeedbackBanner ?: return@LaunchedEffect
+        delay(if (current.first) 5_000L else 9_000L)
+        actionFeedbackBanner = null
+    }
+
+    // 1 秒级实时倒计时与后台状态同步（确保选座后 5 分钟免入馆取消倒计时实时跳动，且整 5 分钟闸机签到同步后立即刷新按钮）
+    LaunchedEffect(repository, sessionState) {
+        if (repository == null || sessionState !is LibrarySeatSessionState.Authenticated) return@LaunchedEffect
+        var tickCount = 0
+        while (isActive) {
+            delay(1_000L)
+            nowEpochMs = System.currentTimeMillis()
+            tickCount++
+            if (tickCount % 10 == 0 && !isRefreshingOverview && !isExecutingSeatAction) {
+                refreshSeatOverviewAsync()
+            }
         }
     }
 
@@ -574,6 +588,27 @@ fun LibrarySeatBookingScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
+                        if (activeBooking.status == LibrarySeatBookingStatus.FULFILLED) {
+                            val remainSec = activeBooking.remainingSecondsBeforeStart(nowEpochMs)
+                            if (remainSec != null && remainSec > 0L) {
+                                val mm = remainSec / 60L
+                                val ss = remainSec % 60L
+                                Text(
+                                    text = "⏱ 免入馆取消窗口剩余 %d分%02d秒（系统默认选座 5 分钟后正式生效，开始后未刷脸入馆不可直接取消）".format(mm, ss),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            } else if (activeBooking.hasStarted(nowEpochMs)) {
+                                val nextSync = LibrarySeatBookingRecord.computeNextGateSyncTimeText(nowEpochMs)
+                                Text(
+                                    text = "⚠️ 预约已正式开始：若您已刷脸入馆，系统每整 5 分钟（预计 $nextSync）同步签到后即可「签退释放」；未入馆需先过闸机刷脸自动签到。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
                         // 原生快捷动作控件行：取消预约 / 签到 / 短暂离 / 长暂离 / 暂离返回 / 续座 / 签退释放
                         Row(
                             modifier = Modifier
@@ -582,6 +617,34 @@ fun LibrarySeatBookingScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (activeBooking.canCancel) {
+                                val remainSec = activeBooking.remainingSecondsBeforeStart(nowEpochMs)
+                                val cancelLabel = when {
+                                    remainSec != null && remainSec > 0L ->
+                                        "取消预约 (%d:%02d)".format(remainSec / 60L, remainSec % 60L)
+                                    activeBooking.hasStarted(nowEpochMs) ->
+                                        "取消 / 自动退座"
+                                    else -> "取消预约"
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        pendingActionRequest = PendingSeatActionRequest(
+                                            action = LibrarySeatActionType.CANCEL_BOOKING,
+                                            booking = activeBooking
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text(
+                                        cancelLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+
                             if (activeBooking.canSignIn) {
                                 FilledTonalButton(
                                     onClick = {
@@ -595,26 +658,6 @@ fun LibrarySeatBookingScreen(
                                     modifier = Modifier.height(32.dp)
                                 ) {
                                     Text("立即签到", style = MaterialTheme.typography.labelMedium)
-                                }
-                            }
-
-                            if (activeBooking.canCancel) {
-                                OutlinedButton(
-                                    onClick = {
-                                        pendingActionRequest = PendingSeatActionRequest(
-                                            action = LibrarySeatActionType.CANCEL_BOOKING,
-                                            booking = activeBooking
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Text(
-                                        "取消预约",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
                                 }
                             }
 
@@ -889,6 +932,29 @@ fun LibrarySeatBookingScreen(
                                 }
                                 SchoolWebSessionManager.persistCookiesAsync()
                             }
+
+                            override fun doUpdateVisitedHistory(
+                                view: WebView?,
+                                url: String?,
+                                isReload: Boolean
+                            ) {
+                                super.doUpdateVisitedHistory(view, url, isReload)
+                                if (!url.isNullOrBlank()) {
+                                    currentUrl = url
+                                }
+                                // uni-app 选座 H5 采用 #/seatPage/... 单页 Hash 路由切换，不会触发 onPageFinished；
+                                // 在路由变更（如选座成功跳转 AddBeatStatus 或进入 SeatBooking）时立即同步原生座位控制台与倒计时。
+                                if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
+                                    view?.evaluateJavascript(
+                                        OfficialWebScripts.buildLibraryTokenSyncScript(
+                                            rawToken = activeToken,
+                                            navigateToSelectRoom = false
+                                        ),
+                                        null
+                                    )
+                                    refreshSeatOverviewAsync()
+                                }
+                            }
                         }
                         val initialEntryUrl = OfficialServiceRoutePolicy.buildAuthenticatedSeatBookingUrl(activeToken)
                         loadUrl(initialEntryUrl)
@@ -1033,12 +1099,18 @@ fun LibrarySeatBookingScreen(
 
     // 原生座位动作二次确认弹窗（取消预约 / 签到 / 短暂离 / 长暂离 / 暂离返回 / 续座 / 签退释放）
     pendingActionRequest?.let { req ->
-        val customDetail = when (req.action) {
-            LibrarySeatActionType.SHORT_LEAVE -> {
+        val customDetail = when {
+            req.action == LibrarySeatActionType.CANCEL_BOOKING && req.booking?.hasStarted(nowEpochMs) == true -> {
+                val nextSync = LibrarySeatBookingRecord.computeNextGateSyncTimeText(nowEpochMs)
+                "当前已到达预约开始时间（选座满 5 分钟），系统将自动尝试「直接取消 → 自动转签退释放」链路：\n" +
+                    "• 若您已刷脸入馆且满整 5 分钟同步（预计 $nextSync），将自动为您完成签退退座；\n" +
+                    "• 若您尚未刷脸入馆，学校系统需先过馆内闸机刷脸自动签到后方可签退释放。"
+            }
+            req.action == LibrarySeatActionType.SHORT_LEAVE -> {
                 val min = seatOverview?.shortLeaveMinutes ?: 30
                 "座位将为您保留 $min 分钟，请在规定时间内返回并点击「暂离返回」，否则将自动释放座位并记违约。确定办理短暂离开吗？"
             }
-            LibrarySeatActionType.LONG_LEAVE -> {
+            req.action == LibrarySeatActionType.LONG_LEAVE -> {
                 val min = seatOverview?.longLeaveMinutes ?: 120
                 "座位将为您保留 $min 分钟，请在规定时间内返回并点击「暂离返回」，否则将自动释放座位并记违约。确定办理长时间暂离吗？"
             }

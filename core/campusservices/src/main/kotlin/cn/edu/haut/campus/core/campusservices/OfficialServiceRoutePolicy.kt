@@ -259,9 +259,94 @@ object OfficialWebScripts {
                             if (typeof getApp === 'function' && getApp() && getApp().globalData) {
                                 getApp().globalData.token = bearer;
                                 getApp().globalData.isLogin = true;
+                                if (!getApp().globalData.tmplIds) {
+                                    getApp().globalData.tmplIds = {
+                                        seatTemplateId: '1',
+                                        seatBookingStartTmplId: '2',
+                                        seatBreakTmplId: '3',
+                                        seatShotLeaveTmplId: '4',
+                                        seatLeaveBackTmplId: '5',
+                                        seatBookingEndTmplId: '6'
+                                    };
+                                }
                             }
                         } catch (_) {}
                     }
+                    try {
+                        if (typeof window.wx === 'undefined') {
+                            window.wx = {};
+                        }
+                        if (typeof window.wx.getSetting !== 'function') {
+                            window.wx.getSetting = function(opt) {
+                                if (opt && typeof opt.success === 'function') {
+                                    opt.success({ subscriptionsSetting: { mainSwitch: true, itemSettings: null } });
+                                }
+                            };
+                        }
+                        if (typeof window.wx.requestSubscribeMessage !== 'function') {
+                            window.wx.requestSubscribeMessage = function(opt) {
+                                if (opt && typeof opt.success === 'function') {
+                                    var res = {};
+                                    var ids = (opt && opt.tmplIds) || [];
+                                    for (var i = 0; i < ids.length; i++) res[ids[i]] = 'accept';
+                                    opt.success(res);
+                                }
+                            };
+                        }
+                        if (typeof window.wx.showToast !== 'function') {
+                            window.wx.showToast = function() {};
+                        }
+                        if (typeof window.wx.showModal !== 'function') {
+                            window.wx.showModal = function() {};
+                        }
+                    } catch (_) {}
+                    try {
+                        if (!window.__hautSeatCancelFallbackInstalled && typeof XMLHttpRequest !== 'undefined') {
+                            window.__hautSeatCancelFallbackInstalled = true;
+                            var origOpen = XMLHttpRequest.prototype.open;
+                            var origSend = XMLHttpRequest.prototype.send;
+                            XMLHttpRequest.prototype.open = function(method, url) {
+                                this.__hautReqUrl = typeof url === 'string' ? url : '';
+                                return origOpen.apply(this, arguments);
+                            };
+                            XMLHttpRequest.prototype.send = function() {
+                                var xhr = this;
+                                xhr.addEventListener('readystatechange', function() {
+                                    if (xhr.readyState === 4 && xhr.__hautReqUrl && xhr.__hautReqUrl.indexOf('/seatbook/user/cancel') >= 0) {
+                                        try {
+                                            var data = JSON.parse(xhr.responseText || '{}');
+                                            if (data && data.code !== 200 && String(data.msg || '').indexOf('已开始') >= 0) {
+                                                var mBid = /[?&]bookingid=(\d+)/i.exec(xhr.__hautReqUrl);
+                                                var bid = mBid ? mBid[1] : '';
+                                                var tk = localStorage.getItem('hzd_token') || '';
+                                                if (bid && tk) {
+                                                    fetch('/spacelink/api/seatbook/user/signoff?bookingid=' + bid, {
+                                                        method: 'GET',
+                                                        headers: { 'Authorization': tk, 'Accept': 'application/json' }
+                                                    }).then(function(r) { return r.json(); }).then(function(so) {
+                                                        if (so && so.code === 200) {
+                                                            if (typeof uni !== 'undefined' && uni.showToast) {
+                                                                uni.showToast({ icon: 'none', title: '预约已开始，已自动为您签退释放座位', duration: 3000 });
+                                                            }
+                                                            setTimeout(function() { location.reload(); }, 800);
+                                                        } else if (typeof uni !== 'undefined' && uni.showModal) {
+                                                            uni.showModal({
+                                                                title: '预约已生效（满5分钟）',
+                                                                content: '河工大图书馆规定当日选座 5 分钟后正式开始，开始后未签到不可直接取消。\n\n• 若您已刷脸入馆：系统每整 5 分钟（:00/:05/:10）自动同步签到，同步后点击顶部「签退释放」即可退座。\n• 若尚未入馆：请刷脸过闸机自动签到后再点击「签退释放」。',
+                                                                showCancel: false,
+                                                                confirmText: '知道了'
+                                                            });
+                                                        }
+                                                    }).catch(function() {});
+                                                }
+                                            }
+                                        } catch (_) {}
+                                    }
+                                });
+                                return origSend.apply(this, arguments);
+                            };
+                        }
+                    } catch (_) {}
                     if ($navigateLiteral &&
                         location.pathname === '/h5/index.html' &&
                         !location.hash.startsWith('#/seatPage/')) {
