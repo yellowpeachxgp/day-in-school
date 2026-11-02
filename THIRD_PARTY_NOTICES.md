@@ -104,3 +104,27 @@ SOFTWARE.
    - 仅用于区分国际学生 5.0 绩点办法与普通本科生绩点规则，不将其作为普通本科默认 GPA 公式。
 5. **河南工业大学莲花街校区地图参考（`https://www.haut.edu.cn/info/1120/1030.htm`）**：
    - 仅用于人工核对校内主要建筑名称与地理方位，未抓取或分发学校官方地图图片。
+
+---
+
+## 5. ExpressAssistant（Parcel Hub 快递聚合中心）归属、改编与合规声明
+
+- **上游仓库**：[Halo0sama/ExpressAssistant](https://github.com/Halo0sama/ExpressAssistant)
+- **锁定提交**：`b892565502d381a58a5a2c57e6d9068e07648c7a`（对应版本 `v0.7.2`）
+- **开源许可**：MIT License（Copyright (c) 2026 Halo0sama，完整原文保存在 [`licenses/ExpressAssistant-MIT.txt`](licenses/ExpressAssistant-MIT.txt)）
+
+本项目在 Apache-2.0 许可下，对 `Halo0sama/ExpressAssistant`（MIT 许可）的领域模型、多平台快递发现与去重合并策略、取件码与预计送达时间（ETA）规则解析、日报汇总及可选 AI 快递助手工具理念进行了架构重构与参考，并将其拆分为符合 `SYSTEM_CONTRACT.md` 清洁架构与 `PluginBroker` 最小权限契约的 `:core:parcel-*`、`:feature:parcel-*` 与 `:widget:parcel` 模块族。
+
+### 明确重构与不复制的高风险及品牌材料声明
+
+1. **安全与隐私重构**：
+   - 不复制上游 `Store.kt` 中以明文 `SharedPreferences` 存储平台 Cookie、Token 及 AI Key 的实现；全部改为 Android Keystore AES-GCM 加密凭据仓（`:core:parcel-security`）与多 Profile 隔离的 Room 数据库（`:core:parcel-data`）。
+   - 不复制 `XiaomiLoginActivity.java` 中的 `WebView.setWebContentsDebuggingEnabled(true)` 及 Cookie/手机号明文日志输出；不复制 `CookieManager.removeAllCookies` 跨平台清空全局会话的做法。
+   - 不复制默认暴露在 `127.0.0.1:8765` 的无鉴权明文 `LocalApiServer.kt` 及 `Shizuku` 依赖。
+2. **授权与商业边界**：
+   - 小米账号不能作为京东、淘宝/菜鸟或拼多多的统一授权票据；各来源账号独立授权、独立撤销。
+   - 任何未经官方消费者 API 明确授权的私有协议或网页抓取路径均由 [`docs/parcel/PROVIDER_AUTHORITY_MATRIX.md`](docs/parcel/PROVIDER_AUTHORITY_MATRIX.md) 严格门禁控制（默认 `RESEARCH_ONLY` / `MANUAL_ONLY` / `MOCK_READY`），绝不作为商业生产服务默认开启，也不上传至 Campus Cloud 或 XPEACH SSO。
+3. **品牌与美术资产隔离**：
+   - 不复制上游“云雀 / Lark”品牌名称、应用图标或 XML 布局资源；全部使用本项目原生 Jetpack Compose Bento 设计系统独立实现。
+   - 详细的逐文件来源映射见 [`docs/provenance/PARCEL_HUB_UPSTREAM.md`](docs/provenance/PARCEL_HUB_UPSTREAM.md)。
+
