@@ -60,6 +60,162 @@ sealed interface LibrarySeatSessionState {
 }
 
 /**
+ * 河南工业大学图书馆空间预约系统 (`wslib.haut.edu.cn`) 座位预约状态枚举（对应官方 `bookingStatus` 1..7）。
+ */
+enum class LibrarySeatBookingStatus(val code: Int, val label: String) {
+    FULFILLED(1, "待履约签到"),
+    LEARNING(2, "学习使用中"),
+    LEAVING(3, "中途暂离中"),
+    CONTINUED_LEARNING(4, "续座学习中"),
+    CANCELLED(5, "已取消"),
+    SIGNED_OUT(6, "已签退"),
+    DEFAULTED(7, "已违约"),
+    UNKNOWN(0, "未知状态");
+
+    companion object {
+        fun fromCode(raw: String?): LibrarySeatBookingStatus {
+            val code = raw?.trim()?.toIntOrNull() ?: 0
+            return entries.firstOrNull { it.code == code } ?: UNKNOWN
+        }
+    }
+}
+
+/**
+ * 图书馆座位预约单条记录模型（兼容 `/seatbook/user/my/crrentbooking`、`/seatbook/user/mybookingInProgress` 与 `/seatbook/user/mybookinghis`）。
+ */
+data class LibrarySeatBookingRecord(
+    val bookingId: Long,
+    val seatId: Long?,
+    val seatName: String,
+    val regionName: String,
+    val buildingLayerRegionId: Long?,
+    val startDate: String,
+    val endDate: String,
+    val status: LibrarySeatBookingStatus,
+    val signInTime: String? = null,
+    val signOutTime: String? = null,
+    val shotLeaveTime: String? = null,
+    val longShortLeave: Int? = null
+) {
+    val isActive: Boolean
+        get() = status in setOf(
+            LibrarySeatBookingStatus.FULFILLED,
+            LibrarySeatBookingStatus.LEARNING,
+            LibrarySeatBookingStatus.LEAVING,
+            LibrarySeatBookingStatus.CONTINUED_LEARNING
+        )
+
+    val canSignIn: Boolean
+        get() = status == LibrarySeatBookingStatus.FULFILLED
+
+    val canCancel: Boolean
+        get() = status == LibrarySeatBookingStatus.FULFILLED
+
+    val canLeave: Boolean
+        get() = status == LibrarySeatBookingStatus.LEARNING ||
+            status == LibrarySeatBookingStatus.CONTINUED_LEARNING
+
+    val canReturnFromLeave: Boolean
+        get() = status == LibrarySeatBookingStatus.LEAVING
+
+    val canRenew: Boolean
+        get() = status == LibrarySeatBookingStatus.LEARNING ||
+            status == LibrarySeatBookingStatus.CONTINUED_LEARNING
+
+    val canSignOut: Boolean
+        get() = status in setOf(
+            LibrarySeatBookingStatus.LEARNING,
+            LibrarySeatBookingStatus.LEAVING,
+            LibrarySeatBookingStatus.CONTINUED_LEARNING
+        )
+
+    val timeWindowText: String
+        get() {
+            val startPart = startDate.trim()
+            val endTimeOnly = endDate.trim().substringAfter(' ', endDate.trim()).removeSuffix(":00")
+            val cleanStart = startPart.removeSuffix(":00")
+            return if (cleanStart.isNotEmpty() && endTimeOnly.isNotEmpty()) {
+                "$cleanStart - $endTimeOnly"
+            } else {
+                listOf(startPart, endDate.trim()).filter { it.isNotEmpty() }.joinToString(" - ")
+            }
+        }
+
+    val displaySeatTitle: String
+        get() {
+            val cleanSeat = seatName.trim()
+            val cleanRegion = regionName.trim()
+            return when {
+                cleanSeat.isNotEmpty() && cleanRegion.isNotEmpty() && cleanSeat.startsWith(cleanRegion) ->
+                    "${cleanSeat}号座"
+                cleanSeat.isNotEmpty() && cleanRegion.isNotEmpty() ->
+                    "$cleanRegion · ${cleanSeat}号座"
+                cleanSeat.isNotEmpty() -> "${cleanSeat}号座"
+                cleanRegion.isNotEmpty() -> cleanRegion
+                else -> "预约编号 #$bookingId"
+            }
+        }
+}
+
+/**
+ * 图书馆座位预约操作类型（严格对应 `wslib.haut.edu.cn/spacelink/api` 真实端点）。
+ */
+enum class LibrarySeatActionType(
+    val title: String,
+    val confirmMessage: String,
+    val requiresBookingId: Boolean = true
+) {
+    SIGN_IN(
+        title = "签到入座",
+        confirmMessage = "确认立即签到入座当前预约座位吗？（移动端签到需配合馆内蓝牙或现场核验）"
+    ),
+    QUICK_SIGN_IN(
+        title = "快速签到",
+        confirmMessage = "确认发起一键快速签到吗？",
+        requiresBookingId = false
+    ),
+    CANCEL_BOOKING(
+        title = "取消预约",
+        confirmMessage = "确认取消该座位预约吗？取消后座位将立即释放给其他同学。"
+    ),
+    SHORT_LEAVE(
+        title = "短暂离开",
+        confirmMessage = "确认办理中途短暂离开（默认保留座位 30 分钟）吗？请在规定时间内点击「暂离返回」，否则将自动释放座位并记违约。"
+    ),
+    LONG_LEAVE(
+        title = "长时暂离",
+        confirmMessage = "确认办理中途长时间暂离（默认保留座位 120 分钟）吗？请在规定时间内点击「暂离返回」，否则将自动释放座位并记违约。"
+    ),
+    LEAVE_BACK(
+        title = "暂离返回",
+        confirmMessage = "确认您已返回预约座位并恢复学习状态吗？"
+    ),
+    RENEW_SEAT(
+        title = "续约座位",
+        confirmMessage = "确认续约当前正在使用的座位吗？"
+    ),
+    SIGN_OUT(
+        title = "签退释放",
+        confirmMessage = "确认结束使用并签退释放当前座位吗？签退后本次预约即告完成。"
+    )
+}
+
+data class LibrarySeatActionOutcome(
+    val success: Boolean,
+    val message: String,
+    val rawCode: Int = 200
+)
+
+data class LibrarySeatOverviewSnapshot(
+    val currentBooking: LibrarySeatBookingRecord?,
+    val inProgressBookings: List<LibrarySeatBookingRecord>,
+    val recentHistory: List<LibrarySeatBookingRecord>,
+    val shortLeaveMinutes: Int = 30,
+    val longLeaveMinutes: Int = 120,
+    val fetchedAtEpochMs: Long = System.currentTimeMillis()
+)
+
+/**
  * 基于 Android Keystore 非导出 AES-256-GCM 密钥的图书馆座位预约持久化 Cookie 与 Token 安全仓。
  *
  * 将统一身份认证 `CASTGC` Cookie 与 `wslib.haut.edu.cn` 会话 Token 加密保存在本地，
@@ -214,7 +370,12 @@ object HautLibrarySeatAuthClient {
     const val CAS_TICKET_LOGIN_SERVICE_URL = "https://wslib.haut.edu.cn/stage-api/api/caslogin/ticketlogin"
     const val CAS_LOGIN_ENTRY_URL =
         "https://mapp.haut.edu.cn/cas/login?service=https://wslib.haut.edu.cn/stage-api/api/caslogin/ticketlogin"
-    const val WSLIB_USER_INFO_URL = "https://wslib.haut.edu.cn/spacelink/api/h5user/my/userinfo"
+    const val WSLIB_API_BASE_URL = "https://wslib.haut.edu.cn/spacelink/api"
+    const val WSLIB_USER_INFO_URL = "$WSLIB_API_BASE_URL/h5user/my/userinfo"
+    const val WSLIB_CURRENT_BOOKING_URL = "$WSLIB_API_BASE_URL/seatbook/user/my/crrentbooking"
+    const val WSLIB_IN_PROGRESS_BOOKINGS_URL = "$WSLIB_API_BASE_URL/seatbook/user/mybookingInProgress"
+    const val WSLIB_HISTORY_BOOKINGS_URL = "$WSLIB_API_BASE_URL/seatbook/user/mybookinghis"
+    const val WSLIB_RULE_URL = "$WSLIB_API_BASE_URL/seatbook/layout/rule"
 
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
@@ -268,6 +429,233 @@ object HautLibrarySeatAuthClient {
             cardNo = data.optString("cardNo").trim(),
             breakNum = data.optString("breakNum", "0").trim()
         )
+    }
+
+    /**
+     * 解析 `/spacelink/api/seatbook/user/my/crrentbooking` 返回的当前有效预约。
+     * 若 `code == 401` 则抛出 [LibrarySeatSessionExpiredException] 以便调用方触发后台自动重登。
+     */
+    fun parseCurrentBookingResponse(rawJson: String): LibrarySeatBookingRecord? {
+        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull() ?: return null
+        val code = root.optInt("code", -1)
+        if (code == 401) throw LibrarySeatSessionExpiredException()
+        if (code != 200) return null
+        val data = root.optJSONObject("data") ?: root.optJSONObject("booking") ?: return null
+        return parseBookingRecordObject(data)
+    }
+
+    /**
+     * 解析 `/spacelink/api/seatbook/user/mybookingInProgress` 或 `/spacelink/api/seatbook/user/mybookinghis` 返回的预约列表。
+     */
+    fun parseBookingListResponse(rawJson: String): List<LibrarySeatBookingRecord> {
+        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull() ?: return emptyList()
+        val code = root.optInt("code", -1)
+        if (code == 401) throw LibrarySeatSessionExpiredException()
+        if (code != 200) return emptyList()
+        val rows = root.optJSONArray("rows") ?: return emptyList()
+        val list = mutableListOf<LibrarySeatBookingRecord>()
+        for (i in 0 until rows.length()) {
+            val item = rows.optJSONObject(i) ?: continue
+            parseBookingRecordObject(item)?.let(list::add)
+        }
+        return list
+    }
+
+    private fun parseBookingRecordObject(obj: JSONObject): LibrarySeatBookingRecord? {
+        if (obj.isNull("id")) return null
+        val id = obj.optLong("id", -1L).takeIf { it > 0L } ?: return null
+        val statusRaw = if (obj.isNull("bookingStatus")) "" else obj.optString("bookingStatus")
+        val status = LibrarySeatBookingStatus.fromCode(statusRaw)
+        val startDate = if (obj.isNull("startDate")) "" else obj.optString("startDate").trim()
+        val endDate = if (obj.isNull("endDate")) "" else obj.optString("endDate").trim()
+        val seatName = if (obj.isNull("seatName")) "" else obj.optString("seatName").trim()
+        val regionName = if (obj.isNull("regionName")) "" else obj.optString("regionName").trim()
+        return LibrarySeatBookingRecord(
+            bookingId = id,
+            seatId = if (obj.isNull("seatId")) null else obj.optLong("seatId", -1L).takeIf { it > 0L },
+            seatName = seatName,
+            regionName = regionName,
+            buildingLayerRegionId = if (obj.isNull("buildingLayerRegionId")) null else obj.optLong("buildingLayerRegionId", -1L).takeIf { it > 0L },
+            startDate = startDate,
+            endDate = endDate,
+            status = status,
+            signInTime = if (obj.isNull("signInTime")) null else obj.optString("signInTime").trim().takeIf { it.isNotEmpty() },
+            signOutTime = if (obj.isNull("signOutTime")) null else obj.optString("signOutTime").trim().takeIf { it.isNotEmpty() },
+            shotLeaveTime = if (obj.isNull("shotLeaveTime")) null else obj.optString("shotLeaveTime").trim().takeIf { it.isNotEmpty() },
+            longShortLeave = if (obj.isNull("longShortLeave")) null else obj.optInt("longShortLeave", 0).takeIf { it > 0 }
+        )
+    }
+
+    /**
+     * 解析 `/spacelink/api/seatbook/layout/rule` 中的短暂离 (`r1007`) 与长暂离 (`r1052`) 时长（分钟）。
+     */
+    fun parseRuleLeaveMinutes(rawJson: String): Pair<Int, Int> {
+        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull() ?: return 30 to 120
+        val rule = root.optJSONObject("rule") ?: return 30 to 120
+        val shortMin = rule.optString("r1007", "30").trim().toIntOrNull()?.coerceIn(5, 180) ?: 30
+        val longMin = rule.optString("r1052", "120").trim().toIntOrNull()?.coerceIn(15, 360) ?: 120
+        return shortMin to longMin
+    }
+
+    /**
+     * 解析预约操作（取消预约 / 签到 / 短暂离 / 长暂离 / 暂离返回 / 续座 / 签退）响应报文。
+     */
+    fun parseActionOutcome(rawJson: String, action: LibrarySeatActionType): LibrarySeatActionOutcome {
+        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull()
+            ?: return LibrarySeatActionOutcome(
+                success = false,
+                message = "${action.title}响应无法解析，请刷新确认状态",
+                rawCode = -1
+            )
+        val code = root.optInt("code", -1)
+        if (code == 401) throw LibrarySeatSessionExpiredException()
+        val rawMsg = if (root.isNull("msg")) "" else root.optString("msg").trim()
+        return if (code == 200) {
+            val defaultSuccess = when (action) {
+                LibrarySeatActionType.SIGN_IN, LibrarySeatActionType.QUICK_SIGN_IN -> "签到成功"
+                LibrarySeatActionType.CANCEL_BOOKING -> "已成功取消该座位预约"
+                LibrarySeatActionType.SHORT_LEAVE -> "已办理中途短暂离开，请按时返回"
+                LibrarySeatActionType.LONG_LEAVE -> "已办理中途长时暂离，请按时返回"
+                LibrarySeatActionType.LEAVE_BACK -> "已成功从暂离状态返回座位"
+                LibrarySeatActionType.RENEW_SEAT -> "座位续约成功"
+                LibrarySeatActionType.SIGN_OUT -> "已成功签退并释放座位"
+            }
+            LibrarySeatActionOutcome(
+                success = true,
+                message = if (rawMsg.isNotEmpty() && rawMsg != "成功" && rawMsg != "操作成功") rawMsg else defaultSuccess,
+                rawCode = 200
+            )
+        } else {
+            LibrarySeatActionOutcome(
+                success = false,
+                message = rawMsg.ifBlank { "${action.title}未成功 (代码 $code)" },
+                rawCode = code
+            )
+        }
+    }
+
+    /**
+     * 拉取用户当前有效预约、进行中预约、最近历史预约及暂离时长规则。
+     */
+    suspend fun fetchSeatBookingOverview(
+        rawToken: String
+    ): Result<LibrarySeatOverviewSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanToken = normalizeRawToken(rawToken)
+            if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+
+            val currentBody = executeAuthenticatedApiGet(
+                url = WSLIB_CURRENT_BOOKING_URL,
+                cleanToken = cleanToken
+            )
+            val currentRecord = parseCurrentBookingResponse(currentBody)
+
+            val inProgressBody = runCatching {
+                executeAuthenticatedApiGet(
+                    url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=10&pageNum=1",
+                    cleanToken = cleanToken
+                )
+            }.getOrDefault("")
+            val inProgressList = if (inProgressBody.isNotBlank()) {
+                parseBookingListResponse(inProgressBody)
+            } else {
+                emptyList()
+            }
+
+            val historyBody = runCatching {
+                executeAuthenticatedApiGet(
+                    url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=10&pageNum=1",
+                    cleanToken = cleanToken
+                )
+            }.getOrDefault("")
+            val historyList = if (historyBody.isNotBlank()) {
+                parseBookingListResponse(historyBody)
+            } else {
+                emptyList()
+            }
+
+            val ruleBody = runCatching {
+                executeAuthenticatedApiGet(
+                    url = WSLIB_RULE_URL,
+                    cleanToken = cleanToken
+                )
+            }.getOrDefault("")
+            val (shortMin, longMin) = parseRuleLeaveMinutes(ruleBody)
+
+            val effectiveCurrent = currentRecord?.takeIf { it.isActive }
+                ?: inProgressList.firstOrNull { it.isActive }
+                ?: currentRecord
+
+            LibrarySeatOverviewSnapshot(
+                currentBooking = effectiveCurrent,
+                inProgressBookings = inProgressList,
+                recentHistory = historyList,
+                shortLeaveMinutes = shortMin,
+                longLeaveMinutes = longMin,
+                fetchedAtEpochMs = System.currentTimeMillis()
+            )
+        }
+    }
+
+    /**
+     * 执行座位控制动作（取消预约、签到、快速签到、短暂离、长暂离、暂离返回、续座、签退释放）。
+     */
+    suspend fun performSeatAction(
+        rawToken: String,
+        action: LibrarySeatActionType,
+        bookingId: Long? = null
+    ): Result<LibrarySeatActionOutcome> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanToken = normalizeRawToken(rawToken)
+            if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+            if (action.requiresBookingId && (bookingId == null || bookingId <= 0L)) {
+                return@runCatching LibrarySeatActionOutcome(
+                    success = false,
+                    message = "当前没有可操作的有效座位预约",
+                    rawCode = -1
+                )
+            }
+            val targetUrl = when (action) {
+                LibrarySeatActionType.SIGN_IN ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/signin?bookingid=$bookingId&channelType=1003&positionType=1"
+                LibrarySeatActionType.QUICK_SIGN_IN ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/quickSignIn?channelType=1003&positionType=1&status=1"
+                LibrarySeatActionType.CANCEL_BOOKING ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/cancel?bookingid=$bookingId&channelType=1003"
+                LibrarySeatActionType.SHORT_LEAVE ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/leave4short?bookingid=$bookingId&channelType=1003"
+                LibrarySeatActionType.LONG_LEAVE ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/leave4long?bookingid=$bookingId&channelType=1003"
+                LibrarySeatActionType.LEAVE_BACK ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/leaveBack?bookingid=$bookingId"
+                LibrarySeatActionType.RENEW_SEAT ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/keepon?bookingid=$bookingId"
+                LibrarySeatActionType.SIGN_OUT ->
+                    "$WSLIB_API_BASE_URL/seatbook/user/signoff?bookingid=$bookingId"
+            }
+            val body = executeAuthenticatedApiGet(url = targetUrl, cleanToken = cleanToken)
+            parseActionOutcome(body, action)
+        }
+    }
+
+    private fun executeAuthenticatedApiGet(url: String, cleanToken: String): String {
+        val uri = validateAuthUri(url)
+        val conn = (uri.toURL().openConnection() as HttpURLConnection)
+        try {
+            conn.instanceFollowRedirects = false
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 8_000
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Authorization", "Bearer $cleanToken")
+            conn.setRequestProperty("Access-Control-Allow-Methods", "POST,GET,OPTIONS")
+            conn.setRequestProperty("Accept", "application/json, text/plain, */*")
+            val status = conn.responseCode
+            if (status == 401) throw LibrarySeatSessionExpiredException()
+            return readBoundedBody(conn, status)
+        } finally {
+            conn.disconnect()
+        }
     }
 
     /**
@@ -681,3 +1069,5 @@ class LibrarySeatAuthException(
     override val message: String,
     val requiresManualVerification: Boolean = false
 ) : IllegalStateException(message)
+
+class LibrarySeatSessionExpiredException : IllegalStateException("图书馆空间预约登录态已过期")

@@ -17,8 +17,12 @@ import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
 import cn.edu.haut.campus.core.academic.AcademicReadException
 import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
+import cn.edu.haut.campus.core.campusservices.LibrarySeatActionOutcome
+import cn.edu.haut.campus.core.campusservices.LibrarySeatActionType
 import cn.edu.haut.campus.core.campusservices.LibrarySeatAuthException
+import cn.edu.haut.campus.core.campusservices.LibrarySeatOverviewSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatRefreshSource
+import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionExpiredException
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
@@ -1395,6 +1399,69 @@ class CampusRepository internal constructor(
                 }
             )
         }
+    }
+
+    /**
+     * 拉取用户当前有效的图书馆座位预约、进行中预约列表、历史预约记录与暂离规则时长。
+     * 若 Token 过期（`401`），会自动使用持久化 Cookie 或本地加密数据库凭据后台重登并无感重试。
+     */
+    suspend fun fetchLibrarySeatOverview(): Result<LibrarySeatOverviewSnapshot> = withContext(Dispatchers.IO) {
+        val state0 = ensureLibrarySeatSession(forceRefresh = false)
+        val token0 = (state0 as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return@withContext Result.failure(
+                IllegalStateException(
+                    when (state0) {
+                        is LibrarySeatSessionState.CredentialsRequired -> state0.message
+                        is LibrarySeatSessionState.AuthError -> state0.message
+                        else -> "尚未建立有效的图书馆选座登录会话"
+                    }
+                )
+            )
+        val firstTry = HautLibrarySeatAuthClient.fetchSeatBookingOverview(token0)
+        if (firstTry.isSuccess || firstTry.exceptionOrNull() !is LibrarySeatSessionExpiredException) {
+            return@withContext firstTry
+        }
+        val stateRetry = ensureLibrarySeatSession(forceRefresh = true)
+        val tokenRetry = (stateRetry as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return@withContext Result.failure(IllegalStateException("自动后台重登失败，请检查账号或网络"))
+        HautLibrarySeatAuthClient.fetchSeatBookingOverview(tokenRetry)
+    }
+
+    /**
+     * 执行图书馆座位控制动作（签到、快速签到、取消预约、短暂离、长暂离、暂离返回、续座、签退释放）。
+     * 若执行时遇到 `401` 会话过期，自动触发加密凭据后台重登并重试一次。
+     */
+    suspend fun executeLibrarySeatAction(
+        action: LibrarySeatActionType,
+        bookingId: Long? = null
+    ): Result<LibrarySeatActionOutcome> = withContext(Dispatchers.IO) {
+        val state0 = ensureLibrarySeatSession(forceRefresh = false)
+        val token0 = (state0 as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return@withContext Result.failure(
+                IllegalStateException(
+                    when (state0) {
+                        is LibrarySeatSessionState.CredentialsRequired -> state0.message
+                        is LibrarySeatSessionState.AuthError -> state0.message
+                        else -> "请先完成统一身份认证登录"
+                    }
+                )
+            )
+        val firstTry = HautLibrarySeatAuthClient.performSeatAction(
+            rawToken = token0,
+            action = action,
+            bookingId = bookingId
+        )
+        if (firstTry.isSuccess || firstTry.exceptionOrNull() !is LibrarySeatSessionExpiredException) {
+            return@withContext firstTry
+        }
+        val stateRetry = ensureLibrarySeatSession(forceRefresh = true)
+        val tokenRetry = (stateRetry as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+            ?: return@withContext Result.failure(IllegalStateException("自动后台重登失败，请重试"))
+        HautLibrarySeatAuthClient.performSeatAction(
+            rawToken = tokenRetry,
+            action = action,
+            bookingId = bookingId
+        )
     }
 
     suspend fun setGpaPrivacyShield(enabled: Boolean) {

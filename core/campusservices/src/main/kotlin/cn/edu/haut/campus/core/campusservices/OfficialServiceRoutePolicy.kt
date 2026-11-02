@@ -193,6 +193,16 @@ object OfficialServiceRoutePolicy {
     }
 
     /**
+     * 构造携带有效登录 Token 的「我的预约管理（签到/取消/暂离/签退）」页面 URL。
+     */
+    fun buildAuthenticatedMySeatManageUrl(rawToken: String?): String {
+        val clean = HautLibrarySeatAuthClient.normalizeRawToken(rawToken)
+        if (clean.isBlank()) return "https://$WSLIB_HOST$SEAT_BOOKING_BASE_PATH#/pages/SeatBooking/SeatBooking"
+        val encoded = java.net.URLEncoder.encode(clean, java.nio.charset.StandardCharsets.UTF_8.name())
+        return "https://$WSLIB_HOST$SEAT_BOOKING_BASE_PATH?token=$encoded#/pages/SeatBooking/SeatBooking"
+    }
+
+    /**
      * 判断是否为学校统一身份认证站点（`https://mapp.haut.edu.cn`）。
      */
     fun isSchoolCasAuthUrl(rawUrl: String?): Boolean {
@@ -280,6 +290,20 @@ object OfficialWebScripts {
             if (location.origin === 'https://wslib.haut.edu.cn' &&
                 location.pathname === '/h5/index.html') {
                 location.hash = '#/seatPage/SelectRoom/SelectRoom';
+                return true;
+            }
+            return false;
+        })();
+    """
+
+    /**
+     * 用户点击「我的预约」按钮时切换至官方预约管理页（包含签到、取消预约、短暂离、长暂离、签退、历史记录）。
+     */
+    const val LIBRARY_OPEN_MY_BOOKINGS_SCRIPT = """
+        (function() {
+            if (location.origin === 'https://wslib.haut.edu.cn' &&
+                location.pathname === '/h5/index.html') {
+                location.hash = '#/pages/SeatBooking/SeatBooking';
                 return true;
             }
             return false;

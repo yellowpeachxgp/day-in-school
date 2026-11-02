@@ -398,5 +398,148 @@ class CampusServicesUnitTest {
         assertTrue(syncScript.contains("localStorage.setItem('hzd_token', bearer)"))
         assertTrue(syncScript.contains("getApp().globalData.token = bearer"))
         assertTrue(syncScript.contains("#/seatPage/SelectRoom/SelectRoom"))
+
+        val mySeatUrl = OfficialServiceRoutePolicy.buildAuthenticatedMySeatManageUrl(sampleJwt)
+        assertEquals(
+            "https://wslib.haut.edu.cn/h5/index.html?token=$sampleJwt#/pages/SeatBooking/SeatBooking",
+            mySeatUrl
+        )
+        assertTrue(OfficialServiceRoutePolicy.isAllowedMainFrameUrl(mySeatUrl))
+    }
+
+    @Test
+    fun hautLibrarySeatAuthClient_parsesBookingStatusAndActionsAndLeaveRules() {
+        val waitingSignInJson = """
+            {
+              "msg": "操作成功",
+              "code": 200,
+              "data": {
+                "id": 918273,
+                "seatId": 10086,
+                "seatName": "A086",
+                "regionName": "莲花街图书馆 三楼A区",
+                "buildingLayerRegionId": 15,
+                "bookingStatus": "1",
+                "startDate": "2026-11-02 08:00:00",
+                "endDate": "2026-11-02 22:00:00"
+              }
+            }
+        """.trimIndent()
+        val waitingRecord = HautLibrarySeatAuthClient.parseCurrentBookingResponse(waitingSignInJson)
+        assertNotNull(waitingRecord)
+        assertEquals(918273L, waitingRecord!!.bookingId)
+        assertEquals("莲花街图书馆 三楼A区", waitingRecord.regionName)
+        assertEquals("A086", waitingRecord.seatName)
+        assertEquals(LibrarySeatBookingStatus.FULFILLED, waitingRecord.status)
+        assertTrue(waitingRecord.canSignIn)
+        assertTrue(waitingRecord.canCancel)
+        assertFalse(waitingRecord.canLeave)
+        assertFalse(waitingRecord.canSignOut)
+
+        val studyingJson = """
+            {
+              "msg": "操作成功",
+              "code": 200,
+              "data": {
+                "id": 918274,
+                "regionName": "莲花街图书馆 四楼B区",
+                "seatName": "B102",
+                "bookingStatus": "2",
+                "startDate": "2026-11-02 09:00:00",
+                "endDate": "2026-11-02 22:00:00"
+              }
+            }
+        """.trimIndent()
+        val studyingRecord = HautLibrarySeatAuthClient.parseCurrentBookingResponse(studyingJson)
+        assertNotNull(studyingRecord)
+        assertEquals(LibrarySeatBookingStatus.LEARNING, studyingRecord!!.status)
+        assertFalse(studyingRecord.canCancel)
+        assertTrue(studyingRecord.canLeave)
+        assertTrue(studyingRecord.canRenew)
+        assertTrue(studyingRecord.canSignOut)
+
+        val awayJson = """
+            {
+              "msg": "操作成功",
+              "code": 200,
+              "data": {
+                "id": 918275,
+                "regionName": "嵩山路图书馆 二楼自习室",
+                "seatName": "C018",
+                "bookingStatus": "3",
+                "startDate": "2026-11-02 14:00:00",
+                "endDate": "2026-11-02 21:30:00",
+                "shotLeaveTime": "2026-11-02 15:10:00",
+                "longShortLeave": 1
+              }
+            }
+        """.trimIndent()
+        val awayRecord = HautLibrarySeatAuthClient.parseCurrentBookingResponse(awayJson)
+        assertNotNull(awayRecord)
+        assertEquals(LibrarySeatBookingStatus.LEAVING, awayRecord!!.status)
+        assertTrue(awayRecord.canReturnFromLeave)
+        assertTrue(awayRecord.canSignOut)
+        assertFalse(awayRecord.canLeave)
+
+        val emptyCurrentJson = """
+            {"msg":"操作成功","code":200,"data":{"id":null,"bookingStatus":null}}
+        """.trimIndent()
+        assertEquals(null, HautLibrarySeatAuthClient.parseCurrentBookingResponse(emptyCurrentJson))
+
+        val listJson = """
+            {
+              "total": 2,
+              "rows": [
+                {
+                  "id": 918270,
+                  "regionName": "莲花街图书馆 三楼A区",
+                  "seatName": "A086",
+                  "bookingStatus": "6",
+                  "startDate": "2026-11-01 08:30:00",
+                  "endDate": "2026-11-01 18:00:00"
+                },
+                {
+                  "id": 918269,
+                  "regionName": "莲花街图书馆 五楼C区",
+                  "seatName": "C012",
+                  "bookingStatus": "5",
+                  "startDate": "2026-10-31 14:00:00",
+                  "endDate": "2026-10-31 20:00:00"
+                }
+              ],
+              "code": 200,
+              "msg": "查询成功"
+            }
+        """.trimIndent()
+        val historyList = HautLibrarySeatAuthClient.parseBookingListResponse(listJson)
+        assertEquals(2, historyList.size)
+        assertEquals(LibrarySeatBookingStatus.SIGNED_OUT, historyList[0].status)
+        assertEquals(LibrarySeatBookingStatus.CANCELLED, historyList[1].status)
+
+        val ruleJson = """
+            {
+              "msg": "操作成功",
+              "code": 200,
+              "rule": {
+                "r1007": "30",
+                "r1052": "120"
+              }
+            }
+        """.trimIndent()
+        assertEquals(30 to 120, HautLibrarySeatAuthClient.parseRuleLeaveMinutes(ruleJson))
+
+        val cancelSuccessOutcome = HautLibrarySeatAuthClient.parseActionOutcome(
+            rawJson = """{"code":200,"msg":"取消预约成功"}""",
+            action = LibrarySeatActionType.CANCEL_BOOKING
+        )
+        assertTrue(cancelSuccessOutcome.success)
+        assertEquals("取消预约成功", cancelSuccessOutcome.message)
+
+        val leaveFailOutcome = HautLibrarySeatAuthClient.parseActionOutcome(
+            rawJson = """{"code":500,"msg":"当前时段暂不支持长暂离"}""",
+            action = LibrarySeatActionType.LONG_LEAVE
+        )
+        assertFalse(leaveFailOutcome.success)
+        assertEquals("当前时段暂不支持长暂离", leaveFailOutcome.message)
     }
 }
