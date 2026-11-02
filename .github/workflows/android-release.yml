@@ -33,19 +33,6 @@ jobs:
       - name: 配置 Gradle 缓存
         uses: gradle/actions/setup-gradle@v4
 
-      - name: 校验标签与版本配置一致
-        id: meta
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '发行标签必须是 v主版本.次版本.修订号'; exit 1; }
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          ./gradlew --no-daemon -q printVersion > version-output.txt
-          VERSION_NAME=$(sed -n 's/^VERSION_NAME=//p' version-output.txt)
-          test "$RELEASE_TAG" = "v$VERSION_NAME" || { echo '发行标签与 version.properties 不一致'; exit 1; }
-          echo "TAG_NAME=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          cat version-output.txt >> "$GITHUB_OUTPUT"
-
       - name: 检查正式签名配置
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
@@ -61,13 +48,39 @@ jobs:
           chmod 600 keystore/haut-release.jks
           keytool -exportcert -keystore keystore/haut-release.jks -storepass:env SIGNING_STORE_PASSWORD -alias "$SIGNING_KEY_ALIAS" -file keystore/release-cert.der
 
+      - name: 校验标签与版本配置一致
+        id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '发行标签必须是 v主版本.次版本.修订号'; exit 1; }
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          ./gradlew --no-daemon -q printVersion > version-output.txt
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=//p' version-output.txt)
+          test "$RELEASE_TAG" = "v$VERSION_NAME" || { echo '发行标签与 version.properties 不一致'; exit 1; }
+          echo "TAG_NAME=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          cat version-output.txt >> "$GITHUB_OUTPUT"
+
       - name: 执行完整质量门禁并构建发行包
         env:
+          SIGNING_STORE_FILE: ${{ github.workspace }}/keystore/haut-release.jks
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon :core:model:test :core:domain:test :core:academic-protocols:test :core:school-packages:test :core:academic-plan:test :core:selection:test testDebugUnitTest lintDebug lintRelease :app:assembleDebug :app:assembleRelease --stacktrace
+          ./gradlew --no-daemon \
+            :core:model:test \
+            :core:domain:test \
+            :core:academic-protocols:test \
+            :core:school-packages:test \
+            :core:academic-plan:test \
+            :core:selection:test \
+            testDebugUnitTest \
+            lintDebug \
+            lintRelease \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            --stacktrace
           git diff --exit-code -- core/database/schemas
           test -z "$(git ls-files --others --exclude-standard core/database/schemas)"
 
@@ -83,9 +96,15 @@ jobs:
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$REL_APK" > release-assets/APK_SIGNATURE.txt
-          EXPECTED_CERT=$(sha256sum keystore/release-cert.der | cut -d' ' -f1)
-          ACTUAL_CERT=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' release-assets/APK_SIGNATURE.txt)
-          test "$EXPECTED_CERT" = "$ACTUAL_CERT" || { echo 'APK 证书与正式签名证书不一致'; exit 1; }
+          EXPECTED_CERT=$(sha256sum keystore/release-cert.der | awk '{print tolower($1)}')
+          ACTUAL_CERT=$(grep -i 'certificate SHA-256 digest:' release-assets/APK_SIGNATURE.txt | head -n 1 | awk '{print tolower($NF)}' | tr -d '\r')
+          echo "EXPECTED_CERT=$EXPECTED_CERT"
+          echo "ACTUAL_CERT=$ACTUAL_CERT"
+          test -n "$ACTUAL_CERT" && test "$EXPECTED_CERT" = "$ACTUAL_CERT" || {
+            cat release-assets/APK_SIGNATURE.txt
+            echo 'APK 证书与正式签名证书不一致'
+            exit 1
+          }
           if grep -qi 'CN=Android Debug' release-assets/APK_SIGNATURE.txt; then
             echo '禁止发布使用调试证书签名的安装包'
             exit 1
