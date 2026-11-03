@@ -332,16 +332,37 @@ object CampusCloudOidcHelper {
                 bearerToken = accessToken
             )
             val consentId = JSONObject(consentRaw).optJSONObject("data")?.optString("id").orEmpty()
-            val localTime = targetExecuteAtIso.substringAfter('T', "07:00:00").take(8).let {
-                if (it.length == 5) "$it:00" else if (it.length == 8) it else "07:00:00"
+            val localTime = targetExecuteAtIso.trim().let { raw ->
+                when {
+                    raw.matches(Regex("^\\d{2}:\\d{2}:\\d{2}$")) -> raw
+                    raw.matches(Regex("^\\d{2}:\\d{2}$")) -> "$raw:00"
+                    raw.endsWith("Z") -> runCatching {
+                        java.time.Instant.parse(raw)
+                            .atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                            .toLocalTime()
+                            .let { "%02d:%02d:%02d".format(it.hour, it.minute, it.second) }
+                    }.getOrDefault("07:00:00")
+                    else -> raw.substringAfter('T', "07:00:00").take(8).let {
+                        if (it.length == 5) "$it:00" else if (it.length == 8) it else "07:00:00"
+                    }
+                }
             }
+            val candidateSeatsArr = JSONArray()
+            preferredSeatLabel
+                .split(",", "，", "、", "/", "|", ";", "；")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .ifEmpty { listOf(preferredSeatLabel.trim()) }
+                .forEach { candidateSeatsArr.put(it) }
+
             val planBody = JSONObject()
                 .put("school_binding_id", bindId)
                 .put("consent_id", consentId)
+                .put("area_code", preferredAreaName)
                 .put("area_name", preferredAreaName)
-                .put("candidate_seats", JSONArray().put(preferredSeatLabel))
+                .put("candidate_seats", candidateSeatsArr)
                 .put("preferred_area_ids", JSONArray().put(preferredAreaName))
-                .put("preferred_seat_ids", JSONArray().put(preferredSeatLabel))
+                .put("preferred_seat_ids", candidateSeatsArr)
                 .put("target_local_date", targetDate)
                 .put("target_local_time", localTime)
                 .toString()
@@ -356,6 +377,67 @@ object CampusCloudOidcHelper {
             planData?.optString("job_id")?.takeIf { it.isNotBlank() }
                 ?: planData?.optString("plan_id")
         }.getOrNull()
+    }
+
+    /**
+     * 立即在云端执行指定预约任务 (`/api/v1/reservation-jobs/{jobId}/execute-now`)
+     */
+    fun executeCloudHostedReservationJobNow(
+        accessToken: String,
+        jobId: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): AutomatedSeatBookingResult? {
+        if (accessToken.isBlank() || jobId.isBlank()) return null
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/reservation-jobs/$jobId/execute-now",
+                bodyJson = "{}",
+                bearerToken = accessToken
+            )
+            val root = JSONObject(raw)
+            if (!root.optBoolean("ok", false)) return null
+            val data = root.optJSONObject("data") ?: return null
+            val job = data.optJSONObject("job")
+            val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
+            val confirmed = job?.optString("state") == "CONFIRMED"
+            val extId = sr?.optString("external_booking_id").orEmpty().ifBlank { jobId }
+            val seatAlias = sr?.optString("seat_alias").orEmpty()
+            val evidenceHash = sr?.optString("evidence_sha256").orEmpty()
+            AutomatedSeatBookingResult(
+                confirmed = confirmed,
+                bookingId = extId,
+                seatTitle = seatAlias,
+                evidenceSha256 = evidenceHash,
+                diagnosticMessage = if (confirmed) {
+                    "云端抢座成功！已锁定 $seatAlias（预约号 $extId），扣除 0.1 🍑"
+                } else {
+                    "云端抢座未锁定座位（状态：${job?.optString("state") ?: "UNKNOWN"}），未扣费"
+                }
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * 在云端取消并释放已占座位 (`/api/v1/reservation-jobs/{jobId}/cancel-seat`)
+     */
+    fun cancelCloudHostedReservationSeat(
+        accessToken: String,
+        jobId: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Boolean {
+        if (accessToken.isBlank() || jobId.isBlank()) return false
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/reservation-jobs/$jobId/cancel-seat",
+                bodyJson = "{}",
+                bearerToken = accessToken
+            )
+            JSONObject(raw).optBoolean("ok", false)
+        }.getOrDefault(false)
     }
 
     /**

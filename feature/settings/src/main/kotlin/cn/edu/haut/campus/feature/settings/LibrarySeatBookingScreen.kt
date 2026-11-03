@@ -6,15 +6,25 @@
  */
 package cn.edu.haut.campus.feature.settings
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import cn.edu.haut.campus.core.database.LibrarySeatAlarmSubsystem
+import cn.edu.haut.campus.core.database.LocalSeatPermissionSnapshot
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -1692,6 +1702,58 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     var selectedSeatNames by remember { mutableStateOf<List<String>>(emptyList()) }
     var isRunningImmediateBooking by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var permissionSnapshot by remember { mutableStateOf(LibrarySeatAlarmSubsystem.inspectPermissions(context)) }
+    var showPermissionActivationDialog by remember { mutableStateOf(false) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
+    }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
+                scope.launch {
+                    runCatching { repository.rescheduleActiveLocalBookingPlans() }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    fun requestNotificationPermissionOrSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            runCatching {
+                context.startActivity(LibrarySeatAlarmSubsystem.buildNotificationSettingsIntent(context))
+            }
+        }
+    }
+
+    fun requestExactAlarmPermission() {
+        runCatching {
+            context.startActivity(LibrarySeatAlarmSubsystem.buildExactAlarmSettingsIntent(context))
+        }
+    }
+
+    fun requestIgnoreBatteryOptimizations() {
+        runCatching {
+            context.startActivity(LibrarySeatAlarmSubsystem.buildIgnoreBatteryOptimizationsIntent(context))
+        }.onFailure {
+            runCatching {
+                context.startActivity(LibrarySeatAlarmSubsystem.buildBatteryOptimizationListIntent())
+            }
+        }
+    }
+
     fun reloadStudyRegions() {
         scope.launch {
             isLoadingRegions = true
@@ -2362,6 +2424,74 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
+            if (selectedMode != BookingExecutionMode.CLOUD_HOSTED) {
+                XPeachWell(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (permissionSnapshot.allReady) {
+                                "🛡️ 本机准点抢座权限已全部激活"
+                            } else {
+                                "⚡ 本机抢座权限（待激活 ${permissionSnapshot.missingCount} 项）"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (permissionSnapshot.allReady) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            }
+                        )
+                        TextButton(
+                            onClick = {
+                                val ok = LibrarySeatAlarmSubsystem.triggerTestWakeupNotification(context)
+                                permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
+                                if (ok) {
+                                    onFeedback(true, "已发送测试唤醒通知，请查看顶部通知栏")
+                                } else {
+                                    requestNotificationPermissionOrSettings()
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Text("🔔 测试本地唤醒", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachFilterPill(
+                            label = if (permissionSnapshot.exactAlarmAllowed) "✓ 精准定时闹钟" else "开启精准定时闹钟 →",
+                            selected = permissionSnapshot.exactAlarmAllowed,
+                            onClick = { requestExactAlarmPermission() }
+                        )
+                        XPeachFilterPill(
+                            label = if (permissionSnapshot.ignoringBatteryOptimizations) "✓ 后台省电白名单" else "加入后台白名单 →",
+                            selected = permissionSnapshot.ignoringBatteryOptimizations,
+                            onClick = { requestIgnoreBatteryOptimizations() }
+                        )
+                        XPeachFilterPill(
+                            label = if (permissionSnapshot.notificationGranted) "✓ 抢座结果通知" else "开启抢座通知 →",
+                            selected = permissionSnapshot.notificationGranted,
+                            onClick = { requestNotificationPermissionOrSettings() }
+                        )
+                    }
+                }
+            }
+
             computedScheduleResult.getOrNull()?.let { calc ->
                 XPeachWell(
                     modifier = Modifier
@@ -2384,6 +2514,83 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             }
 
+            fun saveBookingPlanNow() {
+                scope.launch {
+                    val result = repository.createDualEngineBookingPlan(
+                        executionMode = selectedMode,
+                        targetDate = targetDate,
+                        targetTimeText = targetTimeText,
+                        preferredAreaName = roomLabel,
+                        preferredSeatLabel = preferredSeatsText
+                    )
+                    result.fold(
+                        onSuccess = { created ->
+                            onFeedback(
+                                true,
+                                "已设置好定时抢座：${created.targetLocalDate} ${created.targetLocalTime} · ${created.preferredAreaName}"
+                            )
+                        },
+                        onFailure = { err ->
+                            onFeedback(false, err.message ?: "设置失败，请重试")
+                        }
+                    )
+                }
+            }
+
+            if (showPermissionActivationDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPermissionActivationDialog = false },
+                    title = { Text("激活本机准点抢座权限") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "为了让手机在早上 07:00 息屏状态下也能准时唤醒帮你抢座，建议先点亮以下权限：",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            if (!permissionSnapshot.exactAlarmAllowed) {
+                                FilledTonalButton(
+                                    onClick = { requestExactAlarmPermission() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("1. 开启「精准定时闹钟」权限")
+                                }
+                            }
+                            if (!permissionSnapshot.ignoringBatteryOptimizations) {
+                                FilledTonalButton(
+                                    onClick = { requestIgnoreBatteryOptimizations() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("2. 允许「后台无限制 / 忽略电池优化」")
+                                }
+                            }
+                            if (!permissionSnapshot.notificationGranted) {
+                                FilledTonalButton(
+                                    onClick = { requestNotificationPermissionOrSettings() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("3. 开启「抢座结果通知」权限")
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showPermissionActivationDialog = false
+                                saveBookingPlanNow()
+                            }
+                        ) {
+                            Text("已设置好，立即开启定时抢座")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showPermissionActivationDialog = false }) {
+                            Text("稍后")
+                        }
+                    }
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2393,25 +2600,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 Button(
                     enabled = computedScheduleResult.isSuccess && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
-                        scope.launch {
-                            val result = repository.createDualEngineBookingPlan(
-                                executionMode = selectedMode,
-                                targetDate = targetDate,
-                                targetTimeText = targetTimeText,
-                                preferredAreaName = roomLabel,
-                                preferredSeatLabel = preferredSeatsText
-                            )
-                            result.fold(
-                                onSuccess = { created ->
-                                    onFeedback(
-                                        true,
-                                        "已设置好定时抢座：${created.targetLocalDate} ${created.targetLocalTime} · ${created.preferredAreaName}"
-                                    )
-                                },
-                                onFailure = { err ->
-                                    onFeedback(false, err.message ?: "设置失败，请重试")
-                                }
-                            )
+                        permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
+                        if (selectedMode != BookingExecutionMode.CLOUD_HOSTED && !permissionSnapshot.allReady) {
+                            showPermissionActivationDialog = true
+                        } else {
+                            saveBookingPlanNow()
                         }
                     },
                     shape = RoundedCornerShape(10.dp),
@@ -2493,7 +2686,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         }
                         val friendlyMode = when (plan.executionMode) {
                             "CLOUD_HOSTED" -> "云端代抢"
-                            "NOTIFICATION_ONLY" -> "仅提醒"
+                            "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "仅提醒"
                             else -> "手机自动抢"
                         }
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
@@ -2523,7 +2716,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 )
                             }
                             Text(
-                                text = "已选座位：${plan.preferredSeatLabel}号",
+                                text = "已选座位：${plan.preferredSeatLabel}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2532,7 +2725,36 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            if (plan.status !in setOf("CONFIRMED", "CANCELLED", "FAILED")) {
+                            if (plan.status == "CONFIRMED") {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.cancelActiveLibrarySeatBooking(
+                                                    planId = plan.id,
+                                                    bookingId = plan.externalBookingId
+                                                ).fold(
+                                                    onSuccess = { msg ->
+                                                        onFeedback(true, msg)
+                                                        onRefreshSeatOverview()
+                                                        selectedRegion?.let { reloadSeatsForRegion(it) }
+                                                    },
+                                                    onFailure = { err ->
+                                                        onFeedback(false, err.message ?: "退座失败")
+                                                    }
+                                                )
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("退座释放", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            } else if (plan.status !in setOf("CONFIRMED", "CANCELLED", "FAILED")) {
                                 Row(
                                     modifier = Modifier.padding(top = 4.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)

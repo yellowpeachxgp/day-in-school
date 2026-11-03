@@ -857,8 +857,45 @@ object HautLibrarySeatAuthClient {
         }
     }
 
+    private fun inferLayerNameFromRegion(regionName: String, rawLayerName: String): String {
+        val cleaned = rawLayerName.trim().takeUnless { it.equals("null", ignoreCase = true) }.orEmpty()
+        if (cleaned.isNotEmpty()) return cleaned
+        val match = Regex("^([一二三四五六七八九十]+层)").find(regionName.trim())
+        return match?.groupValues?.getOrNull(1) ?: "自习室"
+    }
+
+    private fun resolveDefaultTimeWindow(
+        cleanToken: String,
+        regionId: Long,
+        bookingDate: String
+    ): Triple<String, String, JSONObject?> {
+        val defaultTimeUrl = "$WSLIB_API_BASE_URL/seatbook/layout/getDefaultTime?regionid=$regionId&bookingdate=${URLEncoder.encode(bookingDate, "UTF-8")}"
+        val defaultTimeRaw = runCatching {
+            executeAuthenticatedApiGet(url = defaultTimeUrl, cleanToken = cleanToken)
+        }.getOrDefault("")
+        val dtRoot = runCatching { JSONObject(defaultTimeRaw) }.getOrNull()
+        if (dtRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+
+        val rawStartDate = dtRoot?.optString("startDate")?.trim().takeUnless { it.isNullOrBlank() || it == "null" } ?: bookingDate
+        val rawEndDate = dtRoot?.optString("endDate")?.trim().takeUnless { it.isNullOrBlank() || it == "null" } ?: bookingDate
+        val rawStartTime = dtRoot?.optString("startTime")?.trim().takeUnless { it.isNullOrBlank() || it == "null" } ?: "07:30"
+        val rawEndTime = dtRoot?.optString("endTime")?.trim().takeUnless { it.isNullOrBlank() || it == "null" } ?: "22:00"
+
+        val startFull = when {
+            rawStartDate.contains(" ") -> rawStartDate
+            rawStartTime.count { it == ':' } == 1 -> "$rawStartDate $rawStartTime:00"
+            else -> "$rawStartDate $rawStartTime"
+        }
+        val endFull = when {
+            rawEndDate.contains(" ") -> rawEndDate
+            rawEndTime.count { it == ':' } == 1 -> "$rawEndDate $rawEndTime:00"
+            else -> "$rawEndDate $rawEndTime"
+        }
+        return Triple(startFull, endFull, dtRoot)
+    }
+
     /**
-     * 自动识别并拉取全馆自习区域列表（依次调用 `/seatbook/layout/building`、`/seatbook/layout/layer` 与 `/seatbook/layout/region`）。
+     * 自动识别并拉取全馆自习区域列表（依次调用 `/seatbook/layout/getDefaultTime`、`/seatbook/layout/building` 与 `/seatbook/layout/region`）。
      */
     suspend fun fetchLibraryStudyRegions(
         rawToken: String,
@@ -867,6 +904,8 @@ object HautLibrarySeatAuthClient {
         runCatching {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+
+            val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, 7L, bookingDate)
 
             val buildingRaw = executeAuthenticatedApiGet(
                 url = "$WSLIB_API_BASE_URL/seatbook/layout/building",
@@ -878,8 +917,8 @@ object HautLibrarySeatAuthClient {
                 ?: buildingRoot.optJSONObject("data")?.optJSONArray("builderInfo")
 
             val resultList = mutableListOf<LibraryStudyRegionItem>()
-            val startTimeParam = URLEncoder.encode("$bookingDate 00:00:00", "UTF-8")
-            val endTimeParam = URLEncoder.encode("$bookingDate 23:59:59", "UTF-8")
+            val startTimeParam = URLEncoder.encode(startFull, "UTF-8")
+            val endTimeParam = URLEncoder.encode(endFull, "UTF-8")
 
             if (builderArr != null && builderArr.length() > 0) {
                 for (bIdx in 0 until builderArr.length()) {
@@ -905,10 +944,11 @@ object HautLibrarySeatAuthClient {
                             if (regionName.isEmpty()) continue
                             val totalNum = rObj.optInt("num", 0)
                             val canNum = rObj.optInt("cannum", 0)
-                            val openDate = rObj.optString("openDate", "07:00").trim()
+                            val openDate = rObj.optString("openDate", "07:30").trim()
                             val closeDate = rObj.optString("closeDate", "22:00").trim()
                             val isOpen = rObj.optInt("isOpen", 1) != 0
-                            val layerName = rObj.optString("layerName").trim()
+                            val rawLayer = if (rObj.isNull("layerName")) "" else rObj.optString("layerName").trim()
+                            val layerName = inferLayerNameFromRegion(regionName, rawLayer)
                             resultList.add(
                                 LibraryStudyRegionItem(
                                     id = regionId,
@@ -937,7 +977,7 @@ object HautLibrarySeatAuthClient {
                             for (lIdx in 0 until layerArr.length()) {
                                 val lObj = layerArr.optJSONObject(lIdx) ?: continue
                                 val layerId = lObj.optString("id").trim()
-                                val layerName = lObj.optString("layerName").trim()
+                                val rawLayer = if (lObj.isNull("layerName")) "" else lObj.optString("layerName").trim()
                                 if (layerId.isEmpty()) continue
                                 val lRegionUrl = "$WSLIB_API_BASE_URL/seatbook/layout/region?buildingId=${URLEncoder.encode(buildingId, "UTF-8")}&layerid=${URLEncoder.encode(layerId, "UTF-8")}&starttime=$startTimeParam&endtime=$endTimeParam"
                                 val lRegionRaw = runCatching {
@@ -959,8 +999,8 @@ object HautLibrarySeatAuthClient {
                                             buildingId = buildingId,
                                             buildingName = buildingName,
                                             layerId = layerId,
-                                            layerName = layerName,
-                                            openTime = rObj.optString("openDate", "07:00").trim(),
+                                            layerName = inferLayerNameFromRegion(regionName, rawLayer),
+                                            openTime = rObj.optString("openDate", "07:30").trim(),
                                             closeTime = rObj.optString("closeDate", "22:00").trim(),
                                             totalSeats = rObj.optInt("num", 0),
                                             availableSeats = rObj.optInt("cannum", 0),
@@ -989,26 +1029,18 @@ object HautLibrarySeatAuthClient {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
 
-            val defaultTimeUrl = "$WSLIB_API_BASE_URL/seatbook/layout/getDefaultTime?regionid=$regionId&bookingdate=${URLEncoder.encode(bookingDate, "UTF-8")}"
-            val defaultTimeRaw = executeAuthenticatedApiGet(url = defaultTimeUrl, cleanToken = cleanToken)
-            val dtRoot = runCatching { JSONObject(defaultTimeRaw) }.getOrNull()
-            if (dtRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
-
-            val startDate = dtRoot?.optString("startDate")?.takeIf { it.isNotBlank() } ?: bookingDate
-            val endDate = dtRoot?.optString("endDate")?.takeIf { it.isNotBlank() } ?: bookingDate
-            val startTime = dtRoot?.optString("startTime")?.takeIf { it.isNotBlank() } ?: "07:00"
-            val endTime = dtRoot?.optString("endTime")?.takeIf { it.isNotBlank() } ?: "22:00"
+            val (startFull, endFull, dtRoot) = resolveDefaultTimeWindow(cleanToken, regionId, bookingDate)
+            val startTime = dtRoot?.optString("startTime")?.takeIf { it.isNotBlank() && it != "null" } ?: "07:30"
+            val endTime = dtRoot?.optString("endTime")?.takeIf { it.isNotBlank() && it != "null" } ?: "22:00"
             val canSetTime = (dtRoot?.optInt("isCanSetTime", 0) ?: 0) != 0
-
-            val startFull = if (startTime.count { it == ':' } == 1) "$startDate $startTime:00" else "$startDate $startTime"
-            val endFull = if (endTime.count { it == ':' } == 1) "$endDate $endTime:00" else "$endDate $endTime"
+            val cleanBookingDate = startFull.substringBefore(" ").ifBlank { bookingDate }
 
             val queryUrl = "$WSLIB_API_BASE_URL/seatbook/layout/query?starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}&regionid=$regionId"
             val queryRaw = executeAuthenticatedApiGet(url = queryUrl, cleanToken = cleanToken)
             val qRoot = JSONObject(queryRaw)
             if (qRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
 
-            val layoutName = qRoot.optJSONObject("layout")?.optString("regionName").orEmpty()
+            val layoutName = qRoot.optJSONObject("layout")?.optString("regionName").orEmpty().trim()
             val seatArr = qRoot.optJSONArray("seatList")
                 ?: qRoot.optJSONObject("data")?.optJSONArray("seatList")
             val seats = mutableListOf<LibrarySeatItem>()
@@ -1016,13 +1048,18 @@ object HautLibrarySeatAuthClient {
                 for (i in 0 until seatArr.length()) {
                     val sObj = seatArr.optJSONObject(i) ?: continue
                     val seatId = sObj.optLong("id", -1L).takeIf { it > 0L } ?: continue
-                    val seatName = sObj.optString("seatName").trim()
-                    if (seatName.isEmpty()) continue
+                    val rawSeatName = sObj.optString("seatName").trim()
+                    if (rawSeatName.isEmpty()) continue
+                    val shortSeatName = if (layoutName.isNotEmpty() && rawSeatName.startsWith(layoutName)) {
+                        rawSeatName.removePrefix(layoutName).trim().ifEmpty { rawSeatName }
+                    } else {
+                        rawSeatName
+                    }
                     val status = sObj.optInt("seatStatus", 2)
                     seats.add(
                         LibrarySeatItem(
                             id = seatId,
-                            seatName = seatName,
+                            seatName = shortSeatName,
                             seatStatus = status
                         )
                     )
@@ -1031,12 +1068,54 @@ object HautLibrarySeatAuthClient {
             LibraryRegionSeatsSnapshot(
                 regionId = regionId,
                 regionName = layoutName,
-                bookingDate = startDate,
+                bookingDate = cleanBookingDate,
                 startTime = startTime,
                 endTime = endTime,
                 canSetTime = canSetTime,
                 seats = seats.sortedWith(compareBy({ it.seatName.length }, { it.seatName }))
             )
+        }
+    }
+
+    /**
+     * 取消/释放当前已生效的图书馆座位预约（自动尝试 `/seatbook/user/cancel`、`/seatbook/user/cancelbooking` 与 `/seatbook/user/signoff`）。
+     */
+    suspend fun cancelActiveSeatBooking(
+        rawToken: String,
+        bookingId: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanToken = normalizeRawToken(rawToken)
+            if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
+
+            val resolvedId = bookingId?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+                ?: fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }?.bookingId?.toString()
+                ?: throw IllegalStateException("当前没有正在生效的图书馆预约座位")
+
+            val endpoints = listOf(
+                "/seatbook/user/cancel?bookingid=$resolvedId",
+                "/seatbook/user/cancel?id=$resolvedId",
+                "/seatbook/user/cancelbooking?bookingid=$resolvedId",
+                "/seatbook/user/signoff?bookingid=$resolvedId"
+            )
+            var lastMsg = "已发送退座释放请求"
+            for (ep in endpoints) {
+                val raw = runCatching {
+                    executeAuthenticatedApiGet(url = "$WSLIB_API_BASE_URL$ep", cleanToken = cleanToken)
+                }.getOrDefault("")
+                val obj = runCatching { JSONObject(raw) }.getOrNull() ?: continue
+                val msg = obj.optString("msg").ifBlank { obj.optString("message") }
+                if (msg.isNotBlank()) lastMsg = msg
+                if (obj.optInt("code", -1) == 200) {
+                    return@runCatching "已成功取消并释放座位（编号 $resolvedId）"
+                }
+            }
+            val afterActive = fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }
+            if (afterActive == null) {
+                "已成功取消并释放座位"
+            } else {
+                throw IllegalStateException("退座未生效：$lastMsg")
+            }
         }
     }
 
@@ -1075,7 +1154,7 @@ object HautLibrarySeatAuthClient {
             }
 
             val candidateSeatNames = preferredSeatLabel
-                .split(",", "，", " ", "、")
+                .split(",", "，", "、", "/", "|", ";", "；")
                 .map { it.trim().removeSuffix("号座").removeSuffix("号") }
                 .filter { it.isNotEmpty() }
 
@@ -1091,6 +1170,7 @@ object HautLibrarySeatAuthClient {
             var bookedIdFromApi: Long? = null
 
             if (matchedRegion != null) {
+                val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, matchedRegion.id, targetDate)
                 val roomSnapshot = fetchLibraryRegionSeats(
                     rawToken = cleanToken,
                     regionId = matchedRegion.id,
@@ -1098,25 +1178,17 @@ object HautLibrarySeatAuthClient {
                 ).getOrNull()
 
                 if (roomSnapshot != null && roomSnapshot.seats.isNotEmpty()) {
-                    val startFull = if (roomSnapshot.startTime.count { it == ':' } == 1) {
-                        "${roomSnapshot.bookingDate} ${roomSnapshot.startTime}:00"
-                    } else {
-                        "${roomSnapshot.bookingDate} ${roomSnapshot.startTime}"
-                    }
-                    val endFull = if (roomSnapshot.endTime.count { it == ':' } == 1) {
-                        "${roomSnapshot.bookingDate} ${roomSnapshot.endTime}:00"
-                    } else {
-                        "${roomSnapshot.bookingDate} ${roomSnapshot.endTime}"
-                    }
-
                     // 优先按用户点选的首选/备选顺序找空闲座位，若都被占则尝试该自习室其他空闲座位
                     val orderedCandidates = mutableListOf<LibrarySeatItem>()
                     for (wanted in candidateSeatNames) {
+                        val normWanted = wanted.replace(" ", "")
                         roomSnapshot.seats.firstOrNull { s ->
+                            val normSeat = s.seatName.replace(" ", "")
                             s.isAvailable && (
                                 s.seatName.equals(wanted, ignoreCase = true) ||
-                                    s.seatName.trimStart('0').equals(wanted.trimStart('0'), ignoreCase = true) ||
-                                    s.seatName.endsWith(wanted, ignoreCase = true)
+                                    normSeat.equals(normWanted, ignoreCase = true) ||
+                                    normSeat.trimStart('0').equals(normWanted.trimStart('0'), ignoreCase = true) ||
+                                    normSeat.endsWith(normWanted, ignoreCase = true)
                                 )
                         }?.let { orderedCandidates.add(it) }
                     }
