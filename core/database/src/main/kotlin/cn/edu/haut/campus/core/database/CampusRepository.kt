@@ -2091,6 +2091,11 @@ class CampusRepository internal constructor(
     @Volatile
     private var cachedCloudRefreshToken: String = ""
 
+    @Volatile
+    private var lastCloudTokenRefreshAtMs: Long = 0L
+
+    private val cloudTokenMutex = Mutex()
+
     private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         val parts = token.split(".")
         if (parts.size != 3) return false
@@ -2104,52 +2109,61 @@ class CampusRepository internal constructor(
         }.getOrDefault(false)
     }
 
-    private suspend fun resolveValidCloudAccessToken(forceRefresh: Boolean = false): String {
-        if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken)) {
-            return cachedCloudAccessToken
-        }
-        val prefs = preferences.data.first()
-        val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
-        val storedRt = cachedCloudRefreshToken.ifBlank { prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty() }
-        if (!forceRefresh && storedAt.isNotBlank() && isJwtNotExpired(storedAt)) {
-            cachedCloudAccessToken = storedAt
-            cachedCloudRefreshToken = storedRt
-            return storedAt
-        }
-        if (storedRt.isNotBlank()) {
-            val refreshed = withContext(Dispatchers.IO) {
-                CampusCloudOidcHelper.refreshCloudSession(storedRt)
+    private suspend fun resolveValidCloudAccessToken(forceRefresh: Boolean = false): String =
+        cloudTokenMutex.withLock {
+            val nowMs = System.currentTimeMillis()
+            if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken, nowMs)) {
+                return@withLock cachedCloudAccessToken
             }
-            if (refreshed != null) {
-                cachedCloudAccessToken = refreshed.first
-                cachedCloudRefreshToken = refreshed.second
-                preferences.edit {
-                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = refreshed.first
-                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = refreshed.second
+            if (forceRefresh && cachedCloudAccessToken.isNotBlank() && nowMs - lastCloudTokenRefreshAtMs < 10_000L) {
+                return@withLock cachedCloudAccessToken
+            }
+            val prefs = preferences.data.first()
+            val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
+            val storedRt = cachedCloudRefreshToken.ifBlank { prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty() }
+            if (!forceRefresh && storedAt.isNotBlank() && isJwtNotExpired(storedAt, nowMs)) {
+                cachedCloudAccessToken = storedAt
+                cachedCloudRefreshToken = storedRt
+                return@withLock storedAt
+            }
+            if (storedRt.isNotBlank()) {
+                val refreshed = withContext(Dispatchers.IO) {
+                    CampusCloudOidcHelper.refreshCloudSession(storedRt)
                 }
-                return refreshed.first
+                if (refreshed != null) {
+                    cachedCloudAccessToken = refreshed.first
+                    cachedCloudRefreshToken = refreshed.second
+                    lastCloudTokenRefreshAtMs = System.currentTimeMillis()
+                    preferences.edit {
+                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = refreshed.first
+                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = refreshed.second
+                    }
+                    return@withLock refreshed.first
+                }
             }
+            return@withLock cachedCloudAccessToken.ifBlank { storedAt }
         }
-        return cachedCloudAccessToken.ifBlank { storedAt }
-    }
 
     suspend fun saveVerifiedXpeachCloudAccount(
         profile: cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
     ): CloudIdentityBindingEntity {
         val now = System.currentTimeMillis()
-        if (profile.accessToken.isNotBlank()) {
-            cachedCloudAccessToken = profile.accessToken
-        }
-        if (profile.refreshToken.isNotBlank()) {
-            cachedCloudRefreshToken = profile.refreshToken
-        }
-        if (profile.accessToken.isNotBlank() || profile.refreshToken.isNotBlank()) {
-            preferences.edit {
-                if (profile.accessToken.isNotBlank()) {
-                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = profile.accessToken
-                }
-                if (profile.refreshToken.isNotBlank()) {
-                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = profile.refreshToken
+        cloudTokenMutex.withLock {
+            if (profile.accessToken.isNotBlank()) {
+                cachedCloudAccessToken = profile.accessToken
+                lastCloudTokenRefreshAtMs = now
+            }
+            if (profile.refreshToken.isNotBlank()) {
+                cachedCloudRefreshToken = profile.refreshToken
+            }
+            if (profile.accessToken.isNotBlank() || profile.refreshToken.isNotBlank()) {
+                preferences.edit {
+                    if (profile.accessToken.isNotBlank()) {
+                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = profile.accessToken
+                    }
+                    if (profile.refreshToken.isNotBlank()) {
+                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = profile.refreshToken
+                    }
                 }
             }
         }

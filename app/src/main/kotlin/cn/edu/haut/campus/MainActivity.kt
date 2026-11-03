@@ -290,6 +290,14 @@ class MainActivity : ComponentActivity() {
 
     private fun extractWidgetIntent(intent: Intent?, active: ActiveSession) {
         if (intent == null) return
+        val dataUriString = intent.dataString
+        if (!dataUriString.isNullOrBlank() &&
+            cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.notifyDeepLinkCallback(dataUriString) != null
+        ) {
+            deepLinkOverlayRoute = "xpeach_cloud"
+            pendingAccountIntent = null
+            return
+        }
         val hasAccountScopedAction = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_PROFILE_ID) ||
             intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
             intent.hasExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)

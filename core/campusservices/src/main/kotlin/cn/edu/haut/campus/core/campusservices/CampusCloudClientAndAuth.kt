@@ -30,6 +30,12 @@ data class XpeachCloudAccountProfile(
         get() = "%.2f 🍑".format(peachBalance)
 }
 
+sealed interface NativeOidcLoginResult {
+    data class Success(val profile: XpeachCloudAccountProfile) : NativeOidcLoginResult
+    data class TotpRequired(val message: String) : NativeOidcLoginResult
+    data class Failure(val message: String) : NativeOidcLoginResult
+}
+
 data class CloudSyncedParcelDto(
     val id: String,
     val trackingNumber: String,
@@ -175,8 +181,130 @@ object CampusCloudOidcHelper {
             loginTxn = loginTxn,
             authorizeUrl = authorizeUrl,
             pkce = pkce,
-            expiresAtEpochMillis = System.currentTimeMillis() + 5 * 60 * 1000L
+            expiresAtEpochMillis = System.currentTimeMillis() + 15 * 60 * 1000L
+        ).also { latestBrowserTxn = it }
+    }
+
+    /**
+     * 原生 OIDC 直连登录：在 App 原生表单中输入 XPeach 用户名/邮箱、密码（及可选 6 位 2FA TOTP 验证码），
+     * 由 Campus Cloud BFF 与 XPeach SSO 主站直接完成认证、签发长期会话并同步最新 🍑 余额。
+     */
+    fun loginWithNativeOidcCredentials(
+        identifier: String,
+        password: String,
+        totpCode: String? = null,
+        installEphemeralId: String,
+        deviceLabel: String = "HautCampus Android Native OIDC",
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): NativeOidcLoginResult {
+        val cleanId = identifier.trim()
+        if (cleanId.isEmpty() || password.isEmpty()) {
+            return NativeOidcLoginResult.Failure("请输入 XPeach 用户名（或邮箱）与登录密码")
+        }
+        val safeEphId = if (installEphemeralId.length >= 8) installEphemeralId else "eph_${installEphemeralId}_android"
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val reqObj = JSONObject()
+            .put("identifier", cleanId)
+            .put("password", password)
+            .put("install_ephemeral_id", safeEphId)
+            .put("device_label", deviceLabel)
+        if (!totpCode.isNullOrBlank()) {
+            reqObj.put("totp_code", totpCode.trim())
+        }
+
+        val respRaw = runCatching {
+            httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/auth/oidc/native-login",
+                bodyJson = reqObj.toString(),
+                bearerToken = null
+            )
+        }.getOrElse { err ->
+            return NativeOidcLoginResult.Failure(err.message ?: "连接 XPeach 认证中心失败")
+        }
+        val root = runCatching { JSONObject(respRaw) }.getOrElse {
+            return NativeOidcLoginResult.Failure("认证响应格式异常")
+        }
+        if (!root.optBoolean("ok", false)) {
+            val errMsg = root.optJSONObject("error")?.optString("message") ?: "XPeach 用户名/邮箱或密码不正确"
+            return NativeOidcLoginResult.Failure(errMsg)
+        }
+        val code = root.optString("code")
+        val data = root.optJSONObject("data") ?: JSONObject()
+        if (code == "TOTP_REQUIRED" || (data.optBoolean("totp_required", false) && !data.has("access_token"))) {
+            val msg = data.optString("message").ifBlank { "该账号已开启两步验证 (2FA)，请输入 6 位动态验证码。" }
+            return NativeOidcLoginResult.TotpRequired(msg)
+        }
+
+        val accessToken = data.getString("access_token")
+        val refreshToken = data.optString("refresh_token")
+        val cloudUserId = data.getString("cloud_user_id")
+        val ssoIssuer = data.optString("sso_issuer", DEFAULT_SSO_ISSUER)
+        val ssoSubject = data.getString("sso_subject")
+        val displayName = data.optString("username").ifBlank {
+            data.optString("display_name").ifBlank { ssoSubject }
+        }
+
+        var peachBalance = data.optDouble("peach_balance", 0.0)
+        if (peachBalance.isNaN()) peachBalance = 0.0
+        var holdSupported = false
+        runCatching {
+            val walletRaw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/me/wallet",
+                bodyJson = null,
+                bearerToken = accessToken
+            )
+            val walletRoot = JSONObject(walletRaw)
+            if (walletRoot.optBoolean("ok", false)) {
+                val wData = walletRoot.getJSONObject("data")
+                if (wData.has("peach_balance")) {
+                    val livePeach = wData.optDouble("peach_balance", peachBalance)
+                    if (!livePeach.isNaN()) peachBalance = livePeach
+                }
+                holdSupported = wData.optBoolean("hold_supported", false)
+            }
+        }
+        val storedBalanceUnits = kotlin.math.round(peachBalance * 10_000.0).toLong()
+
+        return NativeOidcLoginResult.Success(
+            XpeachCloudAccountProfile(
+                cloudUserId = cloudUserId,
+                ssoIssuer = ssoIssuer,
+                ssoSubject = ssoSubject,
+                displayName = displayName,
+                peachBalanceMicropeach = storedBalanceUnits,
+                holdSupported = holdSupported,
+                linkedAtEpochMillis = System.currentTimeMillis(),
+                accessToken = accessToken,
+                refreshToken = refreshToken
+            )
         )
+    }
+
+    /**
+     * 查询移动端 OIDC 授权事务状态：当用户在系统浏览器完成一键授权切回 App 时，
+     * 自动读取已验证的 app_ticket 并使用本地 PKCE code_verifier 完成会话绑定，无需手动粘贴凭据。
+     */
+    fun pollMobileAuthTransactionTicket(
+        loginTxn: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): String? {
+        if (loginTxn.isBlank()) return null
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/auth/mobile/status?txn=${Uri.encode(loginTxn.trim())}",
+                bodyJson = null,
+                bearerToken = null
+            )
+            val root = JSONObject(raw)
+            if (!root.optBoolean("ok", false)) return null
+            val data = root.optJSONObject("data") ?: return null
+            val ticket = data.optString("app_ticket").trim()
+            if (ticket.startsWith("tkt_")) ticket else null
+        }.getOrNull()
     }
 
     /**
@@ -274,6 +402,30 @@ object CampusCloudOidcHelper {
             val v = wData.optDouble("peach_balance", Double.NaN)
             if (v.isNaN()) null else v
         }.getOrNull()
+    }
+
+    @Volatile
+    private var latestDeepLinkCallbackPair: Pair<String, String>? = null
+
+    @Volatile
+    private var latestBrowserTxn: MobileAuthTransactionStart? = null
+
+    fun getLatestBrowserTxn(): MobileAuthTransactionStart? = latestBrowserTxn
+
+    fun clearLatestBrowserTxn() {
+        latestBrowserTxn = null
+    }
+
+    fun notifyDeepLinkCallback(url: String?): Pair<String, String>? {
+        val pair = extractCallbackTicketAndTxn(url) ?: return null
+        latestDeepLinkCallbackPair = pair
+        return pair
+    }
+
+    fun consumeDeepLinkCallback(): Pair<String, String>? {
+        val pair = latestDeepLinkCallbackPair
+        latestDeepLinkCallbackPair = null
+        return pair
     }
 
     fun extractCallbackTicketAndTxn(url: String?): Pair<String, String>? {

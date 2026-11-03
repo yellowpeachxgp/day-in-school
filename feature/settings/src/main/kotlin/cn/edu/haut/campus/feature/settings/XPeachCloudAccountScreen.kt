@@ -1,17 +1,9 @@
 package cn.edu.haut.campus.feature.settings
 
-import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.Bitmap
 import android.net.Uri
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,13 +13,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,15 +40,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.campusservices.MobileAuthTransactionStart
+import cn.edu.haut.campus.core.campusservices.NativeOidcLoginResult
 import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
@@ -74,6 +74,7 @@ fun XPeachCloudAccountScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val cloudBinding by repository.cloudIdentityBindingFlow.collectAsState(initial = null)
     val bookingPlans by repository.libraryBookingPlansFlow.collectAsState(initial = emptyList())
@@ -84,6 +85,41 @@ fun XPeachCloudAccountScreen(
     var showInstallPluginDialog by remember { mutableStateOf(false) }
     var isSyncingSnapshot by remember { mutableStateOf(false) }
     var feedbackBanner by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(lifecycleOwner, showBindDialog) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && !showBindDialog) {
+                val txn = CampusCloudOidcHelper.getLatestBrowserTxn() ?: return@LifecycleEventObserver
+                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback()
+                scope.launch {
+                    val ticket = deepLinkPair?.first ?: withContext(Dispatchers.IO) {
+                        CampusCloudOidcHelper.pollMobileAuthTransactionTicket(txn.loginTxn)
+                    }
+                    if (!ticket.isNullOrBlank()) {
+                        CampusCloudOidcHelper.clearLatestBrowserTxn()
+                        val res = withContext(Dispatchers.IO) {
+                            runCatching {
+                                CampusCloudOidcHelper.exchangeMobileTicketForAccount(
+                                    loginTxn = txn.loginTxn,
+                                    appTicket = ticket,
+                                    codeVerifier = txn.pkce.codeVerifier
+                                )
+                            }
+                        }
+                        res.onSuccess { profile ->
+                            val saved = repository.saveVerifiedXpeachCloudAccount(profile)
+                            runCatching { repository.syncWithCampusCloud() }
+                            feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
+                                saved.peachBalanceMicropeach / 10_000.0
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(repository) {
         repository.ensureDefaultReferencePluginsInstalled()
@@ -250,7 +286,9 @@ fun XPeachCloudAccountScreen(
                                         val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
                                         feedbackBanner = "已完成云端双向同步（🍑 余额 %.2f · 抢座与快递已对齐）".format(bal)
                                     } else {
-                                        showBindDialog = true
+                                        feedbackBanner = "云端响应繁忙，已保留当前登录态与本地余额（%.2f 🍑）".format(
+                                            binding.peachBalanceMicropeach / 10_000.0
+                                        )
                                     }
                                 }
                             },
@@ -269,7 +307,9 @@ fun XPeachCloudAccountScreen(
                                         if (refreshed != null) {
                                             feedbackBanner = "已同步 XPeach 主站最新余额：%.2f 🍑".format(refreshed)
                                         } else {
-                                            showBindDialog = true
+                                            feedbackBanner = "刷新稍慢，当前余额：%.2f 🍑".format(
+                                                binding.peachBalanceMicropeach / 10_000.0
+                                            )
                                         }
                                     }
                                 },
@@ -453,12 +493,13 @@ fun XPeachCloudAccountScreen(
     }
 
     if (showBindDialog) {
-        XpeachSsoOidcWebViewDialog(
+        XpeachNativeOidcLoginDialog(
             installEphemeralId = "eph_${repository.profileId}",
             onDismiss = { showBindDialog = false },
             onBound = { profile ->
                 scope.launch {
                     val saved = repository.saveVerifiedXpeachCloudAccount(profile)
+                    runCatching { repository.syncWithCampusCloud() }
                     showBindDialog = false
                     feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
                         saved.peachBalanceMicropeach / 10_000.0
@@ -535,89 +576,136 @@ fun XPeachCloudAccountScreen(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun XpeachSsoOidcWebViewDialog(
+private fun XpeachNativeOidcLoginDialog(
     installEphemeralId: String,
     onDismiss: () -> Unit,
     onBound: (XpeachCloudAccountProfile) -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
-    var activeTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
-    var statusHint by remember { mutableStateOf("正在打开登录页面…") }
-    var errorHint by remember { mutableStateOf<String?>(null) }
-    var isPageLoading by remember { mutableStateOf(true) }
-    var isExchanging by remember { mutableStateOf(false) }
-    var manualTicketInput by remember { mutableStateOf("") }
-    var showManualTicketEntry by remember { mutableStateOf(false) }
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    fun handleCallbackTicket(ticket: String, txnId: String) {
-        val currentTxn = activeTxn ?: return
-        if (isExchanging) return
-        isExchanging = true
+    var identifierInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var totpInput by remember { mutableStateOf("") }
+    var needsTotp by remember { mutableStateOf(false) }
+
+    var isSubmitting by remember { mutableStateOf(false) }
+    var statusHint by remember { mutableStateOf("直接输入你的 XPeach 账号密码，即可原生登录并同步 🍑 余额") }
+    var errorHint by remember { mutableStateOf<String?>(null) }
+
+    var activeBrowserTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
+
+    fun exchangeTicketAndBind(ticket: String, txn: MobileAuthTransactionStart) {
+        if (isSubmitting) return
+        isSubmitting = true
         errorHint = null
-        statusHint = "登录成功，正在同步你的昵称与余额…"
+        statusHint = "授权成功，正在同步你的昵称与 🍑 余额…"
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     CampusCloudOidcHelper.exchangeMobileTicketForAccount(
-                        loginTxn = txnId.ifBlank { currentTxn.loginTxn },
+                        loginTxn = txn.loginTxn,
                         appTicket = ticket.trim(),
-                        codeVerifier = currentTxn.pkce.codeVerifier
+                        codeVerifier = txn.pkce.codeVerifier
                     )
                 }
             }
-            isExchanging = false
+            isSubmitting = false
             result.fold(
                 onSuccess = { profile ->
+                    CampusCloudOidcHelper.clearLatestBrowserTxn()
                     onBound(profile)
                 },
                 onFailure = { err ->
                     errorHint = "登录同步失败：${err.message}"
-                    statusHint = "请重试登录或检查网络"
                 }
             )
         }
     }
 
-    LaunchedEffect(installEphemeralId) {
-        errorHint = null
-        statusHint = "正在打开登录页面…"
-        val res = withContext(Dispatchers.IO) {
-            runCatching {
-                CampusCloudOidcHelper.startRemoteMobileAuthTransaction(installEphemeralId = installEphemeralId)
+    DisposableEffect(lifecycleOwner, activeBrowserTxn) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback()
+                val currentTxn = activeBrowserTxn
+                if (deepLinkPair != null && currentTxn != null) {
+                    exchangeTicketAndBind(deepLinkPair.first, currentTxn)
+                } else if (currentTxn != null && !isSubmitting) {
+                    scope.launch {
+                        val polledTicket = withContext(Dispatchers.IO) {
+                            CampusCloudOidcHelper.pollMobileAuthTransactionTicket(currentTxn.loginTxn)
+                        }
+                        if (!polledTicket.isNullOrBlank()) {
+                            exchangeTicketAndBind(polledTicket, currentTxn)
+                        }
+                    }
+                }
             }
         }
-        res.fold(
-            onSuccess = { txn ->
-                activeTxn = txn
-                statusHint = "请在下方输入你已有的账号密码完成登录"
-            },
-            onFailure = { err ->
-                errorHint = "无法连接服务器：${err.message}"
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun submitNativeLogin() {
+        if (isSubmitting) return
+        if (identifierInput.isBlank() || passwordInput.isBlank()) {
+            errorHint = "请输入 XPeach 用户名（或邮箱）与登录密码"
+            return
+        }
+        if (needsTotp && totpInput.trim().length < 6) {
+            errorHint = "请输入 6 位两步验证码（或 2FA 恢复码）"
+            return
+        }
+        isSubmitting = true
+        errorHint = null
+        statusHint = "正在通过 XPeach OIDC 原生认证并同步 🍑 余额…"
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                CampusCloudOidcHelper.loginWithNativeOidcCredentials(
+                    identifier = identifierInput.trim(),
+                    password = passwordInput,
+                    totpCode = totpInput.trim().takeIf { it.isNotEmpty() },
+                    installEphemeralId = installEphemeralId
+                )
             }
-        )
+            isSubmitting = false
+            when (res) {
+                is NativeOidcLoginResult.Success -> {
+                    onBound(res.profile)
+                }
+                is NativeOidcLoginResult.TotpRequired -> {
+                    needsTotp = true
+                    statusHint = "密码验证通过，请继续输入 6 位两步验证码"
+                    errorHint = res.message
+                }
+                is NativeOidcLoginResult.Failure -> {
+                    errorHint = res.message
+                    statusHint = "请核对账号信息后重试"
+                }
+            }
+        }
     }
 
     Dialog(
-        onDismissRequest = { if (!isExchanging) onDismiss() },
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .height(640.dp),
-            shape = RoundedCornerShape(20.dp),
+                .fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(22.dp),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp
+            tonalElevation = 6.dp
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -626,7 +714,7 @@ private fun XpeachSsoOidcWebViewDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "XPEACH SSO 统一身份认证",
+                            text = "XPeach 统一账号原生登录",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -636,22 +724,15 @@ private fun XpeachSsoOidcWebViewDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(
-                            onClick = { showManualTicketEntry = !showManualTicketEntry }
-                        ) {
-                            Text(if (showManualTicketEntry) "返回内嵌登录" else "外部浏览器辅助")
-                        }
-                        TextButton(
-                            enabled = !isExchanging,
-                            onClick = onDismiss
-                        ) {
-                            Text("关闭")
-                        }
+                    TextButton(
+                        enabled = !isSubmitting,
+                        onClick = onDismiss
+                    ) {
+                        Text("关闭")
                     }
                 }
 
-                if (isPageLoading || isExchanging || activeTxn == null) {
+                if (isSubmitting) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
@@ -665,132 +746,116 @@ private fun XpeachSsoOidcWebViewDialog(
                     }
                 }
 
-                if (showManualTicketEntry) {
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "若您已在系统浏览器登录过 XPEACH SSO，可点击「系统浏览器打开」完成授权，随后粘贴回调页显示的 Ticket 即可完成绑定：",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                enabled = activeTxn != null,
-                                onClick = {
-                                    val url = activeTxn?.authorizeUrl ?: return@OutlinedButton
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                        )
-                                    }
-                                }
-                            ) {
-                                Text("系统浏览器打开 SSO")
-                            }
+                OutlinedTextField(
+                    value = identifierInput,
+                    onValueChange = { identifierInput = it },
+                    label = { Text("XPeach 用户名 / 邮箱") },
+                    placeholder = { Text("例如 yellowpeach 或注册邮箱") },
+                    singleLine = true,
+                    enabled = !isSubmitting,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = passwordInput,
+                    onValueChange = { passwordInput = it },
+                    label = { Text("登录密码") },
+                    singleLine = true,
+                    enabled = !isSubmitting,
+                    visualTransformation = if (showPassword) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        TextButton(onClick = { showPassword = !showPassword }) {
+                            Text(if (showPassword) "隐藏" else "显示")
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = manualTicketInput,
-                            onValueChange = { manualTicketInput = it.trim() },
-                            label = { Text("粘贴回调页单次 Ticket (如 tkt_...)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Button(
-                            enabled = manualTicketInput.startsWith("tkt_") && activeTxn != null && !isExchanging,
-                            onClick = {
-                                val txn = activeTxn ?: return@Button
-                                handleCallbackTicket(manualTicketInput, txn.loginTxn)
-                            }
-                        ) {
-                            Text("兑换 Ticket 并绑定")
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = if (needsTotp) ImeAction.Next else ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (needsTotp) {
+                    OutlinedTextField(
+                        value = totpInput,
+                        onValueChange = { totpInput = it.trim() },
+                        label = { Text("6 位两步验证码 (2FA / 恢复码)") },
+                        placeholder = { Text("请输入身份验证器中的 6 位动态码") },
+                        singleLine = true,
+                        enabled = !isSubmitting,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { needsTotp = true }) {
+                            Text("账号开启了两步验证 (2FA)？点击填写验证码")
                         }
                     }
                 }
 
-                val txn = activeTxn
-                if (txn != null && !showManualTicketEntry) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.loadWithOverviewMode = true
-                                    settings.useWideViewPort = true
-                                    CookieManager.getInstance().setAcceptCookie(true)
-                                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                Button(
+                    enabled = !isSubmitting && identifierInput.isNotBlank() && passwordInput.isNotBlank(),
+                    onClick = { submitNativeLogin() },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isSubmitting) "正在登录并同步 🍑 余额…" else "立即登录并同步 🍑 余额")
+                }
 
-                                    webViewClient = object : WebViewClient() {
-                                        override fun shouldOverrideUrlLoading(
-                                            view: WebView?,
-                                            request: WebResourceRequest?
-                                        ): Boolean {
-                                            val url = request?.url?.toString().orEmpty()
-                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
-                                            if (pair != null) {
-                                                handleCallbackTicket(pair.first, pair.second)
-                                                return true
-                                            }
-                                            if (url.startsWith("intent://")) {
-                                                val fallbackPair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(
-                                                    url.replace("intent://", "https://")
-                                                )
-                                                if (fallbackPair != null) {
-                                                    handleCallbackTicket(fallbackPair.first, fallbackPair.second)
-                                                }
-                                                return true
-                                            }
-                                            return false
-                                        }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-                                        override fun onPageStarted(
-                                            view: WebView?,
-                                            url: String?,
-                                            favicon: Bitmap?
-                                        ) {
-                                            super.onPageStarted(view, url, favicon)
-                                            isPageLoading = true
-                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
-                                            if (pair != null) {
-                                                handleCallbackTicket(pair.first, pair.second)
-                                            }
-                                        }
-
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
-                                            isPageLoading = false
-                                            val pair = CampusCloudOidcHelper.extractCallbackTicketAndTxn(url)
-                                            if (pair != null) {
-                                                handleCallbackTicket(pair.first, pair.second)
-                                            }
-                                        }
-                                    }
-                                    loadUrl(txn.authorizeUrl)
-                                    webViewRef = this
+                OutlinedButton(
+                    enabled = !isSubmitting,
+                    onClick = {
+                        scope.launch {
+                            isSubmitting = true
+                            errorHint = null
+                            statusHint = "正在拉起系统 OIDC 授权（支持通行密钥 Passkey）…"
+                            val res = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    CampusCloudOidcHelper.startRemoteMobileAuthTransaction(
+                                        installEphemeralId = installEphemeralId
+                                    )
                                 }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                } else if (txn == null) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                            }
+                            isSubmitting = false
+                            res.fold(
+                                onSuccess = { txn ->
+                                    activeBrowserTxn = txn
+                                    statusHint = "请在系统浏览器完成授权，完成后将自动跳回 App 绑定"
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(txn.authorizeUrl)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                onFailure = { err ->
+                                    errorHint = "无法发起 OIDC 授权：${err.message}"
+                                }
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("使用通行密钥 (Passkey) / 系统浏览器一键授权")
                 }
             }
         }
