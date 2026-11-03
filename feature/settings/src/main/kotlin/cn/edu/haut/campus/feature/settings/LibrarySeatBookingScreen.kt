@@ -108,6 +108,8 @@ import cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy
 import cn.edu.haut.campus.core.campusservices.OfficialWebScripts
 import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
+import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
+import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
@@ -447,8 +449,8 @@ fun LibrarySeatBookingScreen(
                         }
 
                         is LibrarySeatSessionState.Authenticated -> {
-                            val userLabel = state.snapshot.userInfo.userName.ifBlank {
-                                state.snapshot.userInfo.userNo
+                            val userLabel = state.snapshot.userInfo.userName.cleanNullLiteral().ifBlank {
+                                state.snapshot.userInfo.userNo.cleanNullLiteral("已登录同学")
                             }
                             Row(
                                 modifier = Modifier.weight(1f),
@@ -2169,14 +2171,18 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                val cleanRegionName = region.regionName.cleanNullLiteral("自习室")
+                                val cleanLayerName = region.layerName.cleanNullLiteral("图书馆")
+                                val cleanOpenTime = region.openTime.cleanNullLiteral("07:30")
+                                val cleanCloseTime = region.closeTime.cleanNullLiteral("22:00")
                                 Text(
-                                    text = if (isSelected) "✅ ${region.regionName}" else region.regionName,
+                                    text = if (isSelected) "✅ $cleanRegionName" else cleanRegionName,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "${region.layerName} · 开放时间 ${region.openTime}-${region.closeTime}",
+                                    text = "$cleanLayerName · 开放时间 $cleanOpenTime-$cleanCloseTime",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2718,6 +2724,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "仅提醒"
                             else -> "手机自动抢"
                         }
+                        val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
+                        val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")
+                        val cleanDiag = plan.lastDiagnosticMessage.cleanNullableLiteral() ?: "等待到点自动抢座"
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2725,7 +2734,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${plan.targetLocalDate} ${plan.targetLocalTime} · ${plan.preferredAreaName}",
+                                    text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $cleanAreaName",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.weight(1f)
@@ -2745,12 +2754,12 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 )
                             }
                             Text(
-                                text = "已选座位：${plan.preferredSeatLabel}",
+                                text = "已选座位：$cleanSeatLabel",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = plan.lastDiagnosticMessage ?: "等待到点自动抢座",
+                                text = cleanDiag,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )

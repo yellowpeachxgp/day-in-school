@@ -682,4 +682,22 @@ class CampusServicesUnitTest {
             CampusCloudOidcHelper.buildRefundIdempotencyKey("ord-123")
         )
     }
+
+    @Test
+    fun nullLiteralSanitizers_stripJsonNullStringsAcrossParcelAndLibraryPayloads() {
+        val obj = JSONObject()
+            .put("pickup_code", JSONObject.NULL)
+            .put("station_name", "null")
+            .put("item_title", "中通快递 · null")
+            .put("carrier_name", "中通快递")
+        assertEquals(null, obj.optNullableCleanString("pickup_code"))
+        assertEquals(null, obj.optNullableCleanString("station_name"))
+        assertEquals("中通快递", obj.optCleanString("item_title"))
+        assertEquals("中通快递", obj.optCleanString("carrier_name"))
+        assertEquals("默认驿站", "null".cleanNullLiteral("默认驿站"))
+        assertEquals(null, "undefined".cleanNullableLiteral())
+        val syncScript = OfficialWebScripts.buildLibraryTokenSyncScript("tok_1234567890", navigateToSelectRoom = false)
+        assertTrue(syncScript.contains("__hautNullScrubberInstalled"))
+        assertTrue(syncScript.contains("07:30-22:00"))
+    }
 }

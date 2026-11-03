@@ -10,6 +10,34 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 
+fun String?.cleanNullLiteral(fallback: String = ""): String {
+    if (this == null) return fallback
+    val trimmed = this.trim()
+    if (trimmed.isEmpty()) return fallback
+    val lower = trimmed.lowercase()
+    if (lower == "null" || lower == "undefined" || lower == "none" || lower == "nil") {
+        return fallback
+    }
+    val cleaned = trimmed
+        .replace(Regex("\\s*·\\s*null\\b", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\bnull\\s*·\\s*", RegexOption.IGNORE_CASE), "")
+        .trim()
+    return cleaned.ifEmpty { fallback }
+}
+
+fun String?.cleanNullableLiteral(): String? =
+    this.cleanNullLiteral("").takeIf { it.isNotEmpty() }
+
+fun JSONObject.optCleanString(key: String, fallback: String = ""): String {
+    if (!has(key) || isNull(key)) return fallback
+    return optString(key, fallback).cleanNullLiteral(fallback)
+}
+
+fun JSONObject.optNullableCleanString(key: String): String? {
+    if (!has(key) || isNull(key)) return null
+    return optString(key, "").cleanNullableLiteral()
+}
+
 data class XpeachCloudAccountProfile(
     val cloudUserId: String,
     val ssoIssuer: String,
@@ -237,12 +265,12 @@ object CampusCloudOidcHelper {
         }
 
         val accessToken = data.getString("access_token")
-        val refreshToken = data.optString("refresh_token")
+        val refreshToken = data.optCleanString("refresh_token")
         val cloudUserId = data.getString("cloud_user_id")
-        val ssoIssuer = data.optString("sso_issuer", DEFAULT_SSO_ISSUER)
+        val ssoIssuer = data.optCleanString("sso_issuer", DEFAULT_SSO_ISSUER)
         val ssoSubject = data.getString("sso_subject")
-        val displayName = data.optString("username").ifBlank {
-            data.optString("display_name").ifBlank { ssoSubject }
+        val displayName = data.optCleanString("username").ifBlank {
+            data.optCleanString("display_name").ifBlank { ssoSubject }
         }
 
         var peachBalance = data.optDouble("peach_balance", 0.0)
@@ -302,7 +330,7 @@ object CampusCloudOidcHelper {
             val root = JSONObject(raw)
             if (!root.optBoolean("ok", false)) return null
             val data = root.optJSONObject("data") ?: return null
-            val ticket = data.optString("app_ticket").trim()
+            val ticket = data.optCleanString("app_ticket")
             if (ticket.startsWith("tkt_")) ticket else null
         }.getOrNull()
     }
@@ -332,17 +360,17 @@ object CampusCloudOidcHelper {
         )
         val exchangeRoot = JSONObject(exchangeRaw)
         if (!exchangeRoot.optBoolean("ok", false)) {
-            val errMsg = exchangeRoot.optJSONObject("error")?.optString("message") ?: "兑换 XPEACH SSO 凭据失败"
+            val errMsg = exchangeRoot.optJSONObject("error")?.optCleanString("message")?.ifBlank { null } ?: "兑换 XPEACH SSO 凭据失败"
             throw IllegalStateException(errMsg)
         }
         val sessionData = exchangeRoot.getJSONObject("data")
         val accessToken = sessionData.getString("access_token")
-        val refreshToken = sessionData.optString("refresh_token")
+        val refreshToken = sessionData.optCleanString("refresh_token")
         val cloudUserId = sessionData.getString("cloud_user_id")
-        val ssoIssuer = sessionData.optString("sso_issuer", DEFAULT_SSO_ISSUER)
+        val ssoIssuer = sessionData.optCleanString("sso_issuer", DEFAULT_SSO_ISSUER)
         val ssoSubject = sessionData.getString("sso_subject")
-        val displayName = sessionData.optString("username").ifBlank {
-            sessionData.optString("display_name").ifBlank { ssoSubject }
+        val displayName = sessionData.optCleanString("username").ifBlank {
+            sessionData.optCleanString("display_name").ifBlank { ssoSubject }
         }
 
         var peachBalance = sessionData.optDouble("peach_balance", 0.0)
@@ -554,19 +582,19 @@ object CampusCloudOidcHelper {
             val data = root.optJSONObject("data") ?: return null
             val job = data.optJSONObject("job")
             val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
-            val confirmed = job?.optString("state") == "CONFIRMED"
-            val extId = sr?.optString("external_booking_id").orEmpty().ifBlank { jobId }
-            val seatAlias = sr?.optString("seat_alias").orEmpty()
-            val evidenceHash = sr?.optString("evidence_sha256").orEmpty()
+            val confirmed = job?.optCleanString("state") == "CONFIRMED"
+            val extId = sr?.optCleanString("external_booking_id").orEmpty().ifBlank { jobId }
+            val seatAlias = sr?.optCleanString("seat_alias").orEmpty()
+            val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
             AutomatedSeatBookingResult(
                 confirmed = confirmed,
                 bookingId = extId,
                 seatTitle = seatAlias,
                 evidenceSha256 = evidenceHash,
                 diagnosticMessage = if (confirmed) {
-                    "云端抢座成功！已锁定 $seatAlias（预约号 $extId），扣除 0.1 🍑"
+                    "云端抢座成功！已锁定 ${seatAlias.ifBlank { "所选座位" }}（预约号 $extId），扣除 0.1 🍑"
                 } else {
-                    "云端抢座未锁定座位（状态：${job?.optString("state") ?: "UNKNOWN"}），未扣费"
+                    "云端抢座未锁定座位（状态：${job?.optCleanString("state", "未命中") ?: "未命中"}），未扣费"
                 }
             )
         }.getOrNull()
@@ -649,22 +677,23 @@ object CampusCloudOidcHelper {
             val parcelUpserts = JSONArray()
             val parcelStatusUpdates = JSONArray()
             for (p in localParcels) {
-                if (p.trackingNumber.isBlank()) continue
+                val cleanTracking = p.trackingNumber.cleanNullLiteral()
+                if (cleanTracking.isBlank()) continue
                 parcelUpserts.put(
                     JSONObject()
-                        .put("tracking_number", p.trackingNumber)
-                        .put("carrier_code", p.carrierCode.ifBlank { "cainiao" })
-                        .put("carrier_name", p.carrierName.ifBlank { "校园快递" })
-                        .put("status", p.status)
-                        .put("pickup_code", p.pickupCode.orEmpty())
-                        .put("station_name", p.stationName.orEmpty())
-                        .put("item_title", p.itemTitle.orEmpty())
-                        .put("raw_notification_text", p.rawNotificationText.orEmpty())
+                        .put("tracking_number", cleanTracking)
+                        .put("carrier_code", p.carrierCode.cleanNullLiteral("cainiao"))
+                        .put("carrier_name", p.carrierName.cleanNullLiteral("校园快递"))
+                        .put("status", p.status.cleanNullLiteral("IN_TRANSIT"))
+                        .put("pickup_code", p.pickupCode.cleanNullLiteral(""))
+                        .put("station_name", p.stationName.cleanNullLiteral(""))
+                        .put("item_title", p.itemTitle.cleanNullLiteral(""))
+                        .put("raw_notification_text", p.rawNotificationText.cleanNullLiteral(""))
                 )
                 if (p.status == "PICKED_UP") {
                     parcelStatusUpdates.put(
                         JSONObject()
-                            .put("tracking_number", p.trackingNumber)
+                            .put("tracking_number", cleanTracking)
                             .put("status", "PICKED_UP")
                     )
                 }
@@ -695,7 +724,7 @@ object CampusCloudOidcHelper {
 
             val boundStudentNo = if (bindingsArr.length() > 0) {
                 val b0 = bindingsArr.optJSONObject(0)
-                b0?.optString("student_no")?.takeIf { it.isNotBlank() && !it.contains("***") }
+                b0?.optNullableCleanString("student_no")?.takeIf { !it.contains("***") }
             } else null
 
             val jobs = buildList {
@@ -704,24 +733,24 @@ object CampusCloudOidcHelper {
                     val seatsArr = j.optJSONArray("candidate_seats") ?: JSONArray()
                     val seats = buildList {
                         for (k in 0 until seatsArr.length()) {
-                            val s = seatsArr.optString(k).trim()
+                            val s = seatsArr.optString(k).cleanNullLiteral()
                             if (s.isNotEmpty()) add(s)
                         }
                     }
                     val sr = j.optJSONObject("school_reservation")
                     add(
                         CloudSyncedReservationJobDto(
-                            jobId = j.optString("id"),
-                            planId = j.optString("plan_id"),
-                            areaCode = j.optString("area_code", "4F_NORTH"),
-                            areaName = j.optString("area_name", "4楼北自习区"),
+                            jobId = j.optCleanString("id"),
+                            planId = j.optCleanString("plan_id"),
+                            areaCode = j.optCleanString("area_code", "4F_NORTH"),
+                            areaName = j.optCleanString("area_name", "4楼北自习区"),
                             candidateSeats = seats,
-                            slotWindow = j.optString("slot_window", "08:00-22:00"),
-                            targetLocalDate = j.optString("booking_local_date"),
-                            targetLocalTime = j.optString("target_local_time", "07:00:00"),
-                            state = j.optString("state", "ARMED"),
-                            externalBookingId = sr?.optString("external_booking_id")?.takeIf { it.isNotBlank() },
-                            evidenceSha256 = sr?.optString("evidence_sha256")?.takeIf { it.isNotBlank() }
+                            slotWindow = j.optCleanString("slot_window", "08:00-22:00"),
+                            targetLocalDate = j.optCleanString("booking_local_date"),
+                            targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
+                            state = j.optCleanString("state", "ARMED"),
+                            externalBookingId = sr?.optNullableCleanString("external_booking_id"),
+                            evidenceSha256 = sr?.optNullableCleanString("evidence_sha256")
                         )
                     )
                 }
@@ -732,12 +761,12 @@ object CampusCloudOidcHelper {
                     val o = ordersArr.optJSONObject(i) ?: continue
                     add(
                         CloudSyncedOrderDto(
-                            orderId = o.optString("id"),
-                            jobId = o.optString("job_id"),
+                            orderId = o.optCleanString("id"),
+                            jobId = o.optCleanString("job_id"),
                             pricePeach = o.optDouble("price_peach", 0.1),
-                            paymentState = o.optString("payment_state", "PAID"),
-                            paidAtIso = o.optString("paid_at").takeIf { it.isNotBlank() },
-                            createdAtIso = o.optString("created_at")
+                            paymentState = o.optCleanString("payment_state", "PAID"),
+                            paidAtIso = o.optNullableCleanString("paid_at"),
+                            createdAtIso = o.optCleanString("created_at")
                         )
                     )
                 }
@@ -746,30 +775,32 @@ object CampusCloudOidcHelper {
             val parcels = buildList {
                 for (i in 0 until parcelsArr.length()) {
                     val p = parcelsArr.optJSONObject(i) ?: continue
+                    val tn = p.optCleanString("tracking_number")
+                    if (tn.isBlank()) continue
                     add(
                         CloudSyncedParcelDto(
-                            id = p.optString("id"),
-                            trackingNumber = p.optString("tracking_number"),
-                            carrierCode = p.optString("carrier_code", "cainiao"),
-                            carrierName = p.optString("carrier_name", "校园快递"),
-                            status = p.optString("status", "IN_TRANSIT"),
-                            pickupCode = p.optString("pickup_code").takeIf { it.isNotBlank() },
-                            stationName = p.optString("station_name").takeIf { it.isNotBlank() },
-                            itemTitle = p.optString("item_title").takeIf { it.isNotBlank() },
-                            rawNotificationText = p.optString("raw_notification_text").takeIf { it.isNotBlank() }
+                            id = p.optCleanString("id"),
+                            trackingNumber = tn,
+                            carrierCode = p.optCleanString("carrier_code", "cainiao"),
+                            carrierName = p.optCleanString("carrier_name", "校园快递"),
+                            status = p.optCleanString("status", "IN_TRANSIT"),
+                            pickupCode = p.optNullableCleanString("pickup_code"),
+                            stationName = p.optNullableCleanString("station_name"),
+                            itemTitle = p.optNullableCleanString("item_title"),
+                            rawNotificationText = p.optNullableCleanString("raw_notification_text")
                         )
                     )
                 }
             }
 
             CloudSyncSnapshotResult(
-                cloudUserId = userObj.optString("cloud_user_id"),
-                ssoSubject = userObj.optString("sso_subject"),
-                displayName = userObj.optString("username").ifBlank { userObj.optString("display_name") },
+                cloudUserId = userObj.optCleanString("cloud_user_id"),
+                ssoSubject = userObj.optCleanString("sso_subject"),
+                displayName = userObj.optCleanString("username").ifBlank { userObj.optCleanString("display_name") },
                 peachBalance = walletObj.optDouble("peach_balance", 0.0).let { if (it.isNaN()) 0.0 else it },
                 peachUsed = walletObj.optDouble("peach_used", 0.0).let { if (it.isNaN()) 0.0 else it },
-                group = walletObj.optString("group", "默认分组"),
-                affCode = walletObj.optString("aff_code", ""),
+                group = walletObj.optCleanString("group", "默认分组"),
+                affCode = walletObj.optCleanString("aff_code", ""),
                 boundStudentNo = boundStudentNo,
                 jobs = jobs,
                 orders = orders,

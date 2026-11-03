@@ -503,7 +503,7 @@ object XiaomiExpressApi {
         val out = ArrayList<XiaomiExpressParcelDto>(list.length())
         for (i in 0 until list.length()) {
             val e = list.getJSONObject(i)
-            val mailNo = e.optString("mailNo").trim()
+            val mailNo = e.optCleanString("mailNo")
             if (mailNo.isEmpty()) continue
             val details = e.optJSONArray("details")
             val checkpoints = ArrayList<XiaomiTrackPoint>()
@@ -511,8 +511,8 @@ object XiaomiExpressApi {
             if (details != null) {
                 for (j in 0 until details.length()) {
                     val d = details.getJSONObject(j)
-                    val desc = d.optString("desc").trim()
-                    val time = d.optString("time").trim()
+                    val desc = d.optCleanString("desc")
+                    val time = d.optCleanString("time")
                     if (desc.isNotEmpty()) {
                         checkpoints.add(XiaomiTrackPoint(desc = desc, time = time))
                         allTextBuilder.append(desc).append(' ')
@@ -520,33 +520,41 @@ object XiaomiExpressApi {
                 }
             }
             val latest = checkpoints.lastOrNull()
-            val stateName = e.optString("state").trim()
+            val rawStateName = e.optCleanString("state")
             val stateNum = e.optInt("stateNum")
-            val latestText = latest?.desc?.takeIf { it.isNotBlank() } ?: stateName.ifBlank { "包裹运输中" }
+            val latestText = latest?.desc?.takeIf { it.isNotBlank() } ?: rawStateName.ifBlank { "包裹运输中" }
             val latestTime = latest?.time.orEmpty()
             val extractedPickup = ParcelHubEngine.resolvePickupCodeFromText("$latestText $allTextBuilder")
             val lifecycleStatus = mapXiaomiStateToLifecycle(
-                stateName = stateName,
+                stateName = rawStateName,
                 stateNum = stateNum,
                 latestText = latestText,
                 hasPickupCode = extractedPickup != null
             )
+            val stateName = rawStateName.ifBlank {
+                when (lifecycleStatus) {
+                    ParcelLifecycleStatus.PICKED_UP -> "已签收"
+                    ParcelLifecycleStatus.READY_FOR_PICKUP -> "待取件"
+                    ParcelLifecycleStatus.OUT_FOR_DELIVERY -> "派送中"
+                    else -> "运输中"
+                }
+            }
             out.add(
                 XiaomiExpressParcelDto(
                     mailNo = mailNo,
-                    cpCode = e.optString("cpCode").ifBlank { "XIAOMI" },
-                    companyName = e.optString("name").ifBlank { "小米智能助理快递" },
+                    cpCode = e.optCleanString("cpCode", "XIAOMI"),
+                    companyName = e.optCleanString("name", "校园快递"),
                     latestText = latestText,
                     latestTime = latestTime,
                     stateName = stateName,
                     stateNum = stateNum,
                     lifecycleStatus = lifecycleStatus,
-                    phone = e.optString("phone").takeIf { it.isNotBlank() },
-                    provider = e.optString("provider"),
-                    queryChannel = e.optString("queryChannel"),
-                    iconUrl = e.optString("iconUrl"),
-                    pickupCode = extractedPickup?.pickupCode,
-                    stationName = extractedPickup?.stationName,
+                    phone = e.optNullableCleanString("phone"),
+                    provider = e.optCleanString("provider"),
+                    queryChannel = e.optCleanString("queryChannel"),
+                    iconUrl = e.optCleanString("iconUrl"),
+                    pickupCode = extractedPickup?.pickupCode?.cleanNullableLiteral(),
+                    stationName = extractedPickup?.stationName?.cleanNullableLiteral(),
                     checkpoints = checkpoints.asReversed()
                 )
             )
@@ -580,25 +588,24 @@ object XiaomiExpressApi {
         )
         val root = JSONObject(raw)
         if (root.optInt("code") != 0) {
-            throw IllegalStateException("小米物流详情查询失败: ${root.optString("message")}")
+            throw IllegalStateException("小米物流详情查询失败: ${root.optCleanString("message", "服务暂时不可用")}")
         }
         val data = JSONObject(root.optString("data"))
         val details = data.optJSONArray("details") ?: JSONArray()
         val points = ArrayList<XiaomiTrackPoint>(details.length())
         for (i in 0 until details.length()) {
             val d = details.getJSONObject(i)
-            points.add(
-                XiaomiTrackPoint(
-                    desc = d.optString("desc"),
-                    time = d.optString("time")
-                )
-            )
+            val desc = d.optCleanString("desc")
+            val time = d.optCleanString("time")
+            if (desc.isNotEmpty()) {
+                points.add(XiaomiTrackPoint(desc = desc, time = time))
+            }
         }
         val newStateNum = data.optInt("stateNum", stateNum)
-        val isReceived = newStateNum == 107 || data.optString("state").contains("签收")
+        val isReceived = newStateNum == 107 || data.optCleanString("state").contains("签收")
         return XiaomiExpressDetailDto(
             mailNo = mailNo,
-            companyName = companyName.orEmpty(),
+            companyName = companyName.cleanNullLiteral("校园快递"),
             stateNum = newStateNum,
             isReceived = isReceived,
             points = points
@@ -1019,13 +1026,13 @@ class XiaomiAccountSecureVault(
             }
             out.add(
                 XiaomiAccountCredential(
-                    id = o.optString("id"),
-                    label = o.optString("label").ifBlank { "小米账号" },
-                    token = o.optString("token"),
-                    cUserId = o.optString("cUserId"),
-                    accountId = o.optString("accountId"),
-                    oaid = o.optString("oaid"),
-                    vaid = o.optString("vaid"),
+                    id = o.optCleanString("id"),
+                    label = o.optCleanString("label", "小米账号"),
+                    token = o.optCleanString("token"),
+                    cUserId = o.optCleanString("cUserId"),
+                    accountId = o.optCleanString("accountId"),
+                    oaid = o.optCleanString("oaid"),
+                    vaid = o.optCleanString("vaid"),
                     phones = phones,
                     enabled = o.optBoolean("enabled", true),
                     updatedAtEpochMillis = o.optLong("updatedAtEpochMillis", System.currentTimeMillis())

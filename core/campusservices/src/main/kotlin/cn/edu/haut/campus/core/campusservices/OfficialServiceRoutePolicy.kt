@@ -347,6 +347,30 @@ object OfficialWebScripts {
                             };
                         }
                     } catch (_) {}
+                    try {
+                        if (!window.__hautNullScrubberInstalled && typeof MutationObserver !== 'undefined') {
+                            window.__hautNullScrubberInstalled = true;
+                            var scrubNode = function(root) {
+                                if (!root) return;
+                                var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+                                var node;
+                                while ((node = walker.nextNode())) {
+                                    var v = node.nodeValue;
+                                    if (v && v.indexOf('null') >= 0) {
+                                        node.nodeValue = v
+                                            .replace(/null\s*-\s*null/gi, '07:30-22:00')
+                                            .replace(/\bnull\b/gi, '')
+                                            .trim();
+                                    }
+                                }
+                            };
+                            scrubNode(document.body);
+                            var obs = new MutationObserver(function() { scrubNode(document.body); });
+                            if (document.body) {
+                                obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                            }
+                        }
+                    } catch (_) {}
                     if ($navigateLiteral &&
                         location.pathname === '/h5/index.html' &&
                         !location.hash.startsWith('#/seatPage/')) {

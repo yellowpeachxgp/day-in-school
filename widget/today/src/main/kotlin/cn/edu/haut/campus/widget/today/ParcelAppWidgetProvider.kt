@@ -71,6 +71,19 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        private fun String?.cleanWidgetText(): String? {
+            val trimmed = this?.trim() ?: return null
+            if (trimmed.isEmpty()) return null
+            val lower = trimmed.lowercase()
+            if (lower == "null" || lower == "undefined" || lower == "none" || lower == "nil") return null
+            val cleaned = trimmed
+                .replace(Regex("(?i)\\s*·\\s*null\\b"), "")
+                .replace(Regex("(?i)\\bnull\\s*·\\s*"), "")
+                .trim()
+            if (cleaned.isEmpty() || cleaned.equals("null", ignoreCase = true)) return null
+            return cleaned
+        }
+
         suspend fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
@@ -87,7 +100,11 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 ?: run { WidgetRefreshCoordinator.showSwitching(context, intArrayOf(appWidgetId)); return }
             val allParcels = runCatching { active.repository.parcelItemsFlow.first() }.getOrDefault(emptyList())
             val pending = allParcels.filter {
-                it.status == "READY_FOR_PICKUP" || (!it.pickupCode.isNullOrBlank() && it.status != "PICKED_UP")
+                val code = it.pickupCode.cleanWidgetText()
+                val station = it.stationName.cleanWidgetText()
+                val hasArrivalCue = code != null || station != null ||
+                    it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
+                (it.status == "READY_FOR_PICKUP" && hasArrivalCue) || (code != null && it.status != "PICKED_UP")
             }
 
             val views = RemoteViews(context.packageName, R.layout.widget_parcel_pickup_4x2)
@@ -104,7 +121,7 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
 
             if (pending.isNotEmpty()) {
                 val first = pending.first()
-                val stationCount = pending.map { it.stationName?.takeIf { s -> s.isNotBlank() } ?: "校园驿站" }.distinct().size
+                val stationCount = pending.map { it.stationName.cleanWidgetText() ?: "校园驿站" }.distinct().size
                 views.setTextViewText(
                     R.id.tv_parcel_header,
                     if (stationCount > 1) "📦 待取快递 · $stationCount 个驿站" else "📦 校园快递取件码"
@@ -112,14 +129,14 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.tv_parcel_count_badge, "待取 ${pending.size} 件")
                 views.setTextViewText(
                     R.id.tv_parcel_station,
-                    "📍 ${first.stationName?.takeIf { it.isNotBlank() } ?: "校园快递驿站"}"
+                    "📍 ${first.stationName.cleanWidgetText() ?: "校园快递驿站"}"
                 )
                 views.setTextViewText(
                     R.id.tv_parcel_code_main,
-                    first.pickupCode?.takeIf { it.isNotBlank() } ?: "待出取件码"
+                    first.pickupCode.cleanWidgetText() ?: "待出取件码"
                 )
-                val firstCarrier = first.carrierName.ifBlank { "快递" }
-                val firstDesc = first.itemTitle?.takeIf { it.isNotBlank() } ?: "尾号 ${first.trackingNumber.takeLast(6)}"
+                val firstCarrier = first.carrierName.cleanWidgetText() ?: "快递"
+                val firstDesc = first.itemTitle.cleanWidgetText() ?: "尾号 ${first.trackingNumber.takeLast(6)}"
                 views.setTextViewText(R.id.tv_parcel_meta_main, "$firstCarrier · $firstDesc")
 
                 val second = pending.getOrNull(1)
@@ -127,11 +144,11 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 if (second != null) {
                     views.setTextViewText(
                         R.id.tv_parcel_sub_1_code,
-                        second.pickupCode?.takeIf { it.isNotBlank() } ?: "待出码"
+                        second.pickupCode.cleanWidgetText() ?: "待出码"
                     )
                     views.setTextViewText(
                         R.id.tv_parcel_sub_1_desc,
-                        "${second.carrierName.ifBlank { "快递" }} · ${second.stationName ?: second.itemTitle ?: second.trackingNumber.takeLast(6)}"
+                        "${second.carrierName.cleanWidgetText() ?: "快递"} · ${second.stationName.cleanWidgetText() ?: second.itemTitle.cleanWidgetText() ?: second.trackingNumber.takeLast(6)}"
                     )
                 } else {
                     views.setTextViewText(R.id.tv_parcel_sub_1_code, "其余已取完")
@@ -139,13 +156,14 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 }
 
                 if (third != null) {
+                    val thirdCode = third.pickupCode.cleanWidgetText()
                     views.setTextViewText(
                         R.id.tv_parcel_sub_2_code,
-                        if (pending.size > 3) "${third.pickupCode ?: "待取"} 等${pending.size - 1}件" else (third.pickupCode ?: "待出码")
+                        if (pending.size > 3) "${thirdCode ?: "待取"} 等${pending.size - 1}件" else (thirdCode ?: "待出码")
                     )
                     views.setTextViewText(
                         R.id.tv_parcel_sub_2_desc,
-                        "${third.carrierName.ifBlank { "快递" }} · ${third.stationName ?: third.itemTitle ?: third.trackingNumber.takeLast(6)}"
+                        "${third.carrierName.cleanWidgetText() ?: "快递"} · ${third.stationName.cleanWidgetText() ?: third.itemTitle.cleanWidgetText() ?: third.trackingNumber.takeLast(6)}"
                     )
                 } else {
                     views.setTextViewText(R.id.tv_parcel_sub_2_code, "去标记已取件 ›")

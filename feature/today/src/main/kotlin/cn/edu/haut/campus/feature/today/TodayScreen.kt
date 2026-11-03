@@ -361,7 +361,11 @@ fun TodayScreen(
             // 1.5 动态待取快递弹出提醒卡（有待取快递时自动在主页显著弹出，按驿站聚合超大取件码，全部取完自动收起）
             val pendingPickups = remember(parcelItems) {
                 parcelItems.filter {
-                    it.status == "READY_FOR_PICKUP" || (!it.pickupCode.isNullOrBlank() && it.status != "PICKED_UP")
+                    val code = it.pickupCode.cleanUiText()
+                    val station = it.stationName.cleanUiText()
+                    val hasArrivalCue = code != null || station != null ||
+                        it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
+                    (it.status == "READY_FOR_PICKUP" && hasArrivalCue) || (code != null && it.status != "PICKED_UP")
                 }
             }
             AnimatedVisibility(
@@ -1290,6 +1294,19 @@ private val HOME_CARD_META: List<Pair<String, String>> = listOf(
     "CAMPUS_COMMUNITY" to "社团与频道"
 )
 
+private fun String?.cleanUiText(): String? {
+    val trimmed = this?.trim() ?: return null
+    if (trimmed.isEmpty()) return null
+    val lower = trimmed.lowercase()
+    if (lower == "null" || lower == "undefined" || lower == "none" || lower == "nil") return null
+    val cleaned = trimmed
+        .replace(Regex("(?i)\\s*·\\s*null\\b"), "")
+        .replace(Regex("(?i)\\bnull\\s*·\\s*"), "")
+        .trim()
+    if (cleaned.isEmpty() || cleaned.equals("null", ignoreCase = true)) return null
+    return cleaned
+}
+
 @Composable
 private fun TodayExpressPickupHeroCard(
     pendingPickups: List<cn.edu.haut.campus.core.database.ParcelItemEntity>,
@@ -1300,7 +1317,7 @@ private fun TodayExpressPickupHeroCard(
 ) {
     val groupedByStation = remember(pendingPickups) {
         pendingPickups.groupBy {
-            it.stationName?.takeIf { s -> s.isNotBlank() } ?: "校园快递驿站"
+            it.stationName.cleanUiText() ?: "校园快递驿站"
         }
     }
 
@@ -1370,7 +1387,7 @@ private fun TodayExpressPickupHeroCard(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            if (stationParcels.size > 1 && stationParcels.first().stationName != null) {
+                            if (stationParcels.size > 1 && stationParcels.first().stationName.cleanUiText() != null) {
                                 XPeachFilterPill(
                                     label = "本驿站全取",
                                     selected = false,
@@ -1397,7 +1414,7 @@ private fun TodayExpressPickupHeroCard(
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     Text(
-                                        text = parcel.pickupCode?.takeIf { it.isNotBlank() } ?: "待出取件码",
+                                        text = parcel.pickupCode.cleanUiText() ?: "待出取件码",
                                         fontSize = 20.sp,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontFamily = FontFamily.Monospace,
@@ -1405,8 +1422,8 @@ private fun TodayExpressPickupHeroCard(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    val carrier = parcel.carrierName.ifBlank { "快递" }
-                                    val desc = parcel.itemTitle?.takeIf { it.isNotBlank() }
+                                    val carrier = parcel.carrierName.cleanUiText() ?: "快递"
+                                    val desc = parcel.itemTitle.cleanUiText()
                                         ?: "尾号 ${parcel.trackingNumber.takeLast(6)}"
                                     Text(
                                         text = "$carrier · $desc",
@@ -1480,7 +1497,8 @@ private fun TodayLibrarySeatDynamicCard(
             }
 
             activePlans.take(2).forEach { plan ->
-                val firstSeat = plan.preferredSeatLabel.split(",")
+                val cleanArea = plan.preferredAreaName.cleanUiText() ?: "图书馆自习区"
+                val firstSeat = plan.preferredSeatLabel.cleanUiText().orEmpty().split(",")
                     .map { it.trim() }
                     .firstOrNull { it.isNotEmpty() } ?: "自动优选"
                 val statusLabel = when (plan.status) {
@@ -1511,7 +1529,7 @@ private fun TodayLibrarySeatDynamicCard(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "💺 ${plan.preferredAreaName} · $firstSeat 号座",
+                                text = "💺 $cleanArea · $firstSeat 号座",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -1735,12 +1753,13 @@ private fun TodayCampusBentoSection(
                 it.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CONFIRMED")
             }
             if (activePlan != null) {
-                val seatNo = activePlan.preferredSeatLabel.split(",").firstOrNull()?.trim() ?: "优选座"
+                val cleanArea = activePlan.preferredAreaName.cleanUiText() ?: "图书馆自习区"
+                val seatNo = activePlan.preferredSeatLabel.cleanUiText()?.split(",")?.firstOrNull()?.trim() ?: "优选座"
                 HomeModularCardSpec(
                     id = "LIBRARY_SEAT",
                     title = "座位预约",
                     badgeText = if (activePlan.status == "CONFIRMED") "已约座" else "待开抢",
-                    subtitle = "${activePlan.preferredAreaName} · ${seatNo}号 (${activePlan.targetLocalTime})",
+                    subtitle = "$cleanArea · ${seatNo}号 (${activePlan.targetLocalTime})",
                     highlighted = true,
                     onClick = onNavigateToLibrarySeats
                 )
@@ -1756,7 +1775,11 @@ private fun TodayCampusBentoSection(
         },
         "PARCEL_HUB" to run {
             val waitingParcels = parcelItems.filter {
-                it.status == "READY_FOR_PICKUP" || (!it.pickupCode.isNullOrBlank() && it.status != "PICKED_UP")
+                val code = it.pickupCode.cleanUiText()
+                val station = it.stationName.cleanUiText()
+                val hasArrivalCue = code != null || station != null ||
+                    it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
+                (it.status == "READY_FOR_PICKUP" && hasArrivalCue) || (code != null && it.status != "PICKED_UP")
             }
             val waitingCount = waitingParcels.size
             val firstWaiting = waitingParcels.firstOrNull()
@@ -1765,7 +1788,11 @@ private fun TodayCampusBentoSection(
                 title = "我的快递",
                 badgeText = if (waitingCount > 0) "待取 $waitingCount" else "取件码",
                 subtitle = if (firstWaiting != null) {
-                    "${firstWaiting.pickupCode ?: "待取件"} · ${firstWaiting.stationName ?: firstWaiting.itemTitle ?: firstWaiting.trackingNumber}"
+                    val codeLabel = firstWaiting.pickupCode.cleanUiText() ?: "待取件"
+                    val stationOrTitle = firstWaiting.stationName.cleanUiText()
+                        ?: firstWaiting.itemTitle.cleanUiText()
+                        ?: firstWaiting.trackingNumber
+                    "$codeLabel · $stationOrTitle"
                 } else {
                     "手机号同步小米快递 · 短信识别取件码"
                 },

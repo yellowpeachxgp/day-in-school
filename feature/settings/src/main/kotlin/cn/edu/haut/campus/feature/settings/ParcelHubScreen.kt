@@ -61,6 +61,9 @@ import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
 import cn.edu.haut.campus.core.campusservices.XiaomiPassportClient
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
+import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
+import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
+import cn.edu.haut.campus.core.campusservices.optCleanString
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -106,13 +109,24 @@ fun ParcelHubScreen(
     }
 
     val readyParcels = remember(parcels) {
-        parcels.filter { it.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName }
+        parcels.filter {
+            val cleanCode = it.pickupCode.cleanNullableLiteral()
+            val cleanStation = it.stationName.cleanNullableLiteral()
+            val hasArrivalCue = cleanCode != null || cleanStation != null ||
+                it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
+            it.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && hasArrivalCue
+        }
     }
     val inTransitParcels = remember(parcels) {
         parcels.filter {
+            val cleanCode = it.pickupCode.cleanNullableLiteral()
+            val cleanStation = it.stationName.cleanNullableLiteral()
+            val hasArrivalCue = cleanCode != null || cleanStation != null ||
+                it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
             it.status == ParcelLifecycleStatus.IN_TRANSIT.wireName ||
                 it.status == ParcelLifecycleStatus.OUT_FOR_DELIVERY.wireName ||
-                it.status == ParcelLifecycleStatus.CREATED.wireName
+                it.status == ParcelLifecycleStatus.CREATED.wireName ||
+                (it.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && !hasArrivalCue)
         }
     }
     val pickedUpParcels = remember(parcels) {
@@ -240,7 +254,20 @@ fun ParcelHubScreen(
                     }
 
                     for (item in parcels) {
-                        val statusEnum = ParcelLifecycleStatus.fromWire(item.status)
+                        val cleanPickupCode = item.pickupCode.cleanNullableLiteral()
+                        val cleanStationName = item.stationName.cleanNullableLiteral()
+                        val cleanItemTitle = item.itemTitle.cleanNullableLiteral()
+                        val cleanCarrierName = item.carrierName.cleanNullLiteral("校园快递")
+                        val cleanEstimatedText = item.estimatedDeliveryText.cleanNullLiteral("正在更新物流状态")
+                        val hasArrivalCue = cleanPickupCode != null || cleanStationName != null ||
+                            cleanEstimatedText.contains(Regex("驿站|快递柜|取件|代收|自提"))
+                        val statusEnum = if (
+                            item.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && !hasArrivalCue
+                        ) {
+                            ParcelLifecycleStatus.IN_TRANSIT
+                        } else {
+                            ParcelLifecycleStatus.fromWire(item.status)
+                        }
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -266,19 +293,19 @@ fun ParcelHubScreen(
                                         }
                                     )
                                     Text(
-                                        text = item.itemTitle ?: "${item.carrierName} (${item.trackingNumber})",
+                                        text = cleanItemTitle ?: "$cleanCarrierName (${item.trackingNumber})",
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
                                 Text(
-                                    text = item.carrierName,
+                                    text = cleanCarrierName,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
-                            if (!item.pickupCode.isNullOrBlank()) {
+                            if (cleanPickupCode != null) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                     Row(
@@ -288,13 +315,13 @@ fun ParcelHubScreen(
                                     ) {
                                         Column {
                                             Text(
-                                                text = "取件码：${item.pickupCode}",
+                                                text = "取件码：$cleanPickupCode",
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             Text(
-                                                text = "驿站：${item.stationName ?: "校园快递驿站"}",
+                                                text = "驿站：${cleanStationName ?: "校园快递驿站"}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -304,7 +331,7 @@ fun ParcelHubScreen(
                                                 onClick = {
                                                     scope.launch {
                                                         repository.markParcelPickedUp(item.id)
-                                                        feedbackBanner = "已标记「${item.pickupCode}」为已取件"
+                                                        feedbackBanner = "已标记「$cleanPickupCode」为已取件"
                                                     }
                                                 },
                                                 shape = RoundedCornerShape(8.dp)
@@ -318,7 +345,7 @@ fun ParcelHubScreen(
 
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "最新动态：${item.estimatedDeliveryText}",
+                                text = "最新动态：$cleanEstimatedText",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -506,7 +533,7 @@ fun ParcelHubScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        val byStation = readyParcels.groupBy { it.stationName ?: "默认校园驿站" }
+                        val byStation = readyParcels.groupBy { it.stationName.cleanNullableLiteral() ?: "默认校园驿站" }
                         if (byStation.isEmpty()) {
                             Text(
                                 text = "当前没有待取快递，另有 ${inTransitParcels.size} 件在途、${pickedUpParcels.size} 件已取件。",
@@ -527,13 +554,16 @@ fun ParcelHubScreen(
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = FontWeight.SemiBold
                                             )
+                                            val codesSummary = list.mapNotNull { it.pickupCode.cleanNullableLiteral() }
+                                                .joinToString(" 、 ")
+                                                .ifBlank { "待驿站出码" }
                                             Text(
-                                                text = "取件码汇总：" + list.mapNotNull { it.pickupCode }.joinToString(" 、 "),
+                                                text = "取件码汇总：$codesSummary",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                         }
-                                        if (list.isNotEmpty() && list.first().stationName != null) {
+                                        if (list.isNotEmpty() && list.first().stationName.cleanNullableLiteral() != null) {
                                             FilledTonalButton(
                                                 onClick = {
                                                     scope.launch {
@@ -1262,9 +1292,12 @@ private fun ParcelTimelineDialog(
         mutableStateOf(parseStoredCheckpoints(parcel.checkpointsJson))
     }
 
+    val cleanPickup = parcel.pickupCode.cleanNullableLiteral()
+    val cleanStation = parcel.stationName.cleanNullableLiteral() ?: "校园驿站"
+    val cleanCarrier = parcel.carrierName.cleanNullLiteral("校园快递")
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("${parcel.carrierName} · ${parcel.trackingNumber}") },
+        title = { Text("$cleanCarrier · ${parcel.trackingNumber}") },
         text = {
             Column(
                 modifier = Modifier
@@ -1273,10 +1306,10 @@ private fun ParcelTimelineDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (!parcel.pickupCode.isNullOrBlank()) {
+                if (cleanPickup != null) {
                     XPeachWell(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "取件码：${parcel.pickupCode} · ${parcel.stationName ?: "校园驿站"}",
+                            text = "取件码：$cleanPickup · $cleanStation",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -1344,8 +1377,8 @@ private fun parseStoredCheckpoints(rawJson: String): List<XiaomiTrackPoint> {
         val out = ArrayList<XiaomiTrackPoint>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
-            val desc = o.optString("desc").trim()
-            val time = o.optString("time").trim()
+            val desc = o.optCleanString("desc")
+            val time = o.optCleanString("time")
             if (desc.isNotEmpty()) {
                 out.add(XiaomiTrackPoint(desc = desc, time = time))
             }
