@@ -365,6 +365,7 @@ object CampusCloudOidcHelper {
                 .put("preferred_seat_ids", candidateSeatsArr)
                 .put("target_local_date", targetDate)
                 .put("target_local_time", localTime)
+                .put("replace_existing", true)
                 .toString()
             val planRaw = httpJsonRequest(
                 method = "POST",

@@ -1913,7 +1913,21 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 XPeachFilterPill(
                     label = "今天去自习 ($todayDate)",
                     selected = !useTomorrow,
-                    onClick = { useTomorrow = false }
+                    onClick = {
+                        useTomorrow = false
+                        val nowSh = java.time.LocalTime.now(ZoneId.of("Asia/Shanghai"))
+                        val picked = java.time.LocalTime.of(selectedHour, selectedMinute)
+                        if (picked.isBefore(nowSh) && nowSh.hour in 7..20) {
+                            val nextMin = ((nowSh.minute / 5) + 1) * 5
+                            if (nextMin < 60) {
+                                selectedHour = nowSh.hour
+                                selectedMinute = nextMin
+                            } else {
+                                selectedHour = (nowSh.hour + 1).coerceAtMost(21)
+                                selectedMinute = 0
+                            }
+                        }
+                    }
                 )
             }
 
@@ -2492,27 +2506,42 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             }
 
-            computedScheduleResult.getOrNull()?.let { calc ->
-                XPeachWell(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp)
-                ) {
-                    Text(
-                        text = "📋 已选汇总：$targetDate $targetTimeText · ${roomLabel.ifBlank { "未选自习室" }} · ${
-                            if (selectedSeatNames.isEmpty()) "未选座位" else "${selectedSeatNames.joinToString("、")}号座"
-                        }",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "系统会在 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 提前帮你自动检查登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            computedScheduleResult.fold(
+                onSuccess = { calc ->
+                    XPeachWell(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Text(
+                            text = "📋 已选汇总：$targetDate $targetTimeText · ${roomLabel.ifBlank { "未选自习室" }} · ${
+                                if (selectedSeatNames.isEmpty()) "未选座位" else "${selectedSeatNames.joinToString("、")}号座"
+                            }",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "系统会在 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 提前帮你自动检查登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    XPeachWell(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        Text(
+                            text = "⚠️ ${err.message ?: "当前所选时间已过，请切换为「明天去自习」或选择更晚的时间"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
-            }
+            )
 
             fun saveBookingPlanNow() {
                 scope.launch {

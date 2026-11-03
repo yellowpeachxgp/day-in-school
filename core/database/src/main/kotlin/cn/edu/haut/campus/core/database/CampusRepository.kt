@@ -2091,14 +2091,27 @@ class CampusRepository internal constructor(
     @Volatile
     private var cachedCloudRefreshToken: String = ""
 
+    private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val parts = token.split(".")
+        if (parts.size != 3) return false
+        return runCatching {
+            val payloadJson = String(
+                java.util.Base64.getUrlDecoder().decode(parts[1]),
+                Charsets.UTF_8
+            )
+            val expSec = org.json.JSONObject(payloadJson).optLong("exp", 0L)
+            expSec <= 0L || expSec * 1000L > nowMs + 60_000L
+        }.getOrDefault(false)
+    }
+
     private suspend fun resolveValidCloudAccessToken(forceRefresh: Boolean = false): String {
-        if (!forceRefresh && cachedCloudAccessToken.isNotBlank()) {
+        if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken)) {
             return cachedCloudAccessToken
         }
         val prefs = preferences.data.first()
         val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
         val storedRt = cachedCloudRefreshToken.ifBlank { prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty() }
-        if (!forceRefresh && storedAt.isNotBlank()) {
+        if (!forceRefresh && storedAt.isNotBlank() && isJwtNotExpired(storedAt)) {
             cachedCloudAccessToken = storedAt
             cachedCloudRefreshToken = storedRt
             return storedAt
@@ -2117,7 +2130,7 @@ class CampusRepository internal constructor(
                 return refreshed.first
             }
         }
-        return cachedCloudAccessToken
+        return cachedCloudAccessToken.ifBlank { storedAt }
     }
 
     suspend fun saveVerifiedXpeachCloudAccount(
@@ -2435,11 +2448,11 @@ class CampusRepository internal constructor(
         }
 
         var remoteCloudJobId: String? = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null
-        val token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken() else ""
+        var token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken(forceRefresh = false) else ""
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED && token.isNotBlank()) {
             val (studentNoBundle, delegatedBundle) = buildDelegatedCredentialBundle()
             val studentNo = studentNoBundle ?: preferencesFlow.first().savedStudentId.orEmpty()
-            val remoteJobOrPlanId = withContext(Dispatchers.IO) {
+            var remoteJobOrPlanId = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.syncCloudHostedReservationPlan(
                     accessToken = token,
                     studentNo = studentNo,
@@ -2450,6 +2463,23 @@ class CampusRepository internal constructor(
                     preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
                     planIdempotencyKey = planId
                 )
+            }
+            if (remoteJobOrPlanId.isNullOrBlank()) {
+                token = resolveValidCloudAccessToken(forceRefresh = true)
+                if (token.isNotBlank()) {
+                    remoteJobOrPlanId = withContext(Dispatchers.IO) {
+                        CampusCloudOidcHelper.syncCloudHostedReservationPlan(
+                            accessToken = token,
+                            studentNo = studentNo,
+                            delegatedSecret = delegatedBundle.orEmpty(),
+                            targetDate = targetDate.toString(),
+                            targetExecuteAtIso = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
+                            preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
+                            preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
+                            planIdempotencyKey = planId
+                        )
+                    }
+                }
             }
             if (!remoteJobOrPlanId.isNullOrBlank()) {
                 remoteCloudJobId = remoteJobOrPlanId

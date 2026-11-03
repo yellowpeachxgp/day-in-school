@@ -117,15 +117,22 @@ object DualEngineReservationPlanner {
 
         val targetZdt = ZonedDateTime.of(targetDate, targetTime, zoneId)
         val windowEndZdt = ZonedDateTime.of(targetDate, WINDOW_END_EXCLUSIVE, zoneId)
-        val fireAtMs = targetZdt.toInstant().toEpochMilli()
-        val precheckAtMs = fireAtMs - PRECHECK_LEAD_SECONDS * 1000L
-        val finalCheckAtMs = fireAtMs - FINAL_CHECK_LEAD_SECONDS * 1000L
+        val windowEndMs = windowEndZdt.toInstant().toEpochMilli()
+        var fireAtMs = targetZdt.toInstant().toEpochMilli()
         val clampedLatenessMs = maxLatenessSeconds.coerceIn(0L, 1800L) * 1000L
-        val expiresAtMs = minOf(fireAtMs + clampedLatenessMs, windowEndZdt.toInstant().toEpochMilli())
+        var expiresAtMs = minOf(fireAtMs + clampedLatenessMs, windowEndMs)
 
         if (nowEpochMillis > expiresAtMs) {
-            throw IllegalArgumentException("目标预约时刻 T 已过有效期窗口 (MISSED_WINDOW)")
+            if (nowEpochMillis < windowEndMs) {
+                fireAtMs = minOf(nowEpochMillis + 3_000L, windowEndMs - 1_000L)
+                expiresAtMs = minOf(fireAtMs + maxOf(clampedLatenessMs, 300_000L), windowEndMs)
+            } else {
+                throw IllegalArgumentException("目标预约时刻 T 已过有效期窗口 (MISSED_WINDOW)")
+            }
         }
+
+        val precheckAtMs = fireAtMs - PRECHECK_LEAD_SECONDS * 1000L
+        val finalCheckAtMs = fireAtMs - FINAL_CHECK_LEAD_SECONDS * 1000L
 
         val diffMs = fireAtMs - nowEpochMillis
         val precheckStatus: String
