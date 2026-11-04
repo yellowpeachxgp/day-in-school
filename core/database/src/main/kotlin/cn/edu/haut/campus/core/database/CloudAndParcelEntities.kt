@@ -57,7 +57,9 @@ data class LibraryBookingPlanEntity(
     val generation: Int,
     val lastDiagnosticMessage: String?,
     val createdAtEpochMillis: Long,
-    val updatedAtEpochMillis: Long
+    val updatedAtEpochMillis: Long,
+    val repeatDays: Int = 1,
+    val remainingDays: Int = 1
 )
 
 @Entity(
@@ -229,6 +231,8 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
                 `lastDiagnosticMessage` TEXT,
                 `createdAtEpochMillis` INTEGER NOT NULL,
                 `updatedAtEpochMillis` INTEGER NOT NULL,
+                `repeatDays` INTEGER NOT NULL DEFAULT 1,
+                `remainingDays` INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY(`id`)
             )
             """.trimIndent()

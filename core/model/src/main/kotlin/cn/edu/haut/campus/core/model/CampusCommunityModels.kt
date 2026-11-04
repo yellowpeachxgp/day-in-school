@@ -5,12 +5,32 @@ enum class CampusClubCategory(val label: String) {
     ACADEMIC_CULTURE("学术文化"),
     ART_PERFORMANCE("文艺展演"),
     SPORTS_FITNESS("体育竞技"),
-    VOLUNTEER_ORG("志愿与组织")
+    VOLUNTEER_ORG("志愿与组织");
+
+    companion object {
+        fun fromWireName(raw: String?): CampusClubCategory {
+            val cleaned = raw?.trim().orEmpty()
+            return entries.firstOrNull {
+                it.name.equals(cleaned, ignoreCase = true) || it.label == cleaned
+            } ?: VOLUNTEER_ORG
+        }
+    }
 }
 
 /**
- * 预置 QQ 频道配置模型：
- * 支持直接点击唤醒手机 QQ 跳转进入目标频道，也支持在 App 内修改覆盖预置频道链接。
+ * 云端下发的社团与校园频道顶部横幅公告配置。
+ */
+data class CampusCommunityBulletin(
+    val enabled: Boolean = true,
+    val title: String = "河工大社团纳新与校园频道云端直通车",
+    val content: String = "全校学生社团招新 QQ 群与校园互助频道已接入云端实时下发，点击即可一键呼起手机 QQ 加群或进入频道。",
+    val tag: String = "云端实时同步",
+    val actionUrl: String = ""
+)
+
+/**
+ * 预置/云控 QQ 频道配置模型：
+ * 支持直接点击唤醒手机 QQ 跳转进入目标频道，也支持通过云端后台动态下发更新。
  */
 data class PresetQqChannelItem(
     val id: String,
@@ -18,7 +38,10 @@ data class PresetQqChannelItem(
     val subtitle: String,
     val tagLabel: String,
     val defaultInviteUrl: String,
-    val channelNumberHint: String
+    val channelNumberHint: String = "点击加入",
+    val enabled: Boolean = true,
+    val pinned: Boolean = false,
+    val sortOrder: Int = 100
 )
 
 /**
@@ -33,7 +56,23 @@ data class CampusClubItem(
     val activityVenue: String,
     val summary: String,
     val qqGroupNumber: String,
-    val highlights: List<String> = emptyList()
+    val highlights: List<String> = emptyList(),
+    val enabled: Boolean = true,
+    val pinned: Boolean = false,
+    val sortOrder: Int = 100
+)
+
+/**
+ * 校园频道与学生社团云端配置目录快照。
+ */
+data class CampusCommunityCloudCatalog(
+    val schoolId: String = "haut",
+    val version: Long = 1L,
+    val updatedAtIso: String = "",
+    val bulletin: CampusCommunityBulletin = CampusCommunityBulletin(),
+    val channels: List<PresetQqChannelItem> = PresetCampusCommunityCatalog.defaultQqChannels,
+    val clubs: List<CampusClubItem> = PresetCampusCommunityCatalog.defaultCampusClubs,
+    val isFromCloud: Boolean = false
 )
 
 object PresetCampusCommunityCatalog {

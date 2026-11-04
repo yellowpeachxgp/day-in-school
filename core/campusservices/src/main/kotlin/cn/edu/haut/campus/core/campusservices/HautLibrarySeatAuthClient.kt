@@ -905,8 +905,13 @@ object HautLibrarySeatAuthClient {
         return Triple(startFull, endFull, dtRoot)
     }
 
+    private fun currentShanghaiDateString(): String =
+        java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")).toString()
+
     /**
      * 自动识别并拉取全馆自习区域列表（依次调用 `/seatbook/layout/getDefaultTime`、`/seatbook/layout/building` 与 `/seatbook/layout/region`）。
+     * 当用户在当日营业时段内选择「明天」（`bookingDate > today`）时，学校接口仅允许使用当日时间窗查询区域布局，
+     * 此处自动用当日合法时间窗拉取物理区域与总座位数，并将明日预选可用座位数设为该自习室总座位数。
      */
     suspend fun fetchLibraryStudyRegions(
         rawToken: String,
@@ -916,7 +921,10 @@ object HautLibrarySeatAuthClient {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
 
-            val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, 7L, bookingDate)
+            val shanghaiToday = currentShanghaiDateString()
+            val isFutureDate = bookingDate.isNotBlank() && bookingDate > shanghaiToday
+            val queryDate = if (isFutureDate) shanghaiToday else bookingDate.ifBlank { shanghaiToday }
+            val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, 7L, queryDate)
 
             val buildingRaw = executeAuthenticatedApiGet(
                 url = "$WSLIB_API_BASE_URL/seatbook/layout/building",
@@ -970,7 +978,7 @@ object HautLibrarySeatAuthClient {
                                     openTime = openDate,
                                     closeTime = closeDate,
                                     totalSeats = totalNum,
-                                    availableSeats = canNum,
+                                    availableSeats = if (isFutureDate && totalNum > 0) totalNum else canNum,
                                     isOpen = isOpen
                                 )
                             )
@@ -1003,6 +1011,8 @@ object HautLibrarySeatAuthClient {
                                     val regionId = rObj.optLong("id", -1L).takeIf { it > 0L } ?: continue
                                     val regionName = rObj.optCleanString("regionName")
                                     if (regionName.isEmpty()) continue
+                                    val totalNum = rObj.optInt("num", 0)
+                                    val canNum = rObj.optInt("cannum", 0)
                                     resultList.add(
                                         LibraryStudyRegionItem(
                                             id = regionId,
@@ -1013,8 +1023,8 @@ object HautLibrarySeatAuthClient {
                                             layerName = inferLayerNameFromRegion(regionName, rawLayer),
                                             openTime = rObj.optCleanString("openDate", "07:30"),
                                             closeTime = rObj.optCleanString("closeDate", "22:00"),
-                                            totalSeats = rObj.optInt("num", 0),
-                                            availableSeats = rObj.optInt("cannum", 0),
+                                            totalSeats = totalNum,
+                                            availableSeats = if (isFutureDate && totalNum > 0) totalNum else canNum,
                                             isOpen = rObj.optInt("isOpen", 1) != 0
                                         )
                                     )
@@ -1030,6 +1040,8 @@ object HautLibrarySeatAuthClient {
 
     /**
      * 读取指定自习区域 (`regionId`) 在目标日期的默认时段与全部下属座位列表 (`/seatbook/layout/getDefaultTime` & `/seatbook/layout/query`)。
+     * 当用户在当日营业时间内选择明日预约（`bookingDate > today`）时，学校 `/seatbook/layout/query` 对跨日查询会返回 `seat.10057 (500)`，
+     * 此处自动采用当日合法时间窗获取该自习室的真实物理座位图，并将明日待抢座位统一标记为可预选 (`seatStatus = 2`)。
      */
     suspend fun fetchLibraryRegionSeats(
         rawToken: String,
@@ -1040,22 +1052,38 @@ object HautLibrarySeatAuthClient {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
 
-            val (startFull, endFull, dtRoot) = resolveDefaultTimeWindow(cleanToken, regionId, bookingDate)
+            val shanghaiToday = currentShanghaiDateString()
+            val isFutureDate = bookingDate.isNotBlank() && bookingDate > shanghaiToday
+            val queryDate = if (isFutureDate) shanghaiToday else bookingDate.ifBlank { shanghaiToday }
+
+            val (startFull, endFull, dtRoot) = resolveDefaultTimeWindow(cleanToken, regionId, queryDate)
             val rawStartTime = dtRoot?.optCleanString("startTime", "07:30") ?: "07:30"
             val rawEndTime = dtRoot?.optCleanString("endTime", "22:00") ?: "22:00"
-            val startTime = if (rawStartTime >= "21:50" || rawStartTime >= rawEndTime) "07:30" else rawStartTime
-            val endTime = rawEndTime.ifBlank { "22:00" }
+            val startTime = if (isFutureDate || rawStartTime >= "21:50" || rawStartTime >= rawEndTime) "07:30" else rawStartTime
+            val endTime = if (isFutureDate) "22:00" else rawEndTime.ifBlank { "22:00" }
             val canSetTime = (dtRoot?.optInt("isCanSetTime", 0) ?: 0) != 0
-            val cleanBookingDate = startFull.substringBefore(" ").cleanNullLiteral(bookingDate)
+            val cleanBookingDate = bookingDate.cleanNullLiteral(shanghaiToday).ifBlank { shanghaiToday }
 
             val queryUrl = "$WSLIB_API_BASE_URL/seatbook/layout/query?starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}&regionid=$regionId"
             val queryRaw = executeAuthenticatedApiGet(url = queryUrl, cleanToken = cleanToken)
-            val qRoot = JSONObject(queryRaw)
+            var qRoot = JSONObject(queryRaw)
             if (qRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
 
-            val layoutName = qRoot.optJSONObject("layout")?.optCleanString("regionName").orEmpty()
-            val seatArr = qRoot.optJSONArray("seatList")
+            var seatArr = qRoot.optJSONArray("seatList")
                 ?: qRoot.optJSONObject("data")?.optJSONArray("seatList")
+            if ((seatArr == null || seatArr.length() == 0) && queryDate != shanghaiToday) {
+                val (todayStart, todayEnd, _) = resolveDefaultTimeWindow(cleanToken, regionId, shanghaiToday)
+                val fallbackUrl = "$WSLIB_API_BASE_URL/seatbook/layout/query?starttime=${URLEncoder.encode(todayStart, "UTF-8")}&endtime=${URLEncoder.encode(todayEnd, "UTF-8")}&regionid=$regionId"
+                val fallbackRaw = runCatching { executeAuthenticatedApiGet(url = fallbackUrl, cleanToken = cleanToken) }.getOrDefault("")
+                val fallbackRoot = runCatching { JSONObject(fallbackRaw) }.getOrNull()
+                if (fallbackRoot != null) {
+                    qRoot = fallbackRoot
+                    seatArr = qRoot.optJSONArray("seatList")
+                        ?: qRoot.optJSONObject("data")?.optJSONArray("seatList")
+                }
+            }
+
+            val layoutName = qRoot.optJSONObject("layout")?.optCleanString("regionName").orEmpty()
             val seats = mutableListOf<LibrarySeatItem>()
             if (seatArr != null) {
                 for (i in 0 until seatArr.length()) {
@@ -1068,7 +1096,8 @@ object HautLibrarySeatAuthClient {
                     } else {
                         rawSeatName
                     }
-                    val status = sObj.optInt("seatStatus", 2)
+                    val rawStatus = sObj.optInt("seatStatus", 2)
+                    val status = if (isFutureDate) 2 else rawStatus
                     seats.add(
                         LibrarySeatItem(
                             id = seatId,

@@ -451,6 +451,9 @@ fun HautCampusRootApp(
                 }
             }
             runCatching {
+                repository.refreshCampusCommunityContent()
+            }
+            runCatching {
                 repository.syncWithCampusCloud()
             }
             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)

@@ -5,6 +5,8 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
@@ -54,6 +56,19 @@ internal class AccountDatabaseFactory(private val context: Context) {
                     MIGRATION_3_4,
                     MIGRATION_4_5,
                     MIGRATION_5_6
+                )
+                .addCallback(
+                    object : RoomDatabase.Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            runCatching {
+                                db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `repeatDays` INTEGER NOT NULL DEFAULT 1")
+                            }
+                            runCatching {
+                                db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `remainingDays` INTEGER NOT NULL DEFAULT 1")
+                            }
+                        }
+                    }
                 )
                 .build()
             val preferences = PreferenceDataStoreFactory.create(

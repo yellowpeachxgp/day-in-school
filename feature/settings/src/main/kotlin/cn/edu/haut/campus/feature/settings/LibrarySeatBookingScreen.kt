@@ -1698,6 +1698,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     var selectedHour by remember { mutableIntStateOf(7) }
     var selectedMinute by remember { mutableIntStateOf(0) }
     var showMoreTimeSlots by remember { mutableStateOf(false) }
+    var selectedRepeatDays by remember { mutableIntStateOf(1) }
 
     val targetTimeText = remember(selectedHour, selectedMinute) {
         "%02d:%02d".format(selectedHour, selectedMinute)
@@ -2047,6 +2048,43 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     }
                 }
             }
+
+            Text(
+                text = "连续自动抢座周期（每天同一时间自动开抢）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val repeatOptions = listOf(
+                    1 to "仅抢 1 天",
+                    3 to "连续 3 天",
+                    7 to "连续 7 天（一周）",
+                    14 to "连续 14 天",
+                    30 to "连续 30 天"
+                )
+                for ((days, label) in repeatOptions) {
+                    XPeachFilterPill(
+                        label = label,
+                        selected = selectedRepeatDays == days,
+                        onClick = { selectedRepeatDays = days }
+                    )
+                }
+            }
+            if (selectedRepeatDays > 1) {
+                Text(
+                    text = "🔁 已开启连续 $selectedRepeatDays 天自动抢座：从 $targetDate 起至 ${targetDate.plusDays((selectedRepeatDays - 1).toLong())}，每天 $targetTimeText 自动抢同一个自习室与座位。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         // 第二步：自动读取全馆自习室列表，点击即选
@@ -2329,12 +2367,54 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     )
                 }
             } else if (seatsLoadError != null && allSeats.isEmpty()) {
-                Text(
-                    text = seatsLoadError.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = seatsLoadError.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = {
+                                val r = selectedRegion
+                                if (r != null) reloadSeatsForRegion(r) else reloadStudyRegions()
+                            }
+                        ) {
+                            Text("重新读取座位表")
+                        }
+                        if (sessionState !is LibrarySeatSessionState.Authenticated) {
+                            OutlinedButton(onClick = onRequireLogin) {
+                                Text("登录学号")
+                            }
+                        }
+                    }
+                }
+            } else if (allSeats.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "暂未加载到该自习室座位表，请点击下方按钮重新读取",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FilledTonalButton(
+                        onClick = {
+                            val r = selectedRegion
+                            if (r != null) reloadSeatsForRegion(r) else reloadStudyRegions()
+                        }
+                    ) {
+                        Text("🔄 重新读取座位表")
+                    }
+                }
             } else if (allSeats.isNotEmpty()) {
                 Row(
                     modifier = Modifier
@@ -2368,6 +2448,31 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             }
                         }
                     )
+                }
+
+                if (filteredSeats.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "当前该自习室暂无空闲座位，你可以关闭「只看当前空座」提前点选明天想坐的座位号：",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(onClick = { onlyAvailableSeats = false }) {
+                                Text("显示全部 ${allSeats.size} 个座位")
+                            }
+                            if (!useTomorrow) {
+                                OutlinedButton(onClick = { useTomorrow = true }) {
+                                    Text("切换为明天去自习")
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (seatChunks.size > 1) {
@@ -2531,13 +2636,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
 
             computedScheduleResult.fold(
                 onSuccess = { calc ->
+                    val repeatSummary = if (selectedRepeatDays > 1) " · 连续 $selectedRepeatDays 天" else ""
                     XPeachWell(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp)
                     ) {
                         Text(
-                            text = "📋 已选汇总：$targetDate $targetTimeText · ${roomLabel.ifBlank { "未选自习室" }} · ${
+                            text = "📋 已选汇总：$targetDate $targetTimeText$repeatSummary · ${roomLabel.ifBlank { "未选自习室" }} · ${
                                 if (selectedSeatNames.isEmpty()) "未选座位" else "${selectedSeatNames.joinToString("、")}号座"
                             }",
                             style = MaterialTheme.typography.labelMedium,
@@ -2545,7 +2651,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "系统会在 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 提前帮你自动检查登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座。",
+                            text = "系统会在 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 提前帮你自动检查登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座${if (selectedRepeatDays > 1) "（连续执行 $selectedRepeatDays 天）" else ""}。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2573,13 +2679,15 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         targetDate = targetDate,
                         targetTimeText = targetTimeText,
                         preferredAreaName = roomLabel,
-                        preferredSeatLabel = preferredSeatsText
+                        preferredSeatLabel = preferredSeatsText,
+                        repeatDays = selectedRepeatDays
                     )
                     result.fold(
                         onSuccess = { created ->
+                            val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天自动抢）" else ""
                             onFeedback(
                                 true,
-                                "已设置好定时抢座：${created.targetLocalDate} ${created.targetLocalTime} · ${created.preferredAreaName}"
+                                "已设置好定时抢座：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
                             )
                         },
                         onFailure = { err ->
@@ -2744,6 +2852,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
                         val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")
                         val cleanDiag = plan.lastDiagnosticMessage.cleanNullableLiteral() ?: "等待到点自动抢座"
+                        val repeatBadge = if (plan.repeatDays > 1) {
+                            " · 连续${plan.repeatDays}天(剩${plan.remainingDays}天)"
+                        } else {
+                            ""
+                        }
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2751,7 +2864,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $cleanAreaName",
+                                    text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $cleanAreaName$repeatBadge",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.weight(1f)

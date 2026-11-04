@@ -1,6 +1,12 @@
 package cn.edu.haut.campus.core.campusservices
 
 import android.net.Uri
+import cn.edu.haut.campus.core.model.CampusClubCategory
+import cn.edu.haut.campus.core.model.CampusClubItem
+import cn.edu.haut.campus.core.model.CampusCommunityBulletin
+import cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog
+import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -89,7 +95,10 @@ data class CloudSyncedReservationJobDto(
     val externalBookingId: String?,
     val evidenceSha256: String?,
     val bookedSeatAlias: String? = null,
-    val bookedRegionAlias: String? = null
+    val bookedRegionAlias: String? = null,
+    val repeatDays: Int = 1,
+    val remainingDays: Int = 1,
+    val endLocalDate: String = targetLocalDate
 )
 
 data class CloudSyncedOrderDto(
@@ -112,7 +121,9 @@ data class CloudSyncSnapshotResult(
     val boundStudentNo: String?,
     val jobs: List<CloudSyncedReservationJobDto>,
     val orders: List<CloudSyncedOrderDto>,
-    val parcels: List<CloudSyncedParcelDto>
+    val parcels: List<CloudSyncedParcelDto>,
+    val campusContent: CampusCommunityCloudCatalog? = null,
+    val campusContentRawJson: String? = null
 )
 
 data class PkcePair(
@@ -481,7 +492,8 @@ object CampusCloudOidcHelper {
         preferredAreaName: String,
         preferredSeatLabel: String,
         planIdempotencyKey: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        repeatDays: Int = 1
     ): String? {
         if (accessToken.isBlank()) return null
         return runCatching {
@@ -537,6 +549,7 @@ object CampusCloudOidcHelper {
                 .ifEmpty { listOf(preferredSeatLabel.trim()) }
                 .forEach { candidateSeatsArr.put(it) }
 
+            val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
             val planBody = JSONObject()
                 .put("school_binding_id", bindId)
                 .put("consent_id", consentId)
@@ -547,6 +560,8 @@ object CampusCloudOidcHelper {
                 .put("preferred_seat_ids", candidateSeatsArr)
                 .put("target_local_date", targetDate)
                 .put("target_local_time", localTime)
+                .put("repeat_days", normalizedRepeatDays)
+                .put("remaining_days", normalizedRepeatDays)
                 .put("replace_existing", true)
                 .toString()
             val planRaw = httpJsonRequest(
@@ -740,6 +755,9 @@ object CampusCloudOidcHelper {
                         }
                     }
                     val sr = j.optJSONObject("school_reservation")
+                    val bookingDate = j.optCleanString("booking_local_date")
+                    val repDays = j.optInt("repeat_days", 1).coerceIn(1, 30)
+                    val remDays = j.optInt("remaining_days", repDays).coerceIn(0, 30)
                     add(
                         CloudSyncedReservationJobDto(
                             jobId = j.optCleanString("id"),
@@ -748,13 +766,16 @@ object CampusCloudOidcHelper {
                             areaName = j.optCleanString("area_name", "4楼北自习区"),
                             candidateSeats = seats,
                             slotWindow = j.optCleanString("slot_window", "08:00-22:00"),
-                            targetLocalDate = j.optCleanString("booking_local_date"),
+                            targetLocalDate = bookingDate,
                             targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
                             state = j.optCleanString("state", "ARMED"),
                             externalBookingId = sr?.optNullableCleanString("external_booking_id"),
                             evidenceSha256 = sr?.optNullableCleanString("evidence_sha256"),
                             bookedSeatAlias = sr?.optNullableCleanString("seat_alias"),
-                            bookedRegionAlias = sr?.optNullableCleanString("region_alias")
+                            bookedRegionAlias = sr?.optNullableCleanString("region_alias"),
+                            repeatDays = repDays,
+                            remainingDays = remDays,
+                            endLocalDate = j.optCleanString("end_local_date", bookingDate).ifBlank { bookingDate }
                         )
                     )
                 }
@@ -797,6 +818,9 @@ object CampusCloudOidcHelper {
                 }
             }
 
+            val campusContentObj = data.optJSONObject("campus_content")
+            val parsedCampusContent = campusContentObj?.let { parseCampusContentJson(it) }
+
             CloudSyncSnapshotResult(
                 cloudUserId = userObj.optCleanString("cloud_user_id"),
                 ssoSubject = userObj.optCleanString("sso_subject"),
@@ -808,7 +832,133 @@ object CampusCloudOidcHelper {
                 boundStudentNo = boundStudentNo,
                 jobs = jobs,
                 orders = orders,
-                parcels = parcels
+                parcels = parcels,
+                campusContent = parsedCampusContent,
+                campusContentRawJson = campusContentObj?.toString()
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * 拉取服务器云控下发的校园频道与学生社团配置 (`GET /api/v1/campus-content?school_id=haut`)。
+     * 支持免登录公共访问，确保所有学生在打开 App 时第一时间看到云端最新下发的社团与频道内容。
+     */
+    fun fetchPublicCampusContent(
+        schoolId: String = "haut",
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Pair<CampusCommunityCloudCatalog, String>? {
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/campus-content?school_id=$schoolId",
+                bodyJson = null,
+                bearerToken = null
+            )
+            val root = JSONObject(raw)
+            if (!root.optBoolean("ok", false)) return null
+            val data = root.optJSONObject("data") ?: return null
+            val catalog = parseCampusContentJson(data) ?: return null
+            catalog to data.toString()
+        }.getOrNull()
+    }
+
+    fun parseCampusContentJsonString(rawJson: String?): CampusCommunityCloudCatalog? {
+        if (rawJson.isNullOrBlank()) return null
+        return runCatching {
+            parseCampusContentJson(JSONObject(rawJson))
+        }.getOrNull()
+    }
+
+    fun parseCampusContentJson(data: JSONObject): CampusCommunityCloudCatalog? {
+        return runCatching {
+            val schoolId = data.optCleanString("school_id", "haut").ifBlank { "haut" }
+            val version = data.optLong("version", 1L).coerceAtLeast(1L)
+            val updatedAt = data.optCleanString("updated_at", "")
+            val bObj = data.optJSONObject("bulletin")
+            val bulletin = if (bObj != null) {
+                CampusCommunityBulletin(
+                    enabled = bObj.optBoolean("enabled", true),
+                    title = bObj.optCleanString("title", "河工大社团纳新与校园频道云端直通车"),
+                    content = bObj.optCleanString("content", ""),
+                    tag = bObj.optCleanString("tag", "云端实时同步").ifBlank { "云端实时同步" },
+                    actionUrl = bObj.optCleanString("action_url", "")
+                )
+            } else {
+                CampusCommunityBulletin()
+            }
+
+            val chArr = data.optJSONArray("channels")
+            val parsedChannels = buildList {
+                if (chArr != null) {
+                    for (i in 0 until chArr.length()) {
+                        val ch = chArr.optJSONObject(i) ?: continue
+                        if (!ch.optBoolean("enabled", true)) continue
+                        val id = ch.optCleanString("id")
+                        val title = ch.optCleanString("title")
+                        if (id.isEmpty() || title.isEmpty()) continue
+                        add(
+                            PresetQqChannelItem(
+                                id = id,
+                                title = title,
+                                subtitle = ch.optCleanString("subtitle", ""),
+                                tagLabel = ch.optCleanString("tag_label", ch.optCleanString("tagLabel", "频道")).ifBlank { "频道" },
+                                defaultInviteUrl = ch.optCleanString("invite_url", ch.optCleanString("defaultInviteUrl", "https://pd.qq.com/s/hautcampus")),
+                                channelNumberHint = ch.optCleanString("channel_number_hint", "点击加入").ifBlank { "点击加入" },
+                                enabled = true,
+                                pinned = ch.optBoolean("pinned", false),
+                                sortOrder = ch.optInt("sort_order", (i + 1) * 10)
+                            )
+                        )
+                    }
+                }
+            }.sortedWith(compareByDescending<PresetQqChannelItem> { it.pinned }.thenBy { it.sortOrder })
+
+            val clArr = data.optJSONArray("clubs")
+            val parsedClubs = buildList {
+                if (clArr != null) {
+                    for (i in 0 until clArr.length()) {
+                        val cl = clArr.optJSONObject(i) ?: continue
+                        if (!cl.optBoolean("enabled", true)) continue
+                        val id = cl.optCleanString("id")
+                        val name = cl.optCleanString("name")
+                        if (id.isEmpty() || name.isEmpty()) continue
+                        val hlArr = cl.optJSONArray("highlights")
+                        val highlights = buildList {
+                            if (hlArr != null) {
+                                for (k in 0 until hlArr.length()) {
+                                    val h = hlArr.optString(k).cleanNullLiteral()
+                                    if (h.isNotEmpty()) add(h)
+                                }
+                            }
+                        }
+                        add(
+                            CampusClubItem(
+                                id = id,
+                                name = name,
+                                category = CampusClubCategory.fromWireName(cl.optCleanString("category")),
+                                affiliatedUnit = cl.optCleanString("affiliated_unit", cl.optCleanString("affiliatedUnit", "校团委")).ifBlank { "校团委" },
+                                activityVenue = cl.optCleanString("activity_venue", cl.optCleanString("activityVenue", "大学生活动中心")).ifBlank { "大学生活动中心" },
+                                summary = cl.optCleanString("summary", ""),
+                                qqGroupNumber = cl.optCleanString("qq_group_number", cl.optCleanString("qqGroupNumber", "")),
+                                highlights = highlights,
+                                enabled = true,
+                                pinned = cl.optBoolean("pinned", false),
+                                sortOrder = cl.optInt("sort_order", (i + 1) * 10)
+                            )
+                        )
+                    }
+                }
+            }.sortedWith(compareByDescending<CampusClubItem> { it.pinned }.thenBy { it.sortOrder })
+
+            CampusCommunityCloudCatalog(
+                schoolId = schoolId,
+                version = version,
+                updatedAtIso = updatedAt,
+                bulletin = bulletin,
+                channels = parsedChannels.ifEmpty { PresetCampusCommunityCatalog.defaultQqChannels },
+                clubs = parsedClubs.ifEmpty { PresetCampusCommunityCatalog.defaultCampusClubs },
+                isFromCloud = parsedChannels.isNotEmpty() || parsedClubs.isNotEmpty()
             )
         }.getOrNull()
     }

@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -296,6 +297,7 @@ fun CampusCommunityScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val catalog = prefs.campusCommunityCatalog
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0: 学生社团, 1: 校园频道
     var selectedClubCategory by remember { mutableStateOf<CampusClubCategory?>(null) }
@@ -303,6 +305,13 @@ fun CampusCommunityScreen(
     var feedbackText by remember { mutableStateOf<String?>(null) }
     var editingChannelItem by remember { mutableStateOf<PresetQqChannelItem?>(null) }
     var editingClubItem by remember { mutableStateOf<CampusClubItem?>(null) }
+    var isRefreshingCloud by remember { mutableStateOf(false) }
+
+    LaunchedEffect(repository) {
+        isRefreshingCloud = true
+        runCatching { repository.refreshCampusCommunityContent() }
+        isRefreshingCloud = false
+    }
 
     Column(
         modifier = Modifier
@@ -311,12 +320,33 @@ fun CampusCommunityScreen(
     ) {
         XPeachTopBar(
             title = "社团与校园频道",
-            subtitle = "河南工业大学 · 社团加群与频道导航",
+            subtitle = "河南工业大学 · 云端实时更新社团群与频道导航",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
                     onClick = onBack
+                )
+            },
+            actions = {
+                XPeachFilterPill(
+                    label = if (isRefreshingCloud) "同步中…" else "🔄 同步最新",
+                    selected = false,
+                    onClick = {
+                        if (!isRefreshingCloud) {
+                            scope.launch {
+                                isRefreshingCloud = true
+                                repository.refreshCampusCommunityContent()
+                                    .onSuccess { updated ->
+                                        feedbackText = "已同步最新校园频道（${updated.channels.size} 个）与学生社团（${updated.clubs.size} 个）"
+                                    }
+                                    .onFailure {
+                                        feedbackText = "当前展示本地缓存目录，稍后可重试同步"
+                                    }
+                                isRefreshingCloud = false
+                            }
+                        }
+                    }
                 )
             }
         )
@@ -328,10 +358,46 @@ fun CampusCommunityScreen(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (catalog.bulletin.enabled && catalog.bulletin.title.isNotBlank()) {
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📢 ${catalog.bulletin.title}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (catalog.bulletin.tag.isNotBlank()) {
+                            XPeachStatusBadge(
+                                text = catalog.bulletin.tag,
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    if (catalog.bulletin.content.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = catalog.bulletin.content,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+
             XPeachSegmentedTabs(
                 items = listOf(
-                    "学生社团 (${PresetCampusCommunityCatalog.defaultCampusClubs.size})",
-                    "校园频道 (${PresetCampusCommunityCatalog.defaultQqChannels.size})"
+                    "学生社团 (${catalog.clubs.size})",
+                    "校园频道 (${catalog.channels.size})"
                 ),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
@@ -369,7 +435,7 @@ fun CampusCommunityScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         XPeachFilterPill(
-                            label = "全部 (${PresetCampusCommunityCatalog.defaultCampusClubs.size})",
+                            label = "全部 (${catalog.clubs.size})",
                             selected = selectedClubCategory == null,
                             onClick = { selectedClubCategory = null }
                         )
@@ -395,12 +461,13 @@ fun CampusCommunityScreen(
                 }
 
                 val filteredClubs = remember(
+                    catalog.clubs,
                     selectedClubCategory,
                     clubSearchQuery,
                     prefs.customClubGroupNumbers
                 ) {
                     val q = clubSearchQuery.trim().lowercase()
-                    PresetCampusCommunityCatalog.defaultCampusClubs.filter { club ->
+                    catalog.clubs.filter { club ->
                         val catOk = selectedClubCategory == null || club.category == selectedClubCategory
                         val groupNo = prefs.customClubGroupNumbers[club.id] ?: club.qqGroupNumber
                         val queryOk = q.isEmpty() ||
@@ -436,6 +503,13 @@ fun CampusCommunityScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                if (club.pinned) {
+                                    XPeachStatusBadge(
+                                        text = "置顶",
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
                                 XPeachStatusBadge(
                                     text = club.category.label,
                                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -533,7 +607,7 @@ fun CampusCommunityScreen(
                     }
                 }
             } else {
-                for (channel in PresetCampusCommunityCatalog.defaultQqChannels) {
+                for (channel in catalog.channels) {
                     val effectiveUrl = prefs.customChannelUrls[channel.id]?.takeIf { it.isNotBlank() }
                         ?: channel.defaultInviteUrl
                     val isCustomized = !prefs.customChannelUrls[channel.id].isNullOrBlank()
@@ -570,6 +644,13 @@ fun CampusCommunityScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (channel.pinned) {
+                                        XPeachStatusBadge(
+                                            text = "置顶",
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    }
                                     XPeachStatusBadge(
                                         text = if (isCustomized) "已修改" else channel.tagLabel,
                                         containerColor = MaterialTheme.colorScheme.primaryContainer,

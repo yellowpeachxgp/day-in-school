@@ -150,6 +150,8 @@ data class AppPreferencesState(
     val lastAutoSyncEpochMillis: Long? = null,
     val customChannelUrls: Map<String, String> = emptyMap(),
     val customClubGroupNumbers: Map<String, String> = emptyMap(),
+    val campusCommunityCatalog: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog = cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
+    val lastCampusContentSyncEpochMillis: Long? = null,
     val reminderConfig: ReminderGlobalConfig = ReminderGlobalConfig(),
     val reminderPolicyRevision: String = "v1",
     val lastReminderReconcileEpochMillis: Long? = null,
@@ -261,6 +263,8 @@ class CampusRepository internal constructor(
         val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
         val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
         val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
+        val CLOUD_CAMPUS_CONTENT_JSON = stringPreferencesKey("cloud_campus_content_json_v1")
+        val CLOUD_CAMPUS_CONTENT_SYNCED_MS = longPreferencesKey("cloud_campus_content_synced_ms_v1")
         val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
         val CLASS_LEAD_MINUTES = intPreferencesKey("class_lead_minutes")
         val CLASS_SNOOZE_DEFAULT_MINUTES = intPreferencesKey("class_snooze_default_minutes")
@@ -449,6 +453,10 @@ class CampusRepository internal constructor(
             lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
             customChannelUrls = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]),
             customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]),
+            campusCommunityCatalog = CampusCloudOidcHelper.parseCampusContentJsonString(
+                prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON]
+            ) ?: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
+            lastCampusContentSyncEpochMillis = prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS],
             reminderConfig = reminderConfig,
             reminderPolicyRevision = prefs[PrefKeys.REMINDER_POLICY_REVISION]
                 ?: ReminderRevision.computePolicyRevision(
@@ -1721,6 +1729,31 @@ class CampusRepository internal constructor(
         }
     }
 
+    /**
+     * 从云端控制平面 (`GET /api/v1/campus-content?school_id=haut`) 实时拉取最新的校园频道与学生社团名录，
+     * 并持久化到本地 DataStore 供全端响应式渲染。
+     */
+    suspend fun refreshCampusCommunityContent(): Result<cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val baseUrl = preferencesFlow.first()
+                    .networkProxyConfig
+                    .customCloudApiBaseUrl
+                    .trim()
+                    .ifBlank { CampusCloudOidcHelper.DEFAULT_CLOUD_BASE_URL }
+                val (catalog, rawJson) = CampusCloudOidcHelper.fetchPublicCampusContent(
+                    schoolId = schoolId,
+                    cloudBaseUrl = baseUrl
+                ) ?: throw IllegalStateException("无法连接云端获取最新校园频道与社团内容")
+                val now = System.currentTimeMillis()
+                preferences.edit { prefs ->
+                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
+                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
+                }
+                catalog
+            }
+        }
+
     private fun decodeKeyValueMap(raw: String?): Map<String, String> {
         if (raw.isNullOrBlank()) return emptyMap()
         return raw.split("\n").mapNotNull { line ->
@@ -2482,9 +2515,19 @@ class CampusRepository internal constructor(
                     generation = matchingLocal?.generation ?: 1,
                     lastDiagnosticMessage = diagText,
                     createdAtEpochMillis = matchingLocal?.createdAtEpochMillis ?: now,
-                    updatedAtEpochMillis = now
+                    updatedAtEpochMillis = now,
+                    repeatDays = rj.repeatDays.coerceAtLeast(matchingLocal?.repeatDays ?: 1),
+                    remainingDays = rj.remainingDays
                 )
                 cloudAndParcelDao.upsertLibraryBookingPlan(mergedPlan)
+            }
+
+            val rawCampusContent = verifiedSnapshot.campusContentRawJson
+            if (!rawCampusContent.isNullOrBlank()) {
+                preferences.edit { prefs ->
+                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawCampusContent
+                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
+                }
             }
 
             if (parcelChanged) {
@@ -2531,8 +2574,10 @@ class CampusRepository internal constructor(
         preferredAreaName: String,
         preferredSeatLabel: String,
         allowAlternativeSeat: Boolean = true,
+        repeatDays: Int = 1,
         nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
+        val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
             val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 ?: throw IllegalStateException("云端托管预约需先绑定 XPEACH 账号；您也可随时切换为「本机免费预约」（无需登录 XPEACH）")
@@ -2571,7 +2616,8 @@ class CampusRepository internal constructor(
                     targetExecuteAtIso = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
                     preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                     preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
-                    planIdempotencyKey = planId
+                    planIdempotencyKey = planId,
+                    repeatDays = normalizedRepeatDays
                 )
             }
             if (remoteJobOrPlanId.isNullOrBlank()) {
@@ -2586,7 +2632,8 @@ class CampusRepository internal constructor(
                             targetExecuteAtIso = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
                             preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                             preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
-                            planIdempotencyKey = planId
+                            planIdempotencyKey = planId,
+                            repeatDays = normalizedRepeatDays
                         )
                     }
                 }
@@ -2594,6 +2641,12 @@ class CampusRepository internal constructor(
             if (!remoteJobOrPlanId.isNullOrBlank()) {
                 remoteCloudJobId = remoteJobOrPlanId
             }
+        }
+
+        val repeatHint = if (normalizedRepeatDays > 1) {
+            "（已开启连续 $normalizedRepeatDays 天自动抢座，每日完成后自动续期次日任务）"
+        } else {
+            ""
         }
 
         val entity = LibraryBookingPlanEntity(
@@ -2622,14 +2675,16 @@ class CampusRepository internal constructor(
             generation = 1,
             lastDiagnosticMessage = when (executionMode) {
                 BookingExecutionMode.CLOUD_HOSTED ->
-                    "已交由云端托管（任务号 ${remoteCloudJobId ?: planId.takeLast(8)}）：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 自动登录并准点抢座"
+                    "已交由云端托管（任务号 ${remoteCloudJobId ?: planId.takeLast(8)}）：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 自动登录并准点抢座$repeatHint"
                 BookingExecutionMode.MANUAL_REMINDER ->
-                    "已开启到点提醒：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 弹出选座通知"
+                    "已开启到点提醒：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 弹出选座通知$repeatHint"
                 BookingExecutionMode.LOCAL_DEVICE ->
-                    "已开启本机准点抢座：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 唤醒本机执行自动抢座"
+                    "已开启本机准点抢座：将在 ${targetDate} ${DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)} 唤醒本机执行自动抢座$repeatHint"
             },
             createdAtEpochMillis = nowEpochMillis,
-            updatedAtEpochMillis = nowEpochMillis
+            updatedAtEpochMillis = nowEpochMillis,
+            repeatDays = normalizedRepeatDays,
+            remainingDays = normalizedRepeatDays
         )
         cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
@@ -2808,14 +2863,63 @@ class CampusRepository internal constructor(
                 }
             }
         }
-        cloudAndParcelDao.upsertLibraryBookingPlan(updated)
-        if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
-            LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, updated.id)
+        val finalEntity = if (
+            stage == TripleScheduleStage.FIRE &&
+            current.remainingDays > 1 &&
+            current.status != "CANCELLED"
+        ) {
+            // 1) 保存当日已完成快照行，方便用户在记录列表中查看当日占座结果
+            val dayArchiveId = "${current.id}_d_${current.targetLocalDate.replace("-", "")}"
+            cloudAndParcelDao.upsertLibraryBookingPlan(
+                updated.copy(
+                    id = dayArchiveId,
+                    remainingDays = 0,
+                    updatedAtEpochMillis = nowEpochMillis
+                )
+            )
+            // 2) 自动推进至次日并重新武装 T-30m / T-5m / T 三段准点闹钟
+            val nextDate = runCatching { LocalDate.parse(current.targetLocalDate).plusDays(1) }
+                .getOrElse { LocalDate.now(DualEngineReservationPlanner.HAUT_ZONE).plusDays(1) }
+            val parsedTime = runCatching { DualEngineReservationPlanner.parseTargetLocalTime(current.targetLocalTime) }
+                .getOrDefault(LocalTime.of(7, 0))
+            val nextGen = current.generation + 1
+            val nextRem = (current.remainingDays - 1).coerceAtLeast(1)
+            val nextSchedule = DualEngineReservationPlanner.computeSchedule(
+                planId = current.id,
+                targetDate = nextDate,
+                targetTime = parsedTime,
+                generation = nextGen,
+                nowEpochMillis = nowEpochMillis
+            )
+            val rolledOver = current.copy(
+                targetLocalDate = nextDate.toString(),
+                precheckAtEpochMillis = nextSchedule.precheckAtEpochMillis,
+                finalCheckAtEpochMillis = nextSchedule.finalCheckAtEpochMillis,
+                fireAtEpochMillis = nextSchedule.fireAtEpochMillis,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                status = "ARMED",
+                remainingDays = nextRem,
+                generation = nextGen,
+                stateVersion = updated.stateVersion + 1,
+                lastDiagnosticMessage = "${updated.lastDiagnosticMessage.orEmpty()} · 已自动续期次日 ($nextDate ${current.targetLocalTime}) 抢座（剩余 $nextRem/${current.repeatDays} 天）",
+                updatedAtEpochMillis = nowEpochMillis
+            )
+            cloudAndParcelDao.upsertLibraryBookingPlan(rolledOver)
+            LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, rolledOver)
+            rolledOver
+        } else {
+            cloudAndParcelDao.upsertLibraryBookingPlan(updated)
+            if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+                LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, updated.id)
+            }
+            updated
         }
         if (stage == TripleScheduleStage.FIRE && current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
-        updated
+        finalEntity
     }
 
     suspend fun cancelDualEngineBookingPlan(planId: String) {

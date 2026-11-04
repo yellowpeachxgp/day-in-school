@@ -580,6 +580,7 @@ fun TodayScreen(
                 cardOrder = prefs.homeCardOrder,
                 hiddenCards = prefs.hiddenHomeCards,
                 fullWidthCards = prefs.fullWidthHomeCards,
+                campusClubsCount = prefs.campusCommunityCatalog.clubs.size,
                 onOpenCustomizer = { showCardCustomizerDialog = true },
                 onNavigateToGrades = onNavigateToGrades,
                 onNavigateToMapWithRoom = onNavigateToMapWithRoom,
@@ -1585,6 +1586,7 @@ private fun TodayCampusBentoSection(
     cardOrder: List<String>,
     hiddenCards: Set<String>,
     fullWidthCards: Set<String>,
+    campusClubsCount: Int = PresetCampusCommunityCatalog.defaultCampusClubs.size,
     onOpenCustomizer: () -> Unit,
     onNavigateToGrades: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit,
@@ -1817,7 +1819,7 @@ private fun TodayCampusBentoSection(
         "CAMPUS_COMMUNITY" to HomeModularCardSpec(
             id = "CAMPUS_COMMUNITY",
             title = "社团与频道",
-            badgeText = "${PresetCampusCommunityCatalog.defaultCampusClubs.size} 社团",
+            badgeText = "$campusClubsCount 社团",
             subtitle = "社团招新群与校园频道",
             onClick = onNavigateToCommunity
         )

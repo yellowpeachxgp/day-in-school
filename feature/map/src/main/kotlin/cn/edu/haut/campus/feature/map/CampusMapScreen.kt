@@ -979,7 +979,7 @@ fun CampusMapScreen(
                         ) {
                             Text("学生社团", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             XPeachStatusBadge(
-                                text = "${PresetCampusCommunityCatalog.defaultCampusClubs.size} 社团",
+                                text = "${preferences.campusCommunityCatalog.clubs.size} 社团",
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.primary
                             )
@@ -1006,7 +1006,7 @@ fun CampusMapScreen(
                         ) {
                             Text("校园频道", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             XPeachStatusBadge(
-                                text = "${PresetCampusCommunityCatalog.defaultQqChannels.size} 频道",
+                                text = "${preferences.campusCommunityCatalog.channels.size} 频道",
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.primary
                             )
