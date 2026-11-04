@@ -76,6 +76,7 @@ import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.academic.HautZfsoftParser
 import cn.edu.haut.campus.core.academic.TimetableInterchangeAdapter
+import cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy
 import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState

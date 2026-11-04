@@ -299,9 +299,8 @@ class MainActivity : ComponentActivity() {
                 return
             }
         }
-        val hasWidgetNavExtras = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_TARGET_TAB) ||
-            intent.hasExtra(WidgetRefreshCoordinator.EXTRA_OPEN_ROOM_SEARCH) ||
-            intent.hasExtra(WidgetRefreshCoordinator.EXTRA_OPEN_OVERLAY_ROUTE)
+        val hasWidgetNavExtras = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB) ||
+            intent.hasExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM)
         val hasAccountScopedAction = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_PROFILE_ID) ||
             hasWidgetNavExtras ||
             intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
