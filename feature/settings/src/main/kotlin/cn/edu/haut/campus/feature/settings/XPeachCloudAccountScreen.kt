@@ -90,7 +90,11 @@ fun XPeachCloudAccountScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && !showBindDialog) {
                 val txn = CampusCloudOidcHelper.getLatestBrowserTxn() ?: return@LifecycleEventObserver
-                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback()
+                if (System.currentTimeMillis() > txn.expiresAtEpochMillis) {
+                    CampusCloudOidcHelper.clearLatestBrowserTxn()
+                    return@LifecycleEventObserver
+                }
+                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback(txn.loginTxn)
                 scope.launch {
                     val ticket = deepLinkPair?.first ?: withContext(Dispatchers.IO) {
                         CampusCloudOidcHelper.pollMobileAuthTransactionTicket(txn.loginTxn)

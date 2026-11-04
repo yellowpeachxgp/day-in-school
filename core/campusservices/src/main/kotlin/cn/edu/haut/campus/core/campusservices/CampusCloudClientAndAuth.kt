@@ -459,24 +459,51 @@ object CampusCloudOidcHelper {
 
     fun notifyDeepLinkCallback(url: String?): Pair<String, String>? {
         val pair = extractCallbackTicketAndTxn(url) ?: return null
+        val activeTxn = latestBrowserTxn ?: return null
+        if (System.currentTimeMillis() > activeTxn.expiresAtEpochMillis) {
+            latestBrowserTxn = null
+            return null
+        }
+        if (pair.second != activeTxn.loginTxn) {
+            return null
+        }
         latestDeepLinkCallbackPair = pair
         return pair
     }
 
-    fun consumeDeepLinkCallback(): Pair<String, String>? {
-        val pair = latestDeepLinkCallbackPair
+    fun consumeDeepLinkCallback(expectedTxn: String? = null): Pair<String, String>? {
+        val pair = latestDeepLinkCallbackPair ?: return null
         latestDeepLinkCallbackPair = null
+        if (!expectedTxn.isNullOrBlank() && pair.second != expectedTxn) {
+            return null
+        }
         return pair
     }
 
     fun extractCallbackTicketAndTxn(url: String?): Pair<String, String>? {
         if (url.isNullOrBlank()) return null
-        if (!url.contains("/app-link/auth/callback") && !url.startsWith("dayinschool://auth/callback")) return null
         return runCatching {
-            val uri = Uri.parse(url)
-            val ticket = uri.getQueryParameter("ticket")?.trim().orEmpty()
-            val txn = uri.getQueryParameter("txn")?.trim().orEmpty()
-            if (ticket.isNotEmpty() && txn.isNotEmpty()) ticket to txn else null
+            val uri = java.net.URI(url.trim())
+            val scheme = uri.scheme?.lowercase().orEmpty()
+            val host = uri.host?.lowercase().orEmpty()
+            val path = uri.rawPath.orEmpty()
+            val isCustomScheme = scheme == "dayinschool" && host == "auth" && path.startsWith("/callback")
+            val isHttpsAppLink = scheme == "https" &&
+                host == "campus.yellowpeachxgp.com" &&
+                path.startsWith("/app-link/auth/callback")
+            if (!isCustomScheme && !isHttpsAppLink) return null
+            val query = uri.rawQuery.orEmpty()
+            var ticket = ""
+            var txn = ""
+            for (pair in query.split("&")) {
+                val idx = pair.indexOf('=')
+                if (idx <= 0) continue
+                val k = java.net.URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8.name()).trim()
+                val v = java.net.URLDecoder.decode(pair.substring(idx + 1), StandardCharsets.UTF_8.name()).trim()
+                if (k == "ticket") ticket = v
+                if (k == "txn") txn = v
+            }
+            if (ticket.startsWith("tkt_") && txn.startsWith("txn_")) ticket to txn else null
         }.getOrNull()
     }
 
@@ -963,6 +990,21 @@ object CampusCloudOidcHelper {
         }.getOrNull()
     }
 
+    internal fun validateAllowedCloudUrl(rawUrl: String): URL {
+        val endpoint = OfficialServiceRoutePolicy.parseHttpsEndpoint(rawUrl)
+            ?: throw SecurityException("拒绝非 HTTPS 或含非法端口的云服务地址")
+        val host = endpoint.host
+        val allowed = host == "campus.yellowpeachxgp.com" ||
+            host.endsWith(".yellowpeachxgp.com") ||
+            host == "xpeach.codes" ||
+            host.endsWith(".xpeach.codes") ||
+            host == "cloud.dayinschool.haut.edu.cn"
+        if (!allowed) {
+            throw SecurityException("拒绝向未授权的云端域名发送请求: $host")
+        }
+        return URL(endpoint.urlText)
+    }
+
     private fun httpJsonRequest(
         method: String,
         url: String,
@@ -970,8 +1012,10 @@ object CampusCloudOidcHelper {
         bearerToken: String?,
         extraHeaders: Map<String, String> = emptyMap()
     ): String {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val validatedUrl = validateAllowedCloudUrl(url)
+        val conn = (validatedUrl.openConnection() as HttpURLConnection).apply {
             requestMethod = method
+            instanceFollowRedirects = false
             connectTimeout = 15000
             readTimeout = 15000
             setRequestProperty("Accept", "application/json")
@@ -993,7 +1037,22 @@ object CampusCloudOidcHelper {
         }
         val code = conn.responseCode
         val stream = if (code >= 400) conn.errorStream else conn.inputStream
-        val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+        val text = stream?.use { input ->
+            val maxBytes = 2 * 1024 * 1024
+            val buffer = ByteArray(8192)
+            val out = java.io.ByteArrayOutputStream()
+            var total = 0
+            while (true) {
+                val n = input.read(buffer)
+                if (n <= 0) break
+                total += n
+                if (total > maxBytes) {
+                    throw IllegalStateException("云端响应体积超出 2MB 安全上限")
+                }
+                out.write(buffer, 0, n)
+            }
+            out.toString(StandardCharsets.UTF_8.name())
+        }.orEmpty()
         conn.disconnect()
         return text
     }

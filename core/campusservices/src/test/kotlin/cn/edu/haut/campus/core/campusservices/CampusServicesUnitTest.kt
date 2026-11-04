@@ -681,6 +681,27 @@ class CampusServicesUnitTest {
             "dis:reservation:ord-123:refund:v1",
             CampusCloudOidcHelper.buildRefundIdempotencyKey("ord-123")
         )
+
+        // Cloud URL allowlist blocks HTTP and untrusted domains
+        assertNotNull(CampusCloudOidcHelper.validateAllowedCloudUrl("https://campus.yellowpeachxgp.com/api/v1/me"))
+        try {
+            CampusCloudOidcHelper.validateAllowedCloudUrl("http://campus.yellowpeachxgp.com/api/v1/me")
+            fail("Expected SecurityException for cleartext HTTP cloud URL")
+        } catch (_: SecurityException) {
+        }
+        try {
+            CampusCloudOidcHelper.validateAllowedCloudUrl("https://evil.example.com/api/v1/me")
+            fail("Expected SecurityException for untrusted cloud host")
+        } catch (_: SecurityException) {
+        }
+
+        // Library seat origin & Xiaomi WebView allowlist prevent prefix-spoofing attacks
+        assertTrue(OfficialServiceRoutePolicy.isLibrarySeatOrigin("https://wslib.haut.edu.cn/h5/index.html"))
+        assertFalse(OfficialServiceRoutePolicy.isLibrarySeatOrigin("https://wslib.haut.edu.cn.evil.com/h5/index.html"))
+        assertTrue(OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl("https://account.xiaomi.com/pass/serviceLogin"))
+        assertTrue(OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl("https://api.assistant.miui.com/sts"))
+        assertFalse(OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl("http://account.xiaomi.com/pass/serviceLogin"))
+        assertFalse(OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl("https://account.xiaomi.com.evil.com/pass"))
     }
 
     @Test

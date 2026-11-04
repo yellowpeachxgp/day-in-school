@@ -125,9 +125,8 @@ data class NetworkProxyConfig(
         fun normalizePrefixUrl(rawPrefix: String): String {
             val trimmed = rawPrefix.trim()
             if (trimmed.isEmpty()) return ""
-            val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) ||
-                trimmed.startsWith("https://", ignoreCase = true)
-            ) {
+            if (trimmed.startsWith("http://", ignoreCase = true)) return ""
+            val withScheme = if (trimmed.startsWith("https://", ignoreCase = true)) {
                 trimmed
             } else {
                 "https://$trimmed"

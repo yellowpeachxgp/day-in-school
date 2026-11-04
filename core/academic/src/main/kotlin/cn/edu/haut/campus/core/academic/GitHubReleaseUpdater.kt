@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.academic
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -16,6 +17,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class GitHubReleaseInfo(
     val tagName: String,
@@ -29,7 +31,8 @@ data class GitHubReleaseInfo(
     val apkSizeBytes: Long,
     val hasNewerVersion: Boolean,
     val currentVersionNormalized: String,
-    val resolvedViaRoute: String = "GitHub API"
+    val resolvedViaRoute: String = "GitHub API",
+    val expectedSha256Hex: String? = null
 )
 
 data class ProxyConnectivityReport(
@@ -338,6 +341,7 @@ object GitHubReleaseUpdater {
         var selectedUrl: String? = null
         var selectedName = "day-in-school-$tagName-release.apk"
         var selectedSize = 0L
+        var selectedSha256Hex: String? = null
 
         val assets = obj.optJSONArray("assets")
         if (assets != null && assets.length() > 0) {
@@ -347,11 +351,19 @@ object GitHubReleaseUpdater {
                 val name = asset.optString("name", "")
                 val dlUrl = asset.optString("browser_download_url", "")
                 val size = asset.optLong("size", 0L)
+                val rawDigest = asset.optString("digest", "").trim()
+                val sha256 = rawDigest
+                    .removePrefix("sha256:")
+                    .removePrefix("SHA256:")
+                    .trim()
+                    .lowercase()
+                    .takeIf { it.matches(Regex("^[0-9a-f]{64}$")) }
                 if (name.endsWith(".apk", ignoreCase = true) && dlUrl.isNotBlank()) {
                     if (selectedUrl == null || name.contains("release", ignoreCase = true)) {
                         selectedUrl = dlUrl
                         selectedName = name
                         selectedSize = size
+                        selectedSha256Hex = sha256
                     }
                 }
             }
@@ -376,7 +388,8 @@ object GitHubReleaseUpdater {
             apkFileName = selectedName,
             apkSizeBytes = selectedSize,
             hasNewerVersion = isRemoteVersionNewer(currentVersionName, tagName),
-            currentVersionNormalized = currentNorm
+            currentVersionNormalized = currentNorm,
+            expectedSha256Hex = selectedSha256Hex
         )
     }
 
@@ -393,8 +406,7 @@ object GitHubReleaseUpdater {
             val rawUrl = releaseInfo.apkDownloadUrl
                 ?: throw IllegalArgumentException("未找到可用的 APK 下载链接")
 
-            val baseCacheDir = context.externalCacheDir ?: context.cacheDir
-            val updatesDir = File(baseCacheDir, "updates").apply { mkdirs() }
+            val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
             val safeFileName = releaseInfo.apkFileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
             val targetFile = File(updatesDir, safeFileName)
             val tempFile = File(updatesDir, "$safeFileName.part")
@@ -407,6 +419,7 @@ object GitHubReleaseUpdater {
                     if (tempFile.exists()) {
                         tempFile.delete()
                     }
+                    val digest = MessageDigest.getInstance("SHA-256")
                     val conn = openConnectionFollowingRedirects(candidateUrl, proxyConfig)
                     try {
                         val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: releaseInfo.apkSizeBytes
@@ -419,6 +432,7 @@ object GitHubReleaseUpdater {
                                     val read = input.read(buffer)
                                     if (read <= 0) break
                                     output.write(buffer, 0, read)
+                                    digest.update(buffer, 0, read)
                                     downloaded += read
                                     val now = System.currentTimeMillis()
                                     if (now - lastCallbackTime >= 80L || downloaded == totalBytes) {
@@ -435,8 +449,20 @@ object GitHubReleaseUpdater {
                     }
 
                     if (!tempFile.exists() || tempFile.length() < 64 * 1024L) {
+                        tempFile.delete()
                         throw IllegalStateException("下载内容不完整，自动切换备用线路")
                     }
+
+                    val expectedSha256 = releaseInfo.expectedSha256Hex
+                    if (!expectedSha256.isNullOrBlank()) {
+                        val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                            tempFile.delete()
+                            throw SecurityException("APK SHA-256 摘要校验未通过，已阻断可疑镜像包并切换备用线路")
+                        }
+                    }
+
+                    verifyDownloadedApkArchive(context, tempFile)
                 }
 
                 if (routeAttempt.isSuccess) {
@@ -464,6 +490,10 @@ object GitHubReleaseUpdater {
         var currentUrl = initialUrl
         var redirects = 0
         while (redirects < 6) {
+            val parsedCurrent = URL(currentUrl)
+            if (!parsedCurrent.protocol.equals("https", ignoreCase = true) || parsedCurrent.userInfo != null) {
+                throw SecurityException("拒绝非 HTTPS 下载重定向地址: $currentUrl")
+            }
             val conn = openProxiedConnection(
                 targetUrl = currentUrl,
                 proxyConfig = proxyConfig,
@@ -488,7 +518,11 @@ object GitHubReleaseUpdater {
                 if (location.isNullOrBlank()) {
                     throw IllegalStateException("下载重定向缺少 Location 头")
                 }
-                currentUrl = URL(URL(currentUrl), location).toString()
+                val resolvedUrl = URL(parsedCurrent, location)
+                if (!resolvedUrl.protocol.equals("https", ignoreCase = true) || resolvedUrl.userInfo != null) {
+                    throw SecurityException("下载重定向尝试降级至非 HTTPS 协议，已阻断")
+                }
+                currentUrl = resolvedUrl.toString()
                 redirects++
                 continue
             }
@@ -501,6 +535,64 @@ object GitHubReleaseUpdater {
         throw IllegalStateException("下载重定向次数过多")
     }
 
+    private fun extractSigningCertDigests(pkgInfo: android.content.pm.PackageInfo?): Set<String> {
+        if (pkgInfo == null) return emptySet()
+        val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = pkgInfo.signingInfo ?: return emptySet()
+            if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            pkgInfo.signatures
+        } ?: return emptySet()
+        return sigs.mapNotNull { sig ->
+            runCatching {
+                MessageDigest.getInstance("SHA-256")
+                    .digest(sig.toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            }.getOrNull()
+        }.toSet()
+    }
+
+    private fun verifyDownloadedApkArchive(context: Context, apkFile: File) {
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            @Suppress("DEPRECATION")
+            PackageManager.GET_SIGNATURES
+        }
+        val archiveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+        } ?: throw SecurityException("下载的文件不是有效的 Android APK 安装包")
+
+        if (archiveInfo.packageName != context.packageName) {
+            apkFile.delete()
+            throw SecurityException("APK 包名不匹配 (${archiveInfo.packageName})，已拒绝安装")
+        }
+
+        val installedInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, flags)
+        }
+        val installedDigests = extractSigningCertDigests(installedInfo)
+        val archiveDigests = extractSigningCertDigests(archiveInfo)
+        if (installedDigests.isNotEmpty() && archiveDigests.isNotEmpty() &&
+            installedDigests.intersect(archiveDigests).isEmpty()
+        ) {
+            apkFile.delete()
+            throw SecurityException("下载的 APK 签名证书与当前应用不一致，已拦截可疑篡改包")
+        }
+    }
+
     /**
      * 唤起系统软件包安装程序直接安装已下载的 APK：
      * - 若 Android 8.0+ 尚未授予「安装未知应用」权限，自动跳转系统授权设置页并返回 false。
@@ -511,6 +603,7 @@ object GitHubReleaseUpdater {
             if (!apkFile.exists() || apkFile.length() <= 0L) {
                 throw IllegalStateException("安装包文件不存在或已损坏，请重新拉取")
             }
+            verifyDownloadedApkArchive(context, apkFile)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 !context.packageManager.canRequestPackageInstalls()
             ) {

@@ -33,6 +33,7 @@
         android:name=".HautCampusApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="false"
         android:enableOnBackInvokedCallback="true"
         android:icon="@drawable/ic_launcher_vector"
@@ -84,7 +85,6 @@
             android:label="下一节课 Mini (2×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
@@ -102,7 +102,6 @@
             android:label="今日课程 Today (4×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
@@ -120,7 +119,6 @@
             android:label="日程时间轴 Timeline (4×4)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
@@ -138,7 +136,6 @@
             android:label="周课表 Week (4×4)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
@@ -156,7 +153,6 @@
             android:label="快递取件码 Parcel (4×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />

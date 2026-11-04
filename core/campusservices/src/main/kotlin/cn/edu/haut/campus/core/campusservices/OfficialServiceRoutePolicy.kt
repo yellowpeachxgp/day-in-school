@@ -175,11 +175,43 @@ object OfficialServiceRoutePolicy {
     }
 
     /**
+     * 判断是否为选座 H5 站点（`https://wslib.haut.edu.cn`）。
+     */
+    fun isLibrarySeatOrigin(rawUrl: String?): Boolean {
+        val endpoint = rawUrl?.let(::parseHttpsEndpoint) ?: return false
+        return endpoint.host == WSLIB_HOST
+    }
+
+    /**
      * 判断是否为选座 H5 主文档（`https://wslib.haut.edu.cn/h5/index.html`）。
      */
     fun isLibrarySeatIndexDocument(rawUrl: String?): Boolean {
         val endpoint = rawUrl?.let(::parseHttpsEndpoint) ?: return false
         return endpoint.host == WSLIB_HOST && endpoint.uri.rawPath == SEAT_BOOKING_BASE_PATH
+    }
+
+    /**
+     * 判断 host 是否为小米官方认证及智能助理允许的 HTTPS 域名。
+     */
+    fun isAllowedXiaomiHost(host: String): Boolean {
+        val clean = host.lowercase(Locale.ROOT).trimEnd('.')
+        return clean == "xiaomi.com" ||
+            clean.endsWith(".xiaomi.com") ||
+            clean == "mi.com" ||
+            clean.endsWith(".mi.com") ||
+            clean == "miui.com" ||
+            clean.endsWith(".miui.com") ||
+            clean == "cnbj1.fds.api.xiaomi.com"
+    }
+
+    /**
+     * 校验小米账号 WebView 导航与资源 URL 是否属于官方允许的 HTTPS 域名。
+     */
+    fun isAllowedXiaomiWebUrl(rawUrl: String?): Boolean {
+        val trimmed = rawUrl?.trim().orEmpty()
+        if (trimmed in SAFE_SUBFRAME_ABOUT_URIS) return true
+        val endpoint = parseHttpsEndpoint(trimmed) ?: return false
+        return isAllowedXiaomiHost(endpoint.host)
     }
 
     /**

@@ -291,14 +291,19 @@ class MainActivity : ComponentActivity() {
     private fun extractWidgetIntent(intent: Intent?, active: ActiveSession) {
         if (intent == null) return
         val dataUriString = intent.dataString
-        if (!dataUriString.isNullOrBlank() &&
-            cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.notifyDeepLinkCallback(dataUriString) != null
-        ) {
-            deepLinkOverlayRoute = "xpeach_cloud"
-            pendingAccountIntent = null
-            return
+        if (!dataUriString.isNullOrBlank()) {
+            intent.data = null
+            if (cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.notifyDeepLinkCallback(dataUriString) != null) {
+                deepLinkOverlayRoute = "xpeach_cloud"
+                pendingAccountIntent = null
+                return
+            }
         }
+        val hasWidgetNavExtras = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_TARGET_TAB) ||
+            intent.hasExtra(WidgetRefreshCoordinator.EXTRA_OPEN_ROOM_SEARCH) ||
+            intent.hasExtra(WidgetRefreshCoordinator.EXTRA_OPEN_OVERLAY_ROUTE)
         val hasAccountScopedAction = intent.hasExtra(WidgetRefreshCoordinator.EXTRA_PROFILE_ID) ||
+            hasWidgetNavExtras ||
             intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
             intent.hasExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
         if (!hasAccountScopedAction) {
@@ -311,10 +316,10 @@ class MainActivity : ComponentActivity() {
         val widgetScopeValid = widgetProfile != null &&
             widgetProfile == active.profileId && widgetGeneration == active.generation
         val accountScopeValid = accountScope?.matches(active) == true
-        val hasWidgetScope = widgetProfile != null
+        val hasWidgetScope = widgetProfile != null || hasWidgetNavExtras
         val requiresAccountScope = intent.hasExtra(ReminderNotificationFactory.EXTRA_REMINDER_NAV_ACTION) ||
             intent.hasExtra(FocusNotificationFactory.EXTRA_OVERLAY_ROUTE)
-        if ((hasWidgetScope && !widgetScopeValid) || (requiresAccountScope && !accountScopeValid)) {
+        if ((hasWidgetScope && !widgetScopeValid && !accountScopeValid) || (requiresAccountScope && !accountScopeValid)) {
             pendingAccountIntent = null
             return
         }

@@ -740,6 +740,16 @@ fun ImporterScreen(
                                                     return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
                                                 }
 
+                                                override fun shouldInterceptRequest(
+                                                    view: WebView?,
+                                                    request: WebResourceRequest?
+                                                ): android.webkit.WebResourceResponse? {
+                                                    return SafeWebNavigationPolicy.interceptSubresourceIfBlocked(
+                                                        request = request,
+                                                        allowCatalogCovers = false
+                                                    )
+                                                }
+
                                                 override fun onReceivedSslError(
                                                     view: WebView?,
                                                     handler: SslErrorHandler?,
@@ -750,7 +760,9 @@ fun ImporterScreen(
 
                                                 override fun onPageFinished(view: WebView?, url: String?) {
                                                     super.onPageFinished(view, url)
-                                                    if (!teachingFixScript.isNullOrBlank()) {
+                                                    if (!teachingFixScript.isNullOrBlank() &&
+                                                        OfficialServiceRoutePolicy.isAllowedMainFrameUrl(url.orEmpty())
+                                                    ) {
                                                         view?.evaluateJavascript(teachingFixScript, null)
                                                     }
                                                     SchoolWebSessionManager.persistCookiesAsync()

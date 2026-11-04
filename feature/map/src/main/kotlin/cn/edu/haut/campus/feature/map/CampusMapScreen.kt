@@ -187,12 +187,28 @@ private object CampusTileCache {
                 for (urlStr in urls) {
                     val downloaded = runCatching {
                         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                            instanceFollowRedirects = false
                             connectTimeout = 6000
                             readTimeout = 6000
                             setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36")
                         }
                         if (conn.responseCode == 200) {
-                            val bytes = conn.inputStream.use { it.readBytes() }
+                            val bytes = conn.inputStream.use { input ->
+                                val maxTileBytes = 512 * 1024
+                                val buf = ByteArray(8192)
+                                val out = java.io.ByteArrayOutputStream()
+                                var total = 0
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n <= 0) break
+                                    total += n
+                                    if (total > maxTileBytes) {
+                                        throw IllegalStateException("Map tile exceeds 512KB limit")
+                                    }
+                                    out.write(buf, 0, n)
+                                }
+                                out.toByteArray()
+                            }
                             if (bytes.size > 256) {
                                 diskFile.writeBytes(bytes)
                                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()

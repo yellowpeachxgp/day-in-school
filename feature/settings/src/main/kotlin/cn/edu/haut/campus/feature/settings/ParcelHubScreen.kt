@@ -1016,7 +1016,17 @@ private fun XiaomiLoginWebViewDialog(
                         var webViewInstance by remember { mutableStateOf<WebView?>(null) }
                         DisposableEffect(Unit) {
                             onDispose {
-                                webViewInstance?.destroy()
+                                runCatching {
+                                    val cm = CookieManager.getInstance()
+                                    cm.removeAllCookies(null)
+                                    cm.flush()
+                                }
+                                webViewInstance?.apply {
+                                    stopLoading()
+                                    clearHistory()
+                                    clearCache(true)
+                                    destroy()
+                                }
                             }
                         }
                         AndroidView(
@@ -1031,17 +1041,45 @@ private fun XiaomiLoginWebViewDialog(
                                     cm.removeAllCookies(null)
                                     cm.flush()
                                     cm.setAcceptCookie(true)
-                                    cm.setAcceptThirdPartyCookies(this, true)
+                                    cm.setAcceptThirdPartyCookies(this, false)
 
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
+                                    settings.allowFileAccess = false
+                                    settings.allowContentAccess = false
+                                    @Suppress("DEPRECATION")
+                                    settings.allowFileAccessFromFileURLs = false
+                                    @Suppress("DEPRECATION")
+                                    settings.allowUniversalAccessFromFileURLs = false
+                                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                                    settings.setSupportMultipleWindows(false)
+                                    settings.javaScriptCanOpenWindowsAutomatically = false
                                     settings.useWideViewPort = true
                                     settings.loadWithOverviewMode = true
                                     settings.userAgentString = XiaomiPassportClient.DESKTOP_UA
 
                                     webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            request: android.webkit.WebResourceRequest?
+                                        ): Boolean {
+                                            val reqUrl = request?.url?.toString().orEmpty()
+                                            return !cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl(reqUrl)
+                                        }
+
+                                        override fun onReceivedSslError(
+                                            view: WebView?,
+                                            handler: android.webkit.SslErrorHandler?,
+                                            error: android.net.http.SslError?
+                                        ) {
+                                            handler?.cancel()
+                                        }
+
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             val currentUrl = url.orEmpty()
+                                            if (!cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl(currentUrl)) {
+                                                return
+                                            }
                                             lastUrl = currentUrl
                                             XiaomiPassportClient.extractPhoneFromUrl(currentUrl)?.let {
                                                 phoneFromUrl = it
@@ -1065,10 +1103,7 @@ private fun XiaomiLoginWebViewDialog(
                                             isUserGesture: Boolean,
                                             resultMsg: Message?
                                         ): Boolean {
-                                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                                            transport.webView = this@apply
-                                            resultMsg.sendToTarget()
-                                            return true
+                                            return false
                                         }
 
                                         override fun onJsAlert(
@@ -1081,7 +1116,9 @@ private fun XiaomiLoginWebViewDialog(
                                             return true
                                         }
                                     }
-                                    loadUrl(targetUrl)
+                                    if (cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy.isAllowedXiaomiWebUrl(targetUrl)) {
+                                        loadUrl(targetUrl)
+                                    }
                                     webViewInstance = this
                                 }
                             }

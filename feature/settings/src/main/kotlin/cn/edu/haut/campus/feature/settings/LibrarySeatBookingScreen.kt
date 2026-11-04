@@ -984,7 +984,11 @@ fun LibrarySeatBookingScreen(
                                     if (!url.isNullOrBlank()) {
                                         currentUrl = url
                                     }
-                                    val tokenInUrl = HautLibrarySeatAuthClient.extractTokenFromUrl(url)
+                                    val tokenInUrl = if (OfficialServiceRoutePolicy.isLibrarySeatOrigin(url)) {
+                                        HautLibrarySeatAuthClient.extractTokenFromUrl(url)
+                                    } else {
+                                        null
+                                    }
                                     if (!tokenInUrl.isNullOrBlank()) {
                                         activeToken = tokenInUrl
                                         scope.launch {
@@ -1014,7 +1018,7 @@ fun LibrarySeatBookingScreen(
                                         }
                                     }
                                     // 在 wslib 页面脚本执行前预先写入持久化 Token 到 localStorage，防止首屏读取到旧失效 Token
-                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true && !activeToken.isNullOrBlank()) {
+                                    if (OfficialServiceRoutePolicy.isLibrarySeatOrigin(url) && !activeToken.isNullOrBlank()) {
                                         view?.evaluateJavascript(
                                             OfficialWebScripts.buildLibraryTokenSyncScript(
                                                 rawToken = activeToken,
@@ -1036,7 +1040,7 @@ fun LibrarySeatBookingScreen(
                                     if (shouldJumpToSelectRoom) {
                                         pendingReturnToSeatSelection = false
                                     }
-                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
+                                    if (OfficialServiceRoutePolicy.isLibrarySeatOrigin(url)) {
                                         view?.evaluateJavascript(
                                             OfficialWebScripts.buildLibraryTokenSyncScript(
                                                 rawToken = activeToken,
@@ -1061,7 +1065,7 @@ fun LibrarySeatBookingScreen(
                                     }
                                     // uni-app 选座 H5 采用 #/seatPage/... 单页 Hash 路由切换，不会触发 onPageFinished；
                                     // 在路由变更（如选座成功跳转 AddBeatStatus 或进入 SeatBooking）时立即同步原生座位控制台与倒计时。
-                                    if (url?.startsWith("https://wslib.haut.edu.cn") == true) {
+                                    if (OfficialServiceRoutePolicy.isLibrarySeatOrigin(url)) {
                                         view?.evaluateJavascript(
                                             OfficialWebScripts.buildLibraryTokenSyncScript(
                                                 rawToken = activeToken,

@@ -41,6 +41,7 @@ class GitHubReleaseUpdaterTest {
                 {
                   "name": "day-in-school-v0.9.0-release.apk",
                   "size": 12400000,
+                  "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                   "browser_download_url": "https://github.com/yellowpeachxgp/day-in-school/releases/download/v0.9.0/day-in-school-v0.9.0-release.apk"
                 }
               ]
@@ -52,9 +53,14 @@ class GitHubReleaseUpdaterTest {
         assertEquals("v0.9.0", info.tagName)
         assertEquals("day-in-school-v0.9.0-release.apk", info.apkFileName)
         assertEquals(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            info.expectedSha256Hex
+        )
+        assertEquals(
             "https://github.com/yellowpeachxgp/day-in-school/releases/download/v0.9.0/day-in-school-v0.9.0-release.apk",
             info.apkDownloadUrl
         )
+        assertEquals("", NetworkProxyConfig.normalizePrefixUrl("http://insecure-mirror.example.com"))
     }
 
     @Test

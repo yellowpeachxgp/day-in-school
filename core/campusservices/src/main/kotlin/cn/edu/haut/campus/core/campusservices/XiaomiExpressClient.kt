@@ -150,6 +150,15 @@ object XiaomiPassportClient {
         return map
     }
 
+    internal fun requireAllowedXiaomiUrl(rawUrl: String): URL {
+        val endpoint = OfficialServiceRoutePolicy.parseHttpsEndpoint(rawUrl)
+            ?: throw SecurityException("拒绝非 HTTPS 或含非法端口的小米认证/服务地址")
+        if (!OfficialServiceRoutePolicy.isAllowedXiaomiHost(endpoint.host)) {
+            throw SecurityException("拒绝向未授权的小米域名发送凭据: ${endpoint.host}")
+        }
+        return URL(endpoint.urlText)
+    }
+
     fun getLoginUrl(): String {
         val body = httpGet(
             "https://account.xiaomi.com/pass/serviceLogin?sid=assistant&_json=true",
@@ -161,6 +170,7 @@ object XiaomiPassportClient {
         val obj = JSONObject(json)
         val location = obj.optString("location")
         check(location.isNotEmpty()) { "未获取到小米登录跳转地址: $json" }
+        requireAllowedXiaomiUrl(location)
         return location
     }
 
@@ -201,6 +211,7 @@ object XiaomiPassportClient {
         val clientSign = sha1Base64("nonce=$nonce&$ssecurity")
         val sep = if (location.contains("?")) "&" else "?"
         val stsUrl = location + sep + "clientSign=" + urlEncode(clientSign) + "&_userIdNeedEncrypt=true"
+        requireAllowedXiaomiUrl(stsUrl)
 
         val (headers, stsBody) = httpGetWithHeaders(stsUrl, cookie)
         val token = extractCookie(headers, "serviceToken")
@@ -242,7 +253,8 @@ object XiaomiPassportClient {
             )
             for (u in urls) {
                 try {
-                    val conn = (URL(u).openConnection() as HttpURLConnection).apply {
+                    val conn = (requireAllowedXiaomiUrl(u).openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = false
                         connectTimeout = 6000
                         readTimeout = 6000
                         setRequestProperty("Cookie", cookie)
@@ -263,8 +275,9 @@ object XiaomiPassportClient {
     }
 
     private fun httpGet(url: String, cookie: String?): String {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = (requireAllowedXiaomiUrl(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
+            instanceFollowRedirects = false
             connectTimeout = 15000
             readTimeout = 15000
             setRequestProperty("User-Agent", DESKTOP_UA)
@@ -278,7 +291,7 @@ object XiaomiPassportClient {
     }
 
     private fun httpGetWithHeaders(url: String, cookie: String?): Pair<Map<String, String>, String> {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = (requireAllowedXiaomiUrl(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15000
             readTimeout = 15000
@@ -666,8 +679,9 @@ object XiaomiExpressApi {
             vaidIn = cred.vaid
         )
         val encryptedBody = MiuiExpressCrypto.encode(wrapped)
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = (XiaomiPassportClient.requireAllowedXiaomiUrl(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
+            instanceFollowRedirects = false
             doOutput = true
             connectTimeout = 15000
             readTimeout = 15000
