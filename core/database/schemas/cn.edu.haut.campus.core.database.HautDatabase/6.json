@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 6,
-    "identityHash": "e43c5b3c29015be5d49f6208930d0c0e",
+    "identityHash": "61f31b4f921da6e09992602f725a0827",
     "entities": [
       {
         "tableName": "student_profile",
@@ -1719,7 +1719,7 @@
       },
       {
         "tableName": "library_booking_plans",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `schoolId` TEXT NOT NULL, `executionMode` TEXT NOT NULL, `targetLocalDate` TEXT NOT NULL, `targetLocalTime` TEXT NOT NULL, `timezoneId` TEXT NOT NULL, `precheckAtEpochMillis` INTEGER NOT NULL, `finalCheckAtEpochMillis` INTEGER NOT NULL, `fireAtEpochMillis` INTEGER NOT NULL, `precheckStatus` TEXT NOT NULL, `finalCheckStatus` TEXT NOT NULL, `fireStatus` TEXT NOT NULL, `preferredAreaName` TEXT NOT NULL, `preferredSeatLabel` TEXT NOT NULL, `allowAlternativeSeat` INTEGER NOT NULL, `cloudJobId` TEXT, `externalBookingId` TEXT, `evidenceSha256` TEXT, `priceMicropeach` INTEGER NOT NULL, `paymentState` TEXT NOT NULL, `status` TEXT NOT NULL, `stateVersion` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `lastDiagnosticMessage` TEXT, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, `repeatDays` INTEGER NOT NULL, `remainingDays` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `schoolId` TEXT NOT NULL, `executionMode` TEXT NOT NULL, `targetLocalDate` TEXT NOT NULL, `targetLocalTime` TEXT NOT NULL, `timezoneId` TEXT NOT NULL, `precheckAtEpochMillis` INTEGER NOT NULL, `finalCheckAtEpochMillis` INTEGER NOT NULL, `fireAtEpochMillis` INTEGER NOT NULL, `precheckStatus` TEXT NOT NULL, `finalCheckStatus` TEXT NOT NULL, `fireStatus` TEXT NOT NULL, `preferredAreaName` TEXT NOT NULL, `preferredSeatLabel` TEXT NOT NULL, `allowAlternativeSeat` INTEGER NOT NULL, `cloudJobId` TEXT, `externalBookingId` TEXT, `evidenceSha256` TEXT, `priceMicropeach` INTEGER NOT NULL, `paymentState` TEXT NOT NULL, `status` TEXT NOT NULL, `stateVersion` INTEGER NOT NULL, `generation` INTEGER NOT NULL, `lastDiagnosticMessage` TEXT, `createdAtEpochMillis` INTEGER NOT NULL, `updatedAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -1874,18 +1874,6 @@
           {
             "fieldPath": "updatedAtEpochMillis",
             "columnName": "updatedAtEpochMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "repeatDays",
-            "columnName": "repeatDays",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "remainingDays",
-            "columnName": "remainingDays",
             "affinity": "INTEGER",
             "notNull": true
           }
@@ -2168,7 +2156,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e43c5b3c29015be5d49f6208930d0c0e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '61f31b4f921da6e09992602f725a0827')"
     ]
   }
 }

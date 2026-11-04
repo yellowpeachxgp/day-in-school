@@ -210,7 +210,7 @@ interface CampusDao {
         ParcelSourceConnectionEntity::class,
         InstalledExtensionPluginEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {

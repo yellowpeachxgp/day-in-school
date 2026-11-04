@@ -231,8 +231,6 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
                 `lastDiagnosticMessage` TEXT,
                 `createdAtEpochMillis` INTEGER NOT NULL,
                 `updatedAtEpochMillis` INTEGER NOT NULL,
-                `repeatDays` INTEGER NOT NULL DEFAULT 1,
-                `remainingDays` INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY(`id`)
             )
             """.trimIndent()
@@ -302,5 +300,25 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
             )
             """.trimIndent()
         )
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        val existingColumns = mutableSetOf<String>()
+        db.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                if (nameIndex >= 0) {
+                    existingColumns += cursor.getString(nameIndex)
+                }
+            }
+        }
+        if ("repeatDays" !in existingColumns) {
+            db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `repeatDays` INTEGER NOT NULL DEFAULT 1")
+        }
+        if ("remainingDays" !in existingColumns) {
+            db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `remainingDays` INTEGER NOT NULL DEFAULT 1")
+        }
     }
 }

@@ -36,7 +36,7 @@ class UniversalDatabaseMigrationTest {
         val before = createVersionFourDatabase()
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(6, sqlite.version)
+            assertEquals(7, sqlite.version)
             assertEquals(before, snapshot(sqlite))
             for (tableName in listOf(
                 "unscheduled_academic_courses",
@@ -54,6 +54,24 @@ class UniversalDatabaseMigrationTest {
         }
         withRoom { database ->
             assertEquals(before, snapshot(database.openHelper.writableDatabase))
+        }
+    }
+
+    @Test
+    fun `从 v6 升级到 v7 正常校验 identityHash 并为 library_booking_plans 补齐连续抢座字段`() {
+        createVersionSixDatabase()
+        withRoom { database ->
+            val sqlite = database.openHelper.writableDatabase
+            assertEquals(7, sqlite.version)
+            val cols = mutableSetOf<String>()
+            sqlite.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
+                val idx = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    cols += cursor.getString(idx)
+                }
+            }
+            assertTrue("repeatDays" in cols)
+            assertTrue("remainingDays" in cols)
         }
     }
 
@@ -112,7 +130,7 @@ class UniversalDatabaseMigrationTest {
 
         assertEquals(4, source.oldVersion)
         assertEquals(4, evidence.oldVersion)
-        assertEquals(6, evidence.newVersion)
+        assertEquals(7, evidence.newVersion)
         assertEquals(before.keys, source.tableCounts.keys)
         assertEquals(source.serializedTableCounts, evidence.serializedTableCounts)
         factory.open(profile).databaseForAdoption().close()
@@ -121,7 +139,7 @@ class UniversalDatabaseMigrationTest {
             null,
             SQLiteDatabase.OPEN_READONLY
         ).use { database ->
-            assertEquals(6, database.version)
+            assertEquals(7, database.version)
             assertEquals(before, snapshot(database))
         }
     }
@@ -133,9 +151,33 @@ class UniversalDatabaseMigrationTest {
 
     private fun openRoom(): HautDatabase =
         Room.databaseBuilder(context, HautDatabase::class.java, databaseName)
-            .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .allowMainThreadQueries()
             .build()
+
+    private fun createVersionSixDatabase(name: String = databaseName) {
+        context.deleteDatabase(name)
+        val path = "cn.edu.haut.campus.core.database.HautDatabase/6.json"
+        val content = checkNotNull(javaClass.classLoader?.getResourceAsStream(path)) {
+            "缺少已提交的 Room v6 schema"
+        }.bufferedReader().use { it.readText() }
+        val schema = JSONObject(content).getJSONObject("database")
+        context.openOrCreateDatabase(name, 0, null).use { database ->
+            val entities = schema.getJSONArray("entities")
+            for (index in 0 until entities.length()) {
+                val entity = entities.getJSONObject(index)
+                val table = entity.getString("tableName")
+                database.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.getJSONArray("indices")
+                for (item in 0 until indices.length()) {
+                    database.execSQL(indices.getJSONObject(item).getString("createSql").replace("\${TABLE_NAME}", table))
+                }
+            }
+            val queries = schema.getJSONArray("setupQueries")
+            for (index in 0 until queries.length()) database.execSQL(queries.getString(index))
+            database.version = 6
+        }
+    }
 
     private fun oldSchema(): JSONObject {
         val path = "cn.edu.haut.campus.core.database.HautDatabase/4.json"

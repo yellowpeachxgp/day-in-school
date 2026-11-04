@@ -217,6 +217,7 @@ class CampusRepository internal constructor(
     }
 
     internal suspend fun initializeForSession() {
+        database.openHelper.writableDatabase
         migrateLegacyAcademicCredentialsIfNeeded()
         ensureInitialSeedIfNeeded()
     }
