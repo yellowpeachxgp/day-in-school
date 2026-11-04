@@ -87,7 +87,9 @@ data class CloudSyncedReservationJobDto(
     val targetLocalTime: String,
     val state: String,
     val externalBookingId: String?,
-    val evidenceSha256: String?
+    val evidenceSha256: String?,
+    val bookedSeatAlias: String? = null,
+    val bookedRegionAlias: String? = null
 )
 
 data class CloudSyncedOrderDto(
@@ -750,7 +752,9 @@ object CampusCloudOidcHelper {
                             targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
                             state = j.optCleanString("state", "ARMED"),
                             externalBookingId = sr?.optNullableCleanString("external_booking_id"),
-                            evidenceSha256 = sr?.optNullableCleanString("evidence_sha256")
+                            evidenceSha256 = sr?.optNullableCleanString("evidence_sha256"),
+                            bookedSeatAlias = sr?.optNullableCleanString("seat_alias"),
+                            bookedRegionAlias = sr?.optNullableCleanString("region_alias")
                         )
                     )
                 }

@@ -297,9 +297,13 @@ fun LibrarySeatBookingScreen(
                 refreshSeatOverviewAsync()
             }
             for (plan in bookingPlans) {
-                if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED")) continue
+                if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED")) continue
+                val isCloudPlan = plan.executionMode.equals(BookingExecutionMode.CLOUD_HOSTED.wireName, ignoreCase = true)
                 when {
                     now >= plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK") -> {
+                        if (isCloudPlan) {
+                            repository.syncWithCampusCloud()
+                        }
                         val updated = repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FIRE).getOrNull()
                         if (updated?.status == "CONFIRMED") {
                             actionFeedbackBanner = true to (updated.lastDiagnosticMessage ?: "自动抢座成功！")
@@ -309,23 +313,32 @@ fun LibrarySeatBookingScreen(
                         }
                     }
                     now >= plan.finalCheckAtEpochMillis && now < plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK") -> {
-                        repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FINAL_CHECK)
+                        if (isCloudPlan) {
+                            repository.syncWithCampusCloud()
+                        } else {
+                            repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FINAL_CHECK)
+                        }
                     }
                     now >= plan.precheckAtEpochMillis && now < plan.finalCheckAtEpochMillis && plan.status == "ARMED" -> {
-                        repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.PRECHECK)
+                        if (isCloudPlan) {
+                            repository.syncWithCampusCloud()
+                        } else {
+                            repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.PRECHECK)
+                        }
                     }
                 }
             }
         }
     }
 
-    // 进入页面时自动登录并拉取当前预约与暂离状态
+    // 进入页面时自动登录并拉取当前预约与暂离状态，同时同步云端预约任务状态
     LaunchedEffect(repository) {
         if (repository != null) {
             triggerSilentSessionEnsure(
                 forceRefresh = false,
                 reasonHint = "正在自动登录图书馆选座系统…"
             )
+            runCatching { repository.syncWithCampusCloud() }
         }
     }
 
@@ -1677,7 +1690,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         seatOverview?.currentBooking ?: seatOverview?.recentHistory?.firstOrNull()
     }
     var selectedMode by remember { mutableStateOf(BookingExecutionMode.LOCAL_DEVICE) }
-    var useTomorrow by remember { mutableStateOf(true) }
+    var useTomorrow by remember {
+        mutableStateOf(
+            !java.time.LocalTime.now(ZoneId.of("Asia/Shanghai")).isBefore(java.time.LocalTime.of(7, 0))
+        )
+    }
     var selectedHour by remember { mutableIntStateOf(7) }
     var selectedMinute by remember { mutableIntStateOf(0) }
     var showMoreTimeSlots by remember { mutableStateOf(false) }

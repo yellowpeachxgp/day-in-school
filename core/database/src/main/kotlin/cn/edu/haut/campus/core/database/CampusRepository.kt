@@ -2439,10 +2439,11 @@ class CampusRepository internal constructor(
                         (it.targetLocalDate == rj.targetLocalDate && it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName)
                 }
                 val matchingOrder = verifiedSnapshot.orders.firstOrNull { it.jobId == rj.jobId }
-                val cleanAreaName = rj.areaName.cleanNullLiteral(
+                val cleanAreaName = (rj.bookedRegionAlias ?: rj.areaName).cleanNullLiteral(
                     matchingLocal?.preferredAreaName.cleanNullLiteral("五层中区")
                 )
-                val primarySeat = rj.candidateSeats.firstOrNull { it.cleanNullLiteral().isNotEmpty() }
+                val primarySeat = rj.bookedSeatAlias?.cleanNullableLiteral()
+                    ?: rj.candidateSeats.firstOrNull { it.cleanNullLiteral().isNotEmpty() }
                     ?: matchingLocal?.preferredSeatLabel.cleanNullableLiteral()
                     ?: "001"
                 val parsedDate = runCatching { LocalDate.parse(rj.targetLocalDate) }.getOrNull() ?: LocalDate.now().plusDays(1)
@@ -2452,6 +2453,7 @@ class CampusRepository internal constructor(
                     "CONFIRMED" -> "云端已成功为您抢到 $cleanAreaName $primarySeat，请按时到馆刷脸签到"
                     "CANCELLED" -> "该预约计划已取消（未扣取 🍑）"
                     "FAILED" -> "目标座位已被抢满，本次未扣取 🍑"
+                    "EXPIRED" -> "已过开抢有效期窗口（本次未扣取 🍑）"
                     else -> "云端代抢已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动抢座"
                 }
                 val mergedPlan = LibraryBookingPlanEntity(

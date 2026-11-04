@@ -105,7 +105,7 @@ object DualEngineReservationPlanner {
         targetDate: LocalDate,
         targetTime: LocalTime,
         generation: Int = 1,
-        maxLatenessSeconds: Long = 0L,
+        maxLatenessSeconds: Long = 1800L,
         nowEpochMillis: Long = System.currentTimeMillis(),
         zoneId: ZoneId = HAUT_ZONE
     ): ComputedTripleSchedule {
@@ -119,7 +119,8 @@ object DualEngineReservationPlanner {
         val windowEndZdt = ZonedDateTime.of(targetDate, WINDOW_END_EXCLUSIVE, zoneId)
         val windowEndMs = windowEndZdt.toInstant().toEpochMilli()
         var fireAtMs = targetZdt.toInstant().toEpochMilli()
-        val clampedLatenessMs = maxLatenessSeconds.coerceIn(0L, 1800L) * 1000L
+        val effectiveLatenessSec = if (maxLatenessSeconds <= 0L) 1800L else maxLatenessSeconds
+        val clampedLatenessMs = effectiveLatenessSec.coerceIn(300L, 1800L) * 1000L
         var expiresAtMs = minOf(fireAtMs + clampedLatenessMs, windowEndMs)
 
         if (nowEpochMillis > expiresAtMs) {
