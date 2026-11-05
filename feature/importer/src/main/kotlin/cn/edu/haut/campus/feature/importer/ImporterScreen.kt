@@ -1010,8 +1010,9 @@ fun ImporterScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     for (audit in audits.take(5)) {
                         val srcLabel = when (audit.importSource) {
-                            CourseSource.ZF_HTML -> "教务同步"
+                            CourseSource.OFFICIAL_JW -> "教务同步"
                             CourseSource.CSV_ICS -> "文件/文本导入"
+                            CourseSource.OCR -> "图片识别导入"
                             CourseSource.MANUAL -> "手动添加"
                         }
                         Text(
