@@ -57,6 +57,8 @@ import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
@@ -238,10 +240,9 @@ fun EmptyClassroomScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        XPeachStatusBadge(
+                        XPeachStatusDotText(
                             text = "${freeRooms.size}/${candidateRooms.size} 空闲",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
+                            dotColor = XPeachTheme.readablePrimary
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
@@ -276,7 +277,7 @@ fun EmptyClassroomScreen(
                                 Icon(
                                     imageVector = Icons.Default.Navigation,
                                     contentDescription = "导航去自习",
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = XPeachTheme.readablePrimary,
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
@@ -361,7 +362,7 @@ fun CampusCommunityScreen(
             if (catalog.bulletin.enabled && catalog.bulletin.title.isNotBlank()) {
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                    containerColor = XPeachTheme.secondaryAccentCardColor
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -372,14 +373,13 @@ fun CampusCommunityScreen(
                             text = "📢 ${catalog.bulletin.title}",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
                         )
                         if (catalog.bulletin.tag.isNotBlank()) {
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = catalog.bulletin.tag,
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
                     }
@@ -388,7 +388,7 @@ fun CampusCommunityScreen(
                         Text(
                             text = catalog.bulletin.content,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -405,8 +405,7 @@ fun CampusCommunityScreen(
 
             if (feedbackText != null) {
                 XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    borderColor = Color.Transparent
+                    containerColor = XPeachTheme.primaryAccentCardColor
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -416,7 +415,7 @@ fun CampusCommunityScreen(
                         Text(
                             text = feedbackText!!,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { feedbackText = null }) {
@@ -437,12 +436,14 @@ fun CampusCommunityScreen(
                         XPeachFilterPill(
                             label = "全部 (${catalog.clubs.size})",
                             selected = selectedClubCategory == null,
+                            compact = true,
                             onClick = { selectedClubCategory = null }
                         )
                         for (cat in CampusClubCategory.entries) {
                             XPeachFilterPill(
                                 label = cat.label,
                                 selected = selectedClubCategory == cat,
+                                compact = true,
                                 onClick = { selectedClubCategory = cat }
                             )
                         }
@@ -511,10 +512,9 @@ fun CampusCommunityScreen(
                                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
                                 }
-                                XPeachStatusBadge(
+                                XPeachStatusDotText(
                                     text = club.category.label,
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.primary
+                                    dotColor = XPeachTheme.readablePrimary
                                 )
                             }
                             Text(
@@ -547,7 +547,7 @@ fun CampusCommunityScreen(
                                     Text(
                                         text = "#$tag",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
+                                        color = XPeachTheme.readablePrimary,
                                         fontWeight = FontWeight.Medium
                                     )
                                 }
@@ -573,7 +573,7 @@ fun CampusCommunityScreen(
                                     text = "QQ 群：$effectiveGroupNo",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = XPeachTheme.readablePrimary,
                                     maxLines = 1,
                                     softWrap = false
                                 )
@@ -583,11 +583,13 @@ fun CampusCommunityScreen(
                                 XPeachFilterPill(
                                     label = "改群号",
                                     selected = false,
+                                    compact = true,
                                     onClick = { editingClubItem = club }
                                 )
                                 XPeachFilterPill(
                                     label = "复制",
                                     selected = false,
+                                    compact = true,
                                     onClick = {
                                         copyCommunityText(context, "社团QQ群号", effectiveGroupNo)
                                         feedbackText = "已复制「${club.name}」群号：$effectiveGroupNo"
@@ -596,6 +598,7 @@ fun CampusCommunityScreen(
                                 XPeachFilterPill(
                                     label = "加群",
                                     selected = true,
+                                    compact = true,
                                     onClick = {
                                         feedbackText = openOrCopyClubQqGroup(
                                             context = context,
@@ -654,10 +657,9 @@ fun CampusCommunityScreen(
                                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                                         )
                                     }
-                                    XPeachStatusBadge(
+                                    XPeachStatusDotText(
                                         text = if (isCustomized) "已修改" else channel.tagLabel,
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.primary
+                                        dotColor = XPeachTheme.readablePrimary
                                     )
                                 }
                                 Text(
@@ -668,7 +670,7 @@ fun CampusCommunityScreen(
                                 Text(
                                     text = effectiveUrl,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = XPeachTheme.readablePrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -681,11 +683,13 @@ fun CampusCommunityScreen(
                                 XPeachFilterPill(
                                     label = "改链接",
                                     selected = false,
+                                    compact = true,
                                     onClick = { editingChannelItem = channel }
                                 )
                                 XPeachFilterPill(
                                     label = "打开",
                                     selected = true,
+                                    compact = true,
                                     onClick = {
                                         feedbackText = openPresetQqChannel(
                                             context = context,

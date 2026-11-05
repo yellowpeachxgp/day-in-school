@@ -17,8 +17,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -69,8 +72,11 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
@@ -171,6 +177,7 @@ fun TimetableScreen(
                     XPeachFilterPill(
                         label = "本周",
                         selected = true,
+                        compact = true,
                         onClick = { selectedWeek = currentActualWeek }
                     )
                 }
@@ -221,7 +228,7 @@ fun TimetableScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f))
+                    .background(XPeachTheme.secondaryAccentCardColor)
                     .clickable { showUnscheduled = true }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -230,14 +237,14 @@ fun TimetableScreen(
                 Text(
                     text = "${pendingCourses.size} 门实践课时间待定",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "查看明细 ▸",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = XPeachTheme.readablePrimary
                 )
             }
         }
@@ -309,7 +316,7 @@ fun TimetableScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 4.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
+                        .background(XPeachTheme.primaryAccentCardColor)
                         .clickable {
                             if (otherTermsWithCourses.size == 1) {
                                 scope.launch {
@@ -327,14 +334,14 @@ fun TimetableScreen(
                     Text(
                         text = "${term?.displayName ?: "当前学期"}暂无排课，可切换至 ${targetOtherTerm.displayName}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
                     Text(
                         text = if (otherTermsWithCourses.size == 1) "一键切换 ▸" else "切换学期 ▸",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                 }
             }
@@ -439,7 +446,7 @@ fun TimetableScreen(
                                     text = "${dateMonthLabel(activeWeekDates.firstOrNull())}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = XPeachTheme.readablePrimary,
                                     maxLines = 1,
                                     softWrap = false
                                 )
@@ -560,7 +567,9 @@ fun TimetableScreen(
                                         val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
                                         val topOffset = slotHeightDp * (occ.startPeriod - 1)
                                         val blockHeight = slotHeightDp * span
-                                        val baseColor = Color(occ.colorArgb)
+                                        val accentColor = XPeachTheme.courseAccent(occ.colorArgb)
+                                        val blockBg = XPeachTheme.courseContainer(occ.colorArgb, active = false)
+                                        val blockBorder = XPeachTheme.courseBorder(occ.colorArgb, active = false)
 
                                         Box(
                                             modifier = Modifier
@@ -569,7 +578,8 @@ fun TimetableScreen(
                                                 .height(blockHeight)
                                                 .padding(horizontal = 2.dp, vertical = 2.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(baseColor.copy(alpha = 0.14f))
+                                                .background(blockBg)
+                                                .border(0.7.dp, blockBorder, RoundedCornerShape(8.dp))
                                                 .clickable { editingOccurrence = occ }
                                         ) {
                                             // 顶部柔和色条 + 紧凑文字排布
@@ -578,7 +588,7 @@ fun TimetableScreen(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .height(3.dp)
-                                                        .background(baseColor.copy(alpha = 0.8f))
+                                                        .background(accentColor)
                                                 )
                                                 Column(
                                                     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -598,7 +608,7 @@ fun TimetableScreen(
                                                     )
                                                     Text(
                                                         text = occ.rawRoom,
-                                                        color = baseColor,
+                                                        color = accentColor,
                                                         style = MaterialTheme.typography.labelSmall.copy(
                                                             fontWeight = FontWeight.Medium,
                                                             lineHeight = 13.sp
@@ -645,13 +655,14 @@ fun TimetableScreen(
                     Text(
                         text = "${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                     OutlinedTextField(
                         value = editedName,
                         onValueChange = { editedName = it },
                         label = { Text("课程名称") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -659,6 +670,7 @@ fun TimetableScreen(
                         onValueChange = { editedRoom = it },
                         label = { Text("教室") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -666,6 +678,7 @@ fun TimetableScreen(
                         onValueChange = { editedTeacher = it },
                         label = { Text("教师") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -673,6 +686,7 @@ fun TimetableScreen(
                         onValueChange = { editedWeeksText = it },
                         label = { Text("周次（如 1-16周）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -701,7 +715,7 @@ fun TimetableScreen(
                             editingOccurrence = null
                             onNavigateToMapWithRoom(editedRoom)
                         },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -732,7 +746,7 @@ fun TimetableScreen(
                             editingOccurrence = null
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -857,6 +871,7 @@ fun TimetableScreen(
                         onValueChange = { newWeeks = it },
                         label = { Text("自定义周次范围") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -886,7 +901,7 @@ fun TimetableScreen(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("添加")
                 }
@@ -924,9 +939,9 @@ fun TimetableScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
-                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                                    if (isCurrent) XPeachTheme.primaryAccentCardColor
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 )
                                 .clickable {
@@ -945,7 +960,7 @@ fun TimetableScreen(
                                     text = t.displayName,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
@@ -957,12 +972,12 @@ fun TimetableScreen(
                                 text = if (isCurrent) "当前 ($count 门)" else "$count 门课",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isCurrent) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    XPeachInsetDivider(verticalPadding = 4.dp)
 
                     Text(
                         text = "校准当前学期（${term?.displayName ?: ""}）第1周周一日期",
@@ -977,6 +992,7 @@ fun TimetableScreen(
                         },
                         label = { Text("格式 YYYY-MM-DD") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (dateError != null) {
@@ -1004,7 +1020,7 @@ fun TimetableScreen(
                                     }
                                 }
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("保存开学日期", maxLines = 1, softWrap = false)
@@ -1014,7 +1030,7 @@ fun TimetableScreen(
                                 showTermSwitcherDialog = false
                                 onNavigateToImporter()
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("去同步该学期", maxLines = 1, softWrap = false)
@@ -1092,13 +1108,13 @@ private fun TimetableWeekListView(
                             text = "${date.dayOfWeek.ChineseLabel} (${date.format(SHORT_DATE_FMT)})",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            color = if (isToday) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface
                         )
                         if (isToday) {
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = "今天",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary,
+                                textColor = XPeachTheme.readablePrimary
                             )
                         }
                     }
@@ -1109,59 +1125,68 @@ private fun TimetableWeekListView(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (occ in dayList) {
-                        val baseColor = Color(occ.colorArgb)
-                        XPeachWell(
+                Column {
+                    dayList.forEachIndexed { idx, occ ->
+                        val accentColor = XPeachTheme.courseAccent(occ.colorArgb)
+                        XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 8.dp)
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable { onEditOccurrence(occ) }
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Box(
+                                modifier = Modifier
+                                    .width(3.5.dp)
+                                    .fillMaxHeight()
+                                    .padding(vertical = 2.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(accentColor)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        XPeachStatusBadge(
-                                            text = "${occ.periodRangeText} · ${occ.startTime.format(PERIOD_TIME_FMT)}-${occ.endTime.format(PERIOD_TIME_FMT)}",
-                                            containerColor = baseColor.copy(alpha = 0.14f),
-                                            contentColor = baseColor
-                                        )
-                                        Text(
-                                            text = occ.courseName,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    Text(
-                                        text = "${occ.rawRoom}${occ.teacher?.let { " · $it" } ?: ""}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                if (occ.rawRoom.isNotBlank()) {
-                                    XPeachFilterPill(
-                                        label = "去教室",
-                                        selected = false,
-                                        onClick = { onNavigateToMapWithRoom(occ.rawRoom) }
-                                    )
-                                }
+                                Text(
+                                    text = occ.courseName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${occ.periodRangeText} · ${occ.startTime.format(PERIOD_TIME_FMT)}–${occ.endTime.format(PERIOD_TIME_FMT)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = accentColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${occ.rawRoom}${occ.teacher?.let { " · $it" } ?: ""}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (occ.rawRoom.isNotBlank()) {
+                                XPeachFilterPill(
+                                    label = "去教室",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = { onNavigateToMapWithRoom(occ.rawRoom) }
+                                )
                             }
                         }
                     }
@@ -1239,11 +1264,15 @@ private fun RawMasterTimetableView(
         }
 
         // 2. 教务原始 7×5 大节全周次总览表（不论当前第几周，展示所有周次排课叠加）
-        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        XPeachCard(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 14.dp)
+        ) {
             Text(
                 text = "全学期课表速览",
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 4.dp)
             )
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1257,7 +1286,7 @@ private fun RawMasterTimetableView(
             val days = DayOfWeek.entries
 
             Row(modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.width(34.dp))
+                Box(modifier = Modifier.width(24.dp))
                 for (d in days) {
                     Text(
                         text = d.ChineseLabel.replace("周", ""),
@@ -1277,11 +1306,11 @@ private fun RawMasterTimetableView(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Column(
                             modifier = Modifier
-                                .width(31.dp)
+                                .width(24.dp)
                                 .padding(top = 6.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
@@ -1289,7 +1318,7 @@ private fun RawMasterTimetableView(
                                 text = "$sp-$ep",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = XPeachTheme.readablePrimary
                             )
                         }
                         for (d in days) {
@@ -1304,24 +1333,30 @@ private fun RawMasterTimetableView(
                                         if (slotRules.isNotEmpty()) {
                                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
                                         } else {
-                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
                                         }
                                     )
-                                    .padding(3.dp),
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    .padding(2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 if (slotRules.isEmpty()) {
                                     Spacer(modifier = Modifier.height(28.dp))
                                 } else {
                                     for (r in slotRules) {
                                         val c = courseMap[r.courseId]
-                                        val color = Color(c?.colorArgb ?: 0xFF0072BC)
+                                        val rawArgb = c?.colorArgb ?: 0xFF0072BC
+                                        val accentColor = XPeachTheme.courseAccent(rawArgb)
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(4.dp))
-                                                .background(color.copy(alpha = 0.14f))
-                                                .padding(horizontal = 3.dp, vertical = 2.dp)
+                                                .background(XPeachTheme.courseContainer(rawArgb, active = false))
+                                                .border(
+                                                    0.5.dp,
+                                                    XPeachTheme.courseBorder(rawArgb, active = false),
+                                                    RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
                                         ) {
                                             Text(
                                                 text = c?.name ?: "课程",
@@ -1338,7 +1373,7 @@ private fun RawMasterTimetableView(
                                                 style = MaterialTheme.typography.labelSmall.copy(
                                                     lineHeight = 12.sp
                                                 ),
-                                                color = color,
+                                                color = accentColor,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
@@ -1359,7 +1394,7 @@ private fun RawMasterTimetableView(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             if (sortedRules.isEmpty()) {
                 Text(
@@ -1368,64 +1403,65 @@ private fun RawMasterTimetableView(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (rule in sortedRules) {
+                Column {
+                    sortedRules.forEachIndexed { idx, rule ->
                         val course = courseMap[rule.courseId]
-                        val baseColor = Color(course?.colorArgb ?: 0xFF0072BC)
+                        val rawArgb = course?.colorArgb ?: 0xFF0072BC
+                        val accentColor = XPeachTheme.courseAccent(rawArgb)
                         val weeksText = WeeksSetParser.format(rule.weeks)
                         val sourceLabel = when (course?.source) {
                             CourseSource.MANUAL -> "手动添加"
                             else -> "教务同步"
                         }
 
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 8.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = course?.name ?: "未知课程",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
-                                        )
-                                        XPeachStatusBadge(
-                                            text = sourceLabel,
-                                            containerColor = baseColor.copy(alpha = 0.14f),
-                                            contentColor = baseColor
-                                        )
-                                    }
                                     Text(
-                                        text = "${rule.weekday.ChineseLabel} 第${rule.startPeriod}-${rule.endPeriod}节 · $weeksText",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary
+                                        text = course?.name ?: "未知课程",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    Text(
-                                        text = "教室：${rule.rawRoom}${course?.teacher?.let { " · 教师：$it" } ?: ""}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    XPeachStatusDotText(
+                                        text = sourceLabel,
+                                        dotColor = accentColor
                                     )
                                 }
-                                if (rule.rawRoom.isNotBlank() && !rule.rawRoom.contains("待定")) {
-                                    XPeachFilterPill(
-                                        label = "定位",
-                                        selected = false,
-                                        onClick = { onNavigateToMapWithRoom(rule.rawRoom) }
-                                    )
-                                }
+                                Text(
+                                    text = "${rule.weekday.ChineseLabel} 第${rule.startPeriod}-${rule.endPeriod}节 · $weeksText",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = "教室：${rule.rawRoom}${course?.teacher?.let { " · 教师：$it" } ?: ""}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (rule.rawRoom.isNotBlank() && !rule.rawRoom.contains("待定")) {
+                                XPeachFilterPill(
+                                    label = "定位",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = { onNavigateToMapWithRoom(rule.rawRoom) }
+                                )
                             }
                         }
                     }
@@ -1446,36 +1482,35 @@ private fun RawMasterTimetableView(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (item in unscheduledCourses) {
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = item.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                )
-                                XPeachStatusBadge(
-                                    text = item.category.takeIf { it.isNotBlank() } ?: "实践环节"
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(4.dp))
+                Column {
+                    unscheduledCourses.forEachIndexed { idx, item ->
+                        XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 6.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = listOfNotNull(
-                                    item.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
-                                    item.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
-                                    item.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" }
-                                ).joinToString(" · "),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = item.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                            )
+                            XPeachStatusDotText(
+                                text = item.category.takeIf { it.isNotBlank() } ?: "实践环节"
                             )
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = listOfNotNull(
+                                item.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                                item.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
+                                item.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" }
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

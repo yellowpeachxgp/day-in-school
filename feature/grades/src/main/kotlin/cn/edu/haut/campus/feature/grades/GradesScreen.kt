@@ -65,8 +65,11 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.GpaCalculator
@@ -287,11 +290,7 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("图书馆选座", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
-                                text = "预约",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            XPeachStatusDotText(text = "预约")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -313,11 +312,7 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("馆藏检索", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
-                                text = "馆藏",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            XPeachStatusDotText(text = "馆藏")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -336,7 +331,8 @@ fun GradesScreen(
                 ) {
                     XPeachCard(
                         modifier = Modifier.weight(1f),
-                        containerColor = if (runningFocus != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        containerColor = if (runningFocus != null) XPeachTheme.primaryAccentCardColor else MaterialTheme.colorScheme.surface,
+                        borderColor = if (runningFocus != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.42f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                         onClick = onNavigateToFocus
                     ) {
@@ -346,11 +342,15 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("自习专注", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
-                                text = if (runningFocus != null) "专注中" else "番茄钟",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            if (runningFocus != null) {
+                                XPeachStatusBadge(
+                                    text = "专注中",
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                XPeachStatusDotText(text = "番茄钟")
+                            }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -372,11 +372,7 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("空教室自习", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
-                                text = "教学楼",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            XPeachStatusDotText(text = "教学楼")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -406,7 +402,7 @@ fun GradesScreen(
                         Text(
                             text = if (privacyMasked) "∗.∗∗" else (gpaReport.cumulativeGpa?.toPlainString() ?: "—"),
                             style = MaterialTheme.typography.displaySmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = XPeachTheme.readablePrimary,
                             maxLines = 1,
                             softWrap = false
                         )
@@ -419,12 +415,14 @@ fun GradesScreen(
                         XPeachFilterPill(
                             label = if (showSimulatorSection) "收起测算" else "绩点测算",
                             selected = showSimulatorSection,
+                            compact = true,
                             onClick = { showSimulatorSection = !showSimulatorSection }
                         )
                         if (gpaReport.termTrends.isNotEmpty()) {
                             XPeachFilterPill(
                                 label = if (showTrendSection) "收起趋势" else "学期趋势",
                                 selected = showTrendSection,
+                                compact = true,
                                 onClick = { showTrendSection = !showTrendSection }
                             )
                         }
@@ -466,51 +464,49 @@ fun GradesScreen(
                     exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
                 ) {
                     Column {
-                        Spacer(modifier = Modifier.height(12.dp))
+                        XPeachInsetDivider(verticalPadding = 10.dp)
                         val baseCredits = gpaReport.gpaIncludedCredits.toFloat().coerceAtLeast(0f)
                         val baseGpa = gpaReport.cumulativeGpa?.toFloat() ?: 3.2f
                         val totalSimCredits = (baseCredits + simulatedNewCredits).coerceAtLeast(1f)
                         val projectedGpa = ((baseCredits * baseGpa) + (simulatedNewCredits * simulatedNewGpa)) / totalSimCredits
 
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "预计总绩点",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                                Text(
-                                    text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Slider(
-                                value = simulatedNewCredits,
-                                onValueChange = { simulatedNewCredits = it },
-                                valueRange = 2f..60f
+                                text = "预计总绩点",
+                                style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Slider(
-                                value = simulatedNewGpa,
-                                onValueChange = { simulatedNewGpa = it },
-                                valueRange = 2.0f..4.5f
+                                text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = XPeachTheme.readablePrimary,
+                                fontWeight = FontWeight.Bold
                             )
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = simulatedNewCredits,
+                            onValueChange = { simulatedNewCredits = it },
+                            valueRange = 2f..60f
+                        )
+                        Text(
+                            text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = simulatedNewGpa,
+                            onValueChange = { simulatedNewGpa = it },
+                            valueRange = 2.0f..4.5f
+                        )
                     }
                 }
 
@@ -521,7 +517,7 @@ fun GradesScreen(
                     exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
                 ) {
                     Column {
-                        Spacer(modifier = Modifier.height(14.dp))
+                        XPeachInsetDivider(verticalPadding = 10.dp)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -532,7 +528,7 @@ fun GradesScreen(
                                 items = listOf("GPA", "均分", "学分"),
                                 selectedIndex = trendMetricIndex,
                                 onSelect = { trendMetricIndex = it },
-                                modifier = Modifier.width(164.dp)
+                                modifier = Modifier.width(184.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -557,7 +553,11 @@ fun GradesScreen(
                 onSelect = { activeSubTab = it }
             )
 
-            if (availableTerms.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = availableTerms.isNotEmpty() && (activeSubTab == 0 || activeSubTab == 1),
+                enter = expandVertically(tween(180)) + fadeIn(tween(140)),
+                exit = shrinkVertically(tween(140)) + fadeOut(tween(100))
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -614,12 +614,14 @@ fun GradesScreen(
                                 XPeachFilterPill(
                                     label = "全部性质",
                                     selected = selectedCategoryFilter == null,
+                                    compact = true,
                                     onClick = { selectedCategoryFilter = null }
                                 )
                                 for (cat in CourseCategory.entries) {
                                     XPeachFilterPill(
                                         label = cat.label,
                                         selected = selectedCategoryFilter == cat,
+                                        compact = true,
                                         onClick = { selectedCategoryFilter = cat }
                                     )
                                 }
@@ -674,7 +676,7 @@ fun GradesScreen(
                                                 Text(
                                                     text = if (privacyMasked) "∗∗" else att.rawGrade,
                                                     style = MaterialTheme.typography.titleLarge,
-                                                    color = MaterialTheme.colorScheme.primary,
+                                                    color = XPeachTheme.readablePrimary,
                                                     fontWeight = FontWeight.SemiBold,
                                                     maxLines = 1,
                                                     softWrap = false
@@ -694,10 +696,7 @@ fun GradesScreen(
                                         }
 
                                         if (index < filteredAudit.lastIndex) {
-                                            HorizontalDivider(
-                                                thickness = 0.6.dp,
-                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                                            )
+                                            XPeachInsetDivider(verticalPadding = 0.dp)
                                         }
                                     }
                                 }
@@ -738,7 +737,7 @@ fun GradesScreen(
                                             ) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     Text(
                                                         text = exam.courseName,
@@ -747,16 +746,12 @@ fun GradesScreen(
                                                         overflow = TextOverflow.Ellipsis,
                                                         modifier = Modifier.weight(1f, fill = false)
                                                     )
-                                                    XPeachStatusBadge(
-                                                        text = exam.examStageLabel,
-                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                        contentColor = MaterialTheme.colorScheme.primary
-                                                    )
+                                                    XPeachStatusDotText(text = exam.examStageLabel)
                                                 }
                                                 Text(
                                                     text = "${exam.termId} · ${exam.rawTimeText}",
                                                     style = MaterialTheme.typography.labelMedium,
-                                                    color = MaterialTheme.colorScheme.primary,
+                                                    color = XPeachTheme.readablePrimary,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -778,15 +773,13 @@ fun GradesScreen(
                                             XPeachFilterPill(
                                                 label = "去考场",
                                                 selected = true,
+                                                compact = true,
                                                 onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
                                             )
                                         }
 
                                         if (index < filteredExams.lastIndex) {
-                                            HorizontalDivider(
-                                                thickness = 0.6.dp,
-                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                                            )
+                                            XPeachInsetDivider(verticalPadding = 0.dp)
                                         }
                                     }
                                 }
@@ -850,7 +843,7 @@ private fun TermTrendChart(
     metricIndex: Int,
     privacyMasked: Boolean
 ) {
-    val lineColor = MaterialTheme.colorScheme.primary
+    val lineColor = XPeachTheme.readablePrimary
     val values = points.map { pt ->
         when (metricIndex) {
             0 -> pt.gpa?.toFloat() ?: 0f
@@ -914,7 +907,7 @@ private fun TermTrendChart(
                     Text(
                         text = valText,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = XPeachTheme.readablePrimary,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         softWrap = false
@@ -1015,7 +1008,7 @@ private fun AcademicPlanProgressSection(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                XPeachStatusBadge(
+                XPeachStatusDotText(
                     text = if (officialSnapshot != null) "教务公布" else "按课程学分计算"
                 )
             }
@@ -1036,7 +1029,7 @@ private fun AcademicPlanProgressSection(
                 Text(
                     text = "注：存在 ${aggregation.multiAttemptCourseCount} 门重修或补考记录，已按最高成绩去重统计。",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = XPeachTheme.readablePrimary
                 )
             }
         }
@@ -1059,7 +1052,7 @@ private fun AcademicPlanProgressSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                XPeachStatusBadge(
+                XPeachStatusDotText(
                     text = when (degreeProgress.provenance) {
                         Provenance.OFFICIAL -> "教务公布"
                         Provenance.DERIVED -> "按成绩单计算"
@@ -1068,7 +1061,10 @@ private fun AcademicPlanProgressSection(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            degreeProgress.groups.forEach { grp ->
+            degreeProgress.groups.forEachIndexed { idx, grp ->
+                if (idx > 0) {
+                    XPeachInsetDivider(verticalPadding = 2.dp)
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1091,7 +1087,7 @@ private fun AcademicPlanProgressSection(
                     Text(
                         text = if (privacyMasked) "缺 ∗∗" else "差 ${grp.remainingCredits.toPlainString()} 学分",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                 }
             }
@@ -1167,7 +1163,7 @@ private fun SelectionDraftSection(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                XPeachStatusBadge(text = "撞课检测")
+                XPeachStatusDotText(text = "撞课检测")
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -1229,20 +1225,19 @@ private fun SelectionDraftSection(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+            XPeachInsetDivider(verticalPadding = 8.dp)
+            XPeachStatusDotText(
+                text = conflictReport.summary,
+                dotColor = if (conflictReport.hasConflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary,
+                textColor = if (conflictReport.hasConflict) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+            )
+            conflictReport.details.forEach { detail ->
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = conflictReport.summary,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (conflictReport.hasConflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    text = "• ${detail.message}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
                 )
-                conflictReport.details.forEach { detail ->
-                    Text(
-                        text = "• ${detail.message}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1293,7 +1288,10 @@ private fun SelectionDraftSection(
                         Text("清空")
                     }
                 }
-                draft.entries.forEach { entry ->
+                draft.entries.forEachIndexed { idx, entry ->
+                    if (idx > 0) {
+                        XPeachInsetDivider(verticalPadding = 2.dp)
+                    }
                     val slotText = entry.slots.joinToString("；") { "${it.weekdayLabel} ${it.sectionText}" }
                     Row(
                         modifier = Modifier

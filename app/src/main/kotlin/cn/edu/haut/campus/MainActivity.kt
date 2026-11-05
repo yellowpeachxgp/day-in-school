@@ -129,7 +129,10 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.domain.SchoolDirectory
@@ -390,7 +393,7 @@ class MainActivity : ComponentActivity() {
 private fun AccountSessionStatusScreen(message: String, onRetry: (() -> Unit)? = null) {
     Column(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding().navigationBarsPadding().padding(24.dp),
+            .statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -779,15 +782,14 @@ fun HautCampusRootApp(
                     Text(
                         text = "当前版本 v${releaseToPrompt.currentVersionNormalized}，可更新至 ${releaseToPrompt.tagName}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = releaseToPrompt.changelog.take(360),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    XPeachInsetDivider(verticalPadding = 2.dp)
+                    Text(
+                        text = releaseToPrompt.changelog.take(360),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (isDownloadingStartupApk || startupDownloadStatusText != null) {
                         if (isDownloadingStartupApk) {
                             LinearProgressIndicator(
@@ -802,7 +804,7 @@ fun HautCampusRootApp(
                             Text(
                                 text = msg,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                color = XPeachTheme.readablePrimary
                             )
                         }
                     }
@@ -1011,10 +1013,10 @@ private fun OnboardingWelcomeScreen(
                         )
                     }
                     if (hasLocationPermission) {
-                        XPeachStatusBadge(
+                        XPeachStatusDotText(
                             text = "已授权",
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            dotColor = MaterialTheme.colorScheme.tertiary,
+                            textColor = XPeachTheme.onSuccessContainer
                         )
                     } else {
                         Button(
@@ -1046,7 +1048,7 @@ private fun OnboardingWelcomeScreen(
                         text = if (isHautSchool) "同步课表与成绩" else "导入或手工录入课表",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    XPeachStatusBadge(text = if (isHautSchool) "统一身份认证" else "离线模式")
+                    XPeachStatusDotText(text = if (isHautSchool) "统一身份认证" else "离线模式")
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1173,14 +1175,12 @@ private fun OnboardingWelcomeScreen(
                     }
 
                     if (syncStatusMessage != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = syncStatusMessage!!,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (isErrorStatus) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                            )
-                        }
+                        XPeachInsetDivider(verticalPadding = 8.dp)
+                        Text(
+                            text = syncStatusMessage!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isErrorStatus) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1286,13 +1286,27 @@ private fun XPeachBottomDock(
         label = "pillScaleY"
     )
 
+    val isDark = XPeachTheme.isDark
     val bgColor = MaterialTheme.colorScheme.background
+    val dockSurfaceColor = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f)
+    } else {
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+    }
     val specularRimBrush = Brush.linearGradient(
-        colors = listOf(
-            Color.White.copy(alpha = 0.75f),
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-        ),
+        colors = if (isDark) {
+            listOf(
+                Color.White.copy(alpha = 0.16f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f),
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            )
+        } else {
+            listOf(
+                Color.White.copy(alpha = 0.75f),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+            )
+        },
         start = Offset(0f, 0f),
         end = Offset(800f, 220f)
     )
@@ -1316,7 +1330,7 @@ private fun XPeachBottomDock(
                 }
             )
             .navigationBarsPadding()
-            .padding(horizontal = 22.dp, vertical = 10.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -1325,9 +1339,9 @@ private fun XPeachBottomDock(
                 .fillMaxWidth()
                 .height(62.dp),
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-            tonalElevation = 4.dp,
-            shadowElevation = 16.dp,
+            color = dockSurfaceColor,
+            tonalElevation = 0.dp,
+            shadowElevation = if (isDark) 20.dp else 16.dp,
             border = BorderStroke(width = 1.dp, brush = specularRimBrush)
         ) {
             BoxWithConstraints(
@@ -1408,18 +1422,25 @@ private fun XPeachBottomDock(
                         .clip(CircleShape)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f)
-                                )
+                                colors = if (isDark) {
+                                    listOf(
+                                        XPeachTheme.readablePrimary.copy(alpha = 0.22f),
+                                        XPeachTheme.readablePrimary.copy(alpha = 0.14f)
+                                    )
+                                } else {
+                                    listOf(
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f)
+                                    )
+                                }
                             )
                         )
                         .border(
                             width = 0.9.dp,
                             brush = Brush.linearGradient(
                                 colors = listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.36f),
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                    XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.34f),
+                                    XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.22f else 0.14f)
                                 )
                             ),
                             shape = CircleShape
@@ -1436,7 +1457,7 @@ private fun XPeachBottomDock(
                         val selected = distance < 0.5f
                         val contentColor by animateColorAsState(
                             targetValue = if (selected) {
-                                MaterialTheme.colorScheme.primary
+                                XPeachTheme.readablePrimary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },

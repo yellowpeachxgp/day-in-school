@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,15 +35,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.campusservices.CampusServiceProviderRegistry
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.SchoolDirectory
@@ -146,38 +153,41 @@ fun SchoolCenterScreen(
                     }
                     items(selectedSchool.campuses, key = { "campus-${it.id.value}" }) { campus ->
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Text(campus.name, style = MaterialTheme.typography.titleMedium)
-                            Text("课程时区：${campus.timeZone.id}", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "校区信息来自本地目录；校园地图与教务能力分别核验。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = campus.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "课程时区：${campus.timeZone.id}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "校区信息来自本地目录；校园地图与教务能力分别核验。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                     if (selectedSchool.academicSystems.isEmpty()) {
                         item(key = "no-academic") {
                             XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Text("尚未提供该校教务适配，可使用手工课表或课表文件导入。")
+                                Text(
+                                    text = "尚未提供该校教务适配，可使用手工课表或课表文件导入。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                     selectedSchool.academicSystems.forEach { system ->
-                        item(key = "system-${system.systemId}") { SchoolSystemCard(system) }
-                        items(SCHOOL_ACADEMIC_CAPABILITIES, key = { "${system.systemId}-${it.name}" }) { kind ->
-                            SchoolCapabilityCard(
-                                status = system.capability(kind),
+                        item(key = "system-${system.systemId}") {
+                            SchoolSystemAndCapabilitiesCard(
+                                system = system,
                                 timeZone = selectedSchool.primaryCampus?.timeZone ?: ZoneId.of("Asia/Shanghai")
-                            )
-                        }
-                    }
-                    item(key = "campus-services-header") {
-                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Text("校园服务独立提供方", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "地图路网、图书馆检索、座位预约和宿舍水电均作为独立 Provider 按学校核验，未提供适配时不会借用其他学校的楼宇或接口。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -196,29 +206,54 @@ fun SchoolCenterScreen(
                             add(CampusServiceProviderRegistry.Default.capabilityStatus(selectedSchool.id, kind))
                         }
                     }
-                    items(campusServiceStatuses, key = { "service-${it.kind.name}" }) { status ->
-                        SchoolCapabilityCard(
-                            status = status,
-                            timeZone = selectedSchool.primaryCampus?.timeZone ?: ZoneId.of("Asia/Shanghai")
-                        )
+                    item(key = "campus-services-card") {
+                        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "校园服务独立提供方",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "地图路网、图书馆检索、座位预约和宿舍水电均作为独立 Provider 按学校核验，未提供适配时不会借用其他学校的楼宇或接口。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            campusServiceStatuses.forEach { status ->
+                                XPeachInsetDivider(verticalPadding = 8.dp)
+                                SchoolCapabilityRow(
+                                    status = status,
+                                    timeZone = selectedSchool.primaryCampus?.timeZone ?: ZoneId.of("Asia/Shanghai")
+                                )
+                            }
+                        }
                     }
                     if (onSelectSchool != null) {
                         item(key = "select") {
                             Button(
                                 onClick = { onSelectSchool(selectedSchool) },
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("选择这所学校") }
                         }
                     }
                     if (sessions != null) {
                         item(key = "create-profile") {
-                            Button(onClick = { showCreateProfile = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("为这所学校添加离线身份")
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = { showCreateProfile = true },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("为这所学校添加离线身份")
+                                }
+                                Text(
+                                    text = "新身份拥有独立课表与成绩数据，创建后可在身份列表中切换。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            Text(
-                                "新身份拥有独立课表与成绩数据，创建后可在身份列表中切换。",
-                                style = MaterialTheme.typography.bodySmall
-                            )
                         }
                     }
                     profileFeedback?.let { feedback ->
@@ -231,22 +266,50 @@ fun SchoolCenterScreen(
                 else -> {
                     if (sessions != null) {
                         item(key = "profiles-title") {
-                            Text("我的身份", style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                "每个身份独立保存课表、学业与设置。切换时会结束当前网页会话。",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "我的身份",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "每个身份独立保存课表、学业与设置。切换时会结束当前网页会话。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         items(profiles, key = { "profile-${it.id}" }) { profile ->
                             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                                Text(profile.label, style = MaterialTheme.typography.titleMedium)
-                                Text(profile.school.displayName, style = MaterialTheme.typography.bodyMedium)
-                                if (profile.id == activeSession?.profileId) {
-                                    XPeachStatusBadge(text = "当前身份")
-                                } else {
-                                    onSwitchProfile?.let { switch ->
-                                        TextButton(onClick = { switch(profile.id) }) { Text("切换到此身份") }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = profile.label,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = profile.school.displayName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (profile.id == activeSession?.profileId) {
+                                        XPeachStatusDotText(
+                                            text = "当前身份",
+                                            dotColor = XPeachTheme.readablePrimary
+                                        )
+                                    } else {
+                                        onSwitchProfile?.let { switch ->
+                                            TextButton(onClick = { switch(profile.id) }) { Text("切换到此身份") }
+                                        }
                                     }
                                 }
                             }
@@ -261,8 +324,9 @@ fun SchoolCenterScreen(
                     item(key = "directory-intro") {
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                "当前目录收录 ${directory.schools.size} 所学校。学校详情展示现有实现与核验边界，浏览目录不会切换或清除当前数据。",
-                                style = MaterialTheme.typography.bodyMedium
+                                text = "当前目录收录 ${directory.schools.size} 所学校。学校详情展示现有实现与核验边界，浏览目录不会切换或清除当前数据。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -273,19 +337,27 @@ fun SchoolCenterScreen(
                             label = { Text("搜索学校") },
                             supportingText = { Text("支持中文、英文、拼音和首字母") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
                     if (matches.isEmpty()) {
                         item(key = "empty") {
                             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                                Text("还没有找到这所学校", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    "可尝试学校全名或别名。目录尚在扩充，未收录学校仍可使用本地课表文件和手工录入。",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                onOpenOfflineImporter?.let { openImporter ->
-                                    TextButton(onClick = openImporter) { Text("打开导入中心") }
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "还没有找到这所学校",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "可尝试学校全名或别名。目录尚在扩充，未收录学校仍可使用本地课表文件和手工录入。",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    onOpenOfflineImporter?.let { openImporter ->
+                                        TextButton(onClick = openImporter) { Text("打开导入中心") }
+                                    }
                                 }
                             }
                         }
@@ -295,35 +367,59 @@ fun SchoolCenterScreen(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { selectedSchoolId = match.school.id.value }
                         ) {
-                            Text(match.school.displayName, style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                listOfNotNull(match.school.province, match.school.city).joinToString(" · "),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            XPeachStatusBadge(text = verificationLabel(match.school.verification))
-                            Text(
-                                if (match.approximate) "近似匹配，请核对校名与城市" else "查看校区、教务能力与核验说明",
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = match.school.displayName,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    XPeachStatusDotText(
+                                        text = verificationLabel(match.school.verification),
+                                        dotColor = XPeachTheme.readablePrimary
+                                    )
+                                }
+                                Text(
+                                    text = listOfNotNull(match.school.province, match.school.city).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = if (match.approximate) "近似匹配，请核对校名与城市" else "查看校区、教务能力与核验说明",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                     item(key = "protocol-note") {
                         val protocolDescriptors = remember { ProtocolGatewayRegistry.descriptors() }
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                            Text("支持的高校教务系统类型", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "已支持 ${protocolDescriptors.size} 类主流高校教务系统（正方、强智、金智、青果、树维、URP 等）的课表、成绩与考试同步：",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            protocolDescriptors.values.forEach { descriptor ->
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
-                                    text = "• ${protocolLabel(descriptor.protocol)}：支持课表、考试与成绩导入",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = "支持的高校教务系统类型",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "已支持 ${protocolDescriptors.size} 类主流高校教务系统（正方、强智、金智、青果、树维、URP 等）的课表、成绩与考试同步：",
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                protocolDescriptors.values.forEach { descriptor ->
+                                    Text(
+                                        text = "• ${protocolLabel(descriptor.protocol)}：支持课表、考试与成绩导入",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                TextButton(onClick = { showContribution = true }) { Text("如何适配我的学校") }
                             }
-                            TextButton(onClick = { showContribution = true }) { Text("如何适配我的学校") }
                         }
                     }
                 }
@@ -383,7 +479,9 @@ private fun CreateOfflineProfileDialog(
                     onValueChange = { schoolName = it.take(80) },
                     enabled = school == null && !busy,
                     label = { Text("学校名称") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = profileLabel,
@@ -391,9 +489,17 @@ private fun CreateOfflineProfileDialog(
                     enabled = !busy,
                     label = { Text("身份名称") },
                     supportingText = { Text("例如：本科课表、交流学期；不必填写学号") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
-                if (school == null) Text("未收录学校使用中国标准时间，可先通过手工录入或文件导入使用课表。")
+                if (school == null) {
+                    Text(
+                        text = "未收录学校使用中国标准时间，可先通过手工录入或文件导入使用课表。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 feedback?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
@@ -415,50 +521,118 @@ private fun CreateOfflineProfileDialog(
 @Composable
 private fun SchoolSummaryCard(school: SchoolProfile) {
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-        Text(school.displayName, style = MaterialTheme.typography.headlineSmall)
-        Text(listOfNotNull(school.province, school.city).joinToString(" · "))
-        XPeachStatusBadge(text = verificationLabel(school.verification))
-        school.verification?.note?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium)
-        }
-        school.officialWebsite?.let {
-            SelectionContainer {
-                Text("学校官网：$it", style = MaterialTheme.typography.bodySmall)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = school.displayName,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                XPeachStatusDotText(
+                    text = verificationLabel(school.verification),
+                    dotColor = XPeachTheme.readablePrimary
+                )
+            }
+            Text(
+                text = listOfNotNull(school.province, school.city).joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            school.verification?.note?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            school.officialWebsite?.let {
+                SelectionContainer {
+                    Text(
+                        text = "学校官网：$it",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SchoolSystemCard(system: AcademicSystemProfile) {
+private fun SchoolSystemAndCapabilitiesCard(
+    system: AcademicSystemProfile,
+    timeZone: ZoneId
+) {
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-        Text(protocolLabel(system.protocolFamily), style = MaterialTheme.typography.titleMedium)
-        SelectionContainer {
-            Text("教务入口：${system.baseUrl}", style = MaterialTheme.typography.bodyMedium)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = protocolLabel(system.protocolFamily),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            SelectionContainer {
+                Text(
+                    text = "教务入口：${system.baseUrl}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = "以下能力分别核验。浏览学校目录不会请求教务网络或提交身份信息。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Text(
-            "以下能力分别核验。浏览学校目录不会请求教务网络或提交身份信息。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        SCHOOL_ACADEMIC_CAPABILITIES.forEach { kind ->
+            XPeachInsetDivider(verticalPadding = 8.dp)
+            SchoolCapabilityRow(
+                status = system.capability(kind),
+                timeZone = timeZone
+            )
+        }
     }
 }
 
 @Composable
-private fun SchoolCapabilityCard(status: CapabilityStatus, timeZone: ZoneId) {
+private fun SchoolCapabilityRow(status: CapabilityStatus, timeZone: ZoneId) {
     var showEvidence by rememberSaveable(status.kind.name) { mutableStateOf(false) }
-    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-        Text(capabilityLabel(status.kind), style = MaterialTheme.typography.titleMedium)
-        Text(capabilityStateLabel(status), style = MaterialTheme.typography.bodyMedium)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = capabilityLabel(status.kind),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            if (status.providerSupports) {
+                XPeachStatusDotText(
+                    text = verificationLabel(status.evidence),
+                    dotColor = XPeachTheme.readablePrimary
+                )
+            }
+        }
+        Text(
+            text = capabilityStateLabel(status),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         if (status.providerSupports) {
             Text(
-                verificationLabel(status.evidence),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                "学校账号核验：${if (status.verifiedForAccount) "已核验" else "尚未核验"} · 查询授权：${if (status.userConsent) "已授权" else "尚未授权"}",
-                style = MaterialTheme.typography.bodySmall
+                text = "学校账号核验：${if (status.verifiedForAccount) "已核验" else "尚未核验"} · 查询授权：${if (status.userConsent) "已授权" else "尚未授权"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         status.evidence?.let { evidence ->
@@ -467,15 +641,34 @@ private fun SchoolCapabilityCard(status: CapabilityStatus, timeZone: ZoneId) {
             }
             if (showEvidence) {
                 SelectionContainer {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        evidence.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        evidence.sourceReference?.let { Text("来源：$it", style = MaterialTheme.typography.bodySmall) }
-                        evidence.evidenceId?.let { Text("证据编号：$it", style = MaterialTheme.typography.bodySmall) }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        evidence.note?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        evidence.sourceReference?.let {
+                            Text(
+                                text = "来源：$it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        evidence.evidenceId?.let {
+                            Text(
+                                text = "证据编号：$it",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Text(
-                            evidence.verifiedAt?.let {
+                            text = evidence.verifiedAt?.let {
                                 "核验日期：${DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(timeZone).format(it)}"
                             } ?: "尚未提供设备或学校核验日期",
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -502,31 +695,56 @@ private fun SchoolContributionCard() {
     val context = LocalContext.current
     var copyFeedback by remember { mutableStateOf<String?>(null) }
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-        Text("先提供公开资料", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "整理学校与校区、官方入口、希望支持的功能及公开来源。贡献资料不代表该学校已经适配，学校级验证仍需要授权账户和设备证据。",
-            style = MaterialTheme.typography.bodyMedium
-        )
-        Text(
-            "提交前移除身份信息、会话令牌和个人学业数据。请在项目仓库的议题页面检查内容后手工提交。",
-            style = MaterialTheme.typography.bodyMedium
-        )
-        SelectionContainer {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("项目仓库：https://github.com/yellowpeachxgp/day-in-school", style = MaterialTheme.typography.bodySmall)
-                Text(SCHOOL_CONTRIBUTION_TEMPLATE, style = MaterialTheme.typography.bodySmall)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "先提供公开资料",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "整理学校与校区、官方入口、希望支持的功能及公开来源。贡献资料不代表该学校已经适配，学校级验证仍需要授权账户和设备证据。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "提交前移除身份信息、会话令牌和个人学业数据。请在项目仓库的议题页面检查内容后手工提交。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "项目仓库：https://github.com/yellowpeachxgp/day-in-school",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = XPeachTheme.readablePrimary
+                    )
+                    Text(
+                        text = SCHOOL_CONTRIBUTION_TEMPLATE,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Button(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("学校适配资料模板", SCHOOL_CONTRIBUTION_TEMPLATE))
+                        copyFeedback = "已复制空白模板，请填写公开资料"
+                    } else {
+                        copyFeedback = "暂时无法使用剪贴板，可长按上方模板复制"
+                    }
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("复制空白资料模板") }
+            copyFeedback?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = XPeachTheme.readablePrimary
+                )
             }
         }
-        Button(onClick = {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("学校适配资料模板", SCHOOL_CONTRIBUTION_TEMPLATE))
-                copyFeedback = "已复制空白模板，请填写公开资料"
-            } else {
-                copyFeedback = "暂时无法使用剪贴板，可长按上方模板复制"
-            }
-        }) { Text("复制空白资料模板") }
-        copyFeedback?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }
 

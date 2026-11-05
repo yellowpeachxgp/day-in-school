@@ -69,8 +69,11 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import kotlinx.coroutines.Dispatchers
@@ -169,7 +172,7 @@ fun ParcelHubScreen(
             )
 
             feedbackBanner?.let { msg ->
-                XPeachCard(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                XPeachCard(containerColor = XPeachTheme.secondaryAccentCardColor) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -178,7 +181,7 @@ fun ParcelHubScreen(
                         Text(
                             text = msg,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { feedbackBanner = null }) {
@@ -280,17 +283,12 @@ fun ParcelHubScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    XPeachStatusBadge(
+                                    XPeachStatusDotText(
                                         text = statusEnum.label,
-                                        containerColor = when (statusEnum) {
-                                            ParcelLifecycleStatus.READY_FOR_PICKUP -> MaterialTheme.colorScheme.tertiaryContainer
-                                            ParcelLifecycleStatus.PICKED_UP -> MaterialTheme.colorScheme.surfaceVariant
-                                            else -> MaterialTheme.colorScheme.primaryContainer
-                                        },
-                                        contentColor = when (statusEnum) {
-                                            ParcelLifecycleStatus.READY_FOR_PICKUP -> MaterialTheme.colorScheme.onTertiaryContainer
-                                            ParcelLifecycleStatus.PICKED_UP -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            else -> MaterialTheme.colorScheme.primary
+                                        dotColor = when (statusEnum) {
+                                            ParcelLifecycleStatus.READY_FOR_PICKUP -> MaterialTheme.colorScheme.tertiary
+                                            ParcelLifecycleStatus.PICKED_UP -> MaterialTheme.colorScheme.outline
+                                            else -> XPeachTheme.readablePrimary
                                         }
                                     )
                                     Text(
@@ -309,38 +307,36 @@ fun ParcelHubScreen(
                             }
 
                             if (cleanPickupCode != null) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = "取件码：$cleanPickupCode",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = "驿站：${cleanStationName ?: "校园快递驿站"}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        if (statusEnum != ParcelLifecycleStatus.PICKED_UP) {
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        repository.markParcelPickedUp(item.id)
-                                                        feedbackBanner = "已标记「$cleanPickupCode」为已取件"
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Text("已取件")
-                                            }
+                                XPeachInsetDivider(verticalPadding = 8.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "取件码：$cleanPickupCode",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = XPeachTheme.readablePrimary
+                                        )
+                                        Text(
+                                            text = "驿站：${cleanStationName ?: "校园快递驿站"}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (statusEnum != ParcelLifecycleStatus.PICKED_UP) {
+                                        FilledTonalButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    repository.markParcelPickedUp(item.id)
+                                                    feedbackBanner = "已标记「$cleanPickupCode」为已取件"
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text("已取件")
                                         }
                                     }
                                 }
@@ -465,17 +461,12 @@ fun ParcelHubScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                XPeachStatusBadge(
+                                XPeachStatusDotText(
                                     text = if (acc.phones.isNotEmpty()) "已绑 ${acc.phones.size} 个号码" else "待绑手机号",
-                                    containerColor = if (acc.phones.isNotEmpty()) {
-                                        MaterialTheme.colorScheme.primaryContainer
+                                    dotColor = if (acc.phones.isNotEmpty()) {
+                                        XPeachTheme.readablePrimary
                                     } else {
-                                        MaterialTheme.colorScheme.tertiaryContainer
-                                    },
-                                    contentColor = if (acc.phones.isNotEmpty()) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                        MaterialTheme.colorScheme.tertiary
                                     }
                                 )
                             }
@@ -543,40 +534,41 @@ fun ParcelHubScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
-                            for ((station, list) in byStation) {
-                                XPeachWell(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "$station（共 ${list.size} 件待取）",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            val codesSummary = list.mapNotNull { it.pickupCode.cleanNullableLiteral() }
-                                                .joinToString(" 、 ")
-                                                .ifBlank { "待驿站出码" }
-                                            Text(
-                                                text = "取件码：$codesSummary",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        if (list.isNotEmpty() && list.first().stationName.cleanNullableLiteral() != null) {
-                                            FilledTonalButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        val count = repository.markAllStationParcelsPickedUp(station)
-                                                        feedbackBanner = "已将「$station」的 $count 件快递全部标记为已取件"
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Text("全部已取")
-                                            }
+                            byStation.entries.forEachIndexed { idx, (station, list) ->
+                                if (idx > 0) {
+                                    XPeachInsetDivider(verticalPadding = 8.dp)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "$station（共 ${list.size} 件待取）",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        val codesSummary = list.mapNotNull { it.pickupCode.cleanNullableLiteral() }
+                                            .joinToString(" 、 ")
+                                            .ifBlank { "待驿站出码" }
+                                        Text(
+                                            text = "取件码：$codesSummary",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = XPeachTheme.readablePrimary
+                                        )
+                                    }
+                                    if (list.isNotEmpty() && list.first().stationName.cleanNullableLiteral() != null) {
+                                        FilledTonalButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    val count = repository.markAllStationParcelsPickedUp(station)
+                                                    feedbackBanner = "已将「$station」的 $count 件快递全部标记为已取件"
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Text("全部已取")
                                         }
                                     }
                                 }
@@ -616,15 +608,13 @@ fun ParcelHubScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "• 莲花街校区：北苑菜鸟驿站、南苑菜鸟驿站、西区快递中心（08:30–21:00）\n" +
-                                    "• 嵩山路校区：校区菜鸟驿站与丰巢快递柜\n" +
-                                    "• 桌面小组件：添加「4×2 快递取件码」小组件，可在桌面直接查看取件码。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "• 莲花街校区：北苑菜鸟驿站、南苑菜鸟驿站、西区快递中心（08:30–21:00）\n" +
+                                "• 嵩山路校区：校区菜鸟驿站与丰巢快递柜\n" +
+                                "• 桌面小组件：添加「4×2 快递取件码」小组件，可在桌面直接查看取件码。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -718,7 +708,7 @@ fun ParcelHubScreen(
                                 Text(
                                     text = "已识别取件码：${previewExtracted.pickupCode} · 驿站：${previewExtracted.stationName ?: "校园驿站"}",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = XPeachTheme.readablePrimary
                                 )
                             } else {
                                 Text(
@@ -827,7 +817,7 @@ private fun XiaomiQuickConnectCard(
                     Text(
                         text = "已连接 ${xiaomiAccounts.size} 个账号 · 绑定号码：${first.maskedPhonesSummary}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                 }
             }
@@ -1165,18 +1155,21 @@ private fun XiaomiPhoneBindDialog(
                     fontWeight = FontWeight.SemiBold
                 )
                 if (account.phones.isEmpty()) {
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "当前暂未绑定手机号。请在下方输入 11 位收件手机号并发送验证码完成绑定。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = "当前暂未绑定手机号。请在下方输入 11 位收件手机号并发送验证码完成绑定。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 } else {
-                    for (phone in account.phones) {
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        account.phones.forEachIndexed { idx, phone ->
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 4.dp)
+                            }
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1273,7 +1266,7 @@ private fun XiaomiPhoneBindDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("直接添加本机号")
+                        Text("本机号直绑", maxLines = 1, softWrap = false)
                     }
                 }
                 OutlinedTextField(
@@ -1314,7 +1307,7 @@ private fun XiaomiPhoneBindDialog(
                         Text(
                             text = hint,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = XPeachTheme.readablePrimary
                         )
                     }
                 }
@@ -1361,7 +1354,7 @@ private fun ParcelTimelineDialog(
                             text = "取件码：$cleanPickup · $cleanStation",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = XPeachTheme.readablePrimary
                         )
                     }
                 }
@@ -1394,20 +1387,30 @@ private fun ParcelTimelineDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    for (pt in points) {
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            if (pt.time.isNotBlank()) {
+                    Column {
+                        points.forEachIndexed { idx, pt ->
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 6.dp)
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                if (pt.time.isNotBlank()) {
+                                    Text(
+                                        text = pt.time,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                                 Text(
-                                    text = pt.time,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold
+                                    text = pt.desc,
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
-                            Text(
-                                text = pt.desc,
-                                style = MaterialTheme.typography.bodySmall
-                            )
                         }
                     }
                 }

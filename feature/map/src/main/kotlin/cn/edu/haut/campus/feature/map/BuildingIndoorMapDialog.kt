@@ -79,6 +79,8 @@ import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.location.GisBuildingFootprint
 import cn.edu.haut.campus.core.location.GisIndoorFloorPlan
@@ -201,6 +203,7 @@ internal fun BuildingIndoorMapDialog(
         } else null
     }
 
+    val isDarkPlan = XPeachTheme.isDark
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -211,7 +214,7 @@ internal fun BuildingIndoorMapDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFFF8FAFC))
+                .background(if (isDarkPlan) Color(0xFF0C121B) else Color(0xFFF8FAFC))
         ) {
             // 1. 底层全屏独立建筑平面正交投影画布
             IndoorFloorPlanCanvas(
@@ -234,7 +237,11 @@ internal fun BuildingIndoorMapDialog(
             if (isLoadingFloorPlan) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 4.dp,
                     modifier = Modifier.align(Alignment.Center)
                 ) {
@@ -268,6 +275,10 @@ internal fun BuildingIndoorMapDialog(
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -319,10 +330,9 @@ internal fun BuildingIndoorMapDialog(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    XPeachStatusBadge(
-                                        text = "${selectedFloorIndex + 1}F 室内平面",
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.primary
+                                    XPeachStatusDotText(
+                                        text = "${selectedFloorIndex + 1}F",
+                                        dotColor = XPeachTheme.readablePrimary
                                     )
                                 }
                                 Text(
@@ -462,6 +472,10 @@ internal fun BuildingIndoorMapDialog(
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 3.dp
                 ) {
                     Column(
@@ -475,7 +489,7 @@ internal fun BuildingIndoorMapDialog(
                         Icon(
                             imageVector = Icons.Default.Layers,
                             contentDescription = "楼层切换",
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = XPeachTheme.readablePrimary,
                             modifier = Modifier
                                 .padding(bottom = 2.dp)
                                 .size(16.dp)
@@ -568,13 +582,9 @@ internal fun BuildingIndoorMapDialog(
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    XPeachStatusBadge(
-                                        text = selectedRoom.floorLabel,
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.primary
-                                    )
-                                    XPeachStatusBadge(
-                                        text = selectedRoom.category.label
+                                    XPeachStatusDotText(
+                                        text = "${selectedRoom.floorLabel} · ${selectedRoom.category.label}",
+                                        dotColor = XPeachTheme.readablePrimary
                                     )
                                 }
                                 Text(
@@ -615,7 +625,8 @@ internal fun BuildingIndoorMapDialog(
                             Text(
                                 text = "点击平面图中的房间或下方门牌号即可高亮定位",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp)
                             )
                             OutlinedButton(
                                 onClick = onDismiss,
@@ -648,6 +659,7 @@ internal fun BuildingIndoorMapDialog(
                                 XPeachFilterPill(
                                     label = room.name,
                                     selected = selectedRoom?.id == room.id,
+                                    compact = true,
                                     onClick = { onSelectRoom(room) }
                                 )
                             }
@@ -675,9 +687,22 @@ private fun IndoorLegendFilterChip(
     Surface(
         shape = RoundedCornerShape(999.dp),
         color = if (selected) {
-            MaterialTheme.colorScheme.primaryContainer
+            if (XPeachTheme.isDark) XPeachTheme.readablePrimary.copy(alpha = 0.20f) else MaterialTheme.colorScheme.primaryContainer
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        },
+        border = if (selected) {
+            androidx.compose.foundation.BorderStroke(
+                0.8.dp,
+                XPeachTheme.readablePrimary.copy(alpha = 0.45f)
+            )
+        } else if (XPeachTheme.isDark) {
+            androidx.compose.foundation.BorderStroke(
+                0.7.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+            )
+        } else {
+            null
         },
         modifier = Modifier.clickable(onClick = onClick)
     ) {
@@ -697,7 +722,7 @@ private fun IndoorLegendFilterChip(
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = if (selected) {
-                    MaterialTheme.colorScheme.primary
+                    XPeachTheme.readablePrimary
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
@@ -723,6 +748,7 @@ private fun IndoorFloorPlanCanvas(
     onTransform: (Float, Offset) -> Unit,
     onSelectRoom: (GisIndoorRoom) -> Unit
 ) {
+    val isDarkPlan = XPeachTheme.isDark
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(panOffset)
     val currentFloorPlan by rememberUpdatedState(floorPlan)
@@ -830,8 +856,9 @@ private fun IndoorFloorPlanCanvas(
             )
         }
 
-        // 1. 绘制建筑工程制图浅色网格背景（无杂乱街景瓦片干扰）
-        drawRect(color = Color(0xFFF8FAFC))
+        // 1. 绘制建筑工程制图深浅色自适应网格背景（无杂乱街景瓦片干扰）
+        drawRect(color = if (isDarkPlan) Color(0xFF0C121B) else Color(0xFFF8FAFC))
+        val gridLineColor = if (isDarkPlan) Color(0xFF182232) else Color(0xFFE2E8F0)
         val gridStepMeters = when {
             effectiveScale >= 18f -> 5f
             effectiveScale >= 9f -> 10f
@@ -843,7 +870,7 @@ private fun IndoorFloorPlanCanvas(
         var gx = startX
         while (gx < size.width) {
             drawLine(
-                color = Color(0xFFE2E8F0),
+                color = gridLineColor,
                 start = Offset(gx, 0f),
                 end = Offset(gx, size.height),
                 strokeWidth = 1f
@@ -853,7 +880,7 @@ private fun IndoorFloorPlanCanvas(
         var gy = startY
         while (gy < size.height) {
             drawLine(
-                color = Color(0xFFE2E8F0),
+                color = gridLineColor,
                 start = Offset(0f, gy),
                 end = Offset(size.width, gy),
                 strokeWidth = 1f
@@ -885,16 +912,16 @@ private fun IndoorFloorPlanCanvas(
                 }
                 close()
             }
-            drawPath(path = shadowPath, color = Color(0x180F172A))
-            drawPath(path = shellPath, color = Color(0xFFF1F5F9))
+            drawPath(path = shadowPath, color = if (isDarkPlan) Color(0x55000000) else Color(0x180F172A))
+            drawPath(path = shellPath, color = if (isDarkPlan) Color(0xFF151E2B) else Color(0xFFF1F5F9))
             drawPath(
                 path = shellPath,
-                color = Color(0xFF475569),
+                color = if (isDarkPlan) Color(0xFF64748B) else Color(0xFF475569),
                 style = Stroke(width = 4.5f, join = StrokeJoin.Round)
             )
         }
 
-        // 3. 绘制当前楼层所有房间多边形（按教室/实验室/楼梯/卫生间着色，无重叠清晰边界）
+        // 3. 绘制当前楼层所有房间多边形（按教室/实验室/楼梯/卫生间着色，深浅色自适应高对比度）
         val rooms = floorPlan?.rooms.orEmpty()
         for (room in rooms) {
             val pts = room.outerRing.map { wgsToScreen(it.latitude, it.longitude) }
@@ -910,29 +937,54 @@ private fun IndoorFloorPlanCanvas(
                 close()
             }
 
-            val baseFill = when {
-                isSelected -> Color(0xFFF97316)
-                room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFFDBEAFE)
-                room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFFD1FAE5)
-                room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFFEF3C7)
-                room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFFEDE9FE)
-                room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFFCFFAFE)
-                room.category == GisIndoorRoomCategory.CORRIDOR -> Color(0xFFF8FAFC)
-                else -> Color(0xFFE2E8F0)
+            val baseFill = if (isDarkPlan) {
+                when {
+                    isSelected -> Color(0xFFEA580C)
+                    room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFF16325B)
+                    room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFF11382C)
+                    room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFF382813)
+                    room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFF2B1C4E)
+                    room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFF103344)
+                    room.category == GisIndoorRoomCategory.CORRIDOR -> Color(0xFF121A26)
+                    else -> Color(0xFF1D2736)
+                }
+            } else {
+                when {
+                    isSelected -> Color(0xFFF97316)
+                    room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFFDBEAFE)
+                    room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFFD1FAE5)
+                    room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFFEF3C7)
+                    room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFFEDE9FE)
+                    room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFFCFFAFE)
+                    room.category == GisIndoorRoomCategory.CORRIDOR -> Color(0xFFF8FAFC)
+                    else -> Color(0xFFE2E8F0)
+                }
             }
-            val baseBorder = when {
-                isSelected -> Color(0xFFC2410C)
-                room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFF3B82F6)
-                room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFF10B981)
-                room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFF59E0B)
-                room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFF7C3AED)
-                room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFF0891B2)
-                else -> Color(0xFF94A3B8)
+            val baseBorder = if (isDarkPlan) {
+                when {
+                    isSelected -> Color(0xFFFB923C)
+                    room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFF60A5FA)
+                    room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFF34D399)
+                    room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFFBBF24)
+                    room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFFA78BFA)
+                    room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFF22D3EE)
+                    else -> Color(0xFF475569)
+                }
+            } else {
+                when {
+                    isSelected -> Color(0xFFC2410C)
+                    room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFF3B82F6)
+                    room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFF10B981)
+                    room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFF59E0B)
+                    room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFF7C3AED)
+                    room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFF0891B2)
+                    else -> Color(0xFF94A3B8)
+                }
             }
 
             drawPath(
                 path = roomPath,
-                color = baseFill.copy(alpha = (if (isSelected) 0.90f else 0.88f) * alphaMul)
+                color = baseFill.copy(alpha = (if (isSelected) 0.92f else 0.90f) * alphaMul)
             )
             drawPath(
                 path = roomPath,
@@ -949,14 +1001,14 @@ private fun IndoorFloorPlanCanvas(
             val startPt = wgsToScreen(nearestStairOrElevator.centerLat, nearestStairOrElevator.centerLon)
             val endPt = wgsToScreen(selectedRoom.centerLat, selectedRoom.centerLon)
             drawLine(
-                color = Color.White,
+                color = if (isDarkPlan) Color(0xFF0C121B) else Color.White,
                 start = startPt,
                 end = endPt,
                 strokeWidth = 9f,
                 cap = StrokeCap.Round
             )
             drawLine(
-                color = Color(0xFF0284C7),
+                color = if (isDarkPlan) Color(0xFF38BDF8) else Color(0xFF0284C7),
                 start = startPt,
                 end = endPt,
                 strokeWidth = 5f,
@@ -969,8 +1021,9 @@ private fun IndoorFloorPlanCanvas(
                 val midX = (startPt.x + endPt.x) / 2f
                 val midY = (startPt.y + endPt.y) / 2f
                 val wing = 9f
+                val arrowColor = if (isDarkPlan) Color(0xFF38BDF8) else Color(0xFF0284C7)
                 drawLine(
-                    color = Color(0xFF0284C7),
+                    color = arrowColor,
                     start = Offset(
                         midX - (wing * cos(angle - PI / 4)).toFloat(),
                         midY - (wing * sin(angle - PI / 4)).toFloat()
@@ -980,7 +1033,7 @@ private fun IndoorFloorPlanCanvas(
                     cap = StrokeCap.Round
                 )
                 drawLine(
-                    color = Color(0xFF0284C7),
+                    color = arrowColor,
                     start = Offset(
                         midX - (wing * cos(angle + PI / 4)).toFloat(),
                         midY - (wing * sin(angle + PI / 4)).toFloat()
@@ -1004,7 +1057,11 @@ private fun IndoorFloorPlanCanvas(
                 else -> 9.5.sp.toPx()
             }
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = android.graphics.Color.rgb(30, 41, 59)
+            color = if (isDarkPlan) {
+                android.graphics.Color.rgb(226, 232, 240)
+            } else {
+                android.graphics.Color.rgb(30, 41, 59)
+            }
         }
 
         for (room in rooms) {
@@ -1098,28 +1155,33 @@ private fun IndoorFloorPlanCanvas(
         }
 
         // 7. 左下角绘制真实米制比例尺与指北标识
+        val scaleBarColor = if (isDarkPlan) Color(0xFF94A3B8) else Color(0xFF475569)
         val scaleBarTextPaint = Paint().apply {
             isAntiAlias = true
             textSize = 10.sp.toPx()
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = android.graphics.Color.rgb(71, 85, 105)
+            color = if (isDarkPlan) {
+                android.graphics.Color.rgb(148, 163, 184)
+            } else {
+                android.graphics.Color.rgb(71, 85, 105)
+            }
         }
-        val barLeft = 42f
-        val barY = size.height - 460f
+        val barLeft = 20.dp.toPx()
+        val barY = size.height - 196.dp.toPx()
         drawLine(
-            color = Color(0xFF475569),
+            color = scaleBarColor,
             start = Offset(barLeft, barY),
             end = Offset(barLeft + gridStepPx, barY),
             strokeWidth = 3f
         )
         drawLine(
-            color = Color(0xFF475569),
+            color = scaleBarColor,
             start = Offset(barLeft, barY - 6f),
             end = Offset(barLeft, barY + 6f),
             strokeWidth = 3f
         )
         drawLine(
-            color = Color(0xFF475569),
+            color = scaleBarColor,
             start = Offset(barLeft + gridStepPx, barY - 6f),
             end = Offset(barLeft + gridStepPx, barY + 6f),
             strokeWidth = 3f

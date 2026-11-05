@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
@@ -76,10 +77,12 @@ fun CampusMetricChart(
     val avgVal = validPoints.map { it.value }.average()
     val unitText = selectedPoint.unit.ifBlank { "kWh" }
 
-    val lineColor = MaterialTheme.colorScheme.primary
-    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-    val surfaceColor = MaterialTheme.colorScheme.surface
-    val highlightColor = MaterialTheme.colorScheme.tertiary
+    val lineColor = XPeachTheme.readablePrimary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant.copy(
+        alpha = if (XPeachTheme.isDark) 0.65f else 0.45f
+    )
+    val surfaceColor = MaterialTheme.colorScheme.surface.copy(alpha = 1f)
+    val highlightColor = XPeachTheme.readableAccent(MaterialTheme.colorScheme.tertiary)
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -96,12 +99,17 @@ fun CampusMetricChart(
                 },
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
             )
             Text(
                 text = "均值 ${"%.2f".format(avgVal)} · 峰值 ${"%.2f".format(maxVal)} $unitText",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false
             )
         }
 
@@ -111,7 +119,7 @@ fun CampusMetricChart(
                 .height(148.dp)
                 .pointerInput(validPoints) {
                     detectTapGestures { tapOffset ->
-                        val padH = 18.dp.toPx()
+                        val padH = 6.dp.toPx()
                         val usableWidth = (size.width - padH * 2f).coerceAtLeast(1f)
                         val count = validPoints.size
                         val bestIdx = if (count <= 1) {
@@ -126,7 +134,7 @@ fun CampusMetricChart(
                     }
                 }
         ) {
-            val padHorizontal = 18.dp.toPx()
+            val padHorizontal = 6.dp.toPx()
             val padVertical = 16.dp.toPx()
             val chartW = (size.width - padHorizontal * 2f).coerceAtLeast(1f)
             val chartH = (size.height - padVertical * 2f).coerceAtLeast(1f)
@@ -137,8 +145,8 @@ fun CampusMetricChart(
                 val y = padVertical + chartH * (level / 2f)
                 drawLine(
                     color = gridColor,
-                    start = Offset(padHorizontal, y),
-                    end = Offset(size.width - padHorizontal, y),
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
                     strokeWidth = 1.dp.toPx(),
                     pathEffect = dashEffect
                 )
@@ -222,7 +230,10 @@ fun CampusMetricChart(
                 Text(
                     text = "注：未记录或充值当日折线断开",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 6.dp)
                 )
             }
             if (validPoints.size > 1) {

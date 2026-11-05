@@ -1,20 +1,27 @@
 package cn.edu.haut.campus.core.designsystem
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,13 +29,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -40,22 +52,31 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -70,52 +92,66 @@ import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
+val LocalIsDarkTheme = staticCompositionLocalOf { false }
+
 val XPeachBrandLight = Color(0xFF0066CC)
 val XPeachBrandHoverLight = Color(0xFF0052A3)
 val XPeachBrandSoftLight = Color(0xFFEAF3FF)
 val XPeachBrandBorderLight = Color(0xFFC2DDFB)
 
 val XPeachBrandDark = Color(0xFF479BFF)
-val XPeachBrandSoftDark = Color(0xFF1A2B42)
+val XPeachBrandSoftDark = Color(0xFF192D4B)
 val XPeachBrandBorderDark = Color(0xFF2B4C7E)
 
 val XPeachOk = Color(0xFF16A34A)
 val XPeachOkSoft = Color(0xFFEAF7EE)
+val XPeachOkDark = Color(0xFF34D399)
+val XPeachOkSoftDark = Color(0xFF133324)
+
 val XPeachWarn = Color(0xFFD97706)
 val XPeachWarnSoft = Color(0xFFFEF3C7)
+val XPeachWarnDark = Color(0xFFFBBF24)
+val XPeachWarnSoftDark = Color(0xFF382812)
+
 val XPeachDanger = Color(0xFFDC2626)
 val XPeachDangerSoft = Color(0xFFFEE2E2)
+val XPeachDangerDark = Color(0xFFF87171)
+val XPeachDangerSoftDark = Color(0xFF3B1A1E)
+
 val XPeachInfo = Color(0xFF0284C7)
 
-// 轻盈柔和的底色体系：以微灰蓝底色衬托纯白卡片，弱化硬边框
+// 轻盈柔和的浅色底色体系：以微灰蓝底色衬托纯白卡片，弱化硬边框
 val XPeachBgLight = Color(0xFFF5F7FA)
 val XPeachCardLight = Color(0xFFFFFFFF)
 val XPeachWellLight = Color(0xFFF2F5F9)
+val XPeachSidebarLight = Color(0xFFF8FAFC)
 val XPeachBorderLight = Color(0xFFE8ECF2)
 val XPeachBorderStrongLight = Color(0xFFD8E0EA)
-val XPeachTextLight = Color(0xFF111827)
-val XPeachText2Light = Color(0xFF374151)
-val XPeachMutedLight = Color(0xFF6B7280)
+val XPeachTextLight = Color(0xFF0F172A)
+val XPeachText2Light = Color(0xFF334155)
+val XPeachMutedLight = Color(0xFF64748B)
 
-val XPeachBgDark = Color(0xFF111317)
-val XPeachCardDark = Color(0xFF1B1E24)
-val XPeachWellDark = Color(0xFF232730)
-val XPeachSidebarDark = Color(0xFF15181E)
-val XPeachBorderDark = Color(0xFF282D37)
-val XPeachBorderStrongDark = Color(0xFF363C4A)
-val XPeachTextDark = Color(0xFFF3F4F6)
-val XPeachText2Dark = Color(0xFFD1D5DB)
-val XPeachMutedDark = Color(0xFF9CA3AF)
+// 四层递进式深色表面体系：Level 0 背景 (#0D1117) -> Level 1 卡片 (#161B22) -> Level 2 内嵌槽 (#1F2631) -> Level 3 交互胶囊 (#262F3D)
+val XPeachBgDark = Color(0xFF0D1117)
+val XPeachCardDark = Color(0xFF161B22)
+val XPeachWellDark = Color(0xFF1F2631)
+val XPeachElevatedPillDark = Color(0xFF262F3D)
+val XPeachSidebarDark = Color(0xFF11161E)
+val XPeachBorderDark = Color(0xFF283140)
+val XPeachBorderStrongDark = Color(0xFF384457)
+val XPeachTextDark = Color(0xFFF1F5F9)
+val XPeachText2Dark = Color(0xFFCBD5E1)
+val XPeachMutedDark = Color(0xFF94A3B8)
 
 private val LightColors = lightColorScheme(
     primary = XPeachBrandLight,
     onPrimary = Color.White,
     primaryContainer = XPeachBrandSoftLight,
-    onPrimaryContainer = XPeachBrandLight,
+    onPrimaryContainer = Color(0xFF004C99),
     secondary = XPeachInfo,
     onSecondary = Color.White,
     secondaryContainer = Color(0xFFE0F2FE),
-    onSecondaryContainer = Color(0xFF0369A1),
+    onSecondaryContainer = Color(0xFF075985),
     tertiary = XPeachOk,
     onTertiary = Color.White,
     tertiaryContainer = XPeachOkSoft,
@@ -130,6 +166,10 @@ private val LightColors = lightColorScheme(
     onSurface = XPeachTextLight,
     surfaceVariant = XPeachWellLight,
     onSurfaceVariant = XPeachMutedLight,
+    surfaceContainerLow = XPeachSidebarLight,
+    surfaceContainer = XPeachCardLight,
+    surfaceContainerHigh = Color(0xFFF8FAFC),
+    surfaceContainerHighest = Color(0xFFEEF2F7),
     outline = XPeachBorderStrongLight,
     outlineVariant = XPeachBorderLight
 )
@@ -138,28 +178,187 @@ private val DarkColors = darkColorScheme(
     primary = XPeachBrandDark,
     onPrimary = Color.White,
     primaryContainer = XPeachBrandSoftDark,
-    onPrimaryContainer = Color(0xFF7CC0FF),
+    onPrimaryContainer = Color(0xFFD8EBFF),
     secondary = Color(0xFF38BDF8),
     onSecondary = Color(0xFF082F49),
-    secondaryContainer = Color(0xFF16324A),
-    onSecondaryContainer = Color(0xFF7DD3FC),
-    tertiary = Color(0xFF22C55E),
+    secondaryContainer = Color(0xFF162C40),
+    onSecondaryContainer = Color(0xFFD6F0FF),
+    tertiary = XPeachOkDark,
     onTertiary = Color(0xFF052E16),
-    tertiaryContainer = Color(0xFF143823),
-    onTertiaryContainer = Color(0xFF4ADE80),
-    error = Color(0xFFEF4444),
+    tertiaryContainer = XPeachOkSoftDark,
+    onTertiaryContainer = Color(0xFFD1FAE5),
+    error = XPeachDangerDark,
     onError = Color.White,
-    errorContainer = Color(0xFF3F1D1D),
-    onErrorContainer = Color(0xFFF87171),
+    errorContainer = XPeachDangerSoftDark,
+    onErrorContainer = Color(0xFFFEE2E2),
     background = XPeachBgDark,
     onBackground = XPeachTextDark,
     surface = XPeachCardDark,
     onSurface = XPeachTextDark,
     surfaceVariant = XPeachWellDark,
     onSurfaceVariant = XPeachMutedDark,
+    surfaceContainerLow = XPeachSidebarDark,
+    surfaceContainer = XPeachCardDark,
+    surfaceContainerHigh = Color(0xFF212834),
+    surfaceContainerHighest = XPeachElevatedPillDark,
     outline = XPeachBorderStrongDark,
     outlineVariant = XPeachBorderDark
 )
+
+/**
+ * 深浅色自适应语义色彩与表面层级访问器：
+ * 解决深色模式下卡片底色与文字颜色冲突、低对比度课程色块、内嵌组件与卡片同色等问题。
+ */
+object XPeachTheme {
+    val isDark: Boolean
+        @Composable get() = LocalIsDarkTheme.current
+
+    /**
+     * 主色调高亮卡片底色（如待取快递提醒卡、高亮模块卡）：
+     * 深色模式下采用克制的深蓝灰混色表面（而非高饱和刺眼色块），保证白色主标题与灰蓝副标题依然清晰协调。
+     */
+    val primaryAccentCardColor: Color
+        @Composable get() = if (isDark) {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.52f)
+        } else {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.65f)
+        }
+
+    val secondaryAccentCardColor: Color
+        @Composable get() = if (isDark) {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.52f)
+        } else {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.65f)
+        }
+
+    val tertiaryAccentCardColor: Color
+        @Composable get() = if (isDark) {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.55f)
+        } else {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.72f)
+        }
+
+    val errorAccentCardColor: Color
+        @Composable get() = if (isDark) {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.58f)
+        } else {
+            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.75f)
+        }
+
+    /**
+     * 卡片内部二级内嵌容器表面色（在深色模式下始终比一级卡片更亮一级，避免内嵌框显得凹陷发黑）。
+     */
+    val elevatedWellColor: Color
+        @Composable get() = if (isDark) {
+            MaterialTheme.colorScheme.surfaceVariant
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+        }
+
+    /**
+     * 内嵌容器内部的三级条目表面色（如驿站分组内的单个快递条目）。
+     */
+    val nestedItemColor: Color
+        @Composable get() = if (isDark) {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f)
+        }
+
+    val successContainer: Color
+        @Composable get() = if (isDark) XPeachOkSoftDark else Color(0xFFDCFCE7)
+
+    val onSuccessContainer: Color
+        @Composable get() = if (isDark) Color(0xFF6EE7B7) else Color(0xFF15803D)
+
+    val warnContainer: Color
+        @Composable get() = if (isDark) XPeachWarnSoftDark else XPeachWarnSoft
+
+    val onWarnContainer: Color
+        @Composable get() = if (isDark) XPeachWarnDark else Color(0xFFB45309)
+
+    val dangerContainer: Color
+        @Composable get() = if (isDark) XPeachDangerSoftDark else XPeachDangerSoft
+
+    val onDangerContainer: Color
+        @Composable get() = if (isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
+
+    /**
+     * 在深色卡片或徽章背景上具有高对比度的主题主色文字。
+     */
+    val readablePrimary: Color
+        @Composable get() = readableAccent(MaterialTheme.colorScheme.primary)
+
+    /**
+     * 将任意颜色（如课程色、主题预设种子色、自定义色）转换为当前深/浅色背景上高对比度可读的强调色。
+     */
+    @Composable
+    fun readableAccent(rawColor: Color): Color {
+        val dark = isDark
+        return remember(rawColor, dark) {
+            adjustColorForReadability(rawColor, dark)
+        }
+    }
+
+    @Composable
+    fun courseAccent(rawArgb: Long): Color {
+        val dark = isDark
+        return remember(rawArgb, dark) {
+            adjustColorForReadability(Color(rawArgb), dark)
+        }
+    }
+
+    @Composable
+    fun courseContainer(rawArgb: Long, active: Boolean = false): Color {
+        val dark = isDark
+        val baseWell = MaterialTheme.colorScheme.surfaceVariant
+        return remember(rawArgb, dark, active, baseWell) {
+            val raw = Color(rawArgb)
+            if (!dark) {
+                raw.copy(alpha = if (active) 0.14f else 0.10f)
+            } else {
+                val accent = adjustColorForReadability(raw, darkTheme = true)
+                lerp(baseWell, accent, if (active) 0.25f else 0.17f)
+            }
+        }
+    }
+
+    @Composable
+    fun courseBorder(rawArgb: Long, active: Boolean = false): Color {
+        val dark = isDark
+        return remember(rawArgb, dark, active) {
+            val accent = adjustColorForReadability(Color(rawArgb), dark)
+            accent.copy(alpha = if (dark) {
+                if (active) 0.52f else 0.32f
+            } else {
+                if (active) 0.45f else 0.24f
+            })
+        }
+    }
+
+    fun adjustColorForReadability(color: Color, darkTheme: Boolean): Color {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+        val h = hsv[0]
+        val s = hsv[1]
+        val v = hsv[2]
+        return if (darkTheme) {
+            val targetSat = if (s < 0.08f) s else (s * 0.66f).coerceIn(0.30f, 0.64f)
+            val targetVal = v.coerceIn(0.82f, 0.95f)
+            Color(android.graphics.Color.HSVToColor(floatArrayOf(h, targetSat, targetVal)))
+        } else {
+            val targetSat = if (s < 0.08f) s else s.coerceIn(0.45f, 0.92f)
+            val targetVal = v.coerceIn(0.32f, 0.72f)
+            Color(android.graphics.Color.HSVToColor(floatArrayOf(h, targetSat, targetVal)))
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 /**
  * 对齐 Flutter SDK (Material 3 `_CardDefaultsM3` / `_FilterChipDefaultsM3` / `_SegmentedButtonDefaultsM3` /
@@ -551,20 +750,24 @@ fun buildSeedColorScheme(
             onSurface = XPeachTextLight,
             surfaceVariant = wellTint,
             onSurfaceVariant = XPeachMutedLight,
+            surfaceContainerLow = XPeachSidebarLight,
+            surfaceContainer = surfaceTint,
             surfaceContainerHigh = hsvColor(hue, (sat * 0.06f).coerceIn(0.01f, 0.06f), 0.98f),
             surfaceContainerHighest = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.96f),
             outline = borderStrong,
             outlineVariant = borderTint
         )
     } else {
-        val primaryDark = hsvColor(hue, (sat * 0.68f).coerceIn(0.28f, 0.72f), 0.96f)
-        val primaryContainerDark = hsvColor(hue, (sat * 0.62f).coerceIn(0.22f, 0.65f), 0.28f)
+        val primaryDark = hsvColor(hue, (sat * 0.72f).coerceIn(0.36f, 0.74f), 0.88f)
+        val onPrimaryDark = if (primaryDark.luminance() > 0.42f) Color(0xFF09111E) else Color.White
+        val primaryContainerDark = hsvColor(hue, (sat * 0.62f).coerceIn(0.24f, 0.66f), 0.25f)
             .copy(alpha = safeContainerAlpha)
-        val onPrimaryContainerDark = hsvColor(hue, (sat * 0.48f).coerceIn(0.18f, 0.52f), 0.98f)
-        val secondaryDark = hsvColor(hue + 18f, (sat * 0.58f).coerceIn(0.22f, 0.62f), 0.90f)
-        val secondaryContainerDark = hsvColor(hue + 18f, (sat * 0.55f).coerceIn(0.2f, 0.58f), 0.26f)
+        val onPrimaryContainerDark = hsvColor(hue, (sat * 0.25f).coerceIn(0.08f, 0.28f), 0.96f)
+        val secondaryDark = hsvColor(hue + 18f, (sat * 0.60f).coerceIn(0.28f, 0.64f), 0.86f)
+        val onSecondaryDark = if (secondaryDark.luminance() > 0.42f) Color(0xFF09111E) else Color.White
+        val secondaryContainerDark = hsvColor(hue + 18f, (sat * 0.56f).coerceIn(0.22f, 0.58f), 0.24f)
             .copy(alpha = safeContainerAlpha)
-        val onSecondaryContainerDark = hsvColor(hue + 18f, (sat * 0.42f).coerceIn(0.16f, 0.48f), 0.95f)
+        val onSecondaryContainerDark = hsvColor(hue + 18f, (sat * 0.22f).coerceIn(0.08f, 0.25f), 0.95f)
 
         val surfaceDarkTint = if (hasCustomWallpaper) {
             hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.24f), 0.14f).copy(alpha = safeCardAlpha)
@@ -580,29 +783,31 @@ fun buildSeedColorScheme(
 
         darkColorScheme(
             primary = primaryDark,
-            onPrimary = Color(0xFF09111E),
+            onPrimary = onPrimaryDark,
             primaryContainer = primaryContainerDark,
             onPrimaryContainer = onPrimaryContainerDark,
             secondary = secondaryDark,
-            onSecondary = Color(0xFF09111E),
+            onSecondary = onSecondaryDark,
             secondaryContainer = secondaryContainerDark,
             onSecondaryContainer = onSecondaryContainerDark,
-            tertiary = Color(0xFF22C55E),
+            tertiary = Color(0xFF34D399),
             onTertiary = Color(0xFF052E16),
-            tertiaryContainer = Color(0xFF143823).copy(alpha = safeContainerAlpha),
-            onTertiaryContainer = Color(0xFF4ADE80),
-            error = Color(0xFFEF4444),
-            onError = Color.White,
-            errorContainer = Color(0xFF3F1D1D),
-            onErrorContainer = Color(0xFFF87171),
+            tertiaryContainer = Color(0xFF103121).copy(alpha = safeContainerAlpha),
+            onTertiaryContainer = Color(0xFFD1FAE5),
+            error = Color(0xFFF87171),
+            onError = Color(0xFF450A0A),
+            errorContainer = Color(0xFF3B1A1F),
+            onErrorContainer = Color(0xFFFEE2E2),
             background = bgDarkTint,
             onBackground = XPeachTextDark,
             surface = surfaceDarkTint,
             onSurface = XPeachTextDark,
             surfaceVariant = wellDarkTint,
             onSurfaceVariant = XPeachMutedDark,
-            surfaceContainerHigh = Color(0xFF1E222B),
-            surfaceContainerHighest = Color(0xFF252A34),
+            surfaceContainerLow = XPeachSidebarDark,
+            surfaceContainer = surfaceDarkTint,
+            surfaceContainerHigh = Color(0xFF212834),
+            surfaceContainerHighest = XPeachElevatedPillDark,
             outline = XPeachBorderStrongDark,
             outlineVariant = XPeachBorderDark
         )
@@ -660,51 +865,63 @@ fun HautCampusTheme(
         )
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = HautTypography,
-        shapes = HautShapes
-    ) {
-        val activeBmp = wallpaperBitmap
-        if (activeBmp != null) {
-            val baseBackdrop = if (effectiveDark) XPeachBgDark else XPeachBgLight
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(baseBackdrop)
-            ) {
-                Image(
-                    bitmap = activeBmp,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alpha = wallpaperAlpha.coerceIn(0.10f, 1.0f),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (wallpaperBlurDp > 0.2f) {
-                                Modifier.blur(
-                                    radius = wallpaperBlurDp.dp,
-                                    edgeTreatment = BlurredEdgeTreatment.Unbounded
-                                )
-                            } else {
-                                Modifier
-                            }
-                        )
-                )
-                // 自适应护眼柔光层，保证高饱和度壁纸下文字依然清晰易读
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.isAppearanceLightStatusBars = !effectiveDark
+            insetsController.isAppearanceLightNavigationBars = !effectiveDark
+        }
+    }
+
+    CompositionLocalProvider(LocalIsDarkTheme provides effectiveDark) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = HautTypography,
+            shapes = HautShapes
+        ) {
+            val activeBmp = wallpaperBitmap
+            if (activeBmp != null) {
+                val baseBackdrop = if (effectiveDark) XPeachBgDark else XPeachBgLight
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            baseBackdrop.copy(
-                                alpha = (1f - wallpaperAlpha.coerceIn(0.10f, 1.0f)) * 0.45f
+                        .background(baseBackdrop)
+                ) {
+                    Image(
+                        bitmap = activeBmp,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        alpha = wallpaperAlpha.coerceIn(0.10f, 1.0f),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (wallpaperBlurDp > 0.2f) {
+                                    Modifier.blur(
+                                        radius = wallpaperBlurDp.dp,
+                                        edgeTreatment = BlurredEdgeTreatment.Unbounded
+                                    )
+                                } else {
+                                    Modifier
+                                }
                             )
-                        )
-                )
+                    )
+                    // 自适应护眼柔光层，保证高饱和度壁纸下文字依然清晰易读
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                baseBackdrop.copy(
+                                    alpha = (1f - wallpaperAlpha.coerceIn(0.10f, 1.0f)) * 0.45f
+                                )
+                            )
+                    )
+                    content()
+                }
+            } else {
                 content()
             }
-        } else {
-            content()
         }
     }
 }
@@ -714,21 +931,72 @@ fun XPeachCard(
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.colorScheme.surface,
     borderColor: Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
-    cornerRadius: Dp = 16.dp,
-    contentPadding: PaddingValues = PaddingValues(16.dp),
+    cornerRadius: Dp = FlutterM3Tokens.CardCornerRadius,
+    contentPadding: PaddingValues = PaddingValues(FlutterM3Tokens.CardPadding),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val scheme = MaterialTheme.colorScheme
+    val isDark = XPeachTheme.isDark
+    val resolvedContainerColor = when (containerColor) {
+        scheme.primaryContainer -> XPeachTheme.primaryAccentCardColor
+        scheme.secondaryContainer -> XPeachTheme.secondaryAccentCardColor
+        scheme.tertiaryContainer -> XPeachTheme.tertiaryAccentCardColor
+        scheme.errorContainer -> XPeachTheme.errorAccentCardColor
+        else -> containerColor
+    }
+    val defaultBorder = scheme.outlineVariant.copy(alpha = 0.65f)
+    val resolvedBorderColor = if (borderColor == defaultBorder) {
+        if (isDark) {
+            when (containerColor) {
+                scheme.primaryContainer -> scheme.primary.copy(alpha = 0.30f)
+                scheme.secondaryContainer -> scheme.secondary.copy(alpha = 0.30f)
+                scheme.tertiaryContainer -> scheme.tertiary.copy(alpha = 0.30f)
+                scheme.errorContainer -> scheme.error.copy(alpha = 0.32f)
+                else -> scheme.outlineVariant.copy(alpha = 0.36f)
+            }
+        } else {
+            scheme.outlineVariant.copy(alpha = 0.30f)
+        }
+    } else {
+        borderColor
+    }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (onClick != null && isPressed) 0.984f else 1f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
+        label = "cardPressScale"
+    )
     val shape = RoundedCornerShape(cornerRadius)
     Surface(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .clip(shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         shape = shape,
-        color = containerColor,
+        color = resolvedContainerColor,
+        contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = BorderStroke(0.8.dp, borderColor)
+        border = if (resolvedBorderColor != Color.Transparent) {
+            BorderStroke(0.5.dp, resolvedBorderColor)
+        } else {
+            null
+        }
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
@@ -740,23 +1008,107 @@ fun XPeachCard(
 @Composable
 fun XPeachWell(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 12.dp,
+    cornerRadius: Dp = FlutterM3Tokens.WellCornerRadius,
     borderColor: Color = Color.Transparent,
     containerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    contentPadding: PaddingValues = PaddingValues(12.dp),
+    contentPadding: PaddingValues = PaddingValues(FlutterM3Tokens.WellPadding),
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(cornerRadius),
         color = containerColor,
+        contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = if (borderColor != Color.Transparent) BorderStroke(0.8.dp, borderColor) else null
+        border = if (borderColor != Color.Transparent) BorderStroke(0.5.dp, borderColor) else null
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
             content = content
+        )
+    }
+}
+
+@Composable
+fun XPeachInsetDivider(
+    modifier: Modifier = Modifier,
+    startIndent: Dp = 0.dp,
+    verticalPadding: Dp = 8.dp
+) {
+    val isDark = XPeachTheme.isDark
+    HorizontalDivider(
+        modifier = modifier.padding(start = startIndent, top = verticalPadding, bottom = verticalPadding),
+        thickness = 0.5.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.34f else 0.42f)
+    )
+}
+
+@Composable
+fun XPeachSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+        if (trailing != null) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = trailing
+            )
+        }
+    }
+}
+
+@Composable
+fun XPeachStatusDotText(
+    text: String,
+    modifier: Modifier = Modifier,
+    dotColor: Color = XPeachTheme.readablePrimary,
+    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    val resolvedDot = XPeachTheme.readableAccent(dotColor)
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(resolvedDot, CircleShape)
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = textColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -779,7 +1131,7 @@ fun XPeachTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = FlutterM3Tokens.PageHorizontalPadding, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -807,7 +1159,7 @@ fun XPeachTopBar(
                         )
                         if (!badgeText.isNullOrBlank()) {
                             Spacer(modifier = Modifier.width(8.dp))
-                            XPeachStatusBadge(text = badgeText)
+                            XPeachStatusDotText(text = badgeText)
                         }
                     }
                     if (!subtitle.isNullOrBlank()) {
@@ -817,7 +1169,7 @@ fun XPeachTopBar(
                                 text = "$subtitle ▾",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = XPeachTheme.readablePrimary,
                                 maxLines = 1,
                                 softWrap = false,
                                 overflow = TextOverflow.Ellipsis,
@@ -841,7 +1193,7 @@ fun XPeachTopBar(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 content = actions
             )
@@ -856,24 +1208,43 @@ fun XPeachIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = XPeachTheme.isDark
+    val bgColor = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+    val iconTint = if (isDark) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 560f),
+        label = "iconBtnScale"
+    )
     val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
     Box(
         modifier = modifier
             .size(FlutterM3Tokens.IconButtonSize)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface)
-            .border(
-                0.8.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
-                shape
-            )
-            .clickable(onClick = onClick),
+            .background(bgColor)
+            .border(0.5.dp, borderColor, shape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = iconTint,
             modifier = Modifier.size(18.dp)
         )
     }
@@ -885,18 +1256,32 @@ fun XPeachIconButton(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val isDark = XPeachTheme.isDark
+    val bgColor = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 560f),
+        label = "iconBtnCustomScale"
+    )
     val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
     Box(
         modifier = modifier
             .size(FlutterM3Tokens.IconButtonSize)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface)
-            .border(
-                0.8.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
-                shape
-            )
-            .clickable(onClick = onClick),
+            .background(bgColor)
+            .border(0.5.dp, borderColor, shape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         content()
@@ -912,36 +1297,74 @@ fun XPeachFilterPill(
     leadingIcon: ImageVector? = null,
     compact: Boolean = false
 ) {
+    val isDark = XPeachTheme.isDark
+    val unselectedBg = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+    }
+    val selectedBg = if (isDark) {
+        XPeachTheme.readablePrimary.copy(alpha = 0.20f)
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
+    val selectedFg = XPeachTheme.readablePrimary
+    val unselectedFg = if (isDark) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     val bg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        targetValue = if (selected) selectedBg else unselectedBg,
         animationSpec = tween(180),
         label = "pillBg"
     )
     val border by animateColorAsState(
         targetValue = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
+            XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.32f)
         } else {
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+            Color.Transparent
         },
         animationSpec = tween(180),
         label = "pillBorder"
     )
     val fg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (selected) selectedFg else unselectedFg,
         animationSpec = tween(180),
         label = "pillFg"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.955f else 1f,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = 540f),
+        label = "pillScale"
     )
     val pillShape = RoundedCornerShape(999.dp)
 
     Row(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .defaultMinSize(
                 minHeight = if (compact) FlutterM3Tokens.CompactFilterPillMinHeight else FlutterM3Tokens.FilterPillMinHeight
             )
             .clip(pillShape)
             .background(bg)
-            .border(0.8.dp, border, pillShape)
-            .clickable(onClick = onClick)
+            .then(
+                if (border != Color.Transparent) {
+                    Modifier.border(0.75.dp, border, pillShape)
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(
                 horizontal = if (compact) 10.dp else 12.dp,
                 vertical = if (compact) 4.dp else 6.dp
@@ -979,36 +1402,74 @@ fun XPeachFilterPill(
     compact: Boolean = false,
     leadingIcon: @Composable () -> Unit
 ) {
+    val isDark = XPeachTheme.isDark
+    val unselectedBg = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
+    }
+    val selectedBg = if (isDark) {
+        XPeachTheme.readablePrimary.copy(alpha = 0.20f)
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
+    val selectedFg = XPeachTheme.readablePrimary
+    val unselectedFg = if (isDark) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     val bg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        targetValue = if (selected) selectedBg else unselectedBg,
         animationSpec = tween(180),
         label = "pillBgCustom"
     )
     val border by animateColorAsState(
         targetValue = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
+            XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.32f)
         } else {
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+            Color.Transparent
         },
         animationSpec = tween(180),
         label = "pillBorderCustom"
     )
     val fg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (selected) selectedFg else unselectedFg,
         animationSpec = tween(180),
         label = "pillFgCustom"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.955f else 1f,
+        animationSpec = spring(dampingRatio = 0.68f, stiffness = 540f),
+        label = "pillCustomScale"
     )
     val pillShape = RoundedCornerShape(999.dp)
 
     Row(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .defaultMinSize(
                 minHeight = if (compact) FlutterM3Tokens.CompactFilterPillMinHeight else FlutterM3Tokens.FilterPillMinHeight
             )
             .clip(pillShape)
             .background(bg)
-            .border(0.8.dp, border, pillShape)
-            .clickable(onClick = onClick)
+            .then(
+                if (border != Color.Transparent) {
+                    Modifier.border(0.75.dp, border, pillShape)
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(
                 horizontal = if (compact) 10.dp else 12.dp,
                 vertical = if (compact) 4.dp else 6.dp
@@ -1038,64 +1499,115 @@ fun <T> XPeachSegmentedTabs(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = XPeachTheme.isDark
+    val trackBg = if (isDark) Color(0xFF10151D) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    val selectedThumbBg = if (isDark) {
+        MaterialTheme.colorScheme.surfaceContainerHighest
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val selectedThumbBorder = if (isDark) {
+        XPeachTheme.readablePrimary.copy(alpha = 0.30f)
+    } else {
+        Color.Black.copy(alpha = 0.04f)
+    }
     val containerShape = RoundedCornerShape(FlutterM3Tokens.SegmentedContainerRadius)
     val thumbShape = RoundedCornerShape(FlutterM3Tokens.SegmentedThumbRadius)
-    Row(
+    val count = options.size.coerceAtLeast(1)
+    val selectedIdx = options.indexOf(selectedOption).coerceIn(0, count - 1)
+    val animatedIndex by animateFloatAsState(
+        targetValue = selectedIdx.toFloat(),
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+        label = "segSlidingThumbOffset"
+    )
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = FlutterM3Tokens.SegmentedControlMinHeight)
+            .height(FlutterM3Tokens.SegmentedControlMinHeight)
             .clip(containerShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .background(trackBg)
+            .padding(3.dp)
     ) {
-        for (option in options) {
-            val isSelected = option == selectedOption
-            val tabBg by animateColorAsState(
-                targetValue = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
-                animationSpec = tween(180),
-                label = "segTabBg"
-            )
-            val tabFg by animateColorAsState(
-                targetValue = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                animationSpec = tween(180),
-                label = "segTabFg"
-            )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .defaultMinSize(minHeight = 30.dp)
-                    .clip(thumbShape)
-                    .background(tabBg)
-                    .then(
-                        if (isSelected) {
-                            Modifier.border(
-                                0.6.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                                thumbShape
-                            )
+        val slotWidth = maxWidth / count
+        val thumbOffsetX = slotWidth * animatedIndex
+
+        // 1. 物理弹簧滑动胶囊滑块（CupertinoSlidingSegmentedControl 同款滑动阻尼）
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffsetX)
+                .width(slotWidth)
+                .fillMaxHeight()
+                .then(
+                    if (!isDark) {
+                        Modifier.shadow(
+                            elevation = 2.dp,
+                            shape = thumbShape,
+                            ambientColor = Color.Black.copy(alpha = 0.10f),
+                            spotColor = Color.Black.copy(alpha = 0.12f)
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .clip(thumbShape)
+                .background(selectedThumbBg)
+                .border(0.5.dp, selectedThumbBorder, thumbShape)
+        )
+
+        // 2. 前景标签行与细微分隔线
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            options.forEachIndexed { idx, option ->
+                val isSelected = idx == selectedIdx
+                val interactionSource = remember { MutableInteractionSource() }
+                val isPressed by interactionSource.collectIsPressedAsState()
+                val labelScale by animateFloatAsState(
+                    targetValue = if (isPressed) 0.95f else 1f,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 520f),
+                    label = "segLabelScale_$idx"
+                )
+                val tabFg by animateColorAsState(
+                    targetValue = if (isSelected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isPressed) 0.65f else 0.92f)
+                    },
+                    animationSpec = tween(160),
+                    label = "segTabFg_$idx"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(thumbShape)
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null
+                        ) { onSelect(option) }
+                        .padding(horizontal = if (options.size >= 4) 3.dp else 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = labelProvider(option),
+                        style = if (options.size >= 3) {
+                            MaterialTheme.typography.labelMedium
                         } else {
-                            Modifier
+                            MaterialTheme.typography.labelLarge
+                        },
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = tabFg,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = labelScale
+                            scaleY = labelScale
                         }
                     )
-                    .clickable { onSelect(option) }
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = labelProvider(option),
-                    style = if (options.size >= 3) {
-                        MaterialTheme.typography.labelMedium
-                    } else {
-                        MaterialTheme.typography.labelLarge
-                    },
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = tabFg,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
-                )
+                }
             }
         }
     }
@@ -1126,15 +1638,37 @@ fun XPeachStatusBadge(
     contentColor: Color = MaterialTheme.colorScheme.primary,
     borderColor: Color = Color.Transparent
 ) {
+    val scheme = MaterialTheme.colorScheme
+    val isDark = XPeachTheme.isDark
+    val resolvedContentColor = when (contentColor) {
+        scheme.onPrimary,
+        scheme.onSecondary,
+        scheme.onTertiary,
+        scheme.onError,
+        scheme.onSurface,
+        scheme.onSurfaceVariant,
+        XPeachTheme.onSuccessContainer,
+        XPeachTheme.onWarnContainer,
+        XPeachTheme.onDangerContainer,
+        Color.White -> contentColor
+        scheme.primary -> XPeachTheme.readablePrimary
+        else -> XPeachTheme.readableAccent(contentColor)
+    }
+    val resolvedContainerColor = when {
+        isDark && containerColor == scheme.primaryContainer -> XPeachTheme.readablePrimary.copy(alpha = 0.16f)
+        isDark && containerColor == scheme.secondaryContainer -> XPeachTheme.readableAccent(scheme.secondary).copy(alpha = 0.16f)
+        isDark && containerColor == scheme.tertiaryContainer -> XPeachTheme.readableAccent(scheme.tertiary).copy(alpha = 0.16f)
+        else -> containerColor
+    }
     val badgeShape = RoundedCornerShape(999.dp)
     Box(
         modifier = modifier
             .defaultMinSize(minHeight = FlutterM3Tokens.BadgeMinHeight)
             .clip(badgeShape)
-            .background(containerColor)
+            .background(resolvedContainerColor)
             .then(
                 if (borderColor != Color.Transparent) {
-                    Modifier.border(0.8.dp, borderColor, badgeShape)
+                    Modifier.border(0.5.dp, borderColor, badgeShape)
                 } else Modifier
             )
             .padding(horizontal = 9.dp, vertical = 3.dp),
@@ -1144,7 +1678,7 @@ fun XPeachStatusBadge(
             text = text,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
-            color = contentColor,
+            color = resolvedContentColor,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis

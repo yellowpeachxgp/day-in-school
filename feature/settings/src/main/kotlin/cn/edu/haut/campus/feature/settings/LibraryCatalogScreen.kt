@@ -98,7 +98,10 @@ import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import kotlinx.coroutines.Job
@@ -285,7 +288,7 @@ fun LibraryCatalogScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 20.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
@@ -330,13 +333,13 @@ fun LibraryCatalogScreen(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 )
                 Button(
                     enabled = keywordInput.isNotBlank() && !isSearching,
                     onClick = { executeSearch(keywordInput, selectedField, page = 1) },
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
@@ -355,6 +358,7 @@ fun LibraryCatalogScreen(
                     XPeachFilterPill(
                         label = field.label,
                         selected = selectedField == field,
+                        compact = true,
                         onClick = {
                             selectedField = field
                             if (keywordInput.isNotBlank() && hasSearched) {
@@ -444,7 +448,7 @@ fun LibraryCatalogScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     val detailToShow = activeBookDetail
@@ -496,13 +500,13 @@ fun LibraryCatalogScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         onClick = { executeSearch(keywordInput, selectedField, page = 1) },
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Text("重试检索")
                                     }
                                     FilledTonalButton(
                                         onClick = { showOfficialWebMode = true },
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Text("打开官方网页视图")
                                     }
@@ -539,7 +543,7 @@ fun LibraryCatalogScreen(
                                     Text(
                                         text = "点击查看索书号与书库位置",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = XPeachTheme.readablePrimary
                                     )
                                 }
 
@@ -557,7 +561,7 @@ fun LibraryCatalogScreen(
                                             executeSearch(activeQuery, selectedField, page = currentPage + 1)
                                         },
                                         modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(10.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
                                         if (isLoadingMore) {
                                             CircularProgressIndicator(
@@ -699,12 +703,12 @@ private fun CatalogBookItemCard(
                         XPeachStatusBadge(
                             text = book.resources,
                             containerColor = if (hasAvailableCopies) {
-                                Color(0xFFDCFCE7)
+                                XPeachTheme.successContainer
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
                             },
                             contentColor = if (hasAvailableCopies) {
-                                Color(0xFF15803D)
+                                XPeachTheme.onSuccessContainer
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             }
@@ -737,7 +741,7 @@ private fun CatalogBookDetailView(
                 Text(
                     text = "书目与馆藏明细",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
+                    color = XPeachTheme.readablePrimary
                 )
                 if (isRefreshing) {
                     CircularProgressIndicator(
@@ -748,7 +752,7 @@ private fun CatalogBookDetailView(
             }
             OutlinedButton(
                 onClick = onBackToResults,
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text("返回列表")
             }
@@ -783,13 +787,14 @@ private fun CatalogBookDetailView(
                     val avail = detail.availableHoldingsCount
                     XPeachStatusBadge(
                         text = "可借 $avail / 馆藏 ${detail.totalHoldingsCount} 册",
-                        containerColor = if (avail > 0) Color(0xFFDCFCE7) else MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = if (avail > 0) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
+                        containerColor = if (avail > 0) XPeachTheme.successContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (avail > 0) XPeachTheme.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (callNo.isNotBlank()) {
                         XPeachFilterPill(
                             label = "复制索书号",
                             selected = false,
+                            compact = true,
                             leadingIcon = Icons.Default.ContentCopy,
                             onClick = { onCopyCallNo(callNo) }
                         )
@@ -815,43 +820,43 @@ private fun CatalogBookDetailView(
                 )
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (h in detail.holdings) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                detail.holdings.forEachIndexed { idx, h ->
                     val isAvail = h.isAvailable
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = h.location,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f).padding(end = 8.dp)
-                            )
-                            XPeachStatusBadge(
-                                text = h.status,
-                                containerColor = if (isAvail) Color(0xFFDCFCE7) else MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = if (isAvail) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (h.lines.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = h.lines.joinToString(" · "),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (h.shelf.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = h.shelf,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    if (idx > 0) {
+                        XPeachInsetDivider(verticalPadding = 8.dp)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = h.location,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        )
+                        XPeachStatusDotText(
+                            text = h.status,
+                            dotColor = if (isAvail) Color(0xFF10B981) else MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    if (h.lines.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = h.lines.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (h.shelf.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = h.shelf,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary
+                        )
                     }
                 }
             }

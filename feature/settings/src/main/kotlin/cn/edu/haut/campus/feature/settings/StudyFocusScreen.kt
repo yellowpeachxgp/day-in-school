@@ -50,7 +50,10 @@ import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
@@ -185,18 +188,17 @@ fun StudyFocusScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (statusBanner != null) {
                 XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
+                    containerColor = XPeachTheme.secondaryAccentCardColor
                 ) {
                     Text(
                         text = statusBanner!!,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -204,8 +206,7 @@ fun StudyFocusScreen(
             // 1. 课前 20 分钟非强制提示卡（仅在接近上课时温和提示，不禁用开始按钮）
             if (preClassAdvisory != null) {
                 XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                    borderColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.4f)
+                    containerColor = XPeachTheme.tertiaryAccentCardColor
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -216,7 +217,7 @@ fun StudyFocusScreen(
                             text = "课前时间提醒",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         val recMin = preClassAdvisory.recommendedMaxFocusMinutes
                         if (recMin != null) {
@@ -235,7 +236,7 @@ fun StudyFocusScreen(
                     Text(
                         text = preClassAdvisory.message,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -258,12 +259,13 @@ fun StudyFocusScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        XPeachStatusBadge(
+                        XPeachStatusDotText(
                             text = if (running.scheduleMode == cn.edu.haut.campus.core.model.ReminderAccuracyMode.EXACT) {
                                 "精确闹钟"
                             } else {
                                 "省电闹钟"
-                            }
+                            },
+                            dotColor = XPeachTheme.readablePrimary
                         )
                     }
 
@@ -271,10 +273,11 @@ fun StudyFocusScreen(
 
                     Text(
                         text = "%02d:%02d".format(mm, ss),
-                        fontSize = 48.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.displayMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        color = XPeachTheme.readablePrimary,
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
 
@@ -291,7 +294,7 @@ fun StudyFocusScreen(
                                     statusBanner = "已结束本次自习专注。"
                                 }
                             },
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text("结束专注")
@@ -308,7 +311,10 @@ fun StudyFocusScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        XPeachStatusBadge(text = "今日已专注 $todayCompletedMinutes 分钟")
+                        XPeachStatusDotText(
+                            text = "今日已专注 $todayCompletedMinutes 分钟",
+                            dotColor = XPeachTheme.readablePrimary
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -343,7 +349,7 @@ fun StudyFocusScreen(
                             onValueChange = { customMinutesInput = it },
                             label = { Text("自定义时长 (1–180 分钟)") },
                             singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         )
                         Button(
@@ -358,7 +364,7 @@ fun StudyFocusScreen(
                                     statusBanner = "已开启 $mins 分钟自习专注，到点将发送系统通知。"
                                 }
                             },
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("开始专注")
                         }
@@ -387,7 +393,7 @@ fun StudyFocusScreen(
                             )
                             statusBanner = "已注册 10 秒后测试闹钟，可立即切回桌面等待通知。"
                         },
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("10 秒后台测试")
                     }
@@ -435,29 +441,30 @@ fun StudyFocusScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (item in completedSessions.take(10)) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        completedSessions.take(10).forEachIndexed { idx, item ->
                             val endMs = item.completedAtEpochMs ?: item.expectedEndAtEpochMs
                             val timeText = Instant.ofEpochMilli(endMs)
                                 .atZone(HAUT_ZONE_ID)
                                 .format(FOCUS_DATE_TIME_FMT)
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "完成 ${item.durationMinutes} 分钟自习专注",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = timeText,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 8.dp)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "完成 ${item.durationMinutes} 分钟自习专注",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = timeText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }

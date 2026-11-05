@@ -84,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -104,7 +105,10 @@ import cn.edu.haut.campus.core.designsystem.WallpaperThemeEngine
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
@@ -448,7 +452,7 @@ fun SettingsScreen(
             ) {
                 feedbackText?.let { msg ->
                     XPeachCard(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        containerColor = XPeachTheme.primaryAccentCardColor,
                         borderColor = Color.Transparent
                     ) {
                         Row(
@@ -459,7 +463,7 @@ fun SettingsScreen(
                             Text(
                                 text = msg,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
                             )
                             TextButton(onClick = { feedbackText = null }) {
@@ -504,16 +508,17 @@ fun SettingsScreen(
                 val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
                 val extensionPlugins by repository.installedExtensionPluginsFlow.collectAsState(initial = emptyList())
 
-                XPeachCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onNavigateToXpeachCloud
-                ) {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     val peachFormatted = cloudBinding?.let {
                         "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
                     }
                     val enabledPluginCount = extensionPlugins.count { it.status == "ENABLED" }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToXpeachCloud)
+                            .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -537,28 +542,28 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        XPeachStatusBadge(
-                            text = if (peachFormatted != null) "${peachFormatted} 🍑" else "未登录",
-                            containerColor = if (cloudBinding != null) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            contentColor = if (cloudBinding != null) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
+                        if (peachFormatted != null) {
+                            XPeachStatusBadge(
+                                text = "${peachFormatted} 🍑",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = XPeachTheme.readablePrimary
+                            )
+                        } else {
+                            XPeachStatusDotText(
+                                text = "未登录",
+                                dotColor = MaterialTheme.colorScheme.outline
+                            )
+                        }
                     }
-                }
 
-                XPeachCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onNavigateToSchoolCenter
-                ) {
+                    XPeachInsetDivider(verticalPadding = 10.dp)
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToSchoolCenter)
+                            .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -578,21 +583,22 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        XPeachStatusBadge(
-                            text = "切换学校",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
+                        Text(
+                            text = "切换 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
                         )
                     }
-                }
 
-                XPeachCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onNavigateToParcelHub
-                ) {
+                    XPeachInsetDivider(verticalPadding = 10.dp)
+
                     val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToParcelHub)
+                            .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -609,11 +615,18 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        XPeachStatusBadge(
-                            text = if (waitingCount > 0) "待取 $waitingCount 件" else "共 ${parcelItems.size} 件",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
+                        if (waitingCount > 0) {
+                            XPeachStatusBadge(
+                                text = "待取 $waitingCount 件",
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            XPeachStatusDotText(
+                                text = "共 ${parcelItems.size} 件",
+                                dotColor = XPeachTheme.readablePrimary
+                            )
+                        }
                     }
                 }
 
@@ -754,10 +767,9 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        XPeachStatusBadge(
-                            text = "${(weekProgress * 100).toInt()}%",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
+                        XPeachStatusDotText(
+                            text = "进度 ${(weekProgress * 100).toInt()}%",
+                            dotColor = XPeachTheme.readablePrimary
                         )
                     }
 
@@ -769,7 +781,7 @@ fun SettingsScreen(
                             .fillMaxWidth()
                             .height(7.dp)
                             .clip(CircleShape),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = XPeachTheme.readablePrimary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
 
@@ -794,6 +806,7 @@ fun SettingsScreen(
                                 XPeachFilterPill(
                                     label = "${t.displayName} ($count)",
                                     selected = t.id == currentTerm?.id,
+                                    compact = true,
                                     onClick = {
                                         scope.launch {
                                             repository.selectCurrentTerm(t.id)
@@ -846,105 +859,102 @@ fun SettingsScreen(
 
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Text("常用服务", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (isHautCampus) XPeachWell(
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (isHautCampus) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
                                 .clickable(onClick = onNavigateToElectricity)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "绑定宿舍 · $roomSummaryTitle",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = roomSummaryValue,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "水电详情",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    text = "绑定宿舍 · $roomSummaryTitle",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = roomSummaryValue,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            Text(
+                                text = "水电详情 ›",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = XPeachTheme.readablePrimary
+                            )
                         }
+                        XPeachInsetDivider(verticalPadding = 8.dp)
+                    }
 
-                        XPeachWell(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(onClick = onNavigateToFocus)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (activeFocusSession != null) {
-                                            "自习专注 · 进行中（${activeFocusSession?.durationMinutes}分钟）"
-                                        } else {
-                                            "自习专注记录"
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = "今日已专注 ${todayFocusMinutes} 分钟 · 累计 ${totalFocusMinutes} 分钟（${completedFocusSessions.size} 次）",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = "进入计时",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToFocus)
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (activeFocusSession != null) {
+                                    "自习专注 · 进行中（${activeFocusSession?.durationMinutes}分钟）"
+                                } else {
+                                    "自习专注记录"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "今日已专注 ${todayFocusMinutes} 分钟 · 累计 ${totalFocusMinutes} 分钟（${completedFocusSessions.size} 次）",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+                        Text(
+                            text = "进入计时 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
 
-                        XPeachWell(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showImportHistoryDialog = true }
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "教务同步",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = if (latestAudit != null) {
-                                            "最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)} · 已存 ${courses.size} 门课 / ${attempts.size} 条成绩"
-                                        } else {
-                                            "尚未同步教务数据 · 点击查看记录"
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    text = "同步记录",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { showImportHistoryDialog = true }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "教务同步",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (latestAudit != null) {
+                                    "最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)} · 已存 ${courses.size} 门课 / ${attempts.size} 条成绩"
+                                } else {
+                                    "尚未同步教务数据 · 点击查看记录"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+                        Text(
+                            text = "同步记录 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
                     }
                 }
             } else {
@@ -1005,6 +1015,7 @@ fun SettingsScreen(
                             XPeachFilterPill(
                                 label = "${t.displayName} ($count)",
                                 selected = t.id == currentTerm?.id,
+                                compact = true,
                                 onClick = {
                                     scope.launch {
                                         repository.selectCurrentTerm(t.id)
@@ -1031,20 +1042,23 @@ fun SettingsScreen(
                         XPeachFilterPill(
                             label = "+ 添加",
                             selected = false,
+                            compact = true,
                             onClick = { showAddCalendarOverrideDialog = true }
                         )
                     }
 
                     if (calendarOverrides.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            for (ov in calendarOverrides.sortedBy { it.date }) {
+                        XPeachInsetDivider(verticalPadding = 8.dp)
+                        val sortedOverrides = calendarOverrides.sortedBy { it.date }
+                        Column {
+                            sortedOverrides.forEachIndexed { index, ov ->
+                                if (index > 0) {
+                                    XPeachInsetDivider(verticalPadding = 6.dp)
+                                }
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        .padding(vertical = 2.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1091,34 +1105,7 @@ fun SettingsScreen(
                 // 6. 桌面小组件中心
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Text("桌面小组件", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    for (term in terms) {
-                        XPeachFilterPill(
-                            label = term.displayName,
-                            selected = term.id == currentTerm?.id,
-                            onClick = {
-                                scope.launch {
-                                    repository.selectCurrentTerm(term.id)
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                    feedbackText = "已切换至 ${term.displayName}"
-                                }
-                            }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider(
-                    thickness = 0.6.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1198,21 +1185,21 @@ fun SettingsScreen(
                         onClick = {
                             requestPin("2×2 下一节", "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider")
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 2×2 下一节")
+                        Text("添加 2×2 下一节", maxLines = 1, softWrap = false)
                     }
                     OutlinedButton(
                         onClick = {
                             requestPin("4×2 今日课程", "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider")
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×2 今日")
+                        Text("添加 4×2 今日", maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -1226,21 +1213,21 @@ fun SettingsScreen(
                         onClick = {
                             requestPin("4×4 时间轴", "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider")
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×4 时间轴")
+                        Text("添加 4×4 时间轴", maxLines = 1, softWrap = false)
                     }
                     OutlinedButton(
                         onClick = {
                             requestPin("4×4 周课表", "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider")
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×4 周课表")
+                        Text("添加 4×4 周课表", maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -1337,22 +1324,17 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    XPeachStatusBadge(
+                    XPeachStatusDotText(
                         text = when {
                             !rCfg.enabled -> "已关闭"
                             !reminderPermSnapshot.canPostNotifications -> "无通知权限"
                             reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred -> "精确闹钟"
                             else -> "普通提醒"
                         },
-                        containerColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
-                            MaterialTheme.colorScheme.primaryContainer
+                        dotColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
+                            XPeachTheme.readablePrimary
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                        contentColor = if (rCfg.enabled && reminderPermSnapshot.canPostNotifications) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            MaterialTheme.colorScheme.outline
                         }
                     )
                 }
@@ -1391,8 +1373,11 @@ fun SettingsScreen(
 
                 // 权限状态提示与引导
                 if (rCfg.enabled && (!reminderPermSnapshot.canPostNotifications || (!reminderPermSnapshot.exactAlarmAllowed && rCfg.preciseReminderPreferred))) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    XPeachInsetDivider(verticalPadding = 6.dp)
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         if (!reminderPermSnapshot.canPostNotifications) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1463,6 +1448,7 @@ fun SettingsScreen(
                         XPeachFilterPill(
                             label = "${lead}分钟",
                             selected = rCfg.classLeadMinutes == lead,
+                            compact = true,
                             onClick = {
                                 scope.launch {
                                     repository.updateReminderGlobalConfig {
@@ -1493,6 +1479,7 @@ fun SettingsScreen(
                             XPeachFilterPill(
                                 label = "${maxCount}次",
                                 selected = rCfg.classSnoozeMaxCount == maxCount,
+                                compact = true,
                                 onClick = {
                                     scope.launch {
                                         repository.updateReminderGlobalConfig {
@@ -1602,14 +1589,17 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                XPeachInsetDivider(verticalPadding = 8.dp)
 
-                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                     Text(
                         text = prefs.lastReminderReconcileSummary
                             ?: "待触发提醒：${activeReminderTasks.size} 项",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = XPeachTheme.readablePrimary,
                         fontWeight = FontWeight.Medium
                     )
                     if (activeReminderTasks.isNotEmpty()) {
@@ -1641,7 +1631,7 @@ fun SettingsScreen(
                                 feedbackText = "已刷新提醒：共安排 ${report.activeScheduledCount} 项"
                             }
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1665,7 +1655,7 @@ fun SettingsScreen(
                                 }
                             }
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1690,15 +1680,17 @@ fun SettingsScreen(
                         }
                     }
                     AnimatedVisibility(visible = expandReminderDiagnostics) {
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                for (logLine in prefs.reminderDiagnosticLogs.take(8)) {
-                                    Text(
-                                        text = logLine,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            XPeachInsetDivider(verticalPadding = 4.dp)
+                            for (logLine in prefs.reminderDiagnosticLogs.take(8)) {
+                                Text(
+                                    text = logLine,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -1928,7 +1920,7 @@ fun SettingsScreen(
                                 onBack?.invoke()
                             }
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1940,7 +1932,7 @@ fun SettingsScreen(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
                         ),
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1973,7 +1965,12 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Text(
                             text = "版本更新",
                             style = MaterialTheme.typography.titleMedium
@@ -1984,23 +1981,18 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    XPeachStatusBadge(
-                        text = if (releaseInfoState?.hasNewerVersion == true) {
-                            "有新版 ${releaseInfoState?.tagName}"
-                        } else {
-                            "v$currentInstalledVersion"
-                        },
-                        containerColor = if (releaseInfoState?.hasNewerVersion == true) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        },
-                        contentColor = if (releaseInfoState?.hasNewerVersion == true) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
+                    if (releaseInfoState?.hasNewerVersion == true) {
+                        XPeachStatusBadge(
+                            text = "有新版 ${releaseInfoState?.tagName}",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = XPeachTheme.readablePrimary
+                        )
+                    } else {
+                        XPeachStatusDotText(
+                            text = "v$currentInstalledVersion",
+                            dotColor = XPeachTheme.readablePrimary
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -2026,9 +2018,12 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                XPeachInsetDivider(verticalPadding = 8.dp)
 
-                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     Text(
                         text = releaseStatusMessage
                             ?: if (isCheckingRelease) "正在通过「${prefs.networkProxyConfig.statusSummaryLabel()}」检查新版本..."
@@ -2036,21 +2031,19 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Medium,
                         color = if (releaseInfoState?.hasNewerVersion == true) {
-                            MaterialTheme.colorScheme.primary
+                            XPeachTheme.readablePrimary
                         } else {
                             MaterialTheme.colorScheme.onSurface
                         }
                     )
 
                     releaseInfoState?.let { info ->
-                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "最新版本：${info.releaseTitle} (${info.tagName}) · 通道：${info.resolvedViaRoute}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (info.changelog.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = info.changelog.take(240),
                                 style = MaterialTheme.typography.bodySmall,
@@ -2062,14 +2055,14 @@ fun SettingsScreen(
                     }
 
                     if (isDownloadingApk) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         LinearProgressIndicator(
                             progress = { apkDownloadProgress.coerceIn(0f, 1f) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(6.dp)
                                 .clip(CircleShape),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = XPeachTheme.readablePrimary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     }
@@ -2104,7 +2097,7 @@ fun SettingsScreen(
                                 }
                             }
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -2179,7 +2172,7 @@ fun SettingsScreen(
                                 }
                             }
                         },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -2219,25 +2212,29 @@ fun SettingsScreen(
                         value = nameInput,
                         onValueChange = { nameInput = it },
                         label = { Text("姓名 / 昵称") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     OutlinedTextField(
                         value = schoolIdInput,
                         onValueChange = { schoolIdInput = it },
                         label = { Text("学号") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     OutlinedTextField(
                         value = majorInput,
                         onValueChange = { majorInput = it },
                         label = { Text("学院 / 专业") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     OutlinedTextField(
                         value = yearInput,
                         onValueChange = { yearInput = it },
                         label = { Text("入学年份 (如 2023)") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                 }
             },
@@ -2258,7 +2255,7 @@ fun SettingsScreen(
                             feedbackText = "已保存个人信息。"
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -2287,13 +2284,15 @@ fun SettingsScreen(
                         value = dateIso,
                         onValueChange = { dateIso = it },
                         label = { Text("目标日期 (YYYY-MM-DD)") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     OutlinedTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
                         label = { Text("事由名称 (如 校运会停课 / 国庆调休)") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2315,7 +2314,8 @@ fun SettingsScreen(
                             value = followDateIso,
                             onValueChange = { followDateIso = it },
                             label = { Text("按哪一天的课表上课 (YYYY-MM-DD)") },
-                            singleLine = true
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
                         )
                     }
                 }
@@ -2347,7 +2347,7 @@ fun SettingsScreen(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -2373,9 +2373,18 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (audit in importAudits.take(8)) {
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    val audits = importAudits.take(8)
+                    Column {
+                        audits.forEachIndexed { index, audit ->
+                            if (index > 0) {
+                                XPeachInsetDivider(verticalPadding = 6.dp)
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
                                     text = "${AUDIT_TIME_FMT.format(audit.importedAt)} · ${audit.termId}",
                                     style = MaterialTheme.typography.labelMedium,
@@ -2414,13 +2423,15 @@ fun SettingsScreen(
                         value = startIso,
                         onValueChange = { startIso = it },
                         label = { Text("开始 (HH:mm)") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     OutlinedTextField(
                         value = endIso,
                         onValueChange = { endIso = it },
                         label = { Text("结束 (HH:mm)") },
-                        singleLine = true
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
                     )
                 }
             },
@@ -2443,7 +2454,7 @@ fun SettingsScreen(
                         }
                         editingPeriod = null
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -2479,7 +2490,7 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
                     ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("确认清除")
                 }
@@ -2517,6 +2528,7 @@ fun SettingsScreen(
                         onValueChange = { channelUrlInput = it },
                         label = { Text("QQ 频道链接") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2530,7 +2542,7 @@ fun SettingsScreen(
                             feedbackText = "已更新「${channelToEdit.title}」链接。"
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -2568,6 +2580,7 @@ fun SettingsScreen(
                         onValueChange = { groupNoInput = it },
                         label = { Text("QQ 群号") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2581,7 +2594,7 @@ fun SettingsScreen(
                             feedbackText = "已更新「${clubToEdit.name}」群号为 ${groupNoInput.trim()}。"
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -2693,7 +2706,7 @@ private fun StudentDigitalIdCard(
                         .background(MaterialTheme.colorScheme.primaryContainer)
                         .border(
                             width = 1.dp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                            color = XPeachTheme.readablePrimary.copy(alpha = 0.25f),
                             shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
@@ -2702,7 +2715,7 @@ private fun StudentDigitalIdCard(
                         text = displayName.take(1),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                 }
 
@@ -2717,17 +2730,12 @@ private fun StudentDigitalIdCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        XPeachStatusBadge(
+                        XPeachStatusDotText(
                             text = if (profile != null) "已绑定" else "未同步",
-                            containerColor = if (profile != null) {
-                                MaterialTheme.colorScheme.primaryContainer
+                            dotColor = if (profile != null) {
+                                XPeachTheme.readablePrimary
                             } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            contentColor = if (profile != null) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                MaterialTheme.colorScheme.outline
                             }
                         )
                     }
@@ -2806,7 +2814,7 @@ private fun ProfileMetricItem(
             text = value,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            color = if (highlight) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             softWrap = false
         )
@@ -2890,10 +2898,9 @@ private fun ThemePaletteAndCardLayoutSection(
                 prefs.themePaletteKey == "CUSTOM" -> customHexText
                 else -> PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "工大蓝"
             }
-            XPeachStatusBadge(
+            XPeachStatusDotText(
                 text = currentPaletteLabel,
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary
+                dotColor = XPeachTheme.readablePrimary
             )
         }
 
@@ -2919,16 +2926,17 @@ private fun ThemePaletteAndCardLayoutSection(
                     XPeachFilterPill(
                         label = modeLabel,
                         selected = prefs.themeMode == modeKey,
+                        compact = true,
                         onClick = { onSelectThemeMode(modeKey) }
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        XPeachInsetDivider(verticalPadding = 10.dp)
 
         // 1.5 自定义背景图片上传、自动取色与模糊度/透明度控制
-        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2963,12 +2971,14 @@ private fun ThemePaletteAndCardLayoutSection(
                         XPeachFilterPill(
                             label = "移除",
                             selected = false,
+                            compact = true,
                             onClick = onClearWallpaper
                         )
                     }
                     XPeachFilterPill(
                         label = if (prefs.customWallpaperPath.isNullOrBlank()) "上传背景图" else "更换图片",
                         selected = !prefs.customWallpaperPath.isNullOrBlank(),
+                        compact = true,
                         onClick = onPickWallpaperImage
                     )
                 }
@@ -2995,16 +3005,18 @@ private fun ThemePaletteAndCardLayoutSection(
                             val isSelectedSwatch = prefs.themePaletteKey == "CUSTOM" &&
                                 (prefs.customThemeSeedArgb and 0xFFFFFFL) == (swatchArgb and 0xFFFFFFL)
                             val swatchHex = String.format("#%06X", 0xFFFFFF and swatchArgb.toInt())
+                            val rawSwatchColor = Color(swatchArgb)
+                            val readableSwatch = XPeachTheme.readableAccent(rawSwatchColor)
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(
-                                        if (isSelectedSwatch) Color(swatchArgb).copy(alpha = 0.18f)
-                                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                                        if (isSelectedSwatch) XPeachTheme.courseContainer(swatchArgb, active = true)
+                                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
                                     )
                                     .border(
-                                        width = if (isSelectedSwatch) 1.5.dp else 0.6.dp,
-                                        color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.outlineVariant,
+                                        width = if (isSelectedSwatch) 1.5.dp else 0.7.dp,
+                                        color = if (isSelectedSwatch) readableSwatch else MaterialTheme.colorScheme.outlineVariant,
                                         shape = RoundedCornerShape(16.dp)
                                     )
                                     .clickable { onSelectPalette("CUSTOM", swatchArgb) }
@@ -3016,13 +3028,18 @@ private fun ThemePaletteAndCardLayoutSection(
                                     modifier = Modifier
                                         .size(16.dp)
                                         .clip(CircleShape)
-                                        .background(Color(swatchArgb))
+                                        .background(rawSwatchColor)
+                                        .border(
+                                            0.6.dp,
+                                            if (XPeachTheme.isDark) Color.White.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.12f),
+                                            CircleShape
+                                        )
                                 )
                                 Text(
                                     text = swatchHex,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelectedSwatch) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.onSurface,
+                                    color = if (isSelectedSwatch) readableSwatch else MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     softWrap = false
                                 )
@@ -3095,17 +3112,27 @@ private fun ThemePaletteAndCardLayoutSection(
                     for (palette in rowPalettes) {
                         val isSelected = !prefs.useDynamicColor && prefs.themePaletteKey == palette.key
                         val swatchColor = Color(palette.seedArgb)
+                        val readableSwatch = XPeachTheme.readableAccent(swatchColor)
                         Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(
-                                    if (isSelected) swatchColor.copy(alpha = 0.14f)
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                    if (isSelected) {
+                                        XPeachTheme.courseContainer(palette.seedArgb, active = true)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                                    }
                                 )
                                 .border(
-                                    width = if (isSelected) 1.5.dp else 0.6.dp,
-                                    color = if (isSelected) swatchColor else Color.Transparent,
+                                    width = if (isSelected) 1.5.dp else 0.7.dp,
+                                    color = if (isSelected) {
+                                        readableSwatch
+                                    } else if (XPeachTheme.isDark) {
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                                    } else {
+                                        Color.Transparent
+                                    },
                                     shape = RoundedCornerShape(12.dp)
                                 )
                                 .clickable { onSelectPalette(palette.key, null) }
@@ -3118,12 +3145,17 @@ private fun ThemePaletteAndCardLayoutSection(
                                     .size(22.dp)
                                     .clip(CircleShape)
                                     .background(swatchColor)
+                                    .border(
+                                        0.8.dp,
+                                        if (XPeachTheme.isDark) Color.White.copy(alpha = 0.28f) else Color.Black.copy(alpha = 0.10f),
+                                        CircleShape
+                                    )
                             )
                             Text(
                                 text = palette.label,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) swatchColor else MaterialTheme.colorScheme.onSurface,
+                                color = if (isSelected) readableSwatch else MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -3168,16 +3200,18 @@ private fun ThemePaletteAndCardLayoutSection(
             XPeachFilterPill(
                 label = if (expandCustomPalette) "收起" else "调色盘",
                 selected = prefs.themePaletteKey == "CUSTOM" && !prefs.useDynamicColor,
+                compact = true,
                 onClick = { expandCustomPalette = !expandCustomPalette }
             )
         }
 
         AnimatedVisibility(visible = expandCustomPalette) {
-            XPeachWell(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp)
             ) {
+                XPeachInsetDivider(verticalPadding = 6.dp)
                 // 360° 彩虹色相渐变条预览
                 Box(
                     modifier = Modifier
@@ -3258,29 +3292,27 @@ private fun ThemePaletteAndCardLayoutSection(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
+                    val customBtnBg = Color(customColorInt)
+                    val customBtnFg = if (customBtnBg.luminance() > 0.45f) Color(0xFF0F172A) else Color.White
                     Button(
                         onClick = {
                             val seedLong = 0xFF000000L or (customColorInt.toLong() and 0xFFFFFFL)
                             onSelectPalette("CUSTOM", seedLong)
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(customColorInt)
+                            containerColor = customBtnBg,
+                            contentColor = customBtnFg
                         ),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.height(48.dp)
                     ) {
-                        Text("应用配色", color = Color.White, maxLines = 1, softWrap = false)
+                        Text("应用配色", color = customBtnFg, maxLines = 1, softWrap = false)
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-        HorizontalDivider(
-            thickness = 0.6.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-        )
-        Spacer(modifier = Modifier.height(10.dp))
+        XPeachInsetDivider(verticalPadding = 10.dp)
 
         // 4. 首页模块化卡片排序与显隐管理
         Row(
@@ -3308,6 +3340,7 @@ private fun ThemePaletteAndCardLayoutSection(
             XPeachFilterPill(
                 label = if (expandCardManager) "收起" else "调整卡片",
                 selected = expandCardManager,
+                compact = true,
                 onClick = { expandCardManager = !expandCardManager }
             )
         }
@@ -3320,82 +3353,82 @@ private fun ThemePaletteAndCardLayoutSection(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(top = 8.dp)
             ) {
+                XPeachInsetDivider(verticalPadding = 4.dp)
                 currentOrder.forEachIndexed { index, cardId ->
+                    if (index > 0) {
+                        XPeachInsetDivider(verticalPadding = 6.dp)
+                    }
                     val title = labelMap[cardId] ?: cardId
                     val isVisible = cardId !in prefs.hiddenHomeCards
                     val isFull = cardId in prefs.fullWidthHomeCards
 
-                    XPeachWell(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${index + 1}. $title",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 6.dp)
+                        Text(
+                            text = "${index + 1}. $title",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 6.dp)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            XPeachFilterPill(
+                                label = if (isFull) "大卡" else "小卡",
+                                selected = isFull,
+                                compact = true,
+                                onClick = {
+                                    val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
+                                    onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
+                                }
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                XPeachFilterPill(
-                                    label = if (isFull) "大卡" else "小卡",
-                                    selected = isFull,
-                                    compact = true,
-                                    onClick = {
-                                        val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
-                                        onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
+                            XPeachFilterPill(
+                                label = if (isVisible) "显示" else "隐藏",
+                                selected = isVisible,
+                                compact = true,
+                                onClick = {
+                                    val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
+                                    onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "↑",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    if (index > 0) {
+                                        val mut = currentOrder.toMutableList()
+                                        val tmp = mut[index - 1]
+                                        mut[index - 1] = mut[index]
+                                        mut[index] = tmp
+                                        onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
                                     }
-                                )
-                                XPeachFilterPill(
-                                    label = if (isVisible) "显示" else "隐藏",
-                                    selected = isVisible,
-                                    compact = true,
-                                    onClick = {
-                                        val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
-                                        onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "↓",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    if (index < currentOrder.lastIndex) {
+                                        val mut = currentOrder.toMutableList()
+                                        val tmp = mut[index + 1]
+                                        mut[index + 1] = mut[index]
+                                        mut[index] = tmp
+                                        onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
                                     }
-                                )
-                                XPeachFilterPill(
-                                    label = "↑",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = {
-                                        if (index > 0) {
-                                            val mut = currentOrder.toMutableList()
-                                            val tmp = mut[index - 1]
-                                            mut[index - 1] = mut[index]
-                                            mut[index] = tmp
-                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
-                                        }
-                                    }
-                                )
-                                XPeachFilterPill(
-                                    label = "↓",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = {
-                                        if (index < currentOrder.lastIndex) {
-                                            val mut = currentOrder.toMutableList()
-                                            val tmp = mut[index + 1]
-                                            mut[index + 1] = mut[index]
-                                            mut[index] = tmp
-                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
-                                        }
-                                    }
-                                )
-                            }
+                                }
+                            )
                         }
                     }
                 }
@@ -3455,10 +3488,9 @@ private fun NetworkProxyAndCloudConfigSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            XPeachStatusBadge(
+            XPeachStatusDotText(
                 text = proxyConfig.statusSummaryLabel(),
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary
+                dotColor = XPeachTheme.readablePrimary
             )
         }
 
@@ -3481,6 +3513,7 @@ private fun NetworkProxyAndCloudConfigSection(
                 XPeachFilterPill(
                     label = mode.label,
                     selected = proxyConfig.mode == mode,
+                    compact = true,
                     onClick = {
                         connectivityMessage = null
                         onSaveProxyConfig(proxyConfig.copy(mode = mode))
@@ -3495,7 +3528,7 @@ private fun NetworkProxyAndCloudConfigSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        XPeachInsetDivider(verticalPadding = 10.dp)
 
         // 2. 根据代理类型展示对应配置面板
         when (proxyConfig.mode) {
@@ -3519,12 +3552,12 @@ private fun NetworkProxyAndCloudConfigSection(
                                         .weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
-                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            if (selected) XPeachTheme.readablePrimary.copy(alpha = 0.14f)
                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
                                         )
                                         .border(
                                             width = if (selected) 1.5.dp else 0.6.dp,
-                                            color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            color = if (selected) XPeachTheme.readablePrimary else Color.Transparent,
                                             shape = RoundedCornerShape(12.dp)
                                         )
                                         .clickable {
@@ -3538,7 +3571,7 @@ private fun NetworkProxyAndCloudConfigSection(
                                         text = node.label,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        color = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         softWrap = false
                                     )
@@ -3557,7 +3590,7 @@ private fun NetworkProxyAndCloudConfigSection(
             }
 
             ProxyMode.CUSTOM_REVERSE_PROXY -> {
-                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "自定义镜像地址前缀",
                         style = MaterialTheme.typography.labelSmall,
@@ -3594,7 +3627,7 @@ private fun NetworkProxyAndCloudConfigSection(
             }
 
             ProxyMode.HTTP_PROXY, ProxyMode.SOCKS_PROXY -> {
-                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "常用代理客户端快捷填入",
                         style = MaterialTheme.typography.labelSmall,
@@ -3614,6 +3647,7 @@ private fun NetworkProxyAndCloudConfigSection(
                             XPeachFilterPill(
                                 label = preset.label,
                                 selected = isCurrent,
+                                compact = true,
                                 onClick = {
                                     hostInput = preset.host
                                     portInput = preset.port.toString()
@@ -3653,41 +3687,42 @@ private fun NetworkProxyAndCloudConfigSection(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(0.9f)
                         )
-                        Button(
-                            onClick = {
-                                val validPort = (portInput.toIntOrNull() ?: 7890).coerceIn(1, 65535)
-                                val cleanHost = hostInput.trim().ifBlank { "127.0.0.1" }
-                                hostInput = cleanHost
-                                portInput = validPort.toString()
-                                connectivityMessage = null
-                                onSaveProxyConfig(
-                                    proxyConfig.copy(
-                                        proxyHost = cleanHost,
-                                        proxyPort = validPort
-                                    )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            val validPort = (portInput.toIntOrNull() ?: 7890).coerceIn(1, 65535)
+                            val cleanHost = hostInput.trim().ifBlank { "127.0.0.1" }
+                            hostInput = cleanHost
+                            portInput = validPort.toString()
+                            connectivityMessage = null
+                            onSaveProxyConfig(
+                                proxyConfig.copy(
+                                    proxyHost = cleanHost,
+                                    proxyPort = validPort
                                 )
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.height(48.dp)
-                        ) {
-                            Text("应用", maxLines = 1, softWrap = false)
-                        }
+                            )
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("应用代理配置", maxLines = 1, softWrap = false)
                     }
                 }
             }
 
             ProxyMode.DIRECT -> {
-                XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "直接连接服务器，建议开启下方「自动切换备用线路」。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "直接连接服务器，建议开启下方「自动切换备用线路」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        XPeachInsetDivider(verticalPadding = 8.dp)
 
         // 3. 自动回退镜像开关
         Row(
@@ -3732,6 +3767,7 @@ private fun NetworkProxyAndCloudConfigSection(
             XPeachFilterPill(
                 label = if (expandCloudEndpoint) "收起" else "修改",
                 selected = expandCloudEndpoint,
+                compact = true,
                 onClick = { expandCloudEndpoint = !expandCloudEndpoint }
             )
         }
@@ -3767,19 +3803,17 @@ private fun NetworkProxyAndCloudConfigSection(
         }
 
         if (connectivityMessage != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = connectivityMessage.orEmpty(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (connectivityOk == true) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
-                    },
-                    fontWeight = FontWeight.Medium
-                )
-            }
+            XPeachInsetDivider(verticalPadding = 8.dp)
+            Text(
+                text = connectivityMessage.orEmpty(),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (connectivityOk == true) {
+                    XPeachTheme.readablePrimary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+                fontWeight = FontWeight.Medium
+            )
         }
 
         Spacer(modifier = Modifier.height(10.dp))

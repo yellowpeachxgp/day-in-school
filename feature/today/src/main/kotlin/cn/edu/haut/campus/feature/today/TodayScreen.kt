@@ -13,6 +13,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -80,7 +81,10 @@ import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
@@ -305,8 +309,8 @@ fun TodayScreen(
             ) {
                 dynamicSyncBanner?.let { bannerText ->
                     XPeachCard(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        borderColor = Color.Transparent
+                        containerColor = XPeachTheme.primaryAccentCardColor,
+                        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -316,7 +320,7 @@ fun TodayScreen(
                             Text(
                                 text = bannerText,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
                             )
                             TextButton(onClick = { dynamicSyncBanner = null }) {
@@ -346,13 +350,13 @@ fun TodayScreen(
             ) {
                 snapshot.calendarNotice?.takeIf { it.isNotBlank() }?.let { notice ->
                     XPeachCard(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        borderColor = Color.Transparent
+                        containerColor = XPeachTheme.primaryAccentCardColor,
+                        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
                     ) {
                         Text(
                             text = notice,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -442,10 +446,10 @@ fun TodayScreen(
                         } else {
                             "下一节 ${heroItem.occurrence.startTime.format(TIME_FMT)}"
                         }
-                        XPeachStatusBadge(
+                        XPeachStatusDotText(
                             text = badgeLabel,
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
+                            dotColor = if (isOngoing) MaterialTheme.colorScheme.tertiary else XPeachTheme.readablePrimary,
+                            textColor = XPeachTheme.readablePrimary
                         )
                     } else {
                         Text(
@@ -467,24 +471,20 @@ fun TodayScreen(
                 ) {
                     activeBreak?.let { brk ->
                         Column {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            XPeachWell(
-                                modifier = Modifier.fillMaxWidth(),
-                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                            ) {
+                            XPeachInsetDivider(verticalPadding = 8.dp)
+                            XPeachStatusDotText(
+                                text = "${brk.label} · ${brk.startTime.format(TIME_FMT)}–${brk.endTime.format(TIME_FMT)}" +
+                                    (brk.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
+                                dotColor = XPeachTheme.readablePrimary,
+                                textColor = XPeachTheme.readablePrimary
+                            )
+                            brk.roomTransferText?.let { transfer ->
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "${brk.label} · ${brk.startTime.format(TIME_FMT)}–${brk.endTime.format(TIME_FMT)}" +
-                                        (brk.minutesRemainingInBreak?.let { "（剩 ${it} 分钟）" } ?: ""),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    text = transfer,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                brk.roomTransferText?.let { transfer ->
-                                    Text(
-                                        text = transfer,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
                             }
                         }
                     }
@@ -651,9 +651,9 @@ fun TodayScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
-                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer
+                                    if (isCurrent) XPeachTheme.primaryAccentCardColor
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 )
                                 .clickable {
@@ -672,7 +672,7 @@ fun TodayScreen(
                                     text = t.displayName,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
@@ -684,7 +684,7 @@ fun TodayScreen(
                                 text = if (isCurrent) "当前 ($count 门)" else "$count 门课",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isCurrent) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -794,7 +794,7 @@ private fun CourseDetailAndSnoozeDialog(
                 Text(
                     text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
+                    color = XPeachTheme.readablePrimary
                 )
             }
         },
@@ -803,35 +803,32 @@ private fun CourseDetailAndSnoozeDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                XPeachWell(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "状态：${detailState.statusText}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "教室：${occ.rawRoom}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (!occ.teacher.isNullOrBlank()) {
                         Text(
-                            text = "状态：${detailState.statusText}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "教室：${occ.rawRoom}",
+                            text = "教师：${occ.teacher}",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        if (!occ.teacher.isNullOrBlank()) {
-                            Text(
-                                text = "教师：${occ.teacher}",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        occ.internalBreaksSummary?.let { brkSummary ->
-                            Text(
-                                text = "课间：$brkSummary",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
+                    }
+                    occ.internalBreaksSummary?.let { brkSummary ->
+                        Text(
+                            text = "课间：$brkSummary",
+                            color = XPeachTheme.readablePrimary,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
+
+                XPeachInsetDivider(verticalPadding = 2.dp)
 
                 // 智能提醒与「稍后提醒」控制区
                 XPeachWell(
@@ -856,7 +853,7 @@ private fun CourseDetailAndSnoozeDialog(
                                     },
                                     contentDescription = null,
                                     tint = if (effectivePolicy.enabled) {
-                                        MaterialTheme.colorScheme.primary
+                                        XPeachTheme.readablePrimary
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant
                                     },
@@ -872,6 +869,7 @@ private fun CourseDetailAndSnoozeDialog(
                             XPeachFilterPill(
                                 label = if (effectivePolicy.enabled) "已开启" else "已关闭",
                                 selected = effectivePolicy.enabled,
+                                compact = true,
                                 onClick = {
                                     scope.launch {
                                         val nextEnabled = !effectivePolicy.enabled
@@ -919,19 +917,24 @@ private fun CourseDetailAndSnoozeDialog(
 
                         // 本门课提前分钟数快捷切换
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "提前时间：",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             for (lead in listOf(10, 15, 20, 30)) {
                                 XPeachFilterPill(
                                     label = "${lead}分钟",
                                     selected = effectivePolicy.classLeadMinutes == lead,
+                                    compact = true,
                                     onClick = {
                                         scope.launch {
                                             repository.upsertReminderEventOverride(
@@ -955,7 +958,7 @@ private fun CourseDetailAndSnoozeDialog(
                             Text(
                                 text = "稍后提醒：",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = XPeachTheme.readablePrimary,
                                 fontWeight = FontWeight.Medium
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -966,7 +969,7 @@ private fun CourseDetailAndSnoozeDialog(
                                     Surface(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(10.dp))
+                                            .clip(RoundedCornerShape(12.dp))
                                             .clickable(enabled = opt.available) {
                                                 scope.launch {
                                                     val outcome = reminderCoordinator.snoozeEventFromUi(
@@ -993,9 +996,9 @@ private fun CourseDetailAndSnoozeDialog(
                                                     refreshTrigger++
                                                 }
                                             },
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(12.dp),
                                         color = if (opt.available) {
-                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                            XPeachTheme.primaryAccentCardColor
                                         } else {
                                             MaterialTheme.colorScheme.surface
                                         }
@@ -1015,7 +1018,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                     imageVector = Icons.Default.Snooze,
                                                     contentDescription = null,
                                                     tint = if (opt.available) {
-                                                        MaterialTheme.colorScheme.primary
+                                                        XPeachTheme.readablePrimary
                                                     } else {
                                                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                                     },
@@ -1025,7 +1028,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                     text = "${opt.label} ($targetText)",
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = if (opt.available) {
-                                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                                        MaterialTheme.colorScheme.onSurface
                                                     } else {
                                                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
                                                     }
@@ -1035,7 +1038,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                 text = if (opt.available) "选择" else (opt.disabledReason?.userMessage ?: "不可选"),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = if (opt.available) {
-                                                    MaterialTheme.colorScheme.primary
+                                                    XPeachTheme.readablePrimary
                                                 } else {
                                                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
                                                 }
@@ -1050,7 +1053,7 @@ private fun CourseDetailAndSnoozeDialog(
                             Text(
                                 text = feedback,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = XPeachTheme.readablePrimary,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -1060,7 +1063,7 @@ private fun CourseDetailAndSnoozeDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(
                         onClick = { onNavigateToMapWithRoom(occ.rawRoom) },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -1084,7 +1087,7 @@ private fun CourseDetailAndSnoozeDialog(
                                 onDismiss()
                             }
                         },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("今日停课", maxLines = 1, softWrap = false)
                     }
@@ -1221,8 +1224,8 @@ private fun WeekDaySelectorStrip(
                                 text = date.dayOfWeek.ChineseLabel.replace("周", ""),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = when {
-                                    isSelected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                                    isToday -> MaterialTheme.colorScheme.primary
+                                    isSelected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.88f)
+                                    isToday -> XPeachTheme.readablePrimary
                                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                                 },
                                 maxLines = 1,
@@ -1242,7 +1245,8 @@ private fun WeekDaySelectorStrip(
                                 },
                                 color = when {
                                     isSelected -> MaterialTheme.colorScheme.onPrimary
-                                    isToday || date.dayOfMonth == 1 -> MaterialTheme.colorScheme.primary
+                                    isToday -> XPeachTheme.readablePrimary
+                                    date.dayOfMonth == 1 -> XPeachTheme.readablePrimary
                                     else -> MaterialTheme.colorScheme.onSurface
                                 },
                                 maxLines = 1,
@@ -1256,7 +1260,8 @@ private fun WeekDaySelectorStrip(
                                         when {
                                             !hasClasses -> Color.Transparent
                                             isSelected -> MaterialTheme.colorScheme.onPrimary
-                                            else -> MaterialTheme.colorScheme.primary
+                                            isToday -> XPeachTheme.readablePrimary
+                                            else -> XPeachTheme.readablePrimary
                                         }
                                     )
                             )
@@ -1334,8 +1339,8 @@ private fun TodayExpressPickupHeroCard(
 
     XPeachCard(
         modifier = Modifier.fillMaxWidth(),
-        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f),
-        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+        containerColor = XPeachTheme.primaryAccentCardColor,
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.42f),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1358,7 +1363,7 @@ private fun TodayExpressPickupHeroCard(
                         text = "待取快递提醒",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1367,100 +1372,103 @@ private fun TodayExpressPickupHeroCard(
                     XPeachFilterPill(
                         label = "同步",
                         selected = false,
+                        compact = true,
                         onClick = onSyncParcels
                     )
                     XPeachFilterPill(
                         label = "全部快递",
                         selected = true,
+                        compact = true,
                         onClick = onOpenParcelHub
                     )
                 }
             }
 
-            groupedByStation.entries.forEach { (stationName, stationParcels) ->
-                XPeachWell(
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            groupedByStation.entries.forEachIndexed { stationIdx, (stationName, stationParcels) ->
+                if (stationIdx > 0) {
+                    XPeachInsetDivider(verticalPadding = 4.dp)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📍 $stationName (${stationParcels.size}件)",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = XPeachTheme.readablePrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (stationParcels.size > 1 && stationParcels.first().stationName.cleanUiText() != null) {
+                            XPeachFilterPill(
+                                label = "本驿站全取",
+                                selected = false,
+                                compact = true,
+                                onClick = { onMarkStationAllPickedUp(stationName) }
+                            )
+                        }
+                    }
+
+                    stationParcels.take(4).forEachIndexed { parcelIdx, parcel ->
+                        if (parcelIdx > 0) {
+                            XPeachInsetDivider(verticalPadding = 2.dp)
+                        }
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(onClick = onOpenParcelHub)
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "📍 $stationName (${stationParcels.size}件)",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (stationParcels.size > 1 && stationParcels.first().stationName.cleanUiText() != null) {
-                                XPeachFilterPill(
-                                    label = "本驿站全取",
-                                    selected = false,
-                                    onClick = { onMarkStationAllPickedUp(stationName) }
-                                )
-                            }
-                        }
-
-                        stationParcels.take(4).forEach { parcel ->
-                            Row(
+                            Column(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                                    .clickable(onClick = onOpenParcelHub)
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = parcel.pickupCode.cleanUiText() ?: "待出取件码",
-                                        style = MaterialTheme.typography.headlineMedium.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    val carrier = parcel.carrierName.cleanUiText() ?: "快递"
-                                    val desc = parcel.itemTitle.cleanUiText()
-                                        ?: "尾号 ${parcel.trackingNumber.takeLast(6)}"
-                                    Text(
-                                        text = "$carrier · $desc",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                XPeachFilterPill(
-                                    label = "已取件",
-                                    selected = true,
-                                    onClick = { onMarkPickedUp(parcel.id) }
+                                Text(
+                                    text = parcel.pickupCode.cleanUiText() ?: "待出取件码",
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = XPeachTheme.readablePrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                val carrier = parcel.carrierName.cleanUiText() ?: "快递"
+                                val desc = parcel.itemTitle.cleanUiText()
+                                    ?: "尾号 ${parcel.trackingNumber.takeLast(6)}"
+                                Text(
+                                    text = "$carrier · $desc",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
-                        }
-
-                        if (stationParcels.size > 4) {
-                            Text(
-                                text = "还有 ${stationParcels.size - 4} 件待取包裹，点击查看全部",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.clickable(onClick = onOpenParcelHub)
+                            XPeachFilterPill(
+                                label = "已取件",
+                                selected = true,
+                                compact = true,
+                                onClick = { onMarkPickedUp(parcel.id) }
                             )
                         }
+                    }
+
+                    if (stationParcels.size > 4) {
+                        Text(
+                            text = "还有 ${stationParcels.size - 4} 件待取包裹，点击查看全部",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary,
+                            modifier = Modifier.clickable(onClick = onOpenParcelHub)
+                        )
                     }
                 }
             }
@@ -1476,8 +1484,8 @@ private fun TodayLibrarySeatDynamicCard(
 ) {
     XPeachCard(
         modifier = Modifier.fillMaxWidth(),
-        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
-        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+        containerColor = XPeachTheme.secondaryAccentCardColor,
+        borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.40f),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1498,17 +1506,20 @@ private fun TodayLibrarySeatDynamicCard(
                     Text(
                         text = "座位预约",
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 XPeachFilterPill(
                     label = "选座",
                     selected = false,
+                    compact = true,
                     onClick = onOpenLibrarySeats
                 )
             }
 
-            activePlans.take(2).forEach { plan ->
+            activePlans.take(2).forEachIndexed { idx, plan ->
+                XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 6.dp)
                 val cleanArea = plan.preferredAreaName.cleanUiText() ?: "图书馆自习区"
                 val firstSeat = plan.preferredSeatLabel.cleanUiText().orEmpty().split(",")
                     .map { it.trim() }
@@ -1524,52 +1535,51 @@ private fun TodayLibrarySeatDynamicCard(
                 } else {
                     "本机定时"
                 }
-                XPeachWell(
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Text(
-                                text = "$cleanArea · $firstSeat 号座",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $engineLabel",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = statusLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            XPeachFilterPill(
-                                label = "查看",
-                                selected = true,
-                                onClick = onOpenLibrarySeats
-                            )
-                            if (plan.status != "CONFIRMED") {
-                                XPeachFilterPill(
-                                    label = "取消",
-                                    selected = false,
-                                    onClick = { onCancelPlan(plan.id) }
-                                )
+                        Text(
+                            text = "$cleanArea · $firstSeat 号座",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "${plan.targetLocalDate} ${plan.targetLocalTime} · $engineLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary
+                        )
+                        XPeachStatusDotText(
+                            text = statusLabel,
+                            dotColor = if (plan.status == "CONFIRMED") {
+                                MaterialTheme.colorScheme.tertiary
+                            } else {
+                                XPeachTheme.readablePrimary
                             }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        XPeachFilterPill(
+                            label = "查看",
+                            selected = true,
+                            compact = true,
+                            onClick = onOpenLibrarySeats
+                        )
+                        if (plan.status != "CONFIRMED") {
+                            XPeachFilterPill(
+                                label = "取消",
+                                selected = false,
+                                compact = true,
+                                onClick = { onCancelPlan(plan.id) }
+                            )
                         }
                     }
                 }
@@ -1900,12 +1910,12 @@ private fun FullWidthModularCard(spec: HomeModularCardSpec) {
     XPeachCard(
         modifier = Modifier.fillMaxWidth(),
         containerColor = if (spec.highlighted) {
-            MaterialTheme.colorScheme.primaryContainer
+            XPeachTheme.primaryAccentCardColor
         } else {
             MaterialTheme.colorScheme.surface
         },
         borderColor = if (spec.highlighted) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
@@ -1925,24 +1935,27 @@ private fun FullWidthModularCard(spec: HomeModularCardSpec) {
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    XPeachStatusBadge(
-                        text = spec.badgeText,
-                        containerColor = if (spec.highlighted) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        } else {
-                            MaterialTheme.colorScheme.primaryContainer
-                        },
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
+                    if (spec.highlighted) {
+                        XPeachStatusBadge(
+                            text = spec.badgeText,
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                     Text(
                         text = spec.title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (!spec.highlighted) {
+                        XPeachStatusDotText(text = spec.badgeText)
+                    }
                 }
                 Text(
                     text = spec.subtitle,
@@ -1997,119 +2010,118 @@ private fun HomeCardLayoutCustomizerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
                 workingOrder.forEachIndexed { index, cardId ->
                     val title = labelMap[cardId] ?: cardId
                     val isVisible = cardId !in workingHidden
                     val isFull = cardId in workingFullWidth
 
-                    XPeachWell(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                    if (index > 0) {
+                        XPeachInsetDivider(verticalPadding = 6.dp)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 6.dp)
+                        ) {
+                            Text(
+                                text = "${index + 1}. $title",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isVisible) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (!isVisible) {
+                                    "已隐藏"
+                                } else if (isFull) {
+                                    "大卡片"
+                                } else {
+                                    "小卡片"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isVisible) {
+                                    XPeachTheme.readablePrimary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 6.dp)
-                            ) {
-                                Text(
-                                    text = "${index + 1}. $title",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isVisible) {
-                                        MaterialTheme.colorScheme.onSurface
+                            XPeachFilterPill(
+                                label = if (isFull) "大卡" else "小卡",
+                                selected = isFull,
+                                compact = true,
+                                onClick = {
+                                    workingFullWidth = if (isFull) {
+                                        workingFullWidth - cardId
                                     } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (!isVisible) {
-                                        "已隐藏"
-                                    } else if (isFull) {
-                                        "大卡片"
+                                        workingFullWidth + cardId
+                                    }
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = if (isVisible) "显示" else "隐藏",
+                                selected = isVisible,
+                                compact = true,
+                                onClick = {
+                                    workingHidden = if (isVisible) {
+                                        workingHidden + cardId
                                     } else {
-                                        "小卡片"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isVisible) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                        workingHidden - cardId
                                     }
-                                )
-                            }
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                XPeachFilterPill(
-                                    label = if (isFull) "大卡" else "小卡",
-                                    selected = isFull,
-                                    compact = true,
-                                    onClick = {
-                                        workingFullWidth = if (isFull) {
-                                            workingFullWidth - cardId
-                                        } else {
-                                            workingFullWidth + cardId
-                                        }
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "↑",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    if (index > 0) {
+                                        val mut = workingOrder.toMutableList()
+                                        val tmp = mut[index - 1]
+                                        mut[index - 1] = mut[index]
+                                        mut[index] = tmp
+                                        workingOrder = mut
                                     }
-                                )
-                                XPeachFilterPill(
-                                    label = if (isVisible) "显示" else "隐藏",
-                                    selected = isVisible,
-                                    compact = true,
-                                    onClick = {
-                                        workingHidden = if (isVisible) {
-                                            workingHidden + cardId
-                                        } else {
-                                            workingHidden - cardId
-                                        }
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "↓",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    if (index < workingOrder.lastIndex) {
+                                        val mut = workingOrder.toMutableList()
+                                        val tmp = mut[index + 1]
+                                        mut[index + 1] = mut[index]
+                                        mut[index] = tmp
+                                        workingOrder = mut
                                     }
-                                )
-                                XPeachFilterPill(
-                                    label = "↑",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = {
-                                        if (index > 0) {
-                                            val mut = workingOrder.toMutableList()
-                                            val tmp = mut[index - 1]
-                                            mut[index - 1] = mut[index]
-                                            mut[index] = tmp
-                                            workingOrder = mut
-                                        }
-                                    }
-                                )
-                                XPeachFilterPill(
-                                    label = "↓",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = {
-                                        if (index < workingOrder.lastIndex) {
-                                            val mut = workingOrder.toMutableList()
-                                            val tmp = mut[index + 1]
-                                            mut[index + 1] = mut[index]
-                                            mut[index] = tmp
-                                            workingOrder = mut
-                                        }
-                                    }
-                                )
-                            }
+                                }
+                            )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
                 TextButton(
                     onClick = onResetDefault,
                     modifier = Modifier.align(Alignment.End)
@@ -2146,12 +2158,12 @@ private fun BentoModuleTile(
     XPeachCard(
         modifier = modifier,
         containerColor = if (highlighted) {
-            MaterialTheme.colorScheme.primaryContainer
+            XPeachTheme.primaryAccentCardColor
         } else {
             MaterialTheme.colorScheme.surface
         },
         borderColor = if (highlighted) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
@@ -2167,36 +2179,28 @@ private fun BentoModuleTile(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = if (highlighted) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
                     .padding(end = 6.dp)
             )
-            XPeachStatusBadge(
-                text = badgeText,
-                containerColor = if (highlighted) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
-                },
-                contentColor = MaterialTheme.colorScheme.primary
-            )
+            if (highlighted) {
+                XPeachStatusBadge(
+                    text = badgeText,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                XPeachStatusDotText(text = badgeText)
+            }
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = subtitle,
             style = MaterialTheme.typography.labelSmall,
-            color = if (highlighted) {
-                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
@@ -2211,11 +2215,12 @@ private fun EmptyDayTimelineBox(
     onJumpToDate: (LocalDate) -> Unit,
     onOpenImporter: () -> Unit
 ) {
-    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        XPeachInsetDivider(verticalPadding = 4.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 16.dp),
+                .padding(vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -2278,7 +2283,7 @@ private fun MinimalistDayScheduleFlow(
             val isFinished = item.status == ClassStatus.FINISHED
             val isOngoing = item.status == ClassStatus.IN_PROGRESS
             val isHighlighted = isOngoing || (highlightedOccurrenceId != null && occ.occurrenceId == highlightedOccurrenceId)
-            val baseColor = Color(occ.colorArgb)
+            val accentColor = XPeachTheme.courseAccent(occ.colorArgb)
             val reminderBadge = formatOccurrenceReminderBadge(
                 termId = termId,
                 item = item,
@@ -2322,7 +2327,7 @@ private fun MinimalistDayScheduleFlow(
                         text = occ.periodRangeText,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
-                        color = baseColor,
+                        color = accentColor,
                         maxLines = 1,
                         softWrap = false
                     )
@@ -2337,7 +2342,7 @@ private fun MinimalistDayScheduleFlow(
                         .fillMaxHeight()
                         .padding(vertical = 4.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(baseColor)
+                        .background(accentColor)
                 )
 
                 Spacer(modifier = Modifier.width(12.dp))
@@ -2350,16 +2355,26 @@ private fun MinimalistDayScheduleFlow(
                         .clickable { onItemClick(item) },
                     shape = RoundedCornerShape(14.dp),
                     color = when {
-                        isOngoing -> baseColor.copy(alpha = 0.14f)
-                        isHighlighted -> baseColor.copy(alpha = 0.08f)
-                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+                        isOngoing -> XPeachTheme.courseContainer(occ.colorArgb, active = true)
+                        isHighlighted -> XPeachTheme.courseContainer(occ.colorArgb, active = false)
+                        else -> MaterialTheme.colorScheme.surfaceVariant
                     },
-                    border = if (isHighlighted) {
-                        androidx.compose.foundation.BorderStroke(
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    border = when {
+                        isOngoing -> androidx.compose.foundation.BorderStroke(
                             1.dp,
-                            baseColor.copy(alpha = if (isOngoing) 0.5f else 0.35f)
+                            XPeachTheme.courseBorder(occ.colorArgb, active = true)
                         )
-                    } else null
+                        isHighlighted -> androidx.compose.foundation.BorderStroke(
+                            0.9.dp,
+                            XPeachTheme.courseBorder(occ.colorArgb, active = false)
+                        )
+                        XPeachTheme.isDark -> androidx.compose.foundation.BorderStroke(
+                            0.8.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.60f)
+                        )
+                        else -> null
+                    }
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -2385,7 +2400,7 @@ private fun MinimalistDayScheduleFlow(
                                 text = item.statusText,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isHighlighted) baseColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isHighlighted) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 softWrap = false
                             )
@@ -2419,7 +2434,7 @@ private fun MinimalistDayScheduleFlow(
                             Text(
                                 text = reminderBadge,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = XPeachTheme.readablePrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -2430,9 +2445,9 @@ private fun MinimalistDayScheduleFlow(
                                 text = brkText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (item.activeInternalBreak != null) {
-                                    MaterialTheme.colorScheme.primary
+                                    XPeachTheme.readablePrimary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
                                 },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2452,7 +2467,7 @@ private fun MinimalistDayScheduleFlow(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 64.dp),
+                            .padding(start = 65.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
@@ -2461,7 +2476,7 @@ private fun MinimalistDayScheduleFlow(
                                 .height(18.dp)
                                 .background(MaterialTheme.colorScheme.outlineVariant)
                         )
-                        Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(13.dp))
                         Surface(
                             color = if (matchingBreak.isActiveNow) {
                                 MaterialTheme.colorScheme.primaryContainer
@@ -2482,7 +2497,7 @@ private fun MinimalistDayScheduleFlow(
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (matchingBreak.isActiveNow) {
-                                    MaterialTheme.colorScheme.primary
+                                    XPeachTheme.readablePrimary
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },

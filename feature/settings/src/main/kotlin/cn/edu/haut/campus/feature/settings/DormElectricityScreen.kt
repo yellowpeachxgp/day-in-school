@@ -54,8 +54,11 @@ import cn.edu.haut.campus.core.designsystem.CampusMetricPoint
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
@@ -116,7 +119,7 @@ fun DormElectricityScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
@@ -127,13 +130,12 @@ fun DormElectricityScreen(
 
             if (statusBanner != null) {
                 XPeachCard(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
+                    containerColor = XPeachTheme.secondaryAccentCardColor
                 ) {
                     Text(
                         text = statusBanner!!,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
@@ -152,8 +154,9 @@ fun DormElectricityScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        XPeachStatusBadge(
-                            text = if (activeAcc != null) "已绑定学号" else "输入学号即查"
+                        XPeachStatusDotText(
+                            text = if (activeAcc != null) "已绑定学号" else "输入学号即查",
+                            dotColor = XPeachTheme.readablePrimary
                         )
                     }
 
@@ -175,7 +178,7 @@ fun DormElectricityScreen(
                             Text(
                                 text = "当前绑定学号：${activeAcc.maskedAccount}",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary
+                                color = XPeachTheme.readablePrimary
                             )
                             TextButton(
                                 onClick = {
@@ -202,7 +205,7 @@ fun DormElectricityScreen(
                             )
                         },
                         singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -236,7 +239,7 @@ fun DormElectricityScreen(
                                     }
                                 }
                             },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
@@ -327,6 +330,7 @@ fun DormElectricityScreen(
                                     XPeachFilterPill(
                                         label = label,
                                         selected = room.campusCode == code,
+                                        compact = true,
                                         onClick = {
                                             scope.launch {
                                                 repository.updateOnlineRoomCampus(room.roomId, code)
@@ -336,7 +340,7 @@ fun DormElectricityScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             if (devices.isEmpty()) {
                                 Text(
@@ -345,89 +349,93 @@ fun DormElectricityScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             } else {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    for (dev in devices) {
-                                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    devices.forEachIndexed { idx, dev ->
+                                        if (idx > 0) {
+                                            XPeachInsetDivider(verticalPadding = 10.dp)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${dev.name} (${dev.category.displayLabel})",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            XPeachStatusDotText(
+                                                text = dev.statusRaw,
+                                                dotColor = XPeachTheme.readablePrimary
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
                                                 Text(
-                                                    text = "${dev.name} (${dev.category.displayLabel})",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                                XPeachStatusBadge(text = dev.statusRaw)
-                                            }
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Column {
-                                                    Text(
-                                                        text = "当前剩余",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Text(
-                                                        text = dev.balanceRaw,
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                                Column {
-                                                    Text(
-                                                        text = "今日用量",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Text(
-                                                        text = dev.todayUseRaw,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                }
-                                                Column {
-                                                    Text(
-                                                        text = "累计购入",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Text(
-                                                        text = dev.totalBoughtRaw,
-                                                        style = MaterialTheme.typography.bodyMedium
-                                                    )
-                                                }
-                                            }
-
-                                            val trendPoints = remember(dailySamples, room.roomId, dev.name) {
-                                                UtilitySamplingPolicy.buildDailyTrendPoints(
-                                                    samples = dailySamples,
-                                                    roomId = room.roomId,
-                                                    deviceName = dev.name
-                                                ).map { pt ->
-                                                    CampusMetricPoint(
-                                                        label = pt.label,
-                                                        value = pt.value,
-                                                        unit = pt.unit,
-                                                        subtitle = pt.subtitle,
-                                                        segmentBreakBefore = pt.segmentBreakBefore
-                                                    )
-                                                }
-                                            }
-                                            if (trendPoints.isNotEmpty()) {
-                                                Spacer(modifier = Modifier.height(10.dp))
-                                                Text(
-                                                    text = "每日用电采样趋势",
-                                                    style = MaterialTheme.typography.labelMedium,
+                                                    text = "当前剩余",
+                                                    style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                CampusMetricChart(points = trendPoints)
+                                                Text(
+                                                    text = dev.balanceRaw,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = XPeachTheme.readablePrimary
+                                                )
                                             }
+                                            Column {
+                                                Text(
+                                                    text = "今日用量",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = dev.todayUseRaw,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            Column {
+                                                Text(
+                                                    text = "累计购入",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = dev.totalBoughtRaw,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                            }
+                                        }
+
+                                        val trendPoints = remember(dailySamples, room.roomId, dev.name) {
+                                            UtilitySamplingPolicy.buildDailyTrendPoints(
+                                                samples = dailySamples,
+                                                roomId = room.roomId,
+                                                deviceName = dev.name
+                                            ).map { pt ->
+                                                CampusMetricPoint(
+                                                    label = pt.label,
+                                                    value = pt.value,
+                                                    unit = pt.unit,
+                                                    subtitle = pt.subtitle,
+                                                    segmentBreakBefore = pt.segmentBreakBefore
+                                                )
+                                            }
+                                        }
+                                        if (trendPoints.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            Text(
+                                                text = "每日用电采样趋势",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            CampusMetricChart(points = trendPoints)
                                         }
                                     }
                                 }
@@ -457,7 +465,7 @@ fun DormElectricityScreen(
                         }
                         FilledTonalButton(
                             onClick = { showAddMeterDialog = true },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.size(4.dp))
@@ -508,7 +516,11 @@ fun DormElectricityScreen(
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (isLow) {
-                                        XPeachStatusBadge(text = "余额偏低")
+                                        XPeachStatusBadge(
+                                            text = "余额偏低",
+                                            containerColor = XPeachTheme.dangerContainer,
+                                            contentColor = XPeachTheme.onDangerContainer
+                                        )
                                     }
                                     IconButton(
                                         onClick = {
@@ -532,7 +544,7 @@ fun DormElectricityScreen(
                                 Text(
                                     text = "最新剩余：${"%.2f".format(latest.value)} ${meter.unit}",
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = if (isLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    color = if (isLow) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -554,7 +566,7 @@ fun DormElectricityScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = { readingTargetMeter = meter },
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text("记录新读数")
                                 }

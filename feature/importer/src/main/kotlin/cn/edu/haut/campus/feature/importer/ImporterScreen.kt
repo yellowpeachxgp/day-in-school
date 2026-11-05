@@ -23,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -84,8 +85,11 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.CourseSource
@@ -260,13 +264,13 @@ fun ImporterScreen(
             ) {
                 statusBanner?.let { bannerMsg ->
                     XPeachCard(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                        containerColor = XPeachTheme.primaryAccentCardColor,
+                        borderColor = XPeachTheme.readablePrimary.copy(alpha = 0.32f)
                     ) {
                         Text(
                             text = bannerMsg,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -365,9 +369,13 @@ fun ImporterScreen(
                                 ) {
                                     Text(
                                         text = "教务账号登录",
-                                        style = MaterialTheme.typography.titleMedium
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold
                                     )
-                                    XPeachStatusBadge(text = "课表 + 考试 + 成绩")
+                                    XPeachStatusDotText(
+                                        text = "课表 + 考试 + 成绩",
+                                        dotColor = XPeachTheme.readablePrimary
+                                    )
                                 }
 
                                 if (prefs.academicReauthenticationRequired) {
@@ -457,6 +465,7 @@ fun ImporterScreen(
                                         XPeachFilterPill(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
+                                            compact = true,
                                             onClick = {
                                                 selectedXnm = yr
                                                 scope.launch {
@@ -475,6 +484,7 @@ fun ImporterScreen(
                                     XPeachFilterPill(
                                         label = "第 1 学期",
                                         selected = selectedXqm == "3",
+                                        compact = true,
                                         onClick = {
                                             selectedXqm = "3"
                                             scope.launch {
@@ -485,6 +495,7 @@ fun ImporterScreen(
                                     XPeachFilterPill(
                                         label = "第 2 学期",
                                         selected = selectedXqm == "12",
+                                        compact = true,
                                         onClick = {
                                             selectedXqm = "12"
                                             scope.launch {
@@ -520,7 +531,7 @@ fun ImporterScreen(
                                         enabled = !isSyncing && studentIdInput.isNotBlank() &&
                                             (passwordInput.isNotBlank() || prefs.hasSavedCredentials),
                                         onClick = triggerDirectSync,
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Text(
                                             text = if (isSyncing) "同步中..." else "开始同步",
@@ -544,9 +555,13 @@ fun ImporterScreen(
                                 ) {
                                     Text(
                                         text = "网页登录导入",
-                                        style = MaterialTheme.typography.titleMedium
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold
                                     )
-                                    XPeachStatusBadge(text = "课表 + 考试 + 成绩")
+                                    XPeachStatusDotText(
+                                        text = "课表 + 考试 + 成绩",
+                                        dotColor = XPeachTheme.readablePrimary
+                                    )
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -562,6 +577,7 @@ fun ImporterScreen(
                                         XPeachFilterPill(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
+                                            compact = true,
                                             onClick = {
                                                 selectedXnm = yr
                                                 scope.launch {
@@ -580,6 +596,7 @@ fun ImporterScreen(
                                     XPeachFilterPill(
                                         label = "第 1 学期",
                                         selected = selectedXqm == "3",
+                                        compact = true,
                                         onClick = {
                                             selectedXqm = "3"
                                             scope.launch {
@@ -590,6 +607,7 @@ fun ImporterScreen(
                                     XPeachFilterPill(
                                         label = "第 2 学期",
                                         selected = selectedXqm == "12",
+                                        compact = true,
                                         onClick = {
                                             selectedXqm = "12"
                                             scope.launch {
@@ -609,7 +627,8 @@ fun ImporterScreen(
                                         onClick = {
                                             webViewRef?.loadUrl(HautAcademicEndpoints.CAS_SSO_ENTRY_URL)
                                         },
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text("刷新登录页", maxLines = 1, softWrap = false)
@@ -705,7 +724,8 @@ fun ImporterScreen(
                                                 }
                                             }
                                         },
-                                        shape = RoundedCornerShape(8.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text("同步教务", maxLines = 1, softWrap = false)
@@ -718,7 +738,8 @@ fun ImporterScreen(
                                                 statusBanner = "已清除网页会话。"
                                             }
                                         },
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                                     ) {
                                         Text("清除", maxLines = 1, softWrap = false)
                                     }
@@ -776,8 +797,8 @@ fun ImporterScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(360.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
                                 )
                             }
                         }
@@ -795,7 +816,10 @@ fun ImporterScreen(
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
-                                        XPeachStatusBadge(text = ".md / .json")
+                                        XPeachStatusDotText(
+                                            text = ".md / .json",
+                                            dotColor = XPeachTheme.readablePrimary
+                                        )
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
@@ -815,6 +839,7 @@ fun ImporterScreen(
                                                 )
                                             },
                                             shape = RoundedCornerShape(12.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                             modifier = Modifier.weight(1.2f)
                                         ) {
                                             Text("选择课表文件", maxLines = 1, softWrap = false)
@@ -824,6 +849,7 @@ fun ImporterScreen(
                                                 exportMarkdownLauncher.launch("haut-timetable-v1.md")
                                             },
                                             shape = RoundedCornerShape(12.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("导出 .md", maxLines = 1, softWrap = false)
@@ -833,6 +859,7 @@ fun ImporterScreen(
                                                 exportJsonLauncher.launch("haut-timetable-v1.json")
                                             },
                                             shape = RoundedCornerShape(12.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("导出 .json", maxLines = 1, softWrap = false)
@@ -903,7 +930,7 @@ fun ImporterScreen(
             if (preview != null) {
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
-                    borderColor = MaterialTheme.colorScheme.primary
+                    borderColor = XPeachTheme.readablePrimary.copy(alpha = 0.45f)
                 ) {
                     Text(
                         text = "导入预览",
@@ -914,22 +941,23 @@ fun ImporterScreen(
                     Text(
                         text = "新增 ${preview.addedCount} · 更新 ${preview.modifiedCount} · 冲突 ${preview.conflictUserEditCount} · 不变 ${preview.unchangedCount}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (entry in preview.entries) {
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = "[${entry.changeType.label}] ${entry.summary}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (entry.changeType == ImportChangeType.CONFLICT_USER_MODIFIED) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else MaterialTheme.colorScheme.onSurface
-                                )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        preview.entries.forEachIndexed { idx, entry ->
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 6.dp)
                             }
+                            Text(
+                                text = "[${entry.changeType.label}] ${entry.summary}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (entry.changeType == ImportChangeType.CONFLICT_USER_MODIFIED) {
+                                    XPeachTheme.readablePrimary
+                                } else MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
 

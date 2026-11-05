@@ -62,8 +62,11 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import kotlinx.coroutines.Dispatchers
@@ -164,7 +167,7 @@ fun XPeachCloudAccountScreen(
             )
 
             feedbackBanner?.let { msg ->
-                XPeachCard(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                XPeachCard(containerColor = XPeachTheme.secondaryAccentCardColor) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -173,7 +176,7 @@ fun XPeachCloudAccountScreen(
                         Text(
                             text = msg,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { feedbackBanner = null }) {
@@ -267,31 +270,41 @@ fun XPeachCloudAccountScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = "已登录",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        XPeachInsetDivider(verticalPadding = 10.dp)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
                             Text(
-                                text = "可用余额：%.2f 🍑".format(
-                                    binding.peachBalanceMicropeach / 10_000.0
-                                ),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "仅在云端成功抢到座位后结算 0.10 🍑；未抢到或提前取消不扣费。",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = "可用余额",
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text(
+                                text = "%.2f 🍑".format(
+                                    binding.peachBalanceMicropeach / 10_000.0
+                                ),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "仅在云端成功抢到座位后结算 0.10 🍑；未抢到或提前取消不扣费。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Button(
                             enabled = !isSyncingSnapshot,
                             onClick = {
@@ -382,8 +395,13 @@ fun XPeachCloudAccountScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        for (plan in cloudPlans) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        cloudPlans.forEachIndexed { idx, plan ->
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 8.dp)
+                            } else {
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
                             val friendlyStatus = when (plan.status) {
                                 "CONFIRMED" -> "抢座成功"
                                 "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
@@ -405,8 +423,16 @@ fun XPeachCloudAccountScreen(
                             val seatText = plan.preferredSeatLabel.trim().takeIf {
                                 it.isNotEmpty() && !it.equals("null", ignoreCase = true)
                             } ?: "自动优选"
+                            val dotColor = when (plan.status) {
+                                "CONFIRMED" -> MaterialTheme.colorScheme.tertiary
+                                "CANCELLED" -> MaterialTheme.colorScheme.outline
+                                else -> XPeachTheme.readablePrimary
+                            }
 
-                            XPeachWell(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -420,7 +446,12 @@ fun XPeachCloudAccountScreen(
                                             .weight(1f)
                                             .padding(end = 8.dp)
                                     )
-                                    XPeachStatusBadge(text = payLabel)
+                                    Text(
+                                        text = payLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        fontWeight = FontWeight.Medium
+                                    )
                                 }
                                 Text(
                                     text = "$areaText · ${seatText}号座",
@@ -428,10 +459,9 @@ fun XPeachCloudAccountScreen(
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Text(
+                                XPeachStatusDotText(
                                     text = friendlyStatus,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    dotColor = dotColor
                                 )
                             }
                         }
@@ -495,41 +525,38 @@ fun XPeachCloudAccountScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            XPeachStatusBadge(
-                                text = if (plugin.status == "ENABLED") "已启用" else "已停用",
-                                containerColor = if (plugin.status == "ENABLED") {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                                contentColor = if (plugin.status == "ENABLED") {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
-
-                        if (slotSummary != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = slotSummary.first,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
+                            if (plugin.status == "ENABLED") {
+                                XPeachStatusDotText(
+                                    text = "已启用",
+                                    dotColor = XPeachTheme.readablePrimary
                                 )
-                                if (slotSummary.second.isNotBlank()) {
-                                    Text(
-                                        text = slotSummary.second,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            } else {
+                                XPeachStatusDotText(
+                                    text = "已停用",
+                                    dotColor = MaterialTheme.colorScheme.outline
+                                )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        if (slotSummary != null) {
+                            XPeachInsetDivider(verticalPadding = 8.dp)
+                            Text(
+                                text = slotSummary.first,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (slotSummary.second.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = slotSummary.second,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -829,11 +856,11 @@ private fun XpeachNativeOidcLoginDialog(
                 }
 
                 errorHint?.let { err ->
-                    XPeachCard(containerColor = MaterialTheme.colorScheme.errorContainer) {
+                    XPeachCard(containerColor = XPeachTheme.errorAccentCardColor) {
                         Text(
                             text = err,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }

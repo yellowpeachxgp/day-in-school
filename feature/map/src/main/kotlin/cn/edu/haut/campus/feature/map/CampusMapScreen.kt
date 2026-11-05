@@ -121,8 +121,11 @@ import cn.edu.haut.campus.core.designsystem.XPeachBrandLight
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachOk
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
@@ -841,7 +844,7 @@ fun CampusMapScreen(
                         Text(
                             text = zoneAdaptationFeedback!!,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = XPeachTheme.readablePrimary
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1062,82 +1065,84 @@ fun CampusMapScreen(
                     // 官方 GIS 实时教室/房间/POI 搜索结果列表
                     if (searchQuery.isNotBlank() && officialSearchResults.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
+                        val displayedSearchResults = officialSearchResults.take(6)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 196.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                .heightIn(max = 204.dp)
+                                .verticalScroll(rememberScrollState())
                         ) {
-                            for (item in officialSearchResults.take(6)) {
-                                XPeachWell(
+                            displayedSearchResults.forEachIndexed { idx, item ->
+                                if (idx > 0) {
+                                    XPeachInsetDivider(verticalPadding = 4.dp)
+                                }
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
                                         .clickable {
                                             handleSelectGisSearchResult(item, openSecondaryIndoorMap = item.isIndoorRoom)
                                             if (!item.isIndoorRoom) {
                                                 isFullScreenMap = true
                                             }
-                                        },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                        }
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
                                     ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .padding(end = 8.dp),
-                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = item.name,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                item.floorLabel?.let { floorLabel ->
-                                                    XPeachStatusBadge(
-                                                        text = floorLabel,
-                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                        contentColor = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                            }
                                             Text(
-                                                text = item.subtitle,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                text = item.name,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            if (item.isIndoorRoom) {
-                                                XPeachFilterPill(
-                                                    label = "室内平面",
-                                                    selected = true,
-                                                    onClick = {
-                                                        handleSelectGisSearchResult(item, openSecondaryIndoorMap = true)
-                                                    }
+                                            item.floorLabel?.let { floorLabel ->
+                                                XPeachStatusDotText(
+                                                    text = floorLabel,
+                                                    dotColor = XPeachTheme.readablePrimary
                                                 )
                                             }
+                                        }
+                                        Text(
+                                            text = item.subtitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (item.isIndoorRoom) {
                                             XPeachFilterPill(
-                                                label = if (item.isIndoorRoom) "室外路线" else "查看位置",
-                                                selected = !item.isIndoorRoom,
+                                                label = "室内平面",
+                                                selected = true,
+                                                compact = true,
                                                 onClick = {
-                                                    handleSelectGisSearchResult(item, openSecondaryIndoorMap = false)
-                                                    isFullScreenMap = true
+                                                    handleSelectGisSearchResult(item, openSecondaryIndoorMap = true)
                                                 }
                                             )
                                         }
+                                        XPeachFilterPill(
+                                            label = if (item.isIndoorRoom) "室外路线" else "查看位置",
+                                            selected = !item.isIndoorRoom,
+                                            compact = true,
+                                            onClick = {
+                                                handleSelectGisSearchResult(item, openSecondaryIndoorMap = false)
+                                                isFullScreenMap = true
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -1400,10 +1405,9 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("宿舍水电", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = elecBadge,
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1427,10 +1431,9 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("空教室速查", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = "全校教学楼",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1459,10 +1462,9 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("学生社团", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = "${preferences.campusCommunityCatalog.clubs.size} 社团",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1486,10 +1488,9 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("校园频道", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                            XPeachStatusBadge(
+                            XPeachStatusDotText(
                                 text = "${preferences.campusCommunityCatalog.channels.size} 频道",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = MaterialTheme.colorScheme.primary
+                                dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1538,26 +1539,32 @@ fun CampusMapScreen(
                         XPeachFilterPill(
                             label = "全部",
                             selected = selectedCategory == null,
+                            compact = true,
                             onClick = { selectedCategory = null }
                         )
                         for (category in CampusCategory.entries) {
                             XPeachFilterPill(
                                 label = category.label,
                                 selected = selectedCategory == category,
+                                compact = true,
                                 onClick = { selectedCategory = if (selectedCategory == category) null else category }
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (b in filteredBuildings) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        filteredBuildings.forEachIndexed { idx, b ->
                             val gisInfo = HautOfficialGisClient.resolveFeatureIdForBuilding(b, gisDataset)
                             val hasIndoor = gisInfo != null && gisInfo.second >= 1
-                            XPeachWell(
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 4.dp)
+                            }
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
                                     .clickable {
                                         selectedBuilding = b
                                         selectedIndoorRoom = null
@@ -1568,75 +1575,73 @@ fun CampusMapScreen(
                                         inAppNavigationActive = true
                                         isFullScreenMap = true
                                     }
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(end = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = b.name,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f, fill = false)
-                                            )
-                                            if (hasIndoor) {
-                                                XPeachStatusBadge(
-                                                    text = "1-${gisInfo!!.second + 1}F 室内图",
-                                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.primary
-                                                )
-                                            }
-                                        }
-                                        if (b.description.isNotBlank()) {
-                                            Text(
-                                                text = b.description,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                        Text(
+                                            text = b.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (hasIndoor) {
+                                            XPeachStatusDotText(
+                                                text = "1-${gisInfo!!.second + 1}F 室内图",
+                                                dotColor = XPeachTheme.readablePrimary
                                             )
                                         }
                                     }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        if (hasIndoor) {
-                                            XPeachFilterPill(
-                                                label = "室内图",
-                                                selected = false,
-                                                onClick = {
-                                                    selectedBuilding = b
-                                                    selectedIndoorRoom = null
-                                                    showIndoorSecondaryMap = true
-                                                }
-                                            )
-                                        }
+                                    if (b.description.isNotBlank()) {
+                                        Text(
+                                            text = b.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    if (hasIndoor) {
                                         XPeachFilterPill(
-                                            label = "去这里",
-                                            selected = selectedBuilding?.id == b.id,
+                                            label = "室内图",
+                                            selected = false,
+                                            compact = true,
                                             onClick = {
                                                 selectedBuilding = b
                                                 selectedIndoorRoom = null
-                                                val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
-                                                mapCenterLatGcj = glat
-                                                mapCenterLonGcj = glon
-                                                mapZoom = 16.8f
-                                                inAppNavigationActive = true
-                                                isFullScreenMap = true
+                                                showIndoorSecondaryMap = true
                                             }
                                         )
                                     }
+                                    XPeachFilterPill(
+                                        label = "去这里",
+                                        selected = selectedBuilding?.id == b.id,
+                                        compact = true,
+                                        onClick = {
+                                            selectedBuilding = b
+                                            selectedIndoorRoom = null
+                                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                                            mapCenterLatGcj = glat
+                                            mapCenterLonGcj = glon
+                                            mapZoom = 16.8f
+                                            inAppNavigationActive = true
+                                            isFullScreenMap = true
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -1653,7 +1658,7 @@ fun CampusMapScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF2EFE9))
+            .background(if (XPeachTheme.isDark) Color(0xFF0F151E) else Color(0xFFF2EFE9))
     ) {
         // 1. 底层全屏室外地图画布（室内平面图已拆分为独立二级地图页，室外地图仅聚焦楼宇与步行路线）
         RealCampusTileMap(
@@ -1714,6 +1719,10 @@ fun CampusMapScreen(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 2.dp,
                     modifier = Modifier.clickable { isFullScreenMap = false }
                 ) {
@@ -1741,6 +1750,10 @@ fun CampusMapScreen(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 2.dp
                 ) {
                     OutlinedTextField(
@@ -1782,7 +1795,7 @@ fun CampusMapScreen(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                            focusedBorderColor = XPeachTheme.readablePrimary.copy(alpha = 0.45f),
                             unfocusedBorderColor = Color.Transparent
                         ),
                         modifier = Modifier.fillMaxWidth()
@@ -1793,6 +1806,10 @@ fun CampusMapScreen(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        0.6.dp,
+                        MaterialTheme.colorScheme.outlineVariant
+                    ),
                     shadowElevation = 2.dp,
                     modifier = Modifier.clickable {
                         if (!hasLocationPermission) {
@@ -1816,7 +1833,7 @@ fun CampusMapScreen(
                         Icon(
                             imageVector = Icons.Default.Explore,
                             contentDescription = "朝向",
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = XPeachTheme.readablePrimary,
                             modifier = Modifier.size(16.dp)
                         )
                         val headingInt = effectiveHeadingDegrees?.roundToInt()
@@ -1850,18 +1867,21 @@ fun CampusMapScreen(
                         XPeachFilterPill(
                             label = mode.shortLabel,
                             selected = gisStyleMode == mode,
+                            compact = true,
                             onClick = { gisStyleMode = mode }
                         )
                     }
                     XPeachFilterPill(
                         label = "官方GIS网页",
                         selected = false,
+                        compact = true,
                         onClick = { showOfficialWebGisDialog = true }
                     )
                 }
                 XPeachFilterPill(
                     label = "莲花街",
                     selected = detectedCampus.campusId == SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value,
+                    compact = true,
                     onClick = {
                         scope.launch {
                             repository.setSelectedCampusId(SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value)
@@ -1871,6 +1891,7 @@ fun CampusMapScreen(
                 XPeachFilterPill(
                     label = "嵩山路",
                     selected = detectedCampus.campusId == SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value,
+                    compact = true,
                     onClick = {
                         scope.launch {
                             repository.setSelectedCampusId(SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value)
@@ -1881,6 +1902,7 @@ fun CampusMapScreen(
                     XPeachFilterPill(
                         label = zone.campusName,
                         selected = detectedCampus.campusId == zone.campusId,
+                        compact = true,
                         onClick = {
                             scope.launch { repository.setSelectedCampusId(zone.campusId) }
                         }
@@ -1889,12 +1911,14 @@ fun CampusMapScreen(
                 XPeachFilterPill(
                     label = "全部建筑",
                     selected = selectedCategory == null,
+                    compact = true,
                     onClick = { selectedCategory = null }
                 )
                 for (category in CampusCategory.entries) {
                     XPeachFilterPill(
                         label = category.label,
                         selected = selectedCategory == category,
+                        compact = true,
                         onClick = {
                             selectedCategory = if (selectedCategory == category) null else category
                         }
@@ -1903,6 +1927,7 @@ fun CampusMapScreen(
                 XPeachFilterPill(
                     label = if (isDrawingZoneMode) "退出圈定" else "自定义校区",
                     selected = isDrawingZoneMode,
+                    compact = true,
                     onClick = {
                         isDrawingZoneMode = !isDrawingZoneMode
                         if (isDrawingZoneMode && drawingZoneVertices.isEmpty()) {
@@ -1927,7 +1952,7 @@ fun CampusMapScreen(
                         Text(
                             text = "官方 GIS 检索结果（点击直达楼层与教室）",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = XPeachTheme.readablePrimary,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
@@ -1971,7 +1996,7 @@ fun CampusMapScreen(
                                             Text(
                                                 text = floorLabel,
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
+                                                color = XPeachTheme.readablePrimary,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 softWrap = false
@@ -2215,6 +2240,7 @@ fun CampusMapScreen(
                     XPeachFilterPill(
                         label = b.shortName,
                         selected = isSelected,
+                        compact = true,
                         onClick = {
                             if (selectedBuilding?.id != b.id) {
                                 selectedIndoorRoom = null
@@ -2335,21 +2361,9 @@ private fun FloatingRouteBottomSheet(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (selectedIndoorRoom != null) {
-                        XPeachStatusBadge(
-                            text = "${selectedIndoorRoom.floorLabel} · ${selectedIndoorRoom.name}",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    } else if (hasIndoorMap) {
-                        XPeachStatusBadge(
-                            text = "含 1-${activeFootprint!!.maxLevelIndex + 1}F 室内图",
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    XPeachStatusBadge(
-                        text = "${plan.estimatedWalkDistanceMeters}m · 约${plan.estimatedWalkMinutes}分钟"
+                    XPeachStatusDotText(
+                        text = "${plan.estimatedWalkDistanceMeters}m · 约${plan.estimatedWalkMinutes}分钟",
+                        dotColor = XPeachTheme.readablePrimary
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
@@ -2357,7 +2371,7 @@ private fun FloatingRouteBottomSheet(
                     text = buildString {
                         append("${plan.originLabel} → ${building.shortName}")
                         if (selectedIndoorRoom != null) {
-                            append(" (${selectedIndoorRoom.name})")
+                            append(" (${selectedIndoorRoom.floorLabel} · ${selectedIndoorRoom.name})")
                         }
                         append(" · $headingHint")
                         if (isOfficialGisRoute) {
@@ -2365,7 +2379,7 @@ private fun FloatingRouteBottomSheet(
                         }
                     },
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = XPeachTheme.readablePrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -2374,6 +2388,7 @@ private fun FloatingRouteBottomSheet(
             XPeachFilterPill(
                 label = if (expandRouteSteps) "收起" else "详情",
                 selected = expandRouteSteps,
+                compact = true,
                 onClick = onToggleExpandSteps
             )
         }
@@ -2383,7 +2398,11 @@ private fun FloatingRouteBottomSheet(
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                color = XPeachTheme.primaryAccentCardColor,
+                border = androidx.compose.foundation.BorderStroke(
+                    0.8.dp,
+                    XPeachTheme.readablePrimary.copy(alpha = 0.36f)
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onOpenIndoorSecondaryMap)
@@ -2401,7 +2420,7 @@ private fun FloatingRouteBottomSheet(
                         Icon(
                             imageVector = Icons.Default.Layers,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = XPeachTheme.readablePrimary,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
@@ -2412,7 +2431,7 @@ private fun FloatingRouteBottomSheet(
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = XPeachTheme.readablePrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -2421,7 +2440,7 @@ private fun FloatingRouteBottomSheet(
                         text = "进入室内 >",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = XPeachTheme.readablePrimary
                     )
                 }
             }
@@ -2460,20 +2479,20 @@ private fun FloatingRouteBottomSheet(
                 XPeachFilterPill(
                     label = if (hasLiveGps) "我的位置" else "南门",
                     selected = manualOriginBuilding == null,
+                    compact = true,
                     onClick = { onSelectOriginBuilding(null) }
                 )
                 for (b in allBuildings.filter { it.id != building.id }) {
                     XPeachFilterPill(
                         label = b.shortName,
                         selected = manualOriginBuilding?.id == b.id,
+                        compact = true,
                         onClick = { onSelectOriginBuilding(b) }
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(thickness = 0.6.dp, color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(modifier = Modifier.height(8.dp))
+            XPeachInsetDivider(verticalPadding = 6.dp)
 
             Column(
                 modifier = Modifier
@@ -2491,13 +2510,13 @@ private fun FloatingRouteBottomSheet(
                             modifier = Modifier
                                 .size(20.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                .background(XPeachTheme.primaryAccentCardColor),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "${step.stepIndex}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = XPeachTheme.readablePrimary,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -2521,7 +2540,7 @@ private fun FloatingRouteBottomSheet(
                         Text(
                             text = "${step.distanceMeters}m",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = XPeachTheme.readablePrimary,
                             maxLines = 1,
                             softWrap = false
                         )
@@ -2540,15 +2559,15 @@ private fun FloatingRouteBottomSheet(
             Button(
                 onClick = onToggleInAppNavigation,
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(
                     imageVector = Icons.Default.Navigation,
                     contentDescription = null,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(14.dp)
                 )
-                Spacer(modifier = Modifier.width(5.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = if (inAppNavigationActive) "隐藏路线" else "显示路线",
                     maxLines = 1,
@@ -2560,12 +2579,13 @@ private fun FloatingRouteBottomSheet(
                 FilledTonalButton(
                     onClick = onOpenIndoorSecondaryMap,
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Layers,
                         contentDescription = null,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("室内平面", maxLines = 1, softWrap = false)
@@ -2574,12 +2594,13 @@ private fun FloatingRouteBottomSheet(
                 FilledTonalButton(
                     onClick = onOpenOfficialWebGis,
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.LocationOn,
                         contentDescription = null,
-                        modifier = Modifier.size(15.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("官方GIS", maxLines = 1, softWrap = false)
@@ -2589,12 +2610,13 @@ private fun FloatingRouteBottomSheet(
             FilledTonalButton(
                 onClick = onOpenExternalMap,
                 shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                     contentDescription = null,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("高德步行", maxLines = 1, softWrap = false)
@@ -2719,6 +2741,7 @@ private fun RealCampusTileMap(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isDarkMap = XPeachTheme.isDark
     var tileLoadGeneration by remember { mutableIntStateOf(0) }
     var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
     var canvasHeightPx by remember { mutableFloatStateOf(1920f) }
@@ -2866,7 +2889,7 @@ private fun RealCampusTileMap(
         }
 
         // 1. 地图底色
-        drawRect(color = Color(0xFFF2EFE9))
+        drawRect(color = if (isDarkMap) Color(0xFF0F151E) else Color(0xFFF2EFE9))
 
         // 2. 绘制覆盖视口的周边街道/校园瓦片
         val halfTilesW = (size.width / 2f) / baseTileRenderPx + 1f
@@ -2904,6 +2927,10 @@ private fun RealCampusTileMap(
             }
         }
 
+        if (isDarkMap) {
+            drawRect(color = Color(0x6E0B1018))
+        }
+
         // 2.2 绘制河南工业大学官方 GIS 室外矢量底图（先用干净园区底色遮蔽底层栅格杂乱文字，再绘制水系、绿地、运动场、道路与 92 栋建筑轮廓）
         if (styleMode == GisMapStyleMode.OFFICIAL_VECTOR_HYBRID && gisDataset != null) {
             if (campusPolygonVertices.size >= 3) {
@@ -2915,7 +2942,10 @@ private fun RealCampusTileMap(
                     close()
                 }
                 // 纯净园区底板，彻底隔绝底层第三方街景瓦片的重影文字与重影道路
-                drawPath(path = campusMaskPath, color = Color(0xFFF5F6F8))
+                drawPath(
+                    path = campusMaskPath,
+                    color = if (isDarkMap) Color(0xFF131B26) else Color(0xFFF5F6F8)
+                )
             }
 
             // (a) 水系、绿地与运动场多边形
@@ -2937,18 +2967,26 @@ private fun RealCampusTileMap(
                 }
                 when (land.type) {
                     GisLanduseType.WATER -> {
-                        drawPath(path = path, color = Color(0xFFBAE6FD))
-                        drawPath(path = path, color = Color(0xFF38BDF8), style = Stroke(width = 2f))
+                        drawPath(path = path, color = if (isDarkMap) Color(0xFF0E2E47) else Color(0xFFBAE6FD))
+                        drawPath(
+                            path = path,
+                            color = if (isDarkMap) Color(0xFF0284C7) else Color(0xFF38BDF8),
+                            style = Stroke(width = 2f)
+                        )
                     }
                     GisLanduseType.GREENERY -> {
-                        drawPath(path = path, color = Color(0xFFDCFCE7))
+                        drawPath(path = path, color = if (isDarkMap) Color(0xFF112920) else Color(0xFFDCFCE7))
                     }
                     GisLanduseType.SPORTS_GROUND -> {
-                        drawPath(path = path, color = Color(0xFFFFEDD5))
-                        drawPath(path = path, color = Color(0xFFFB923C), style = Stroke(width = 1.6f))
+                        drawPath(path = path, color = if (isDarkMap) Color(0xFF2D1F18) else Color(0xFFFFEDD5))
+                        drawPath(
+                            path = path,
+                            color = if (isDarkMap) Color(0xFFD97706) else Color(0xFFFB923C),
+                            style = Stroke(width = 1.6f)
+                        )
                     }
                     GisLanduseType.PLAZA -> {
-                        drawPath(path = path, color = Color(0xFFEFF2F6))
+                        drawPath(path = path, color = if (isDarkMap) Color(0xFF192230) else Color(0xFFEFF2F6))
                     }
                 }
             }
@@ -2966,12 +3004,12 @@ private fun RealCampusTileMap(
                     val strokeW = if (road.highwayType == "footway") 3.5f else 6.5f
                     drawPath(
                         path = path,
-                        color = Color(0xFFCBD5E1),
+                        color = if (isDarkMap) Color(0xFF0B1017) else Color(0xFFCBD5E1),
                         style = Stroke(width = strokeW + 2.4f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                     drawPath(
                         path = path,
-                        color = Color.White,
+                        color = if (isDarkMap) Color(0xFF283446) else Color.White,
                         style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                 }
@@ -3002,14 +3040,22 @@ private fun RealCampusTileMap(
                     }
                     close()
                 }
-                drawPath(path = shadowPath, color = Color(0x1E0F172A))
+                drawPath(path = shadowPath, color = if (isDarkMap) Color(0x45000000) else Color(0x1E0F172A))
                 drawPath(
                     path = polyPath,
-                    color = if (isSelectedFp) Color(0xFFBAE6FD) else Color(0xFFE2E8F0)
+                    color = if (isSelectedFp) {
+                        if (isDarkMap) Color(0xFF15385C) else Color(0xFFBAE6FD)
+                    } else {
+                        if (isDarkMap) Color(0xFF222D3D) else Color(0xFFE2E8F0)
+                    }
                 )
                 drawPath(
                     path = polyPath,
-                    color = if (isSelectedFp) Color(0xFF0284C7) else Color(0xFF94A3B8),
+                    color = if (isSelectedFp) {
+                        if (isDarkMap) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                    } else {
+                        if (isDarkMap) Color(0xFF475569) else Color(0xFF94A3B8)
+                    },
                     style = Stroke(width = if (isSelectedFp) 3.8f else 1.6f, join = StrokeJoin.Round)
                 )
             }
@@ -3161,11 +3207,15 @@ private fun RealCampusTileMap(
             }
         }
 
-        // 4. 绘制各校内楼宇锚点与严格防碰撞白底标签（优先保证选中建筑完整显示，重叠标签自动退化为小圆点）
+        // 4. 绘制各校内楼宇锚点与严格防碰撞深浅色自适应标签（优先保证选中建筑完整显示，重叠标签自动退化为小圆点）
         val placedLabelRects = mutableListOf<RectF>()
         val labelBgPaint = Paint().apply {
             isAntiAlias = true
-            color = android.graphics.Color.argb(244, 255, 255, 255)
+            color = if (isDarkMap) {
+                android.graphics.Color.argb(242, 30, 39, 52)
+            } else {
+                android.graphics.Color.argb(244, 255, 255, 255)
+            }
             style = Paint.Style.FILL
         }
         val targetBgPaint = Paint().apply {
@@ -3175,7 +3225,11 @@ private fun RealCampusTileMap(
         }
         val labelBorderPaint = Paint().apply {
             isAntiAlias = true
-            color = android.graphics.Color.argb(120, 148, 163, 184)
+            color = if (isDarkMap) {
+                android.graphics.Color.argb(180, 71, 85, 105)
+            } else {
+                android.graphics.Color.argb(120, 148, 163, 184)
+            }
             style = Paint.Style.STROKE
             strokeWidth = 2f
         }
@@ -3184,7 +3238,11 @@ private fun RealCampusTileMap(
             isAntiAlias = true
             textSize = labelTextSizePx
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = android.graphics.Color.rgb(17, 24, 39)
+            color = if (isDarkMap) {
+                android.graphics.Color.rgb(241, 245, 249)
+            } else {
+                android.graphics.Color.rgb(17, 24, 39)
+            }
         }
         val targetTextPaint = Paint().apply {
             isAntiAlias = true
