@@ -197,7 +197,7 @@ internal fun BuildingIndoorMapDialog(
                 selectedRoom.centerLon,
                 nearestStairOrElevator.centerLat,
                 nearestStairOrElevator.centerLon
-            ).roundToInt().coerceAtLeast(3)
+            ).coerceAtLeast(3)
         } else null
     }
 
