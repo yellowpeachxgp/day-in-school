@@ -1589,12 +1589,27 @@ object HautLibrarySeatAuthClient {
             if (extractTokenFromUrl(resolvedUrl) != null) {
                 return resolvedUrl
             }
-            val hop = executeHop(
+            var hop = executeHop(
                 url = resolvedUrl,
                 method = "GET",
                 cookieJar = cookieJar
             )
             currentBaseUrl = resolvedUrl
+            if (hop.statusCode >= 500 &&
+                hop.location.isNullOrBlank() &&
+                resolvedUrl.contains("/stage-api/api/caslogin/ticketlogin")
+            ) {
+                val fallbackUrl = resolvedUrl.replace(
+                    "/stage-api/api/caslogin/ticketlogin",
+                    "/spacelink/api/caslogin/ticketlogin"
+                )
+                hop = executeHop(
+                    url = fallbackUrl,
+                    method = "GET",
+                    cookieJar = cookieJar
+                )
+                currentBaseUrl = fallbackUrl
+            }
             if (hop.statusCode !in listOf(301, 302, 303, 307, 308)) {
                 return currentBaseUrl
             }

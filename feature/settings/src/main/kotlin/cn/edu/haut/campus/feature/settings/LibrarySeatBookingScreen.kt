@@ -925,6 +925,16 @@ fun LibrarySeatBookingScreen(
                                     request: WebResourceRequest?
                                 ): Boolean {
                                     val targetUrl = request?.url?.toString().orEmpty()
+                                    if (OfficialServiceRoutePolicy.isLibrarySeatOrigin(targetUrl) &&
+                                        targetUrl.contains("/stage-api/api/caslogin/ticketlogin")
+                                    ) {
+                                        val fallbackUrl = targetUrl.replace(
+                                            "/stage-api/api/caslogin/ticketlogin",
+                                            "/spacelink/api/caslogin/ticketlogin"
+                                        )
+                                        view?.loadUrl(fallbackUrl)
+                                        return true
+                                    }
                                     val tokenInTarget = HautLibrarySeatAuthClient.extractTokenFromUrl(targetUrl)
                                     if (!tokenInTarget.isNullOrBlank()) {
                                         activeToken = tokenInTarget
