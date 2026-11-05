@@ -11,14 +11,14 @@ import java.time.LocalDate
 
 object ClassroomBuildingResolver {
 
-    private val ROOM_NUMBER_REGEX = Regex("([A-Za-z]?\\d{3,4})")
+    private val ROOM_NUMBER_REGEX = Regex("([A-Za-z]?\\d{3,5})")
 
-    // 河南工业大学莲花街校区电子围栏多边形顶点（WGS-84）
+    // 河南工业大学莲花街校区电子围栏多边形顶点（WGS-84，对齐官方 gis.haut.edu.cn 边界）
     val HAUT_LIANHUAJIE_POLYGON = listOf(
-        GeoPoint(34.82820, 113.53580),
-        GeoPoint(34.82820, 113.54920),
-        GeoPoint(34.83580, 113.54920),
-        GeoPoint(34.83580, 113.53580)
+        GeoPoint(34.82800, 113.53560),
+        GeoPoint(34.82800, 113.55120),
+        GeoPoint(34.83580, 113.55120),
+        GeoPoint(34.83580, 113.53560)
     )
 
     // 河南工业大学嵩山路校区电子围栏多边形顶点（WGS-84，郑州市二七区嵩山南路140号）
@@ -165,7 +165,7 @@ object ClassroomBuildingResolver {
                     text.contains("训练中心", ignoreCase = true) -> {
                     lianhuajieVotes += 3
                 }
-                Regex("(1|2|3|4|5|32|34)号教学楼|[1-4]教|^[1-4]\\d{3}$").containsMatchIn(text) -> {
+                Regex("(1|2|3|4|5|6|7|8|9|18|24|25|31|32|34|35|38|40)号(教学)?楼|[1-9]教|^[1-9]\\d{3}$|^(31|32|34|35|38|40)\\d{3}$").containsMatchIn(text) -> {
                     lianhuajieVotes += 1
                 }
             }
@@ -251,19 +251,19 @@ object ClassroomBuildingResolver {
             }
         }
 
-        // 3. 常见纯四位数字教室号启发式（如 "3206" 可能指 3 号教学楼 206，但未经验证，必须标记为模糊待确认）
-        val fourDigitMatch = Regex("^(\\d)(\\d{3})$").find(trimmed)
-        if (fourDigitMatch != null) {
-            val buildingNum = fourDigitMatch.groupValues[1]
+        // 3. 常见纯四位/五位数字教室号启发式（如 "3206" 指 3 号楼 206，"31204" 指 31 号楼 204，未经别名验证时标记为模糊待确认）
+        val multiDigitMatch = Regex("^(\\d{1,2})(\\d{3})$").find(trimmed)
+        if (multiDigitMatch != null) {
+            val buildingNum = multiDigitMatch.groupValues[1]
             val candidate = buildings.firstOrNull {
-                it.name.contains("${buildingNum}号") || it.shortName.contains("${buildingNum}号")
+                it.name.contains("${buildingNum}号") || it.shortName.contains("${buildingNum}号") || it.shortName == "${buildingNum}教"
             }
             if (candidate != null) {
                 return ResolvedClassroomLocation(
                     rawRoom = rawRoom,
                     status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
                     building = candidate,
-                    roomNumberHint = fourDigitMatch.groupValues[2],
+                    roomNumberHint = multiDigitMatch.groupValues[2],
                     confidence = 0.55f,
                     matchedAlias = "${buildingNum}XXX 编号推断",
                     candidateBuildings = buildings.take(4)

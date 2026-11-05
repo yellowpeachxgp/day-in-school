@@ -65,4 +65,32 @@ class CampusMapProviderTest {
         assertTrue(plan.routePoints.size >= 2)
         assertTrue(plan.estimatedWalkDistanceMeters > 0)
     }
+
+    @Test
+    fun officialGisClient_infersFloorIndexAndMatchesBuildingsAccurately() {
+        assertEquals(0, HautOfficialGisClient.inferFloorIndexFromRoomQuery("3101"))
+        assertEquals(3, HautOfficialGisClient.inferFloorIndexFromRoomQuery("莲花街 3号楼3402"))
+        assertEquals(1, HautOfficialGisClient.inferFloorIndexFromRoomQuery("31205"))
+        assertEquals(2, HautOfficialGisClient.inferFloorIndexFromRoomQuery("5号楼 3层 5308"))
+        assertEquals("3104", HautOfficialGisClient.extractCleanRoomCode("莲花街校区 3号楼3104"))
+        assertEquals("31205", HautOfficialGisClient.extractCleanRoomCode("31号楼31205"))
+
+        val b3 = Building(
+            id = "b_t3",
+            name = "3号楼（文科楼）",
+            shortName = "3号楼",
+            latitude = 34.83013,
+            longitude = 113.54798,
+            category = CampusCategory.TEACHING_BUILDING,
+            entrances = listOf("南门"),
+            description = "文科楼",
+            verifiedAt = LocalDate.of(2026, 11, 5)
+        )
+        val resolved = HautOfficialGisClient.resolveFeatureIdForBuilding(b3, null)
+        assertNotNull(resolved)
+        assertEquals("12866", resolved!!.first)
+        assertEquals(5, resolved.second)
+        assertEquals(GisIndoorRoomCategory.CLASSROOM, HautOfficialGisClient.classifyRoomCategory("classroom", "3101"))
+        assertEquals(GisIndoorRoomCategory.LABORATORY, HautOfficialGisClient.classifyRoomCategory("laboratory", "机房5204"))
+    }
 }

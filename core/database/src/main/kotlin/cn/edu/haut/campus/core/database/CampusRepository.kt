@@ -246,6 +246,7 @@ class CampusRepository internal constructor(
     private object PrefKeys {
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
         val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
+        val GIS_DICTIONARY_SYNCED_V15 = booleanPreferencesKey("official_gis_dictionary_synced_v15")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
@@ -648,6 +649,15 @@ class CampusRepository internal constructor(
             preferences.edit {
                 it[PrefKeys.SEEDED] = true
                 it[PrefKeys.CLEAN_BASE_V2] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+            }
+        } else if (prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true) {
+            database.withTransaction {
+                dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+                dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+            }
+            preferences.edit {
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
             }
         }
         if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
