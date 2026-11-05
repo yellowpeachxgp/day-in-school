@@ -700,8 +700,8 @@ fun CampusMapScreen(
             )
             selectedBuilding = tempBuilding
         }
-        if (item.levelIndex != null) {
-            selectedIndoorFloorIndex = item.levelIndex
+        item.levelIndex?.let { lvl ->
+            selectedIndoorFloorIndex = lvl
         }
         isFollowingUser = false
         inAppNavigationActive = true
@@ -1062,9 +1062,9 @@ fun CampusMapScreen(
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                if (item.floorLabel != null) {
+                                                item.floorLabel?.let { floorLabel ->
                                                     XPeachStatusBadge(
-                                                        text = item.floorLabel,
+                                                        text = floorLabel,
                                                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                                                         contentColor = MaterialTheme.colorScheme.primary
                                                     )
@@ -1930,9 +1930,9 @@ fun CampusMapScreen(
                                             maxLines = 1,
                                             softWrap = false
                                         )
-                                        if (item.floorLabel != null) {
+                                        item.floorLabel?.let { floorLabel ->
                                             Text(
-                                                text = item.floorLabel,
+                                                text = floorLabel,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.primary,
                                                 fontWeight = FontWeight.Bold,
