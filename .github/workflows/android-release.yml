@@ -140,6 +140,23 @@ jobs:
           generate_release_notes: true
           files: release-assets/*
 
+      - name: 校验并补齐 GitHub Release 发行资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.meta.outputs.TAG_NAME }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.VERSION_NAME }}
+        run: |
+          for f in release-assets/*; do
+            fname=$(basename "$f")
+            if ! gh release view "$TAG_NAME" --json assets -q '.assets[].name' | grep -Fxq "$fname"; then
+              echo "补传缺失的发行资产：$fname"
+              gh release upload "$TAG_NAME" "$f" --clobber
+            fi
+          done
+          UPLOADED=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name')
+          echo "$UPLOADED" | grep -Fxq "day-in-school-v${RELEASE_VERSION}-release.apk" || { echo "缺少正式签名 APK 资产"; exit 1; }
+          echo "$UPLOADED" | grep -Fxq "day-in-school-v${RELEASE_VERSION}-debug.apk" || { echo "缺少调试 APK 资产"; exit 1; }
+
       - name: 清理临时签名材料
         if: always()
         run: rm -rf keystore
