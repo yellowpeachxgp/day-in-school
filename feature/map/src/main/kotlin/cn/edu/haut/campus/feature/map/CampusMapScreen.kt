@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.util.LruCache
@@ -134,7 +135,6 @@ import cn.edu.haut.campus.core.location.GisCampusVectorDataset
 import cn.edu.haut.campus.core.location.GisGeoPoint
 import cn.edu.haut.campus.core.location.GisIndoorFloorPlan
 import cn.edu.haut.campus.core.location.GisIndoorRoom
-import cn.edu.haut.campus.core.location.GisIndoorRoomCategory
 import cn.edu.haut.campus.core.location.GisLanduseType
 import cn.edu.haut.campus.core.location.GisMapStyleMode
 import cn.edu.haut.campus.core.location.GisSearchResultItem
@@ -317,7 +317,9 @@ fun CampusMapScreen(
     var gisDataset by remember { mutableStateOf<GisCampusVectorDataset?>(null) }
     var selectedIndoorFloorIndex by remember { mutableIntStateOf(0) }
     var activeIndoorFloorPlan by remember { mutableStateOf<GisIndoorFloorPlan?>(null) }
+    var isLoadingIndoorFloorPlan by remember { mutableStateOf(false) }
     var selectedIndoorRoom by remember { mutableStateOf<GisIndoorRoom?>(null) }
+    var showIndoorSecondaryMap by remember { mutableStateOf(false) }
     var officialSearchResults by remember { mutableStateOf<List<GisSearchResultItem>>(emptyList()) }
     var isOfficialRouteActive by remember { mutableStateOf(false) }
 
@@ -597,14 +599,20 @@ fun CampusMapScreen(
         if (!isLianhuajieActive || fp == null || !fp.hasIndoorFloors) {
             activeIndoorFloorPlan = null
             selectedIndoorRoom = null
+            isLoadingIndoorFloorPlan = false
             return@LaunchedEffect
         }
         val safeFloor = selectedIndoorFloorIndex.coerceIn(fp.minLevelIndex, fp.maxLevelIndex.coerceAtLeast(0))
-        val floorPlan = HautOfficialGisClient.loadIndoorFloorPlan(
-            cacheDir = context.cacheDir,
-            buildingFeatureId = fp.featureId,
-            levelIndex = safeFloor
-        )
+        isLoadingIndoorFloorPlan = true
+        val floorPlan = try {
+            HautOfficialGisClient.loadIndoorFloorPlan(
+                cacheDir = context.cacheDir,
+                buildingFeatureId = fp.featureId,
+                levelIndex = safeFloor
+            )
+        } finally {
+            isLoadingIndoorFloorPlan = false
+        }
         activeIndoorFloorPlan = floorPlan
         val cleanRoomCode = HautOfficialGisClient.extractCleanRoomCode(searchQuery)
         selectedIndoorRoom = if (floorPlan != null && !cleanRoomCode.isNullOrBlank()) {
@@ -681,7 +689,7 @@ fun CampusMapScreen(
     val navigationPlan = officialNavigationPlan ?: fallbackNavigationPlan
 
     // 统一处理用户点击某条官方 GIS 搜索结果（教室/实验室/楼宇/服务点位）
-    fun handleSelectGisSearchResult(item: GisSearchResultItem) {
+    fun handleSelectGisSearchResult(item: GisSearchResultItem, openSecondaryIndoorMap: Boolean = item.isIndoorRoom) {
         val matchedB = campusBuildings.firstOrNull { it.id == item.matchedBuildingId }
         if (matchedB != null) {
             selectedBuilding = matchedB
@@ -708,7 +716,38 @@ fun CampusMapScreen(
         val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(item.latitude, item.longitude)
         mapCenterLatGcj = glat
         mapCenterLonGcj = glon
-        mapZoom = if (item.isIndoorRoom) 18.0f else 17.0f
+        mapZoom = 17.0f
+        if (openSecondaryIndoorMap && item.isIndoorRoom) {
+            showIndoorSecondaryMap = true
+        }
+    }
+
+    // 独立二级建筑室内平面图弹窗（与室外地图解耦，专用于清晰查看楼内 1F~11F 教室/实验室/电梯/卫生间分布）
+    if (showIndoorSecondaryMap && targetBuilding != null && activeBuildingFootprint?.hasIndoorFloors == true) {
+        BuildingIndoorMapDialog(
+            building = targetBuilding,
+            footprint = activeBuildingFootprint,
+            floorPlan = activeIndoorFloorPlan,
+            isLoadingFloorPlan = isLoadingIndoorFloorPlan,
+            selectedFloorIndex = selectedIndoorFloorIndex,
+            selectedRoom = selectedIndoorRoom,
+            onSelectFloor = { floorIdx ->
+                selectedIndoorFloorIndex = floorIdx
+            },
+            onSelectRoom = { room ->
+                selectedIndoorRoom = room
+            },
+            onConfirmRoomForOutdoorRoute = { room ->
+                selectedIndoorRoom = room
+                searchQuery = room.name
+                inAppNavigationActive = true
+                showIndoorSecondaryMap = false
+                isFullScreenMap = true
+            },
+            onDismiss = {
+                showIndoorSecondaryMap = false
+            }
+        )
     }
 
     if (showOfficialWebGisDialog) {
@@ -1035,8 +1074,10 @@ fun CampusMapScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            handleSelectGisSearchResult(item)
-                                            isFullScreenMap = true
+                                            handleSelectGisSearchResult(item, openSecondaryIndoorMap = item.isIndoorRoom)
+                                            if (!item.isIndoorRoom) {
+                                                isFullScreenMap = true
+                                            }
                                         },
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
@@ -1078,14 +1119,25 @@ fun CampusMapScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        XPeachFilterPill(
-                                            label = if (item.isIndoorRoom) "室内定位" else "查看位置",
-                                            selected = true,
-                                            onClick = {
-                                                handleSelectGisSearchResult(item)
-                                                isFullScreenMap = true
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            if (item.isIndoorRoom) {
+                                                XPeachFilterPill(
+                                                    label = "室内平面",
+                                                    selected = true,
+                                                    onClick = {
+                                                        handleSelectGisSearchResult(item, openSecondaryIndoorMap = true)
+                                                    }
+                                                )
                                             }
-                                        )
+                                            XPeachFilterPill(
+                                                label = if (item.isIndoorRoom) "室外路线" else "查看位置",
+                                                selected = !item.isIndoorRoom,
+                                                onClick = {
+                                                    handleSelectGisSearchResult(item, openSecondaryIndoorMap = false)
+                                                    isFullScreenMap = true
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1179,7 +1231,7 @@ fun CampusMapScreen(
                     }
                 }
 
-                // 1. 深度集成官方 GIS 的交互式校园地图卡片（支持直接预览矢量水系、建筑轮廓与室内楼层）
+                // 1. 深度集成官方 GIS 的交互式校园室外地图卡片（室内平面图拆分为独立二级地图页）
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(14.dp)
@@ -1195,38 +1247,25 @@ fun CampusMapScreen(
                                 .padding(end = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = targetBuilding?.name ?: "校区官方 GIS 实测地图",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                if (activeBuildingFootprint?.hasIndoorFloors == true) {
-                                    XPeachStatusBadge(
-                                        text = "${selectedIndoorFloorIndex + 1}F 室内",
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
+                            Text(
+                                text = targetBuilding?.name ?: "校区官方 GIS 实测地图",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                             Text(
                                 text = buildString {
                                     if (targetBuilding != null && navigationPlan != null) {
                                         append("步行约 ${navigationPlan.estimatedWalkMinutes} 分钟 (${navigationPlan.estimatedWalkDistanceMeters}m)")
                                         if (selectedIndoorRoom != null) {
-                                            append(" · 教室 ${selectedIndoorRoom!!.name}")
+                                            append(" · ${selectedIndoorRoom!!.floorLabel} ${selectedIndoorRoom!!.name}")
                                         }
                                         if (isOfficialRouteActive) {
                                             append(" · 官方GIS路网")
                                         }
                                     } else {
-                                        append("已同步 gis.haut.edu.cn 实测建筑轮廓与室内平面")
+                                        append("已同步 gis.haut.edu.cn 实测建筑轮廓与校园路网")
                                     }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
@@ -1235,16 +1274,25 @@ fun CampusMapScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        XPeachFilterPill(
-                            label = "全屏大地图",
-                            selected = true,
-                            onClick = { isFullScreenMap = true }
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (activeBuildingFootprint?.hasIndoorFloors == true) {
+                                XPeachFilterPill(
+                                    label = "室内平面",
+                                    selected = false,
+                                    onClick = { showIndoorSecondaryMap = true }
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "全屏地图",
+                                selected = true,
+                                onClick = { isFullScreenMap = true }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // 图层模式切换条（概览页与全屏页保持一致）
+                    // 室外底图模式切换条（不再混杂楼层按钮）
                     if (isLianhuajieActive) {
                         Row(
                             modifier = Modifier
@@ -1260,18 +1308,6 @@ fun CampusMapScreen(
                                     onClick = { gisStyleMode = mode }
                                 )
                             }
-                            if (activeBuildingFootprint?.hasIndoorFloors == true) {
-                                for ((floorIdx, floorLabel) in activeBuildingFootprint.floorOptions.take(6)) {
-                                    XPeachFilterPill(
-                                        label = floorLabel,
-                                        selected = selectedIndoorFloorIndex == floorIdx,
-                                        onClick = {
-                                            selectedIndoorFloorIndex = floorIdx
-                                            mapZoom = mapZoom.coerceAtLeast(17.2f)
-                                        }
-                                    )
-                                }
-                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -1279,7 +1315,7 @@ fun CampusMapScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(236.dp)
+                            .height(228.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .border(
                                 width = 0.8.dp,
@@ -1295,11 +1331,10 @@ fun CampusMapScreen(
                             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
-                            zoom = mapZoom.coerceIn(15.6f, 18.2f),
+                            zoom = mapZoom.coerceIn(15.6f, 18.0f),
                             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
                             gisDataset = if (isLianhuajieActive) gisDataset else null,
                             activeBuildingFootprint = activeBuildingFootprint,
-                            activeIndoorFloorPlan = activeIndoorFloorPlan,
                             selectedIndoorRoom = selectedIndoorRoom,
                             campusPolygonVertices = activeCampusPolygon,
                             onViewportChange = { newLat, newLon, newZoom ->
@@ -1309,12 +1344,6 @@ fun CampusMapScreen(
                             },
                             onSelectBuilding = { clicked ->
                                 selectedBuilding = clicked
-                                inAppNavigationActive = true
-                                isFullScreenMap = true
-                            },
-                            onSelectIndoorRoom = { room ->
-                                selectedIndoorRoom = room
-                                searchQuery = room.name
                                 inAppNavigationActive = true
                                 isFullScreenMap = true
                             }
@@ -1581,20 +1610,33 @@ fun CampusMapScreen(
                                             )
                                         }
                                     }
-                                    XPeachFilterPill(
-                                        label = if (hasIndoor) "室内/去这里" else "去这里",
-                                        selected = selectedBuilding?.id == b.id,
-                                        onClick = {
-                                            selectedBuilding = b
-                                            selectedIndoorRoom = null
-                                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
-                                            mapCenterLatGcj = glat
-                                            mapCenterLonGcj = glon
-                                            mapZoom = if (hasIndoor) 17.3f else 16.6f
-                                            inAppNavigationActive = true
-                                            isFullScreenMap = true
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (hasIndoor) {
+                                            XPeachFilterPill(
+                                                label = "室内图",
+                                                selected = false,
+                                                onClick = {
+                                                    selectedBuilding = b
+                                                    selectedIndoorRoom = null
+                                                    showIndoorSecondaryMap = true
+                                                }
+                                            )
                                         }
-                                    )
+                                        XPeachFilterPill(
+                                            label = "去这里",
+                                            selected = selectedBuilding?.id == b.id,
+                                            onClick = {
+                                                selectedBuilding = b
+                                                selectedIndoorRoom = null
+                                                val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
+                                                mapCenterLatGcj = glat
+                                                mapCenterLonGcj = glon
+                                                mapZoom = 16.8f
+                                                inAppNavigationActive = true
+                                                isFullScreenMap = true
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1613,7 +1655,7 @@ fun CampusMapScreen(
             .fillMaxSize()
             .background(Color(0xFFF2EFE9))
     ) {
-        // 1. 底层全屏瓦片 + 官方 GIS 矢量与室内平面渲染画布
+        // 1. 底层全屏室外地图画布（室内平面图已拆分为独立二级地图页，室外地图仅聚焦楼宇与步行路线）
         RealCampusTileMap(
             buildings = if (isDrawingZoneMode) (campusBuildings + drawingZoneBuildings) else campusBuildings,
             selectedBuilding = targetBuilding,
@@ -1626,7 +1668,6 @@ fun CampusMapScreen(
             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
             gisDataset = if (isLianhuajieActive) gisDataset else null,
             activeBuildingFootprint = activeBuildingFootprint,
-            activeIndoorFloorPlan = activeIndoorFloorPlan,
             selectedIndoorRoom = selectedIndoorRoom,
             campusPolygonVertices = activeCampusPolygon,
             drawingPolygonVertices = drawingZoneVertices,
@@ -1652,10 +1693,6 @@ fun CampusMapScreen(
                     selectedIndoorRoom = null
                 }
                 selectedBuilding = clicked
-                inAppNavigationActive = true
-            },
-            onSelectIndoorRoom = { room ->
-                selectedIndoorRoom = room
                 inAppNavigationActive = true
             }
         )
@@ -2084,82 +2121,6 @@ fun CampusMapScreen(
             }
         }
 
-        // 2.5 左侧悬浮「室内楼层竖向切换器」(1F ~ 6F/11F)，当选中具有室内平面图的教学楼/实验楼/图书馆时呈现
-        if (isLianhuajieActive && activeBuildingFootprint?.hasIndoorFloors == true && !isDrawingZoneMode) {
-            val floorOptions = activeBuildingFootprint.floorOptions
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                shadowElevation = 3.dp,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 14.dp, bottom = 120.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(vertical = 6.dp, horizontal = 5.dp)
-                        .heightIn(max = 260.dp)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Layers,
-                        contentDescription = "室内楼层",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .padding(vertical = 2.dp)
-                            .size(16.dp)
-                    )
-                    for ((floorIdx, floorLabel) in floorOptions.reversed()) {
-                        val isSelected = selectedIndoorFloorIndex == floorIdx
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                Color.Transparent
-                            },
-                            modifier = Modifier
-                                .width(38.dp)
-                                .clickable {
-                                    selectedIndoorFloorIndex = floorIdx
-                                    if (mapZoom < 17.2f) {
-                                        mapZoom = 17.5f
-                                    }
-                                    if (targetBuilding != null) {
-                                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
-                                            targetBuilding.latitude,
-                                            targetBuilding.longitude
-                                        )
-                                        mapCenterLatGcj = glat
-                                        mapCenterLonGcj = glon
-                                    }
-                                }
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = floorLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    },
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // 3. 右侧中部悬浮地图控制按钮组（放大、缩小、全览路线、回到定位）
         Column(
             modifier = Modifier
@@ -2234,7 +2195,7 @@ fun CampusMapScreen(
             )
         }
 
-        // 4. 底部楼宇选择、室内房间快捷条与路线导航面板
+        // 4. 底部楼宇选择与路线导航面板（点击「查看室内平面图」可进入独立二级室内地图）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2275,7 +2236,6 @@ fun CampusMapScreen(
                     plan = navigationPlan,
                     isOfficialGisRoute = isOfficialRouteActive,
                     activeFootprint = activeBuildingFootprint,
-                    activeIndoorFloorPlan = activeIndoorFloorPlan,
                     selectedIndoorRoom = selectedIndoorRoom,
                     allBuildings = buildings,
                     hasLiveGps = userLocation?.isInsideLianhuajieCampus == true,
@@ -2284,14 +2244,8 @@ fun CampusMapScreen(
                     inAppNavigationActive = inAppNavigationActive,
                     expandRouteSteps = expandRouteSteps,
                     onToggleExpandSteps = { expandRouteSteps = !expandRouteSteps },
-                    onSelectIndoorRoom = { room ->
-                        selectedIndoorRoom = room
-                        isFollowingUser = false
-                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(room.centerLat, room.centerLon)
-                        mapCenterLatGcj = glat
-                        mapCenterLonGcj = glon
-                        mapZoom = mapZoom.coerceAtLeast(17.8f)
-                        inAppNavigationActive = true
+                    onOpenIndoorSecondaryMap = {
+                        showIndoorSecondaryMap = true
                     },
                     onSelectOriginBuilding = { origin ->
                         manualOriginBuilding = origin
@@ -2324,7 +2278,6 @@ private fun FloatingRouteBottomSheet(
     plan: InAppNavigationPlan,
     isOfficialGisRoute: Boolean,
     activeFootprint: GisBuildingFootprint?,
-    activeIndoorFloorPlan: GisIndoorFloorPlan?,
     selectedIndoorRoom: GisIndoorRoom?,
     allBuildings: List<Building>,
     hasLiveGps: Boolean,
@@ -2333,7 +2286,7 @@ private fun FloatingRouteBottomSheet(
     inAppNavigationActive: Boolean,
     expandRouteSteps: Boolean,
     onToggleExpandSteps: () -> Unit,
-    onSelectIndoorRoom: (GisIndoorRoom) -> Unit,
+    onOpenIndoorSecondaryMap: () -> Unit,
     onSelectOriginBuilding: (Building?) -> Unit,
     onToggleInAppNavigation: () -> Unit,
     onOpenOfficialWebGis: () -> Unit,
@@ -2354,16 +2307,7 @@ private fun FloatingRouteBottomSheet(
         }
     }
 
-    val namedRoomsOnFloor = remember(activeIndoorFloorPlan) {
-        activeIndoorFloorPlan?.rooms
-            ?.filter {
-                it.name.isNotBlank() &&
-                    it.category != GisIndoorRoomCategory.STAIRS_ELEVATOR &&
-                    it.category != GisIndoorRoomCategory.RESTROOM
-            }
-            ?.sortedBy { it.name }
-            .orEmpty()
-    }
+    val hasIndoorMap = activeFootprint?.hasIndoorFloors == true
 
     XPeachCard(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
@@ -2397,9 +2341,9 @@ private fun FloatingRouteBottomSheet(
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.primary
                         )
-                    } else if (activeIndoorFloorPlan != null) {
+                    } else if (hasIndoorMap) {
                         XPeachStatusBadge(
-                            text = "${activeIndoorFloorPlan.floorLabel} 平面",
+                            text = "含 1-${activeFootprint!!.maxLevelIndex + 1}F 室内图",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = MaterialTheme.colorScheme.primary
                         )
@@ -2434,28 +2378,50 @@ private fun FloatingRouteBottomSheet(
             )
         }
 
-        // 当前楼层教室/实验室横向速选条（让用户无需放大微操也能一键定位任意教室）
-        if (namedRoomsOnFloor.isNotEmpty()) {
+        // 若当前楼宇支持官方室内平面图，提供醒目的二级室内地图入口条（不在室外地图上堆叠房间）
+        if (hasIndoorMap) {
             Spacer(modifier = Modifier.height(8.dp))
-            Row(
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .clickable(onClick = onOpenIndoorSecondaryMap)
             ) {
-                Text(
-                    text = "${activeIndoorFloorPlan?.floorLabel ?: "1F"} 房间：",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                for (room in namedRoomsOnFloor.take(24)) {
-                    XPeachFilterPill(
-                        label = room.name,
-                        selected = selectedIndoorRoom?.id == room.id,
-                        onClick = { onSelectIndoorRoom(room) }
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Layers,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (selectedIndoorRoom != null) {
+                                "已定位 ${selectedIndoorRoom.floorLabel} · ${selectedIndoorRoom.name}，点击打开独立室内平面图"
+                            } else {
+                                "查看「${building.shortName}」独立室内分层平面图（1F–${activeFootprint!!.maxLevelIndex + 1}F）"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = "进入室内 >",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -2590,18 +2556,34 @@ private fun FloatingRouteBottomSheet(
                 )
             }
 
-            FilledTonalButton(
-                onClick = onOpenOfficialWebGis,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(15.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("官方GIS", maxLines = 1, softWrap = false)
+            if (hasIndoorMap) {
+                FilledTonalButton(
+                    onClick = onOpenIndoorSecondaryMap,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("室内平面", maxLines = 1, softWrap = false)
+                }
+            } else {
+                FilledTonalButton(
+                    onClick = onOpenOfficialWebGis,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("官方GIS", maxLines = 1, softWrap = false)
+                }
             }
 
             FilledTonalButton(
@@ -2712,7 +2694,7 @@ private fun isScreenPointInRing(pt: Offset, ring: List<Offset>): Boolean {
 }
 
 /**
- * 全屏真实瓦片 + 学校官方 GIS 矢量图层（水系/绿地/校园道路/92栋实测建筑轮廓/室内逐层房间平面图）渲染画布。
+ * 一级校园室外地图画布（纯粹聚焦室外导航、实测建筑轮廓与防重叠地标标注；室内平面图已独立至二级页面）。
  */
 @Composable
 private fun RealCampusTileMap(
@@ -2727,15 +2709,13 @@ private fun RealCampusTileMap(
     styleMode: GisMapStyleMode = GisMapStyleMode.OFFICIAL_VECTOR_HYBRID,
     gisDataset: GisCampusVectorDataset? = null,
     activeBuildingFootprint: GisBuildingFootprint? = null,
-    activeIndoorFloorPlan: GisIndoorFloorPlan? = null,
     selectedIndoorRoom: GisIndoorRoom? = null,
     campusPolygonVertices: List<GeoPoint> = emptyList(),
     drawingPolygonVertices: List<GeoPoint> = emptyList(),
     isDrawingZoneMode: Boolean = false,
     onTapMapWgs84: ((Double, Double) -> Unit)? = null,
     onViewportChange: (Double, Double, Float) -> Unit,
-    onSelectBuilding: (Building) -> Unit,
-    onSelectIndoorRoom: ((GisIndoorRoom) -> Unit)? = null
+    onSelectBuilding: (Building) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2774,13 +2754,11 @@ private fun RealCampusTileMap(
     val currentTileZ by rememberUpdatedState(tileZ)
     val currentBaseTilePx by rememberUpdatedState(baseTileRenderPx)
     val currentBuildings by rememberUpdatedState(buildings)
-    val currentIndoorFloorPlan by rememberUpdatedState(activeIndoorFloorPlan)
     val currentGisDataset by rememberUpdatedState(gisDataset)
     val currentIsDrawingMode by rememberUpdatedState(isDrawingZoneMode)
     val currentOnTapMapWgs84 by rememberUpdatedState(onTapMapWgs84)
     val currentOnViewportChange by rememberUpdatedState(onViewportChange)
     val currentOnSelectBuilding by rememberUpdatedState(onSelectBuilding)
-    val currentOnSelectIndoorRoom by rememberUpdatedState(onSelectIndoorRoom)
 
     fun gcjToScreenDynamic(latGcj: Double, lonGcj: Double): Offset {
         val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, currentTileZ)
@@ -2810,20 +2788,7 @@ private fun RealCampusTileMap(
                         return@detectTapGestures
                     }
 
-                    // 1. 优先检测是否点击了当前激活楼层的室内房间多边形
-                    val indoorPlan = currentIndoorFloorPlan
-                    if (indoorPlan != null && currentZoom >= 16.5f) {
-                        val hitRoom = indoorPlan.rooms.firstOrNull { room ->
-                            val screenRing = room.outerRing.map { wgsToScreenDynamic(it.latitude, it.longitude) }
-                            isScreenPointInRing(tapOffset, screenRing)
-                        }
-                        if (hitRoom != null && hitRoom.name.isNotBlank()) {
-                            currentOnSelectIndoorRoom?.invoke(hitRoom)
-                            return@detectTapGestures
-                        }
-                    }
-
-                    // 2. 检测是否点击了官方 GIS 建筑轮廓多边形
+                    // 1. 检测是否点击了官方 GIS 建筑轮廓多边形
                     val dataset = currentGisDataset
                     if (dataset != null) {
                         val hitFootprint = dataset.buildings.firstOrNull { fp ->
@@ -2847,7 +2812,7 @@ private fun RealCampusTileMap(
                         }
                     }
 
-                    // 3. 检测楼宇地标圆点命中
+                    // 2. 检测楼宇地标圆点命中
                     val hit = currentBuildings.minByOrNull { b ->
                         val pt = wgsToScreenDynamic(b.latitude, b.longitude)
                         hypot((pt.x - tapOffset.x).toDouble(), (pt.y - tapOffset.y).toDouble())
@@ -2903,7 +2868,7 @@ private fun RealCampusTileMap(
         // 1. 地图底色
         drawRect(color = Color(0xFFF2EFE9))
 
-        // 2. 绘制覆盖视口的真实街道/校园瓦片
+        // 2. 绘制覆盖视口的周边街道/校园瓦片
         val halfTilesW = (size.width / 2f) / baseTileRenderPx + 1f
         val halfTilesH = (size.height / 2f) / baseTileRenderPx + 1f
         val minTx = floor(centerTileX - halfTilesW).toInt()
@@ -2939,8 +2904,20 @@ private fun RealCampusTileMap(
             }
         }
 
-        // 2.2 绘制河南工业大学官方 GIS 室外矢量图层（水系、绿地、运动场、校园道路、92栋实测建筑轮廓）
+        // 2.2 绘制河南工业大学官方 GIS 室外矢量底图（先用干净园区底色遮蔽底层栅格杂乱文字，再绘制水系、绿地、运动场、道路与 92 栋建筑轮廓）
         if (styleMode == GisMapStyleMode.OFFICIAL_VECTOR_HYBRID && gisDataset != null) {
+            if (campusPolygonVertices.size >= 3) {
+                val campusMaskPath = Path().apply {
+                    campusPolygonVertices.forEachIndexed { idx, v ->
+                        val p = wgsToScreen(v.latitude, v.longitude)
+                        if (idx == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
+                    }
+                    close()
+                }
+                // 纯净园区底板，彻底隔绝底层第三方街景瓦片的重影文字与重影道路
+                drawPath(path = campusMaskPath, color = Color(0xFFF5F6F8))
+            }
+
             // (a) 水系、绿地与运动场多边形
             for (land in gisDataset.landusePolygons) {
                 if (zoom < 15.2f && land.type != GisLanduseType.WATER) continue
@@ -2960,24 +2937,24 @@ private fun RealCampusTileMap(
                 }
                 when (land.type) {
                     GisLanduseType.WATER -> {
-                        drawPath(path = path, color = Color(0x997DD3FC))
-                        drawPath(path = path, color = Color(0xCC0284C7), style = Stroke(width = 2f))
+                        drawPath(path = path, color = Color(0xFFBAE6FD))
+                        drawPath(path = path, color = Color(0xFF38BDF8), style = Stroke(width = 2f))
                     }
                     GisLanduseType.GREENERY -> {
-                        drawPath(path = path, color = Color(0x5586EFAC))
+                        drawPath(path = path, color = Color(0xFFDCFCE7))
                     }
                     GisLanduseType.SPORTS_GROUND -> {
-                        drawPath(path = path, color = Color(0x66FDBA74))
-                        drawPath(path = path, color = Color(0x99EA580C), style = Stroke(width = 1.6f))
+                        drawPath(path = path, color = Color(0xFFFFEDD5))
+                        drawPath(path = path, color = Color(0xFFFB923C), style = Stroke(width = 1.6f))
                     }
                     GisLanduseType.PLAZA -> {
-                        drawPath(path = path, color = Color(0x44CBD5E1))
+                        drawPath(path = path, color = Color(0xFFEFF2F6))
                     }
                 }
             }
 
             // (b) 官方校园步行与行车道路网
-            if (zoom >= 15.5f) {
+            if (zoom >= 15.3f) {
                 for (road in gisDataset.roadLines) {
                     val pts = road.points.map { wgsToScreen(it.latitude, it.longitude) }
                     if (pts.size < 2) continue
@@ -2986,21 +2963,21 @@ private fun RealCampusTileMap(
                             if (idx == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
                         }
                     }
-                    val strokeW = if (road.highwayType == "footway") 3.2f else 5.5f
+                    val strokeW = if (road.highwayType == "footway") 3.5f else 6.5f
                     drawPath(
                         path = path,
-                        color = Color(0x88FFFFFF),
-                        style = Stroke(width = strokeW + 2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        color = Color(0xFFCBD5E1),
+                        style = Stroke(width = strokeW + 2.4f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                     drawPath(
                         path = path,
-                        color = if (road.highwayType == "footway") Color(0x7794A3B8) else Color(0x99CBD5E1),
+                        color = Color.White,
                         style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
                     )
                 }
             }
 
-            // (c) 官方 92 栋实测建筑外轮廓多边形
+            // (c) 官方 92 栋实测建筑外轮廓多边形（带微立体阴影，不再把室内小房间画在室外楼体上）
             for (fp in gisDataset.buildings) {
                 val pts = fp.outerRing.map { wgsToScreen(it.latitude, it.longitude) }
                 if (pts.size < 3) continue
@@ -3013,111 +2990,44 @@ private fun RealCampusTileMap(
                 val isSelectedFp = (activeBuildingFootprint?.featureId == fp.featureId) ||
                     (selectedBuilding != null && fp.matchedBuildingId == selectedBuilding.id)
 
+                val shadowPath = Path().apply {
+                    pts.forEachIndexed { idx, p ->
+                        if (idx == 0) moveTo(p.x + 2.5f, p.y + 3.5f) else lineTo(p.x + 2.5f, p.y + 3.5f)
+                    }
+                    close()
+                }
                 val polyPath = Path().apply {
                     pts.forEachIndexed { idx, p ->
                         if (idx == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
                     }
                     close()
                 }
+                drawPath(path = shadowPath, color = Color(0x1E0F172A))
                 drawPath(
                     path = polyPath,
-                    color = if (isSelectedFp) Color(0x5538BDF8) else Color(0x77E2E8F0)
+                    color = if (isSelectedFp) Color(0xFFBAE6FD) else Color(0xFFE2E8F0)
                 )
                 drawPath(
                     path = polyPath,
-                    color = if (isSelectedFp) Color(0xFF0284C7) else Color(0xAA64748B),
-                    style = Stroke(width = if (isSelectedFp) 4.2f else 2.0f, join = StrokeJoin.Round)
+                    color = if (isSelectedFp) Color(0xFF0284C7) else Color(0xFF94A3B8),
+                    style = Stroke(width = if (isSelectedFp) 3.8f else 1.6f, join = StrokeJoin.Round)
                 )
             }
-
-            // (d) 当前选中建筑的官方室内房间多边形与教室门牌号 (indoorSource)
-            if (activeIndoorFloorPlan != null && zoom >= 16.0f) {
-                val roomTextPaint = Paint().apply {
-                    isAntiAlias = true
-                    textSize = if (zoom >= 17.6f) 10.sp.toPx() else 8.5.sp.toPx()
-                    typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                    color = android.graphics.Color.rgb(30, 41, 59)
+        } else if (activeBuildingFootprint != null && activeBuildingFootprint.outerRing.size >= 3) {
+            // 在标准街景或 2.5D 模式下，仅高亮当前选中建筑轮廓，不叠加冗余矢量底图
+            val pts = activeBuildingFootprint.outerRing.map { wgsToScreen(it.latitude, it.longitude) }
+            val polyPath = Path().apply {
+                pts.forEachIndexed { idx, p ->
+                    if (idx == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
                 }
-
-                for (room in activeIndoorFloorPlan.rooms) {
-                    val pts = room.outerRing.map { wgsToScreen(it.latitude, it.longitude) }
-                    if (pts.size < 3) continue
-                    val isSelectedRoom = selectedIndoorRoom?.id == room.id
-                    val roomPath = Path().apply {
-                        pts.forEachIndexed { idx, p ->
-                            if (idx == 0) moveTo(p.x, p.y) else lineTo(p.x, p.y)
-                        }
-                        close()
-                    }
-
-                    val fillColor = when {
-                        isSelectedRoom -> Color(0xCCF97316)
-                        room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xCCDBEAFE)
-                        room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xCCD1FAE5)
-                        room.category == GisIndoorRoomCategory.OFFICE -> Color(0xCCFEF3C7)
-                        room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xCCEDE9FE)
-                        room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xCCCFFAFE)
-                        else -> Color(0xBBE2E8F0)
-                    }
-                    val borderColor = when {
-                        isSelectedRoom -> Color(0xFFDC2626)
-                        room.category == GisIndoorRoomCategory.CLASSROOM -> Color(0xFF2563EB)
-                        room.category == GisIndoorRoomCategory.LABORATORY -> Color(0xFF059669)
-                        room.category == GisIndoorRoomCategory.OFFICE -> Color(0xFFD97706)
-                        room.category == GisIndoorRoomCategory.STAIRS_ELEVATOR -> Color(0xFF7C3AED)
-                        room.category == GisIndoorRoomCategory.RESTROOM -> Color(0xFF0891B2)
-                        else -> Color(0xFF64748B)
-                    }
-
-                    drawPath(path = roomPath, color = fillColor)
-                    drawPath(
-                        path = roomPath,
-                        color = borderColor,
-                        style = Stroke(width = if (isSelectedRoom) 3.8f else 1.6f)
-                    )
-
-                    if (room.name.isNotBlank() && (isSelectedRoom || zoom >= 16.9f)) {
-                        val centerPt = wgsToScreen(room.centerLat, room.centerLon)
-                        val tw = roomTextPaint.measureText(room.name)
-                        roomTextPaint.color = if (isSelectedRoom) {
-                            android.graphics.Color.WHITE
-                        } else {
-                            android.graphics.Color.rgb(30, 41, 59)
-                        }
-                        drawContext.canvas.nativeCanvas.drawText(
-                            room.name,
-                            centerPt.x - tw / 2f,
-                            centerPt.y + roomTextPaint.textSize * 0.35f,
-                            roomTextPaint
-                        )
-                    }
-                }
+                close()
             }
-
-            // (e) 官方 55 处校园服务点位小图标与标注（高缩放级别下呈现）
-            if (zoom >= 16.7f) {
-                val poiPaint = Paint().apply {
-                    isAntiAlias = true
-                    textSize = 9.5.sp.toPx()
-                    typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-                    color = android.graphics.Color.rgb(71, 85, 105)
-                }
-                for (poi in gisDataset.servicePois) {
-                    val pt = wgsToScreen(poi.latitude, poi.longitude)
-                    if (pt.x < 0f || pt.x > size.width || pt.y < 0f || pt.y > size.height) continue
-                    drawCircle(color = Color.White, radius = 5.5f, center = pt)
-                    drawCircle(color = Color(0xFF0D9488), radius = 3.8f, center = pt)
-                    if (zoom >= 17.2f) {
-                        val tw = poiPaint.measureText(poi.name)
-                        drawContext.canvas.nativeCanvas.drawText(
-                            poi.name,
-                            pt.x - tw / 2f,
-                            pt.y + 15f,
-                            poiPaint
-                        )
-                    }
-                }
-            }
+            drawPath(path = polyPath, color = Color(0x4438BDF8))
+            drawPath(
+                path = polyPath,
+                color = Color(0xFF0284C7),
+                style = Stroke(width = 3.6f, join = StrokeJoin.Round)
+            )
         }
 
         // 2.5 绘制校区电子区划（多边形边界围栏）及用户正在点选圈定的电子区划顶点
@@ -3135,17 +3045,17 @@ private fun RealCampusTileMap(
                 }
                 if (polyPts.size >= 3) close()
             }
-            if (polyPts.size >= 3) {
+            if (polyPts.size >= 3 && isDrawingZoneMode) {
                 drawPath(
                     path = polyPath,
-                    color = if (isDrawingZoneMode) Color(0x280EA5E9) else Color(0x100066CC)
+                    color = Color(0x280EA5E9)
                 )
             }
             drawPath(
                 path = polyPath,
-                color = if (isDrawingZoneMode) Color(0xFF0284C7) else Color(0x770066CC),
+                color = if (isDrawingZoneMode) Color(0xFF0284C7) else Color(0x550066CC),
                 style = Stroke(
-                    width = if (isDrawingZoneMode) 5f else 2.6f,
+                    width = if (isDrawingZoneMode) 5f else 2.2f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
                 )
             )
@@ -3251,17 +3161,23 @@ private fun RealCampusTileMap(
             }
         }
 
-        // 4. 绘制各校内楼宇锚点与紧凑白底标签
+        // 4. 绘制各校内楼宇锚点与严格防碰撞白底标签（优先保证选中建筑完整显示，重叠标签自动退化为小圆点）
+        val placedLabelRects = mutableListOf<RectF>()
         val labelBgPaint = Paint().apply {
             isAntiAlias = true
-            color = android.graphics.Color.argb(238, 255, 255, 255)
+            color = android.graphics.Color.argb(244, 255, 255, 255)
+            style = Paint.Style.FILL
+        }
+        val targetBgPaint = Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.rgb(2, 132, 199)
             style = Paint.Style.FILL
         }
         val labelBorderPaint = Paint().apply {
             isAntiAlias = true
-            color = android.graphics.Color.argb(200, 0, 102, 204)
+            color = android.graphics.Color.argb(120, 148, 163, 184)
             style = Paint.Style.STROKE
-            strokeWidth = 2.5f
+            strokeWidth = 2f
         }
         val labelTextSizePx = 11.sp.toPx()
         val labelTextPaint = Paint().apply {
@@ -3270,52 +3186,88 @@ private fun RealCampusTileMap(
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             color = android.graphics.Color.rgb(17, 24, 39)
         }
+        val targetTextPaint = Paint().apply {
+            isAntiAlias = true
+            textSize = 11.5.sp.toPx()
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            color = android.graphics.Color.WHITE
+        }
 
-        for (b in buildings) {
+        // 将当前选中的目标楼宇排在第一位优先占位，其余楼宇按屏幕碰撞检测决定是否展示文字胶囊
+        val orderedBuildings = buildList {
+            selectedBuilding?.let { target ->
+                buildings.firstOrNull { it.id == target.id }?.let { add(it) }
+            }
+            buildings.forEach { b ->
+                if (b.id != selectedBuilding?.id) add(b)
+            }
+        }
+
+        for (b in orderedBuildings) {
             val pt = wgsToScreen(b.latitude, b.longitude)
             if (pt.x < -80f || pt.x > size.width + 80f || pt.y < -80f || pt.y > size.height + 80f) {
                 continue
             }
             val isTarget = b.id == selectedBuilding?.id
+            val roomSuffix = if (isTarget && selectedIndoorRoom != null) {
+                " · ${selectedIndoorRoom.name}(${selectedIndoorRoom.floorLabel})"
+            } else ""
+            val text = if (isTarget) "终 · ${b.shortName}$roomSuffix" else b.shortName
+            val paintToUse = if (isTarget) targetTextPaint else labelTextPaint
+            val textW = paintToUse.measureText(text)
+            val rectLeft = pt.x - textW / 2f - 10f
+            val rectTop = pt.y - 46f
+            val rectRight = pt.x + textW / 2f + 10f
+            val rectBottom = pt.y - 16f
+
+            val collisionBox = RectF(
+                rectLeft - 8f,
+                rectTop - 6f,
+                rectRight + 8f,
+                rectBottom + 18f
+            )
+            val canDrawLabel = isTarget || (zoom >= 15.8f && placedLabelRects.none { RectF.intersects(it, collisionBox) })
 
             if (isTarget) {
                 drawCircle(
                     color = XPeachBrandLight.copy(alpha = 0.24f),
-                    radius = 32f,
+                    radius = 30f,
                     center = pt
                 )
             }
             drawCircle(
                 color = Color.White,
-                radius = if (isTarget) 15f else 10.5f,
+                radius = if (isTarget) 14f else if (canDrawLabel) 9.5f else 6.5f,
                 center = pt
             )
             drawCircle(
-                color = if (isTarget) XPeachBrandLight else Color(0xFF334155),
-                radius = if (isTarget) 11f else 7.5f,
+                color = if (isTarget) XPeachBrandLight else Color(0xFF475569),
+                radius = if (isTarget) 10f else if (canDrawLabel) 6.5f else 4.2f,
                 center = pt
             )
 
-            if (isTarget || zoom >= 15.8f) {
-                val roomSuffix = if (isTarget && selectedIndoorRoom != null) {
-                    " · ${selectedIndoorRoom.name}(${selectedIndoorRoom.floorLabel})"
-                } else ""
-                val text = if (isTarget) "终 · ${b.shortName}$roomSuffix" else b.shortName
-                val textW = labelTextPaint.measureText(text)
-                val rectLeft = pt.x - textW / 2f - 10f
-                val rectTop = pt.y - 48f
-                val rectRight = pt.x + textW / 2f + 10f
-                val rectBottom = pt.y - 18f
-                drawContext.canvas.nativeCanvas.drawRoundRect(
-                    rectLeft,
-                    rectTop,
-                    rectRight,
-                    rectBottom,
-                    10f,
-                    10f,
-                    labelBgPaint
-                )
+            if (canDrawLabel) {
+                placedLabelRects.add(collisionBox)
                 if (isTarget) {
+                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                        rectLeft,
+                        rectTop,
+                        rectRight,
+                        rectBottom,
+                        12f,
+                        12f,
+                        targetBgPaint
+                    )
+                } else {
+                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                        rectLeft,
+                        rectTop,
+                        rectRight,
+                        rectBottom,
+                        10f,
+                        10f,
+                        labelBgPaint
+                    )
                     drawContext.canvas.nativeCanvas.drawRoundRect(
                         rectLeft,
                         rectTop,
@@ -3329,8 +3281,8 @@ private fun RealCampusTileMap(
                 drawContext.canvas.nativeCanvas.drawText(
                     text,
                     pt.x - textW / 2f,
-                    pt.y - 25f,
-                    labelTextPaint
+                    pt.y - 24f,
+                    paintToUse
                 )
             }
         }

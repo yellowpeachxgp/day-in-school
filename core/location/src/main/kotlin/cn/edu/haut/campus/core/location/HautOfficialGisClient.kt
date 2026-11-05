@@ -20,7 +20,7 @@ enum class GisMapStyleMode(
     val shortLabel: String,
     val subtitle: String
 ) {
-    OFFICIAL_VECTOR_HYBRID("官方矢量+室内", "学校官方 GIS 实测楼宇轮廓、水系路网与室内平面"),
+    OFFICIAL_VECTOR_HYBRID("官方矢量底图", "学校官方 GIS 实测楼宇轮廓、莲湖水系与校园路网"),
     OFFICIAL_25D_2026("官方 2.5D", "学校官方 GIS 轴测手绘校园瓦片"),
     STREET_STANDARD("标准街景", "高德标准道路瓦片底图")
 }
