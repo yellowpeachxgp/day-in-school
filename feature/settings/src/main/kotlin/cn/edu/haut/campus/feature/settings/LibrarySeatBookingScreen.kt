@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -412,12 +413,12 @@ fun LibrarySeatBookingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(horizontal = 20.dp, vertical = 6.dp)
             ) {
                 XPeachSegmentedTabs(
                     items = listOf(
                         "网页选座",
-                        if (activePlanCount > 0) "自动抢座 / 快速选座 ($activePlanCount)" else "自动抢座 / 快速选座"
+                        if (activePlanCount > 0) "快速选座 / 定时 ($activePlanCount)" else "快速选座 / 定时"
                     ),
                     selectedIndex = selectedBookingViewMode,
                     onSelect = { selectedBookingViewMode = it }
@@ -436,7 +437,7 @@ fun LibrarySeatBookingScreen(
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
                         .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -448,7 +449,7 @@ fun LibrarySeatBookingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.height(14.dp),
+                                    modifier = Modifier.size(14.dp),
                                     strokeWidth = 2.dp
                                 )
                                 Text(
@@ -592,7 +593,7 @@ fun LibrarySeatBookingScreen(
                             if (ok) MaterialTheme.colorScheme.secondaryContainer
                             else MaterialTheme.colorScheme.errorContainer
                         )
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -632,7 +633,7 @@ fun LibrarySeatBookingScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
@@ -696,7 +697,7 @@ fun LibrarySeatBookingScreen(
                                 val mm = remainSec / 60L
                                 val ss = remainSec % 60L
                                 Text(
-                                    text = "⏱ 免入馆取消窗口剩余 %d分%02d秒（系统默认选座 5 分钟后正式生效，开始后未刷脸入馆不可直接取消）".format(mm, ss),
+                                    text = "免入馆取消剩余 %d分%02d秒（生效后未刷脸入馆不可直接取消）".format(mm, ss),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.tertiary
@@ -704,7 +705,7 @@ fun LibrarySeatBookingScreen(
                             } else if (activeBooking.hasStarted(nowEpochMs)) {
                                 val nextSync = LibrarySeatBookingRecord.computeNextGateSyncTimeText(nowEpochMs)
                                 Text(
-                                    text = "⚠️ 预约已正式开始：若您已刷脸入馆，系统每整 5 分钟（预计 $nextSync）同步签到后即可「签退释放」；未入馆需先过闸机刷脸自动签到。",
+                                    text = "预约已生效：已刷脸入馆预计 $nextSync 同步签到后可签退释放；未入馆需先过闸机签到。",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.error
                                 )
@@ -850,12 +851,12 @@ fun LibrarySeatBookingScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (isRefreshingOverview) "正在同步当前预约状态…" else "当前无进行中座位 · 预约后可在此一键取消/暂离/签退",
+                            text = if (isRefreshingOverview) "正在同步预约状态…" else "当前无预约 · 预约后可在此签到、暂离或签退",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1557,7 +1558,7 @@ fun LibrarySeatBookingScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "请输入你的学号和统一身份认证密码（与智慧工大、教务系统密码相同）。保存后会自动帮你保持登录状态，抢座时不用再重新输密码。",
+                        text = "请输入学号和统一身份认证密码（与智慧工大、教务系统密码相同），保存后将自动保持登录。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1566,6 +1567,7 @@ fun LibrarySeatBookingScreen(
                         onValueChange = { inputStudentId = it.trim() },
                         label = { Text("学号") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Ascii,
                             imeAction = ImeAction.Next
@@ -1580,6 +1582,7 @@ fun LibrarySeatBookingScreen(
                         onValueChange = { inputPassword = it },
                         label = { Text("统一身份认证密码") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         visualTransformation = if (showPasswordPlain) {
                             VisualTransformation.None
                         } else {
@@ -1607,6 +1610,7 @@ fun LibrarySeatBookingScreen(
             confirmButton = {
                 FilledTonalButton(
                     enabled = !isSavingCredentials && inputStudentId.isNotBlank() && inputPassword.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp),
                     onClick = {
                         focusManager.clearFocus()
                         isSavingCredentials = true
@@ -1893,7 +1897,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         if (sessionState !is LibrarySeatSessionState.Authenticated) {
@@ -1905,19 +1909,19 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "请先登录你的学号",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "尚未登录选座账号",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "登录后即可自动读取全馆自习室和座位表，直接点选座位",
+                            text = "登录后即可加载自习室与座位列表",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Button(
                         onClick = onRequireLogin,
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("登录学号")
                     }
@@ -1928,9 +1932,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         // 第一步：选择日期与时间（全点选，零手输）
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "第一步：选择哪天去、几点自动抢",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+                text = "1. 选择日期与时间",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
             )
             Row(
                 modifier = Modifier
@@ -1940,12 +1944,12 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 XPeachFilterPill(
-                    label = "明天去自习 ($tomorrowDate)",
+                    label = "明天 ($tomorrowDate)",
                     selected = useTomorrow,
                     onClick = { useTomorrow = true }
                 )
                 XPeachFilterPill(
-                    label = "今天去自习 ($todayDate)",
+                    label = "今天 ($todayDate)",
                     selected = !useTomorrow,
                     onClick = {
                         useTomorrow = false
@@ -1966,7 +1970,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
 
             Text(
-                text = "点选自动抢座时间（当前已选：$targetTimeText）",
+                text = "抢座时间（已选 $targetTimeText）",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp)
@@ -1979,14 +1983,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 val quickPresets = listOf(
-                    Triple(7, 0, "明早 07:00 开馆抢"),
+                    Triple(7, 0, "07:00 开馆"),
                     Triple(7, 30, "07:30"),
                     Triple(8, 0, "08:00"),
                     Triple(8, 30, "08:30"),
                     Triple(9, 0, "09:00"),
                     Triple(12, 30, "12:30"),
                     Triple(14, 0, "14:00"),
-                    Triple(20, 59, "晚上 20:59")
+                    Triple(20, 59, "20:59")
                 )
                 for ((hh, mm, label) in quickPresets) {
                     XPeachFilterPill(
@@ -1999,7 +2003,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     )
                 }
                 XPeachFilterPill(
-                    label = if (showMoreTimeSlots) "收起更多时间 ▲" else "自选其他几点几分 ▼",
+                    label = if (showMoreTimeSlots) "收起 ▲" else "自定义时间 ▼",
                     selected = showMoreTimeSlots,
                     onClick = { showMoreTimeSlots = !showMoreTimeSlots }
                 )
@@ -2013,7 +2017,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "点选小时（07:00 - 21:30）：",
+                        text = "选择小时（07:00 - 21:30）：",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2037,7 +2041,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         }
                     }
                     Text(
-                        text = "点选分钟：",
+                        text = "选择分钟：",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2064,7 +2068,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
 
             Text(
-                text = "连续自动抢座周期（每天同一时间自动开抢）",
+                text = "连续预约周期",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 10.dp)
@@ -2079,7 +2083,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 val repeatOptions = listOf(
                     1 to "仅抢 1 天",
                     3 to "连续 3 天",
-                    7 to "连续 7 天（一周）",
+                    7 to "连续 7 天",
                     14 to "连续 14 天",
                     30 to "连续 30 天"
                 )
@@ -2093,7 +2097,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
             if (selectedRepeatDays > 1) {
                 Text(
-                    text = "🔁 已开启连续 $selectedRepeatDays 天自动抢座：从 $targetDate 起至 ${targetDate.plusDays((selectedRepeatDays - 1).toLong())}，每天 $targetTimeText 自动抢同一个自习室与座位。",
+                    text = "已开启连续 $selectedRepeatDays 天抢座：$targetDate 至 ${targetDate.plusDays((selectedRepeatDays - 1).toLong())}，每天 $targetTimeText 自动执行。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 4.dp)
@@ -2109,17 +2113,17 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "第二步：点选你想去的自习室",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
+                    text = "2. 选择自习室",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
                 TextButton(
                     onClick = { reloadStudyRegions() },
                     enabled = !isLoadingRegions,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.height(26.dp)
+                    modifier = Modifier.height(28.dp)
                 ) {
-                    Text(if (isLoadingRegions) "刷新中…" else "🔄 刷新列表", style = MaterialTheme.typography.labelSmall)
+                    Text(if (isLoadingRegions) "刷新中…" else "刷新", style = MaterialTheme.typography.labelSmall)
                 }
             }
 
@@ -2138,14 +2142,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             selectedSeatNames = listOf(recentRecord.seatName)
                         }
                     },
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
                 ) {
                     Text(
-                        text = "⭐ 一键用上次坐过的：${recentRecord.regionName} · ${recentRecord.seatName}号座",
+                        text = "使用上次座位：${recentRecord.regionName} · ${recentRecord.seatName}号",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
@@ -2177,9 +2181,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.height(18.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        text = "正在自动读取图书馆全部自习室…",
+                        text = "正在加载自习室列表…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2197,10 +2201,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         color = MaterialTheme.colorScheme.error
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { reloadStudyRegions() }) {
-                            Text("重新读取自习室")
+                        FilledTonalButton(
+                            onClick = { reloadStudyRegions() },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("重新加载")
                         }
-                        OutlinedButton(onClick = onRequireLogin) {
+                        OutlinedButton(
+                            onClick = onRequireLogin,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
                             Text("登录学号")
                         }
                     }
@@ -2227,8 +2237,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(bgColor, RoundedCornerShape(10.dp))
-                                .border(if (isSelected) 1.5.dp else 0.5.dp, borderColor, RoundedCornerShape(10.dp))
+                                .background(bgColor, RoundedCornerShape(12.dp))
+                                .border(if (isSelected) 1.5.dp else 0.5.dp, borderColor, RoundedCornerShape(12.dp))
                                 .clickable {
                                     if (selectedRegion?.id != region.id) {
                                         selectedSeatNames = emptyList()
@@ -2245,7 +2255,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 val cleanOpenTime = region.openTime.cleanNullLiteral("07:30")
                                 val cleanCloseTime = region.closeTime.cleanNullLiteral("22:00")
                                 Text(
-                                    text = if (isSelected) "✅ $cleanRegionName" else cleanRegionName,
+                                    text = if (isSelected) "✓ $cleanRegionName" else cleanRegionName,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
@@ -2257,7 +2267,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 )
                             }
                             XPeachStatusBadge(
-                                text = "空余 ${region.availableSeats}/${region.totalSeats} 座",
+                                text = "空余 ${region.availableSeats}/${region.totalSeats}",
                                 containerColor = if (region.availableSeats > 0) {
                                     MaterialTheme.colorScheme.secondaryContainer
                                 } else {
@@ -2284,15 +2294,15 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "第三步：点选座位号（可多选 3 个防撞车）",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        text = "3. 选择座位（最多 3 个）",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = if (selectedRegion != null) {
-                            "当前自习室：${selectedRegion?.regionName}（第1个为首选，被抢时自动试第2、第3个）"
+                            "${selectedRegion?.regionName} · 首选被占时自动顺延备选座位"
                         } else {
-                            "请先在上方点击选择一个自习室"
+                            "请先在上方选择自习室"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2303,9 +2313,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         onClick = { selectedRegion?.let { reloadSeatsForRegion(it) } },
                         enabled = !isLoadingSeats,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(26.dp)
+                        modifier = Modifier.height(28.dp)
                     ) {
-                        Text(if (isLoadingSeats) "读取中…" else "🔄 刷新座位", style = MaterialTheme.typography.labelSmall)
+                        Text(if (isLoadingSeats) "读取中…" else "刷新", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -2318,7 +2328,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             ) {
                 if (selectedSeatNames.isEmpty()) {
                     Text(
-                        text = "👆 请在下方列表中直接点击你想坐的座位号（最多点选 3 个）",
+                        text = "请在下方点击选择座位号（最多 3 个）",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -2329,16 +2339,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "已选座位（点击可取消）：",
+                            text = "已选座位（点击取消）：",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         TextButton(
                             onClick = { selectedSeatNames = emptyList() },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                            modifier = Modifier.height(22.dp)
+                            modifier = Modifier.height(24.dp)
                         ) {
-                            Text("清空重选", style = MaterialTheme.typography.labelSmall)
+                            Text("清空", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Row(
@@ -2373,9 +2383,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.height(18.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        text = "正在读取该自习室的全部座位号…",
+                        text = "正在加载座位列表…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2397,12 +2407,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             onClick = {
                                 val r = selectedRegion
                                 if (r != null) reloadSeatsForRegion(r) else reloadStudyRegions()
-                            }
+                            },
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("重新读取座位表")
+                            Text("重新加载")
                         }
                         if (sessionState !is LibrarySeatSessionState.Authenticated) {
-                            OutlinedButton(onClick = onRequireLogin) {
+                            OutlinedButton(
+                                onClick = onRequireLogin,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
                                 Text("登录学号")
                             }
                         }
@@ -2416,7 +2430,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "暂未加载到该自习室座位表，请点击下方按钮重新读取",
+                        text = "暂未加载到座位表，请点击下方按钮重试",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2424,9 +2438,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         onClick = {
                             val r = selectedRegion
                             if (r != null) reloadSeatsForRegion(r) else reloadStudyRegions()
-                        }
+                        },
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("🔄 重新读取座位表")
+                        Text("重新加载座位表")
                     }
                 }
             } else if (allSeats.isNotEmpty()) {
@@ -2439,7 +2454,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     XPeachFilterPill(
-                        label = if (onlyAvailableSeats) "✓ 只看当前空座" else "只看当前空座",
+                        label = "仅看空座",
                         selected = onlyAvailableSeats,
                         onClick = {
                             onlyAvailableSeats = !onlyAvailableSeats
@@ -2447,7 +2462,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         }
                     )
                     XPeachFilterPill(
-                        label = "🎲 随机帮我选 3 个空座",
+                        label = "随机选 3 个",
                         selected = false,
                         onClick = {
                             val randomThree = allSeats
@@ -2472,17 +2487,23 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "当前该自习室暂无空闲座位，你可以关闭「只看当前空座」提前点选明天想坐的座位号：",
+                            text = "当前自习室暂无空座，可显示全部座位提前选择明天想坐的座位号：",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilledTonalButton(onClick = { onlyAvailableSeats = false }) {
+                            FilledTonalButton(
+                                onClick = { onlyAvailableSeats = false },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
                                 Text("显示全部 ${allSeats.size} 个座位")
                             }
                             if (!useTomorrow) {
-                                OutlinedButton(onClick = { useTomorrow = true }) {
-                                    Text("切换为明天去自习")
+                                OutlinedButton(
+                                    onClick = { useTomorrow = true },
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("切换为明天")
                                 }
                             }
                         }
@@ -2546,9 +2567,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         // 第四步：选择抢座方式并一键开启
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "第四步：选择抢座方式并开始",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+                text = "4. 抢座方式",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
             )
             Row(
                 modifier = Modifier
@@ -2567,7 +2588,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
             Text(
                 text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
-                    "⚠️ 使用云端关机代抢需要先在「设置 → 云账号与扩展功能」登录你的账号。"
+                    "使用云端代抢请先在「设置 → 云账号与扩展功能」登录账号。"
                 } else {
                     selectedMode.subtitle
                 },
@@ -2593,9 +2614,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     ) {
                         Text(
                             text = if (permissionSnapshot.allReady) {
-                                "🛡️ 本机准点抢座权限已全部激活"
+                                "本机定时抢座权限已就绪"
                             } else {
-                                "⚡ 本机抢座权限（待激活 ${permissionSnapshot.missingCount} 项）"
+                                "本机抢座权限（待开启 ${permissionSnapshot.missingCount} 项）"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
@@ -2610,7 +2631,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 val ok = LibrarySeatAlarmSubsystem.triggerTestWakeupNotification(context)
                                 permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
                                 if (ok) {
-                                    onFeedback(true, "已发送测试唤醒通知，请查看顶部通知栏")
+                                    onFeedback(true, "已发送测试通知，请查看状态栏")
                                 } else {
                                     requestNotificationPermissionOrSettings()
                                 }
@@ -2618,7 +2639,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier.height(26.dp)
                         ) {
-                            Text("🔔 测试本地唤醒", style = MaterialTheme.typography.labelSmall)
+                            Text("测试通知", style = MaterialTheme.typography.labelSmall)
                         }
                     }
 
@@ -2630,17 +2651,17 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         XPeachFilterPill(
-                            label = if (permissionSnapshot.exactAlarmAllowed) "✓ 精准定时闹钟" else "开启精准定时闹钟 →",
+                            label = if (permissionSnapshot.exactAlarmAllowed) "✓ 精准闹钟" else "开启精准闹钟 →",
                             selected = permissionSnapshot.exactAlarmAllowed,
                             onClick = { requestExactAlarmPermission() }
                         )
                         XPeachFilterPill(
-                            label = if (permissionSnapshot.ignoringBatteryOptimizations) "✓ 后台省电白名单" else "加入后台白名单 →",
+                            label = if (permissionSnapshot.ignoringBatteryOptimizations) "✓ 后台白名单" else "加入后台白名单 →",
                             selected = permissionSnapshot.ignoringBatteryOptimizations,
                             onClick = { requestIgnoreBatteryOptimizations() }
                         )
                         XPeachFilterPill(
-                            label = if (permissionSnapshot.notificationGranted) "✓ 抢座结果通知" else "开启抢座通知 →",
+                            label = if (permissionSnapshot.notificationGranted) "✓ 结果通知" else "开启结果通知 →",
                             selected = permissionSnapshot.notificationGranted,
                             onClick = { requestNotificationPermissionOrSettings() }
                         )
@@ -2657,7 +2678,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             .padding(top = 8.dp)
                     ) {
                         Text(
-                            text = "📋 已选汇总：$targetDate $targetTimeText$repeatSummary · ${roomLabel.ifBlank { "未选自习室" }} · ${
+                            text = "已选：$targetDate $targetTimeText$repeatSummary · ${roomLabel.ifBlank { "未选自习室" }} · ${
                                 if (selectedSeatNames.isEmpty()) "未选座位" else "${selectedSeatNames.joinToString("、")}号座"
                             }",
                             style = MaterialTheme.typography.labelMedium,
@@ -2665,7 +2686,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "系统会在 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 提前帮你自动检查登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座${if (selectedRepeatDays > 1) "（连续执行 $selectedRepeatDays 天）" else ""}。",
+                            text = "将于 ${DualEngineReservationPlanner.formatEpochToShanghaiHms(calc.finalCheckAtEpochMillis)} 预检登录状态，并在 ${DualEngineReservationPlanner.formatLocalTimeHms(calc.targetLocalTime)} 准时抢座${if (selectedRepeatDays > 1) "（连续 $selectedRepeatDays 天）" else ""}。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2678,7 +2699,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             .padding(top = 8.dp)
                     ) {
                         Text(
-                            text = "⚠️ ${err.message ?: "当前所选时间已过，请切换为「明天去自习」或选择更晚的时间"}",
+                            text = err.message ?: "所选时间已过，请切换为明天或选择更晚时间",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -2698,10 +2719,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     )
                     result.fold(
                         onSuccess = { created ->
-                            val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天自动抢）" else ""
+                            val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
                             onFeedback(
                                 true,
-                                "已设置好定时抢座：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
+                                "已设置定时抢座：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
                             )
                         },
                         onFailure = { err ->
@@ -2714,35 +2735,38 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             if (showPermissionActivationDialog) {
                 AlertDialog(
                     onDismissRequest = { showPermissionActivationDialog = false },
-                    title = { Text("激活本机准点抢座权限") },
+                    title = { Text("开启本机定时抢座权限") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                text = "为了让手机在早上 07:00 息屏状态下也能准时唤醒帮你抢座，建议先点亮以下权限：",
+                                text = "为确保息屏状态下准时唤醒抢座，建议开启以下权限：",
                                 style = MaterialTheme.typography.bodySmall
                             )
                             if (!permissionSnapshot.exactAlarmAllowed) {
                                 FilledTonalButton(
                                     onClick = { requestExactAlarmPermission() },
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("1. 开启「精准定时闹钟」权限")
+                                    Text("1. 开启精准闹钟权限")
                                 }
                             }
                             if (!permissionSnapshot.ignoringBatteryOptimizations) {
                                 FilledTonalButton(
                                     onClick = { requestIgnoreBatteryOptimizations() },
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("2. 允许「后台无限制 / 忽略电池优化」")
+                                    Text("2. 允许后台无限制运行")
                                 }
                             }
                             if (!permissionSnapshot.notificationGranted) {
                                 FilledTonalButton(
                                     onClick = { requestNotificationPermissionOrSettings() },
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("3. 开启「抢座结果通知」权限")
+                                    Text("3. 开启抢座结果通知")
                                 }
                             }
                         }
@@ -2752,9 +2776,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             onClick = {
                                 showPermissionActivationDialog = false
                                 saveBookingPlanNow()
-                            }
+                            },
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("已设置好，立即开启定时抢座")
+                            Text("继续开启定时抢座")
                         }
                     },
                     dismissButton = {
@@ -2781,10 +2806,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             saveBookingPlanNow()
                         }
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("⏰ 开启定时抢座")
+                    Text("开启定时抢座")
                 }
 
                 FilledTonalButton(
@@ -2795,7 +2820,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             val sessionRes = repository.ensureLibrarySeatSession(forceRefresh = false)
                             if (sessionRes !is LibrarySeatSessionState.Authenticated) {
                                 isRunningImmediateBooking = false
-                                onFeedback(false, "请先点击上方登录学号后再选座")
+                                onFeedback(false, "请先登录学号后再选座")
                                 onRequireLogin()
                                 return@launch
                             }
@@ -2822,10 +2847,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             )
                         }
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (isRunningImmediateBooking) "正在帮你选座…" else "⚡ 现在立刻选这个座")
+                    Text(if (isRunningImmediateBooking) "正在选座…" else "立即选座")
                 }
             }
         }
@@ -2833,13 +2858,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         // 我的定时抢座任务列表
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "我的抢座任务 (${bookingPlans.size})",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
+                text = "定时抢座任务 (${bookingPlans.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
             )
             if (bookingPlans.isEmpty()) {
                 Text(
-                    text = "还没有设置定时抢座任务。在上面点选自习室和座位号后，点击「⏰ 开启定时抢座」即可。",
+                    text = "暂无定时抢座任务。在上方选择自习室和座位后，点击「开启定时抢座」即可添加。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
@@ -2851,17 +2876,17 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 ) {
                     for (plan in bookingPlans) {
                         val friendlyStatus = when (plan.status) {
-                            "ARMED" -> "等待到点开抢"
-                            "PRECHECK_OK", "FINAL_CHECK_OK" -> "已准备好，等待开抢"
-                            "CONFIRMED" -> "🎉 抢座成功"
+                            "ARMED" -> "等待开抢"
+                            "PRECHECK_OK", "FINAL_CHECK_OK" -> "就绪待抢"
+                            "CONFIRMED" -> "抢座成功"
                             "FAILED" -> "未抢到"
                             "CANCELLED" -> "已取消"
                             else -> plan.status
                         }
                         val friendlyMode = when (plan.executionMode) {
                             "CLOUD_HOSTED" -> "云端代抢"
-                            "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "仅提醒"
-                            else -> "手机自动抢"
+                            "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "到点提醒"
+                            else -> "本机抢座"
                         }
                         val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
                         val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")
@@ -2930,6 +2955,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                                 )
                                             }
                                         },
+                                        shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
@@ -2959,10 +2985,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                                 }
                                             }
                                         },
+                                        shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("⚡ 现在立刻抢", style = MaterialTheme.typography.labelSmall)
+                                        Text("立即执行", style = MaterialTheme.typography.labelSmall)
                                     }
                                     TextButton(
                                         onClick = {

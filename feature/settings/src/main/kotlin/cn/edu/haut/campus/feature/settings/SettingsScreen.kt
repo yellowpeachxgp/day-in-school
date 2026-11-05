@@ -192,7 +192,7 @@ fun SettingsScreen(
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToXpeachCloud: () -> Unit = {},
     activeSchool: SchoolProfile = SchoolDirectory.hautProfile(),
-    activeProfileLabel: String = "原有身份",
+    activeProfileLabel: String = "默认账号",
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -298,7 +298,7 @@ fun SettingsScreen(
             OfficialGpaSnapshot(
                 cumulativeGpa = valBd,
                 fetchedAt = Instant.now(),
-                fieldDefinitionNote = prefs.officialGpaNote ?: "来自教务官方平均学分绩点"
+                fieldDefinitionNote = prefs.officialGpaNote ?: "教务系统平均绩点"
             )
         }
     }
@@ -379,7 +379,7 @@ fun SettingsScreen(
         XPeachTopBar(
             title = if (showSystemSettingsMenu) "设置" else "我的",
             subtitle = if (showSystemSettingsMenu) {
-                "提醒、作息、调休、小组件、隐私与版本更新"
+                "通用设置与偏好"
             } else {
                 "${activeSchool.displayName} · $activeProfileLabel"
             },
@@ -512,11 +512,19 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         onClick = onNavigateToSchoolCenter
                     ) {
-                        Text("切换学校", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "${activeSchool.displayName} · 扩展功能(${extensionPlugins.size})",
+                            text = "切换学校",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = activeSchool.displayName,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -528,16 +536,17 @@ fun SettingsScreen(
                             "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
                         }
                         Text(
-                            text = if (peachFormatted != null) "云账号 · ${peachFormatted}🍑" else "云账号与代抢",
+                            text = if (peachFormatted != null) "云账号 · ${peachFormatted} 🍑" else "云账号",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = if (cloudBinding != null) {
                                 "已登录 ${cloudBinding?.displayName}"
                             } else {
-                                "关机自动代抢图书馆座位"
+                                "支持离线代抢图书馆座位"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -557,10 +566,15 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("我的快递与取件码", style = MaterialTheme.typography.titleMedium)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("我的快递", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                text = "绑定手机号自动同步快递 · 驿站取件码集中查看",
+                                text = "自动同步物流与驿站取件码",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -657,9 +671,9 @@ fun SettingsScreen(
                                 Column(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                        .padding(vertical = 10.dp, horizontal = 6.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
@@ -801,7 +815,7 @@ fun SettingsScreen(
                 val latestAudit = importAudits.firstOrNull()
 
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("个人状态摘要", style = MaterialTheme.typography.titleMedium)
+                    Text("常用服务", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(10.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (isHautCampus) XPeachWell(
@@ -880,7 +894,7 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "教务数据同步状态",
+                                        text = "教务同步",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium
                                     )
@@ -895,7 +909,7 @@ fun SettingsScreen(
                                     )
                                 }
                                 Text(
-                                    text = "同步日志",
+                                    text = "同步记录",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -915,20 +929,25 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
-                                text = "学期、调休与课表互通",
+                                text = "学期与调休",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "切换当前学期、管理法定节假日调休及导入导出课表文件",
+                                text = "切换学期、节假日调休与课表导入导出",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         if (prefs.timetableInterchangeEnabled) {
                             XPeachFilterPill(
-                                label = "课表互通 (.md/.json)",
+                                label = "导入/导出",
                                 selected = false,
                                 onClick = onNavigateToImporter
                             )
@@ -993,9 +1012,9 @@ fun SettingsScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1024,7 +1043,7 @@ fun SettingsScreen(
                                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             }
                                         },
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.size(32.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.DeleteOutline,
@@ -1051,7 +1070,7 @@ fun SettingsScreen(
                 ) {
                     for (term in terms) {
                         XPeachFilterPill(
-                            label = term.id,
+                            label = term.displayName,
                             selected = term.id == currentTerm?.id,
                             onClick = {
                                 scope.launch {
@@ -1197,10 +1216,10 @@ fun SettingsScreen(
                     onClick = {
                         requestPin("4×2 快递取件码", "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider")
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("📦 添加 4×2 快递取件码桌面小组件", maxLines = 1, softWrap = false)
+                    Text("添加 4×2 快递取件码", maxLines = 1, softWrap = false)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -1210,7 +1229,7 @@ fun SettingsScreen(
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                         feedbackText = "已刷新全部桌面小组件。"
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("立即刷新全部小组件", maxLines = 1, softWrap = false)
@@ -1251,7 +1270,11 @@ fun SettingsScreen(
                                     text = "第 ${pt.periodNo} 节 (${pt.sectionLabel})",
                                     style = MaterialTheme.typography.bodyMedium
                                 )
-                                TextButton(onClick = { editingPeriod = pt }) {
+                                TextButton(
+                                    onClick = { editingPeriod = pt },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
                                     Text(
                                         text = "${pt.startLocalTime}–${pt.endLocalTime}",
                                         maxLines = 1,
@@ -1275,7 +1298,7 @@ fun SettingsScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("上课与考试提醒", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "课前提醒 · 稍后提醒 · 考试提醒",
+                            text = "课前与考前自动通知",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1310,7 +1333,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("开启上课与考试提醒", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "按作息时间自动发送课前和考前通知，可在通知栏延后",
+                            text = "课前和考前自动发送提醒通知",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1652,7 +1675,7 @@ fun SettingsScreen(
             ) { uri: Uri? ->
                 if (uri != null) {
                     scope.launch {
-                        feedbackText = "正在解析背景图片并提取专属主题配色..."
+                        feedbackText = "正在应用背景图片..."
                         WallpaperThemeEngine.importWallpaperAndExtractPalette(context, uri)
                             .onSuccess { result ->
                                 repository.saveCustomWallpaperTheme(
@@ -1662,7 +1685,7 @@ fun SettingsScreen(
                                 )
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 val hexStr = String.format("#%06X", 0xFFFFFF and result.primarySeedArgb.toInt())
-                                feedbackText = "已应用自定义背景图并自动取色 ($hexStr)"
+                                feedbackText = "已应用自定义背景图 ($hexStr)"
                             }
                             .onFailure { err ->
                                 feedbackText = "导入背景图失败：${err.message ?: "请换一张图片重试"}"
@@ -1683,7 +1706,7 @@ fun SettingsScreen(
                     scope.launch {
                         repository.setThemePalette(key, seedArgb)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = "已应用主题配色并同步刷新桌面小组件"
+                        feedbackText = "已更新主题配色"
                     }
                 },
                 onPickWallpaperImage = {
@@ -1707,7 +1730,7 @@ fun SettingsScreen(
                 onUpdateCardLayout = { order, hidden, fullWidth ->
                     scope.launch {
                         repository.updateHomeCardLayout(order, hidden, fullWidth)
-                        feedbackText = "已保存首页模块化卡片布局"
+                        feedbackText = "已更新首页卡片布局"
                     }
                 },
                 onResetCardLayout = {
@@ -2604,7 +2627,7 @@ private fun StudentDigitalIdCard(
     onSyncNow: () -> Unit
 ) {
     val displayName = profile?.displayName?.takeIf { it.isNotBlank() } ?: "未设置姓名"
-    val rawSchoolId = profile?.schoolId?.takeIf { it.isNotBlank() } ?: "同步教务后自动显示学号"
+    val rawSchoolId = profile?.schoolId?.takeIf { it.isNotBlank() } ?: "未绑定学号"
     val displaySchoolId = if (privacyMasked && rawSchoolId.length >= 8) {
         rawSchoolId.take(4) + "****" + rawSchoolId.takeLast(3)
     } else {
@@ -2745,7 +2768,7 @@ private fun ProfileMetricItem(
     ) {
         Text(
             text = value,
-            fontSize = 18.sp,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -2815,12 +2838,12 @@ private fun ThemePaletteAndCardLayoutSection(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "主题、壁纸与调色盘",
+                    text = "主题与壁纸",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "支持自定义背景图智能取色、模糊透明度调节与自由调色盘",
+                    text = "深浅外观、背景图片与主题配色",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2876,25 +2899,30 @@ private fun ThemePaletteAndCardLayoutSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = "自定义背景图片主题",
+                        text = "自定义背景图",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = if (prefs.customWallpaperPath.isNullOrBlank()) {
-                            "上传相册图片作为全局背景，按钮、菜单与卡片模板自动提取主题色"
+                            "选择相册图片作为背景，自动匹配主题色"
                         } else {
-                            "已启用自定义背景图 · 按钮、菜单与卡片模板已同步壁纸配色"
+                            "已启用自定义背景图"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (!prefs.customWallpaperPath.isNullOrBlank()) {
                         XPeachFilterPill(
                             label = "移除",
@@ -2915,13 +2943,15 @@ private fun ThemePaletteAndCardLayoutSection(
 
                 if (prefs.extractedWallpaperColors.isNotEmpty()) {
                     Text(
-                        text = "从背景图自动提取的配色（点击可切换按钮与菜单色调）",
+                        text = "壁纸提取配色",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -2956,7 +2986,9 @@ private fun ThemePaletteAndCardLayoutSection(
                                     text = swatchHex,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelectedSwatch) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.onSurface
+                                    color = if (isSelectedSwatch) Color(swatchArgb) else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -2993,7 +3025,7 @@ private fun ThemePaletteAndCardLayoutSection(
                 )
 
                 Text(
-                    text = "按钮菜单与卡片背景模板通透度 (${(localCardAlpha * 100).toInt()}%)",
+                    text = "卡片不透明度 (${(localCardAlpha * 100).toInt()}%)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3091,7 +3123,7 @@ private fun ThemePaletteAndCardLayoutSection(
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "拖动色相、饱和度与明度滑块或输入色号定制专属主题",
+                        text = "调节滑块或输入色号自定义配色",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3131,7 +3163,7 @@ private fun ThemePaletteAndCardLayoutSection(
                         )
                 )
                 Text(
-                    text = "色相 Hue (${hue.toInt()}°)",
+                    text = "色相 (${hue.toInt()}°)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
@@ -3143,7 +3175,7 @@ private fun ThemePaletteAndCardLayoutSection(
                 )
 
                 Text(
-                    text = "饱和度 Saturation (${(saturation * 100).toInt()}%)",
+                    text = "饱和度 (${(saturation * 100).toInt()}%)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3154,7 +3186,7 @@ private fun ThemePaletteAndCardLayoutSection(
                 )
 
                 Text(
-                    text = "明度 Brightness (${(brightness * 100).toInt()}%)",
+                    text = "明度 (${(brightness * 100).toInt()}%)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3185,8 +3217,9 @@ private fun ThemePaletteAndCardLayoutSection(
                                 }
                             }
                         },
-                        label = { Text("HEX 色号 (#RRGGBB)") },
+                        label = { Text("色号 (#RRGGBB)") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
                     Button(
@@ -3197,7 +3230,8 @@ private fun ThemePaletteAndCardLayoutSection(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(customColorInt)
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(48.dp)
                     ) {
                         Text("应用配色", color = Color.White, maxLines = 1, softWrap = false)
                     }
@@ -3218,15 +3252,19 @@ private fun ThemePaletteAndCardLayoutSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
                 Text(
-                    text = "首页模块化卡片布局",
+                    text = "首页卡片管理",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
                 val visibleCount = (DEFAULT_HOME_CARD_ORDER.size - prefs.hiddenHomeCards.size).coerceAtLeast(0)
                 Text(
-                    text = "当前已启用 $visibleCount / ${DEFAULT_HOME_CARD_ORDER.size} 个板块 · 支持调整顺序与通栏/双列尺寸",
+                    text = "已显示 $visibleCount / ${DEFAULT_HOME_CARD_ORDER.size} 个卡片 · 可调整顺序与宽度",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3268,12 +3306,17 @@ private fun ThemePaletteAndCardLayoutSection(
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 6.dp)
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 XPeachFilterPill(
-                                    label = if (isFull) "通栏" else "双列",
+                                    label = if (isFull) "大卡" else "小卡",
                                     selected = isFull,
+                                    compact = true,
                                     onClick = {
                                         val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
                                         onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
@@ -3282,6 +3325,7 @@ private fun ThemePaletteAndCardLayoutSection(
                                 XPeachFilterPill(
                                     label = if (isVisible) "显示" else "隐藏",
                                     selected = isVisible,
+                                    compact = true,
                                     onClick = {
                                         val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
                                         onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
@@ -3290,6 +3334,7 @@ private fun ThemePaletteAndCardLayoutSection(
                                 XPeachFilterPill(
                                     label = "↑",
                                     selected = false,
+                                    compact = true,
                                     onClick = {
                                         if (index > 0) {
                                             val mut = currentOrder.toMutableList()
@@ -3303,6 +3348,7 @@ private fun ThemePaletteAndCardLayoutSection(
                                 XPeachFilterPill(
                                     label = "↓",
                                     selected = false,
+                                    compact = true,
                                     onClick = {
                                         if (index < currentOrder.lastIndex) {
                                             val mut = currentOrder.toMutableList()
@@ -3321,7 +3367,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     onClick = onResetCardLayout,
                     modifier = Modifier.align(Alignment.End)
                 ) {
-                    Text("恢复默认卡片布局")
+                    Text("恢复默认")
                 }
             }
         }
@@ -3363,12 +3409,12 @@ private fun NetworkProxyAndCloudConfigSection(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "网络代理与云服务加速",
+                    text = "网络与更新线路",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "预置镜像加速、自定义反代、HTTP/SOCKS5 代理与云服务端点",
+                    text = "设置更新下载线路与网络代理",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3477,7 +3523,7 @@ private fun NetworkProxyAndCloudConfigSection(
             ProxyMode.CUSTOM_REVERSE_PROXY -> {
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "自定义反向代理 URL 前缀（支持 Cloudflare Worker / 自建 Nginx 反代）",
+                        text = "自定义镜像地址前缀",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3490,8 +3536,9 @@ private fun NetworkProxyAndCloudConfigSection(
                         OutlinedTextField(
                             value = customPrefixInput,
                             onValueChange = { customPrefixInput = it },
-                            label = { Text("反代前缀 (如 https://gh.example.com/)") },
+                            label = { Text("镜像前缀 (如 https://gh.example.com/)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         )
                         Button(
@@ -3501,7 +3548,8 @@ private fun NetworkProxyAndCloudConfigSection(
                                 connectivityMessage = null
                                 onSaveProxyConfig(proxyConfig.copy(customReverseProxyPrefix = normalized))
                             },
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(48.dp)
                         ) {
                             Text("保存", maxLines = 1, softWrap = false)
                         }
@@ -3556,15 +3604,17 @@ private fun NetworkProxyAndCloudConfigSection(
                         OutlinedTextField(
                             value = hostInput,
                             onValueChange = { hostInput = it },
-                            label = { Text("主机 Host") },
+                            label = { Text("服务器地址") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1.4f)
                         )
                         OutlinedTextField(
                             value = portInput,
                             onValueChange = { portInput = it.filter { ch -> ch.isDigit() } },
-                            label = { Text("端口 Port") },
+                            label = { Text("端口") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(0.9f)
                         )
                         Button(
@@ -3581,7 +3631,8 @@ private fun NetworkProxyAndCloudConfigSection(
                                     )
                                 )
                             },
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(48.dp)
                         ) {
                             Text("应用", maxLines = 1, softWrap = false)
                         }
@@ -3592,7 +3643,7 @@ private fun NetworkProxyAndCloudConfigSection(
             ProxyMode.DIRECT -> {
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "当前使用直连模式访问 GitHub 与云服务；建议保持下方「主线路异常时自动切换备用镜像」开启以确保无代理环境下仍可正常下载更新。",
+                        text = "直接连接服务器，建议开启下方「自动切换备用线路」。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3609,9 +3660,9 @@ private fun NetworkProxyAndCloudConfigSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("主线路异常时自动切换备用镜像", style = MaterialTheme.typography.bodyMedium)
+                Text("自动切换备用线路", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "首选节点连接超时或失败时，自动轮询其余预置镜像线路",
+                    text = "当前线路连接失败时自动尝试其他镜像",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3633,7 +3684,7 @@ private fun NetworkProxyAndCloudConfigSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("云服务 API 网关地址", style = MaterialTheme.typography.bodyMedium)
+                Text("云服务地址", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     text = proxyConfig.customCloudApiBaseUrl,
                     style = MaterialTheme.typography.labelSmall,
@@ -3643,7 +3694,7 @@ private fun NetworkProxyAndCloudConfigSection(
                 )
             }
             XPeachFilterPill(
-                label = if (expandCloudEndpoint) "收起" else "自定义网关",
+                label = if (expandCloudEndpoint) "收起" else "修改",
                 selected = expandCloudEndpoint,
                 onClick = { expandCloudEndpoint = !expandCloudEndpoint }
             )
@@ -3660,8 +3711,9 @@ private fun NetworkProxyAndCloudConfigSection(
                 OutlinedTextField(
                     value = cloudEndpointInput,
                     onValueChange = { cloudEndpointInput = it },
-                    label = { Text("云服务 Base URL") },
+                    label = { Text("服务器地址") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 )
                 Button(
@@ -3670,7 +3722,8 @@ private fun NetworkProxyAndCloudConfigSection(
                         cloudEndpointInput = cleaned
                         onSaveProxyConfig(proxyConfig.copy(customCloudApiBaseUrl = cleaned))
                     },
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(48.dp)
                 ) {
                     Text("保存", maxLines = 1, softWrap = false)
                 }
@@ -3698,14 +3751,15 @@ private fun NetworkProxyAndCloudConfigSection(
         // 5. 连通性测速与恢复默认按钮
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedButton(
                 enabled = !isTestingConnectivity,
                 onClick = {
                     scope.launch {
                         isTestingConnectivity = true
-                        connectivityMessage = "正在测试「${proxyConfig.statusSummaryLabel()}」连通性..."
+                        connectivityMessage = "正在测试「${proxyConfig.statusSummaryLabel()}」连接..."
                         connectivityOk = true
                         val report = GitHubReleaseUpdater.testProxyConnectivity(proxyConfig)
                         isTestingConnectivity = false
@@ -3713,21 +3767,22 @@ private fun NetworkProxyAndCloudConfigSection(
                         connectivityMessage = report.detailMessage
                     }
                 },
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = if (isTestingConnectivity) "正在测速..." else "测试代理连通性",
+                    text = if (isTestingConnectivity) "正在测试..." else "测试连接",
                     maxLines = 1,
                     softWrap = false
                 )
             }
 
-            TextButton(
+            OutlinedButton(
                 onClick = {
                     connectivityMessage = null
                     onResetProxyConfig()
-                }
+                },
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text("恢复默认", maxLines = 1, softWrap = false)
             }

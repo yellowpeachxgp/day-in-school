@@ -16,22 +16,22 @@ enum class BookingExecutionMode(
 ) {
     LOCAL_DEVICE(
         wireName = "LOCAL_DEVICE",
-        label = "手机自动抢（免费）",
-        subtitle = "完全免费，无需登录云账号，保持手机开机联网即可到点自动帮您抢座",
+        label = "本机抢座",
+        subtitle = "免费，无需云账号，保持手机开机联网即可到点自动抢座",
         requiresXpeachSso = false,
         priceMicropeach = 0L
     ),
     CLOUD_HOSTED(
         wireName = "CLOUD_HOSTED",
-        label = "云端关机代抢（0.1 🍑）",
-        subtitle = "手机关机或没网也能由服务器帮您抢，抢到座位才扣 0.1 🍑，没抢到不收费",
+        label = "云端代抢 (0.1 🍑)",
+        subtitle = "支持手机关机或断网时由云端代抢，抢座成功扣 0.1 🍑，失败不扣费",
         requiresXpeachSso = true,
         priceMicropeach = 1_000L
     ),
     MANUAL_REMINDER(
         wireName = "MANUAL_REMINDER",
-        label = "仅到点提醒我",
-        subtitle = "到点前发送通知提醒您自己去选座",
+        label = "仅到点提醒",
+        subtitle = "到点前发送通知提醒手动选座",
         requiresXpeachSso = false,
         priceMicropeach = 0L
     );

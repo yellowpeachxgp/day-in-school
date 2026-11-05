@@ -161,7 +161,7 @@ fun EmptyClassroomScreen(
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = "选择星期与节次",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -320,7 +320,7 @@ fun CampusCommunityScreen(
     ) {
         XPeachTopBar(
             title = "社团与校园频道",
-            subtitle = "河南工业大学 · 云端实时更新社团群与频道导航",
+            subtitle = "河南工业大学 · 学生社团与校园频道",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -330,7 +330,7 @@ fun CampusCommunityScreen(
             },
             actions = {
                 XPeachFilterPill(
-                    label = if (isRefreshingCloud) "同步中…" else "🔄 同步最新",
+                    label = if (isRefreshingCloud) "刷新中…" else "刷新",
                     selected = false,
                     onClick = {
                         if (!isRefreshingCloud) {
@@ -338,10 +338,10 @@ fun CampusCommunityScreen(
                                 isRefreshingCloud = true
                                 repository.refreshCampusCommunityContent()
                                     .onSuccess { updated ->
-                                        feedbackText = "已同步最新校园频道（${updated.channels.size} 个）与学生社团（${updated.clubs.size} 个）"
+                                        feedbackText = "已更新校园频道（${updated.channels.size} 个）与学生社团（${updated.clubs.size} 个）"
                                     }
                                     .onFailure {
-                                        feedbackText = "当前展示本地缓存目录，稍后可重试同步"
+                                        feedbackText = "当前展示本地缓存目录，稍后可重试刷新"
                                     }
                                 isRefreshingCloud = false
                             }
@@ -455,7 +455,7 @@ fun CampusCommunityScreen(
                         onValueChange = { clubSearchQuery = it },
                         label = { Text("搜索社团名称、场地或群号") },
                         singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -498,10 +498,11 @@ fun CampusCommunityScreen(
                             ) {
                                 Text(
                                     text = club.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 if (club.pinned) {
                                     XPeachStatusBadge(
@@ -521,7 +522,8 @@ fun CampusCommunityScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
-                                softWrap = false
+                                softWrap = false,
+                                modifier = Modifier.padding(start = 8.dp)
                             )
                         }
 
@@ -639,10 +641,11 @@ fun CampusCommunityScreen(
                                 ) {
                                     Text(
                                         text = channel.title,
-                                        style = MaterialTheme.typography.titleSmall,
+                                        style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
                                     if (channel.pinned) {
                                         XPeachStatusBadge(
@@ -725,6 +728,7 @@ fun CampusCommunityScreen(
                         onValueChange = { channelUrlInput = it },
                         label = { Text("QQ 频道链接") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -738,7 +742,7 @@ fun CampusCommunityScreen(
                             feedbackText = "已更新「${channelToEdit.title}」链接。"
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }
@@ -775,6 +779,7 @@ fun CampusCommunityScreen(
                         onValueChange = { groupNoInput = it },
                         label = { Text("QQ 群号") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -788,7 +793,7 @@ fun CampusCommunityScreen(
                             feedbackText = "已更新「${clubToEdit.name}」群号为 ${groupNoInput.trim()}。"
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("保存")
                 }

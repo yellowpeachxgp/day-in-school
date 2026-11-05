@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -139,8 +140,8 @@ fun ParcelHubScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "我的快递与取件码",
-            subtitle = "绑定手机号自动查快递 · 驿站取件码集中查看",
+            title = "我的快递",
+            subtitle = "物流进度与驿站取件码",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -161,7 +162,7 @@ fun ParcelHubScreen(
                 items = listOf(
                     "我的快递 (${parcels.size})",
                     "手机号绑定 (${xiaomiAccounts.size})",
-                    "校园驿站汇总"
+                    "按驿站查看"
                 ),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
@@ -220,19 +221,19 @@ fun ParcelHubScreen(
                                 Text(
                                     text = "待取件 ${readyParcels.size} 件 · 在途 ${inTransitParcels.size} 件",
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "支持通过小米账号+手机号自动拉取全网快递，或粘贴菜鸟/丰巢短信提取取件码",
+                                    text = "支持手机号自动同步快递，或粘贴取件短信识别取件码",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             OutlinedButton(
                                 onClick = { showAddDialog = true },
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("手动/短信导入")
+                                Text("添加快递")
                             }
                         }
                     }
@@ -240,13 +241,13 @@ fun ParcelHubScreen(
                     if (parcels.isEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "当前暂无包裹记录",
-                                style = MaterialTheme.typography.titleSmall,
+                                text = "当前暂无快递记录",
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "推荐上方先点击「手机号/扫码登录小米账号」并绑定收件手机号，即可一键同步菜鸟裹裹、顺丰、京东、小米商城等全渠道快递；也可点击「手动/短信导入」粘贴驿站取件短信。",
+                                text = "可在上方登录小米账号并绑定收件手机号自动同步快递，或点击「添加快递」粘贴驿站短信。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -295,7 +296,9 @@ fun ParcelHubScreen(
                                     Text(
                                         text = cleanItemTitle ?: "$cleanCarrierName (${item.trackingNumber})",
                                         style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 Text(
@@ -334,9 +337,9 @@ fun ParcelHubScreen(
                                                         feedbackBanner = "已标记「$cleanPickupCode」为已取件"
                                                     }
                                                 },
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(12.dp)
                                             ) {
-                                                Text("一键已取")
+                                                Text("已取件")
                                             }
                                         }
                                     }
@@ -384,16 +387,15 @@ fun ParcelHubScreen(
                 1 -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "绑定手机号 · 自动查全网快递",
+                            text = "绑定手机号 · 自动同步快递",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "使用方法（只需 3 步）：\n" +
-                                "1. 点击下方「手机号 / 扫码登录小米账号」，用手机号或扫码完成登录。\n" +
-                                "2. 点击「绑定 / 管理收件手机号」，把你平时买东西用的收件手机号绑上（支持绑定多个手机号）。\n" +
-                                "3. 点击「立即同步快递」，即可自动拉取菜鸟裹裹、顺丰、京东、中通、圆通、韵达、申通、极兔等快递和驿站取件码。",
+                            text = "1. 登录小米账号（支持手机号验证码或扫码登录）。\n" +
+                                "2. 绑定常用收件手机号（支持多个号码）。\n" +
+                                "3. 点击「同步快递」，即可拉取顺丰、京东、菜鸟等快递进度与驿站取件码。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -404,9 +406,9 @@ fun ParcelHubScreen(
                         ) {
                             Button(
                                 onClick = { showXiaomiLoginDialog = true },
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("手机号 / 扫码登录小米账号")
+                                Text("登录小米账号")
                             }
                             if (xiaomiAccounts.isNotEmpty()) {
                                 FilledTonalButton(
@@ -420,9 +422,9 @@ fun ParcelHubScreen(
                                         }
                                     },
                                     enabled = !syncingXiaomi,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text(if (syncingXiaomi) "正在同步快递…" else "立即同步全部快递")
+                                    Text(if (syncingXiaomi) "正在同步…" else "同步全部快递")
                                 }
                             }
                         }
@@ -431,13 +433,13 @@ fun ParcelHubScreen(
                     if (xiaomiAccounts.isEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "当前尚未登录小米账号",
-                                style = MaterialTheme.typography.titleSmall,
+                                text = "尚未登录小米账号",
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "点击上方「手机号 / 扫码登录小米账号」即可直接用手机号验证码登录并绑定收件号码。",
+                                text = "点击上方「登录小米账号」，使用手机号验证码登录并绑定收件号码。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -455,10 +457,10 @@ fun ParcelHubScreen(
                                     Text(
                                         text = acc.label,
                                         style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "账号 ID: ${acc.accountId} · 已绑手机号 (${acc.phones.size} 个)：${acc.maskedPhonesSummary}",
+                                        text = "ID: ${acc.accountId} · 已绑手机号 (${acc.phones.size} 个)：${acc.maskedPhonesSummary}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -484,9 +486,9 @@ fun ParcelHubScreen(
                             ) {
                                 Button(
                                     onClick = { phoneManageAccount = acc },
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text("绑定 / 管理收件手机号")
+                                    Text("管理手机号")
                                 }
                                 FilledTonalButton(
                                     onClick = {
@@ -504,9 +506,9 @@ fun ParcelHubScreen(
                                         }
                                     },
                                     enabled = !syncingXiaomi,
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text("同步该账号快递")
+                                    Text("同步快递")
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -516,7 +518,7 @@ fun ParcelHubScreen(
                                             feedbackBanner = "已移除 ${acc.label}"
                                         }
                                     },
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text("退出账号", color = MaterialTheme.colorScheme.error)
                                 }
@@ -528,9 +530,9 @@ fun ParcelHubScreen(
                 else -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "按驿站集中查看取件码",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "按驿站查看取件码",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         val byStation = readyParcels.groupBy { it.stationName.cleanNullableLiteral() ?: "默认校园驿站" }
@@ -550,7 +552,7 @@ fun ParcelHubScreen(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "📍 $station（共 ${list.size} 件待取）",
+                                                text = "$station（共 ${list.size} 件待取）",
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = FontWeight.SemiBold
                                             )
@@ -558,7 +560,7 @@ fun ParcelHubScreen(
                                                 .joinToString(" 、 ")
                                                 .ifBlank { "待驿站出码" }
                                             Text(
-                                                text = "取件码汇总：$codesSummary",
+                                                text = "取件码：$codesSummary",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
@@ -571,9 +573,9 @@ fun ParcelHubScreen(
                                                         feedbackBanner = "已将「$station」的 $count 件快递全部标记为已取件"
                                                     }
                                                 },
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(12.dp)
                                             ) {
-                                                Text("本驿站全取")
+                                                Text("全部已取")
                                             }
                                         }
                                     }
@@ -590,12 +592,12 @@ fun ParcelHubScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "智能取件路线建议",
-                                    style = MaterialTheme.typography.titleSmall,
+                                    text = "顺路取件提醒",
+                                    style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "开启后可根据你的下课地点与宿舍位置，推荐顺路取快递的驿站顺序。",
+                                    text = "根据下课地点与宿舍位置，推荐顺路取件的驿站顺序。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -609,16 +611,16 @@ fun ParcelHubScreen(
 
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "校园常用快递驿站指南",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "校园常用快递驿站",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "📍 莲花街校区：北苑菜鸟驿站、南苑菜鸟驿站、西区快递中心（日常营业 08:30–21:00）\n" +
-                                    "📍 嵩山路校区：校区菜鸟驿站与丰巢智能柜\n" +
-                                    "💡 小贴士：你还可以把「4×2 快递取件码」小组件添加到手机桌面，站在货架前无需打开 App 即可一眼看到取件码。",
+                                text = "• 莲花街校区：北苑菜鸟驿站、南苑菜鸟驿站、西区快递中心（08:30–21:00）\n" +
+                                    "• 嵩山路校区：校区菜鸟驿站与丰巢快递柜\n" +
+                                    "• 桌面小组件：添加「4×2 快递取件码」小组件，可在桌面直接查看取件码。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -705,21 +707,22 @@ fun ParcelHubScreen(
                     OutlinedTextField(
                         value = smsInput,
                         onValueChange = { smsInput = it },
-                        label = { Text("粘贴取件短信全文（推荐，自动识别取件码与驿站）") },
-                        placeholder = { Text("例如：【菜鸟驿站】您的包裹已到莲花街北苑菜鸟驿站，请凭取件码 3-2-1048 取件") },
+                        label = { Text("粘贴取件短信（自动识别取件码与驿站）") },
+                        placeholder = { Text("例如：【菜鸟驿站】请凭取件码 3-2-1048 取件") },
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (smsInput.isNotBlank()) {
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             if (previewExtracted != null) {
                                 Text(
-                                    text = "✅ 已识别取件码：${previewExtracted.pickupCode} · 驿站：${previewExtracted.stationName ?: "校园驿站"}",
+                                    text = "已识别取件码：${previewExtracted.pickupCode} · 驿站：${previewExtracted.stationName ?: "校园驿站"}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             } else {
                                 Text(
-                                    text = "未在短信中识别到取件码（可直接在下方填写单号与备注）",
+                                    text = "未识别到取件码，可在下方直接填写单号与备注",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -729,9 +732,10 @@ fun ParcelHubScreen(
                     OutlinedTextField(
                         value = trackingInput,
                         onValueChange = { trackingInput = it },
-                        label = { Text("快递单号（粘贴短信后可留空自动生成）") },
+                        label = { Text("快递单号（粘贴短信后可留空）") },
                         placeholder = { Text("如 SF1234567890") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -739,13 +743,15 @@ fun ParcelHubScreen(
                         onValueChange = { carrierInput = it },
                         label = { Text("快递公司") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
-                        label = { Text("物品备注（选填，如：教材 / 耳机）") },
+                        label = { Text("物品备注（选填）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -753,6 +759,7 @@ fun ParcelHubScreen(
             confirmButton = {
                 Button(
                     enabled = trackingInput.isNotBlank() || previewExtracted != null,
+                    shape = RoundedCornerShape(12.dp),
                     onClick = {
                         scope.launch {
                             val resolvedTracking = trackingInput.trim().ifBlank {
@@ -804,21 +811,21 @@ private fun XiaomiQuickConnectCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "小米智能助理 · 手机号链接快递同步",
+                    text = "自动同步全网快递",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 if (xiaomiAccounts.isEmpty()) {
                     Text(
-                        text = "直接通过手机号+短信验证码登录小米账号，并绑定收件手机号获取全网快递（菜鸟/顺丰/京东/小米商城）",
+                        text = "登录小米账号并绑定收件手机号，自动拉取顺丰、京东、菜鸟等快递与取件码",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
                     val first = xiaomiAccounts.first()
                     Text(
-                        text = "已连接 ${xiaomiAccounts.size} 个小米账号 · 当前绑定号码：${first.maskedPhonesSummary}",
+                        text = "已连接 ${xiaomiAccounts.size} 个账号 · 绑定号码：${first.maskedPhonesSummary}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -833,29 +840,29 @@ private fun XiaomiQuickConnectCard(
             if (xiaomiAccounts.isEmpty()) {
                 Button(
                     onClick = onOpenLogin,
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("手机号 / 扫码登录小米账号")
+                    Text("登录小米账号")
                 }
             } else {
                 Button(
                     onClick = onSyncNow,
                     enabled = !syncing,
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(if (syncing) "正在从小米同步快递…" else "立即从小米同步快递")
+                    Text(if (syncing) "正在同步…" else "同步快递")
                 }
                 FilledTonalButton(
                     onClick = { onManagePhones(xiaomiAccounts.first()) },
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("绑定 / 管理收件手机号")
+                    Text("管理手机号")
                 }
                 OutlinedButton(
                     onClick = onOpenLogin,
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("切换/新增小米账号")
+                    Text("切换账号")
                 }
             }
         }
@@ -1205,7 +1212,7 @@ private fun XiaomiPhoneBindDialog(
                 HorizontalDivider()
 
                 Text(
-                    text = "新增绑定收件手机号（小米智能助理短信验证）",
+                    text = "新增收件手机号",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1214,6 +1221,7 @@ private fun XiaomiPhoneBindDialog(
                     onValueChange = { phoneInput = it.filter { ch -> ch.isDigit() }.take(11) },
                     label = { Text("11 位收件手机号") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(
@@ -1227,9 +1235,9 @@ private fun XiaomiPhoneBindDialog(
                                 repository.sendXiaomiPhoneVerificationCode(account.id, phoneInput)
                                     .onSuccess { res ->
                                         dialogHint = if (res.ok) {
-                                            "✅ 验证码已发送至 $phoneInput，请查收短信"
+                                            "验证码已发送至 $phoneInput，请查收短信"
                                         } else {
-                                            "发送提示：${res.message}（若该号码已是当前小米账号绑定号，可直接点下方「直接添加已验证号码」）"
+                                            "发送提示：${res.message}"
                                         }
                                     }
                                     .onFailure { err ->
@@ -1239,9 +1247,10 @@ private fun XiaomiPhoneBindDialog(
                             }
                         },
                         enabled = !working && phoneInput.length == 11,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("发送短信验证码")
+                        Text("发送验证码")
                     }
                     FilledTonalButton(
                         onClick = {
@@ -1251,7 +1260,7 @@ private fun XiaomiPhoneBindDialog(
                                     .onSuccess { updated ->
                                         onAccountUpdated(updated)
                                         phoneInput = ""
-                                        dialogHint = "✅ 已直接添加手机号，可立即同步快递"
+                                        dialogHint = "已添加手机号，可立即同步快递"
                                         onMessage("已绑定手机号 ${updated.maskedPhonesSummary}")
                                     }
                                     .onFailure { err ->
@@ -1261,6 +1270,7 @@ private fun XiaomiPhoneBindDialog(
                             }
                         },
                         enabled = !working && phoneInput.length == 11,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("直接添加本机号")
@@ -1271,6 +1281,7 @@ private fun XiaomiPhoneBindDialog(
                     onValueChange = { codeInput = it.trim() },
                     label = { Text("短信验证码") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
@@ -1282,8 +1293,8 @@ private fun XiaomiPhoneBindDialog(
                                     onAccountUpdated(updated)
                                     phoneInput = ""
                                     codeInput = ""
-                                    dialogHint = "✅ 短信验证并绑定手机号成功！"
-                                    onMessage("已通过短信验证成功绑定手机号 ${updated.maskedPhonesSummary}")
+                                    dialogHint = "已验证并绑定手机号"
+                                    onMessage("已绑定手机号 ${updated.maskedPhonesSummary}")
                                 }
                                 .onFailure { err ->
                                     dialogHint = "验证绑定失败：${err.message}"
@@ -1292,9 +1303,10 @@ private fun XiaomiPhoneBindDialog(
                         }
                     },
                     enabled = !working && phoneInput.length == 11 && codeInput.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("确认验证并绑定手机号")
+                    Text("验证并绑定")
                 }
 
                 dialogHint?.let { hint ->
@@ -1360,23 +1372,24 @@ private fun ParcelTimelineDialog(
                             repository.fetchXiaomiParcelDetail(parcel.id)
                                 .onSuccess { remotePoints ->
                                     points = remotePoints
-                                    onMessage("已从小米智能助理刷新 ${parcel.trackingNumber} 完整物流轨迹（共 ${remotePoints.size} 条）")
+                                    onMessage("已刷新 ${parcel.trackingNumber} 物流轨迹（共 ${remotePoints.size} 条）")
                                 }
                                 .onFailure { err ->
-                                    onMessage("刷新详情提示：${err.message}")
+                                    onMessage("刷新提示：${err.message}")
                                 }
                             refreshing = false
                         }
                     },
                     enabled = !refreshing,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (refreshing) "正在向小米智能助理查询实时轨迹…" else "从小米智能助理刷新完整轨迹")
+                    Text(if (refreshing) "正在查询实时轨迹…" else "刷新完整物流轨迹")
                 }
 
                 if (points.isEmpty()) {
                     Text(
-                        text = "当前摘要：${parcel.estimatedDeliveryText}\n（若为小米智能助理同步包裹，可点击上方按钮拉取完整节点）",
+                        text = "当前摘要：${parcel.estimatedDeliveryText}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -533,23 +533,29 @@ fun CampusMapScreen(
         }
         AlertDialog(
             onDismissRequest = { showZoneImportExportDialog = false },
-            title = { Text("上传/导入或导出校区电子区划适配") },
+            title = {
+                Text(
+                    text = "导入或分享自定义校区",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "若你的校区不在内置列表中，可在全屏地图上通过「电子区划圈定」点选多边形边界，或在此直接粘贴/导出校区适配 JSON（兼容标准 GeoJSON Polygon 坐标数组）与同学共享：",
+                        text = "可粘贴同学分享的校区配置 JSON，或复制当前校区配置分享给他人：",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
                         value = zoneAdaptationJsonInput.ifBlank { currentExportJson },
                         onValueChange = { zoneAdaptationJsonInput = it },
-                        label = { Text("校区适配 JSON / GeoJSON") },
+                        label = { Text("校区配置 JSON") },
                         minLines = 6,
                         maxLines = 10,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (zoneAdaptationFeedback != null) {
@@ -565,10 +571,11 @@ fun CampusMapScreen(
                                 val textToCopy = zoneAdaptationJsonInput.ifBlank { currentExportJson }
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("campus_zone_json", textToCopy))
-                                zoneAdaptationFeedback = "已复制校区适配 JSON 到剪贴板，可直接分享或上传至社区仓库"
-                            }
+                                zoneAdaptationFeedback = "已复制校区配置到剪贴板"
+                            },
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("复制当前适配 JSON")
+                            Text("复制当前配置")
                         }
                         if (customZones.isNotEmpty()) {
                             TextButton(
@@ -576,7 +583,7 @@ fun CampusMapScreen(
                                     scope.launch {
                                         repository.saveCustomCampusZonesJson("[]")
                                         repository.setSelectedCampusId("auto")
-                                        zoneAdaptationFeedback = "已清空本地自定义校区电子区划"
+                                        zoneAdaptationFeedback = "已清空本地自定义校区"
                                     }
                                 }
                             ) {
@@ -592,7 +599,7 @@ fun CampusMapScreen(
                         val raw = zoneAdaptationJsonInput.ifBlank { currentExportJson }
                         val parsed = CustomCampusZoneCodec.decodeList(raw)
                         if (parsed.isEmpty()) {
-                            zoneAdaptationFeedback = "未能解析出有效的校区电子区划，请检查 JSON 或坐标格式"
+                            zoneAdaptationFeedback = "未能识别有效的校区配置，请检查 JSON 格式"
                         } else {
                             val merged = (parsed + customZones).distinctBy { it.campusId }
                             scope.launch {
@@ -600,13 +607,14 @@ fun CampusMapScreen(
                                     CustomCampusZoneCodec.encodeList(merged, pretty = false)
                                 )
                                 repository.setSelectedCampusId(parsed.first().campusId)
-                                zoneAdaptationFeedback = "已成功导入「${parsed.first().campusName}」电子区划（${parsed.first().polygonVertices.size} 个边界顶点，${parsed.first().buildings.size} 处建筑）"
+                                zoneAdaptationFeedback = "已导入「${parsed.first().campusName}」（${parsed.first().buildings.size} 处建筑）"
                                 showZoneImportExportDialog = false
                             }
                         }
-                    }
+                    },
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("导入并启用该校区")
+                    Text("导入并启用")
                 }
             },
             dismissButton = {
@@ -621,7 +629,12 @@ fun CampusMapScreen(
         val pt = pendingPinPoint!!
         AlertDialog(
             onDismissRequest = { pendingPinPoint = null },
-            title = { Text("添加自定义校区地标建筑") },
+            title = {
+                Text(
+                    text = "添加校区建筑",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -634,6 +647,7 @@ fun CampusMapScreen(
                         onValueChange = { pendingPinName = it },
                         label = { Text("建筑或地标名称（如：综合教学楼、南门）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -657,7 +671,8 @@ fun CampusMapScreen(
                         drawingZoneBuildings = drawingZoneBuildings + newBuilding
                         pendingPinName = ""
                         pendingPinPoint = null
-                    }
+                    },
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("添加地标")
                 }
@@ -731,7 +746,7 @@ fun CampusMapScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "${detectedCampus.source.label} · 支持电子地图圈定校区边界或上传校区适配",
+                                text = "${detectedCampus.source.label} · 支持自定义圈定或导入校区",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -778,7 +793,7 @@ fun CampusMapScreen(
                             )
                         }
                         XPeachFilterPill(
-                            label = "+ 电子区划圈定",
+                            label = "+ 自定义校区",
                             selected = isDrawingZoneMode,
                             onClick = {
                                 isDrawingZoneMode = true
@@ -788,7 +803,7 @@ fun CampusMapScreen(
                             }
                         )
                         XPeachFilterPill(
-                            label = "上传/导入校区适配",
+                            label = "导入/分享校区",
                             selected = false,
                             onClick = {
                                 zoneAdaptationFeedback = null
@@ -802,19 +817,22 @@ fun CampusMapScreen(
                 if (mapProvider == null && customZones.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "当前学校暂未安装校区地图与服务包",
+                            text = "暂未收录该校地图数据",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "「${activeSchool.displayName}」尚未启用经校验的校区 GIS 路网、图书馆或宿舍水电 Provider。应用不会将其他学校的楼宇坐标或服务接口混入当前身份。",
+                            text = "暂未收录「${activeSchool.displayName}」的校园地图数据，你可以通过上方「+ 自定义校区」自行标注建筑与边界。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(10.dp))
-                        Button(onClick = onNavigateToSchoolCenter) {
-                            Text("查看学校与能力状态")
+                        Button(
+                            onClick = onNavigateToSchoolCenter,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("切换学校")
                         }
                     }
                 }
@@ -1354,7 +1372,7 @@ fun CampusMapScreen(
                     )
                 }
                 XPeachFilterPill(
-                    label = if (isDrawingZoneMode) "退出电子区划" else "电子区划圈定",
+                    label = if (isDrawingZoneMode) "退出圈定" else "自定义校区",
                     selected = isDrawingZoneMode,
                     onClick = {
                         isDrawingZoneMode = !isDrawingZoneMode
@@ -1365,7 +1383,7 @@ fun CampusMapScreen(
                     }
                 )
                 XPeachFilterPill(
-                    label = "上传/导出适配",
+                    label = "导入/分享",
                     selected = false,
                     onClick = {
                         zoneAdaptationFeedback = null
@@ -1396,12 +1414,12 @@ fun CampusMapScreen(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)
                 ) {
                     Text(
-                        text = "电子区划圈定校区模式（已点选 ${drawingZoneVertices.size} 个边界顶点，${drawingZoneBuildings.size} 处地标）",
+                        text = "圈定校区范围（已标 ${drawingZoneVertices.size} 个点，${drawingZoneBuildings.size} 处建筑）",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "单指点击地图添加校区电子围栏多边形顶点（至少 3 个顶点闭合），双指或拖动平移地图；也可在当前中心点添加教学楼地标。",
+                        text = "点击地图标记校区边界（至少 3 个点），也可在地图中心添加建筑。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1411,6 +1429,7 @@ fun CampusMapScreen(
                         onValueChange = { drawingZoneName = it },
                         placeholder = { Text("输入自定义校区名称（如：江北校区、东校区）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(6.dp))
@@ -1424,20 +1443,23 @@ fun CampusMapScreen(
                             onClick = {
                                 val (wLat, wLon) = CampusMapNavigator.gcj02ToWgs84(mapCenterLatGcj, mapCenterLonGcj)
                                 pendingPinPoint = GeoPoint(wLat, wLon)
-                            }
+                            },
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("+ 在地图中心加建筑")
+                            Text("+ 在中心加建筑")
                         }
                         OutlinedButton(
                             enabled = drawingZoneVertices.isNotEmpty(),
                             onClick = {
                                 drawingZoneVertices = drawingZoneVertices.dropLast(1)
-                            }
+                            },
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("撤销顶点")
+                            Text("撤销上一点")
                         }
                         Button(
                             enabled = drawingZoneVertices.size >= 3,
+                            shape = RoundedCornerShape(12.dp),
                             onClick = {
                                 val name = drawingZoneName.trim().ifBlank { "自定义校区${customZones.size + 1}" }
                                 val id = "custom-${name.hashCode().toUInt().toString(16)}"
@@ -2184,9 +2206,10 @@ private fun RealCampusTileMap(
             style = Paint.Style.STROKE
             strokeWidth = 2.5f
         }
+        val labelTextSizePx = 11.sp.toPx()
         val labelTextPaint = Paint().apply {
             isAntiAlias = true
-            textSize = 26f
+            textSize = labelTextSizePx
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             color = android.graphics.Color.rgb(17, 24, 39)
         }

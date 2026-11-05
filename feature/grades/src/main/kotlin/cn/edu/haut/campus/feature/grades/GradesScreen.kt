@@ -405,8 +405,7 @@ fun GradesScreen(
                         )
                         Text(
                             text = if (privacyMasked) "∗.∗∗" else (gpaReport.cumulativeGpa?.toPlainString() ?: "—"),
-                            fontSize = 30.sp,
-                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.displaySmall,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
                             softWrap = false
@@ -1023,19 +1022,19 @@ private fun AcademicPlanProgressSection(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = buildString {
-                    append("• 已获得总学分（按课程去重）：")
+                    append("• 已获得总学分：")
                     append(if (privacyMasked) "∗∗.∗" else "${aggregation.totalCreditedCredits.toPlainString()} 学分")
-                    append("（同门重修或补考只计一次）\n")
-                    append("• 多次修读课程数：${aggregation.multiAttemptCourseCount} 门\n")
-                    append("• 平时分与期末卷面分明细以教务系统实际公布为准。")
+                    append("（重修或补考不重复计分）\n")
+                    append("• 重修或补考课程：${aggregation.multiAttemptCourseCount} 门\n")
+                    append("• 平时分与期末分明细以教务系统公布为准。")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            aggregation.notes.forEach { note ->
+            if (aggregation.multiAttemptCourseCount > 0) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "注：$note",
+                    text = "注：存在 ${aggregation.multiAttemptCourseCount} 门重修或补考记录，已按最高成绩去重统计。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -1096,14 +1095,12 @@ private fun AcademicPlanProgressSection(
                     )
                 }
             }
-            degreeProgress.notes.take(2).forEach { note ->
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "• $note",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "注：以上为参考学分进度，具体毕业要求请以本专业培养方案为准。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -1174,7 +1171,7 @@ private fun SelectionDraftSection(
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "选课前可在此预排想选的课程，自动与本学期已排课表（${timetableOccupied.size} 个时段）及草稿比对是否时间冲突。",
+                text = "添加想选的课程，自动检测与本学期已排课表及草稿的时间冲突。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1185,6 +1182,7 @@ private fun SelectionDraftSection(
                 onValueChange = { courseNameInput = it.take(40) },
                 label = { Text("候选课程名称") },
                 singleLine = true,
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1193,6 +1191,7 @@ private fun SelectionDraftSection(
                 onValueChange = { classIdInput = it.take(24) },
                 label = { Text("教学班号") },
                 singleLine = true,
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1263,6 +1262,7 @@ private fun SelectionDraftSection(
                     courseNameInput = ""
                     submissionNotice = "已加入选课预排草稿"
                 },
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("加入选课草稿")
@@ -1285,7 +1285,7 @@ private fun SelectionDraftSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "当前草稿 (${draft.entries.size} 门 · 版本 v${draft.revision})",
+                        text = "已选草稿 (${draft.entries.size} 门)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )

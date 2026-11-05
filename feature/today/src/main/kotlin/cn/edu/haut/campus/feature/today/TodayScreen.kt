@@ -693,7 +693,7 @@ fun TodayScreen(
                             showTermSwitcherDialog = false
                             onNavigateToImporter()
                         },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("去同步其他学期课表", maxLines = 1, softWrap = false)
@@ -790,7 +790,7 @@ private fun CourseDetailAndSnoozeDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(occ.courseName, style = MaterialTheme.typography.titleMedium)
+                Text(occ.courseName, style = MaterialTheme.typography.titleLarge)
                 Text(
                     text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}",
                     style = MaterialTheme.typography.labelMedium,
@@ -808,10 +808,20 @@ private fun CourseDetailAndSnoozeDialog(
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("状态：${detailState.statusText}", fontWeight = FontWeight.Medium)
-                        Text("教室：${occ.rawRoom}")
+                        Text(
+                            text = "状态：${detailState.statusText}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "教室：${occ.rawRoom}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                         if (!occ.teacher.isNullOrBlank()) {
-                            Text("教师：${occ.teacher}")
+                            Text(
+                                text = "教师：${occ.teacher}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                         occ.internalBreaksSummary?.let { brkSummary ->
                             Text(
@@ -1416,9 +1426,10 @@ private fun TodayExpressPickupHeroCard(
                                 ) {
                                     Text(
                                         text = parcel.pickupCode.cleanUiText() ?: "待出取件码",
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontFamily = FontFamily.Monospace,
+                                        style = MaterialTheme.typography.headlineMedium.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        ),
                                         color = MaterialTheme.colorScheme.primary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -1480,18 +1491,18 @@ private fun TodayLibrarySeatDynamicCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     XPeachStatusBadge(
-                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已约上座位" else "自动抢座待命",
+                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已预约" else "等待开抢",
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                     Text(
-                        text = "图书馆座位与抢座动态",
+                        text = "座位预约",
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
                 XPeachFilterPill(
-                    label = "抢座管理",
+                    label = "选座",
                     selected = false,
                     onClick = onOpenLibrarySeats
                 )
@@ -1503,15 +1514,15 @@ private fun TodayLibrarySeatDynamicCard(
                     .map { it.trim() }
                     .firstOrNull { it.isNotEmpty() } ?: "自动优选"
                 val statusLabel = when (plan.status) {
-                    "CONFIRMED" -> "✅ 已成功预约座位"
-                    "FINAL_CHECK_OK" -> "⚡ 开抢前就绪检查通过，等待准点抢座"
-                    "PRECHECK_OK" -> "🛡️ 已完成自动登录保活，等待开抢"
-                    else -> "⏰ 已设定自动抢座计划"
+                    "CONFIRMED" -> "已成功预约座位"
+                    "FINAL_CHECK_OK" -> "即将开抢，准备就绪"
+                    "PRECHECK_OK" -> "登录有效，等待开抢"
+                    else -> "已预约定时抢座"
                 }
                 val engineLabel = if (plan.executionMode == "CLOUD_HOSTED") {
-                    "☁️ 云端托管抢座"
+                    "云端代抢"
                 } else {
-                    "📱 本机定时抢座"
+                    "本机定时"
                 }
                 XPeachWell(
                     modifier = Modifier.fillMaxWidth(),
@@ -1530,9 +1541,9 @@ private fun TodayLibrarySeatDynamicCard(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "💺 $cleanArea · $firstSeat 号座",
+                                text = "$cleanArea · $firstSeat 号座",
                                 style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
@@ -1836,7 +1847,7 @@ private fun TodayCampusBentoSection(
                 .clickable(onClick = onOpenCustomizer)
         ) {
             Text(
-                text = "已隐藏全部首页模块卡片 · 点击恢复或自由组合卡片",
+                text = "已隐藏全部卡片，点击重新设置",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1974,9 +1985,9 @@ private fun HomeCardLayoutCustomizerDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("模块化卡片布局定制", style = MaterialTheme.typography.titleMedium)
+                Text("首页卡片设置", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "自由调整首页卡片上下顺序、切换通栏/双列尺寸或隐藏不常用模块",
+                    text = "调整卡片顺序、大小或隐藏不需要的卡片",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2003,7 +2014,11 @@ private fun HomeCardLayoutCustomizerDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 6.dp)
+                            ) {
                                 Text(
                                     text = "${index + 1}. $title",
                                     style = MaterialTheme.typography.bodyMedium,
@@ -2012,15 +2027,17 @@ private fun HomeCardLayoutCustomizerDialog(
                                         MaterialTheme.colorScheme.onSurface
                                     } else {
                                         MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = if (!isVisible) {
                                         "已隐藏"
                                     } else if (isFull) {
-                                        "通栏宽卡"
+                                        "大卡片"
                                     } else {
-                                        "双列网格卡"
+                                        "小卡片"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isVisible) {
@@ -2036,8 +2053,9 @@ private fun HomeCardLayoutCustomizerDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 XPeachFilterPill(
-                                    label = if (isFull) "通栏" else "双列",
+                                    label = if (isFull) "大卡" else "小卡",
                                     selected = isFull,
+                                    compact = true,
                                     onClick = {
                                         workingFullWidth = if (isFull) {
                                             workingFullWidth - cardId
@@ -2049,6 +2067,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                 XPeachFilterPill(
                                     label = if (isVisible) "显示" else "隐藏",
                                     selected = isVisible,
+                                    compact = true,
                                     onClick = {
                                         workingHidden = if (isVisible) {
                                             workingHidden + cardId
@@ -2060,6 +2079,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                 XPeachFilterPill(
                                     label = "↑",
                                     selected = false,
+                                    compact = true,
                                     onClick = {
                                         if (index > 0) {
                                             val mut = workingOrder.toMutableList()
@@ -2073,6 +2093,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                 XPeachFilterPill(
                                     label = "↓",
                                     selected = false,
+                                    compact = true,
                                     onClick = {
                                         if (index < workingOrder.lastIndex) {
                                             val mut = workingOrder.toMutableList()
@@ -2093,15 +2114,16 @@ private fun HomeCardLayoutCustomizerDialog(
                     onClick = onResetDefault,
                     modifier = Modifier.align(Alignment.End)
                 ) {
-                    Text("恢复默认卡片布局")
+                    Text("恢复默认")
                 }
             }
         },
         confirmButton = {
             FilledTonalButton(
-                onClick = { onSave(workingOrder, workingHidden, workingFullWidth) }
+                onClick = { onSave(workingOrder, workingHidden, workingFullWidth) },
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text("保存布局")
+                Text("保存")
             }
         },
         dismissButton = {
@@ -2297,7 +2319,7 @@ private fun MinimalistDayScheduleFlow(
                     )
                     Text(
                         text = occ.periodRangeText,
-                        fontSize = 10.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
                         color = baseColor,
                         maxLines = 1,

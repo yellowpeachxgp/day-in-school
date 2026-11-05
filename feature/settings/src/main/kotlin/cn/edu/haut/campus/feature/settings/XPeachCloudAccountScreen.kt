@@ -184,13 +184,13 @@ fun XPeachCloudAccountScreen(
             if (selectedTab == 0) {
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "平时用 App 需要登录这个吗？",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        text = "关于云账号",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "不需要！看课表、查成绩、查电费、查空教室、手机自动抢图书馆座位、查快递取件码，全部免费，不用登录这个账号。只有当你想在手机关机或没网时，让服务器帮你抢图书馆座位，才需要登录。",
+                        text = "课表、成绩、电费、空教室、本机自动抢座与查快递均无需登录云账号。仅在使用「云端关机代抢图书馆座位」时需要登录。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -200,13 +200,13 @@ fun XPeachCloudAccountScreen(
                 if (binding == null) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "当前未登录云账号",
+                            text = "尚未登录云账号",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "点击下方按钮即可直接登录你已有的账号，自动同步你的昵称和 🍑 余额。",
+                            text = "登录后可同步昵称与账户余额，开启云端关机代抢。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -214,9 +214,9 @@ fun XPeachCloudAccountScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = { showBindDialog = true },
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("立即登录账号")
+                                Text("登录账号")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -228,9 +228,9 @@ fun XPeachCloudAccountScreen(
                                         )
                                     }
                                 },
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("打开网页版后台")
+                                Text("打开网页端")
                             }
                         }
                     }
@@ -245,10 +245,10 @@ fun XPeachCloudAccountScreen(
                                 Text(
                                     text = binding.displayName,
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "账号 ID: ${binding.ssoSubject}",
+                                    text = "ID: ${binding.ssoSubject}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -263,7 +263,7 @@ fun XPeachCloudAccountScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "🍑 可用余额：%.2f 🍑".format(
+                                text = "可用余额：%.2f 🍑".format(
                                     binding.peachBalanceMicropeach / 10_000.0
                                 ),
                                 style = MaterialTheme.typography.titleMedium,
@@ -271,7 +271,7 @@ fun XPeachCloudAccountScreen(
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "只有当服务器真正帮你抢到图书馆座位后，才会扣除 0.10 🍑；没抢到或者提前取消绝对不扣费。",
+                                text = "仅在云端成功抢到座位后结算 0.10 🍑；未抢到或提前取消不扣费。",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -288,38 +288,42 @@ fun XPeachCloudAccountScreen(
                                     isSyncingSnapshot = false
                                     if (snap != null || refreshed != null) {
                                         val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
-                                        feedbackBanner = "已完成云端双向同步（🍑 余额 %.2f · 抢座与快递已对齐）".format(bal)
+                                        feedbackBanner = "已完成云端同步（余额 %.2f 🍑）".format(bal)
                                     } else {
-                                        feedbackBanner = "云端响应繁忙，已保留当前登录态与本地余额（%.2f 🍑）".format(
+                                        feedbackBanner = "云端繁忙，已保留本地数据（%.2f 🍑）".format(
                                             binding.peachBalanceMicropeach / 10_000.0
                                         )
                                     }
                                 }
                             },
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (isSyncingSnapshot) "正在同步云端数据…" else "立即双向同步（🍑 余额 / 抢座 / 快递）")
+                            Text(if (isSyncingSnapshot) "正在同步云端数据…" else "同步云端数据")
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             FilledTonalButton(
                                 onClick = {
                                     scope.launch {
                                         val refreshed = repository.refreshXpeachWalletBalance()
                                         if (refreshed != null) {
-                                            feedbackBanner = "已同步 XPeach 主站最新余额：%.2f 🍑".format(refreshed)
+                                            feedbackBanner = "已刷新最新余额：%.2f 🍑".format(refreshed)
                                         } else {
-                                            feedbackBanner = "刷新稍慢，当前余额：%.2f 🍑".format(
+                                            feedbackBanner = "当前余额：%.2f 🍑".format(
                                                 binding.peachBalanceMicropeach / 10_000.0
                                             )
                                         }
                                     }
                                 },
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("刷新 🍑 余额")
+                                Text("刷新余额", maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -331,20 +335,22 @@ fun XPeachCloudAccountScreen(
                                         )
                                     }
                                 },
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("网页版中心")
+                                Text("网页端", maxLines = 1, softWrap = false)
                             }
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
                                         repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-                                        feedbackBanner = "已退出账号，并取消了未执行的云端代抢任务"
+                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢任务"
                                     }
                                 },
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("退出账号", color = MaterialTheme.colorScheme.error)
+                                Text("退出账号", color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -354,18 +360,18 @@ fun XPeachCloudAccountScreen(
                 if (cloudPlans.isNotEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "我的云端抢座与 🍑 账单 (${cloudPlans.size})",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "云端代抢记录 (${cloudPlans.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         for (plan in cloudPlans) {
                             val friendlyStatus = when (plan.status) {
-                                "CONFIRMED" -> "✅ 已成功抢到座位"
-                                "FINAL_CHECK_OK" -> "⚡ 就绪检查通过，等待准点抢座"
-                                "PRECHECK_OK" -> "🛡️ 已完成登录保活，等待开抢"
-                                "ARMED" -> "⏰ 云端定时任务待命（未抢成不扣 🍑）"
-                                "CANCELLED" -> "已取消（未扣 🍑）"
+                                "CONFIRMED" -> "抢座成功"
+                                "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
+                                "PRECHECK_OK" -> "已完成登录保活，等待开抢"
+                                "ARMED" -> "定时任务待命（未抢成不扣费）"
+                                "CANCELLED" -> "已取消（未扣费）"
                                 else -> plan.lastDiagnosticMessage ?: "处理中"
                             }
                             val payLabel = when (plan.paymentState) {
@@ -408,18 +414,18 @@ fun XPeachCloudAccountScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "校园扩展功能",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "可按需开启或关闭驿站卡片、图书馆座位快捷提示等附加功能。",
+                                text = "按需开启或关闭驿站卡片、图书馆座位快捷提示等附加功能。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Button(
                             onClick = { showInstallPluginDialog = true },
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("添加扩展")
                         }
@@ -440,7 +446,7 @@ fun XPeachCloudAccountScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "版本 v${plugin.activeVersion}",
+                                    text = "版本 ${plugin.activeVersion}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -474,7 +480,7 @@ fun XPeachCloudAccountScreen(
                                         feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
                                     }
                                 },
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(if (plugin.status == "ENABLED") "停用" else "启用")
                             }
@@ -528,6 +534,7 @@ fun XPeachCloudAccountScreen(
                         onValueChange = { pluginNameInput = it },
                         label = { Text("扩展名称") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -535,6 +542,7 @@ fun XPeachCloudAccountScreen(
                         onValueChange = { pluginIdInput = it },
                         label = { Text("扩展标识") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -542,12 +550,14 @@ fun XPeachCloudAccountScreen(
                         onValueChange = { versionInput = it },
                         label = { Text("版本号") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
                 Button(
+                    shape = RoundedCornerShape(12.dp),
                     onClick = {
                         scope.launch {
                             repository.upsertExtensionPlugin(
@@ -597,7 +607,7 @@ private fun XpeachNativeOidcLoginDialog(
     var needsTotp by remember { mutableStateOf(false) }
 
     var isSubmitting by remember { mutableStateOf(false) }
-    var statusHint by remember { mutableStateOf("直接输入你的 XPeach 账号密码，即可原生登录并同步 🍑 余额") }
+    var statusHint by remember { mutableStateOf("输入账号密码登录后将自动同步余额") }
     var errorHint by remember { mutableStateOf<String?>(null) }
 
     var activeBrowserTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
@@ -665,7 +675,7 @@ private fun XpeachNativeOidcLoginDialog(
         }
         isSubmitting = true
         errorHint = null
-        statusHint = "正在通过 XPeach OIDC 原生认证并同步 🍑 余额…"
+        statusHint = "正在验证账号并同步余额…"
         scope.launch {
             val res = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.loginWithNativeOidcCredentials(
@@ -718,8 +728,8 @@ private fun XpeachNativeOidcLoginDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "XPeach 统一账号原生登录",
-                            style = MaterialTheme.typography.titleMedium,
+                            text = "登录云账号",
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
@@ -753,9 +763,10 @@ private fun XpeachNativeOidcLoginDialog(
                 OutlinedTextField(
                     value = identifierInput,
                     onValueChange = { identifierInput = it },
-                    label = { Text("XPeach 用户名 / 邮箱") },
+                    label = { Text("用户名或邮箱") },
                     placeholder = { Text("例如 yellowpeach 或注册邮箱") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     enabled = !isSubmitting,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Email,
@@ -769,6 +780,7 @@ private fun XpeachNativeOidcLoginDialog(
                     onValueChange = { passwordInput = it },
                     label = { Text("登录密码") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     enabled = !isSubmitting,
                     visualTransformation = if (showPassword) {
                         VisualTransformation.None
@@ -791,9 +803,10 @@ private fun XpeachNativeOidcLoginDialog(
                     OutlinedTextField(
                         value = totpInput,
                         onValueChange = { totpInput = it.trim() },
-                        label = { Text("6 位两步验证码 (2FA / 恢复码)") },
+                        label = { Text("两步验证码 (6 位动态码或恢复码)") },
                         placeholder = { Text("请输入身份验证器中的 6 位动态码") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         enabled = !isSubmitting,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.NumberPassword,
@@ -807,7 +820,7 @@ private fun XpeachNativeOidcLoginDialog(
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = { needsTotp = true }) {
-                            Text("账号开启了两步验证 (2FA)？点击填写验证码")
+                            Text("开启了两步验证？点击填写验证码")
                         }
                     }
                 }
@@ -818,7 +831,7 @@ private fun XpeachNativeOidcLoginDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (isSubmitting) "正在登录并同步 🍑 余额…" else "立即登录并同步 🍑 余额")
+                    Text(if (isSubmitting) "正在登录…" else "登录")
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
@@ -829,7 +842,7 @@ private fun XpeachNativeOidcLoginDialog(
                         scope.launch {
                             isSubmitting = true
                             errorHint = null
-                            statusHint = "正在拉起系统 OIDC 授权（支持通行密钥 Passkey）…"
+                            statusHint = "正在打开浏览器授权…"
                             val res = withContext(Dispatchers.IO) {
                                 runCatching {
                                     CampusCloudOidcHelper.startRemoteMobileAuthTransaction(
@@ -841,7 +854,7 @@ private fun XpeachNativeOidcLoginDialog(
                             res.fold(
                                 onSuccess = { txn ->
                                     activeBrowserTxn = txn
-                                    statusHint = "请在系统浏览器完成授权，完成后将自动跳回 App 绑定"
+                                    statusHint = "请在系统浏览器完成授权，完成后将自动跳回 App"
                                     runCatching {
                                         context.startActivity(
                                             Intent(Intent.ACTION_VIEW, Uri.parse(txn.authorizeUrl)).apply {
@@ -851,7 +864,7 @@ private fun XpeachNativeOidcLoginDialog(
                                     }
                                 },
                                 onFailure = { err ->
-                                    errorHint = "无法发起 OIDC 授权：${err.message}"
+                                    errorHint = "无法发起浏览器授权：${err.message}"
                                 }
                             )
                         }
@@ -859,7 +872,7 @@ private fun XpeachNativeOidcLoginDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("使用通行密钥 (Passkey) / 系统浏览器一键授权")
+                    Text("通行密钥 / 浏览器授权登录")
                 }
             }
         }

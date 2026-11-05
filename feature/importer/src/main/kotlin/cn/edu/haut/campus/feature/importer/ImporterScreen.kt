@@ -167,7 +167,7 @@ fun ImporterScreen(
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     out.write(jsonText.toByteArray(Charsets.UTF_8))
                 }
-                statusBanner = "已导出 univ-timetable/v1 JSON 课表文件（不含学号与个人敏感信息）。"
+                statusBanner = "已导出 JSON 课表文件（不含个人信息）。"
             }.onFailure { err ->
                 statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
             }
@@ -189,7 +189,7 @@ fun ImporterScreen(
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     out.write(mdText.toByteArray(Charsets.UTF_8))
                 }
-                statusBanner = "已导出 univ-timetable/v1 Markdown 课表文件（不含学号与个人敏感信息）。"
+                statusBanner = "已导出 Markdown 课表文件（不含个人信息）。"
             }.onFailure { err ->
                 statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
             }
@@ -242,7 +242,7 @@ fun ImporterScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
@@ -333,7 +333,7 @@ fun ImporterScreen(
                                                 repository.applyLiveSyncData(syncData, overwriteUserConflicts = overwriteUserEdits)
                                             }
                                             if (applied.isFailure) {
-                                                statusBanner = "同步数据保存失败，请重试；原有数据未主动清除"
+                                                statusBanner = "保存失败，请重试（已有数据不受影响）"
                                                 return@onSuccess
                                             }
                                             val credentialFailure = if (rememberForAutoSync) {
@@ -348,7 +348,7 @@ fun ImporterScreen(
                                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             diffPreview = null
                                             statusBanner = syncData.syncSummaryText() + if (credentialFailure) {
-                                                "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用"
+                                                "\n密码保存失败，已关闭自动更新"
                                             } else ""
                                         }.onFailure { err ->
                                             statusBanner = "同步失败：${err.message ?: "请检查网络或账号密码"}"
@@ -371,7 +371,7 @@ fun ImporterScreen(
                                 }
 
                                 if (prefs.academicReauthenticationRequired) {
-                                    Text("安全凭据已失效，请重新登录；本地数据已保留", color = MaterialTheme.colorScheme.error)
+                                    Text("登录已过期，请重新输入密码", color = MaterialTheme.colorScheme.error)
                                 }
                                 if (prefs.hasSavedCredentials) {
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -396,7 +396,7 @@ fun ImporterScreen(
                                             FilledTonalButton(
                                                 enabled = !isSyncing,
                                                 onClick = triggerDirectSync,
-                                                shape = RoundedCornerShape(8.dp)
+                                                shape = RoundedCornerShape(12.dp)
                                             ) {
                                                 Text("立即更新", maxLines = 1, softWrap = false)
                                             }
@@ -415,7 +415,7 @@ fun ImporterScreen(
                                     keyboardActions = KeyboardActions(
                                         onNext = { focusManager.moveFocus(FocusDirection.Down) }
                                     ),
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -423,7 +423,7 @@ fun ImporterScreen(
                                     value = passwordInput,
                                     onValueChange = { passwordInput = it },
                                     label = {
-                                        Text(if (prefs.hasSavedCredentials) "密码（已保存，修改账号或重新认证时填写）" else "密码")
+                                        Text(if (prefs.hasSavedCredentials) "密码（已保存，如需更新请重新输入）" else "密码")
                                     },
                                     singleLine = true,
                                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
@@ -439,7 +439,7 @@ fun ImporterScreen(
                                             )
                                         }
                                     },
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
@@ -791,7 +791,7 @@ fun ImporterScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "大学课表文件互通 (univ-timetable/v1)",
+                                            text = "课表文件导入与导出",
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -799,7 +799,7 @@ fun ImporterScreen(
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "支持导入或导出标准 univ-timetable/v1 课表文件（.md / .json）及正方 JSON。导出文件已自动剔除姓名、学号与水电账号。",
+                                        text = "支持导入或导出 .md / .json 课表文件（导出文件不包含学号等个人信息）。",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -814,7 +814,7 @@ fun ImporterScreen(
                                                     arrayOf("application/json", "text/markdown", "text/plain", "*/*")
                                                 )
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier.weight(1.2f)
                                         ) {
                                             Text("选择课表文件", maxLines = 1, softWrap = false)
@@ -823,7 +823,7 @@ fun ImporterScreen(
                                             onClick = {
                                                 exportMarkdownLauncher.launch("haut-timetable-v1.md")
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("导出 .md", maxLines = 1, softWrap = false)
@@ -832,7 +832,7 @@ fun ImporterScreen(
                                             onClick = {
                                                 exportJsonLauncher.launch("haut-timetable-v1.json")
                                             },
-                                            shape = RoundedCornerShape(8.dp),
+                                            shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Text("导出 .json", maxLines = 1, softWrap = false)
@@ -851,7 +851,7 @@ fun ImporterScreen(
                                     value = csvInputText,
                                     onValueChange = { csvInputText = it },
                                     minLines = 5,
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -889,7 +889,7 @@ fun ImporterScreen(
                                             }
                                         }
                                     },
-                                    shape = RoundedCornerShape(8.dp)
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text("解析文本", maxLines = 1, softWrap = false)
                                 }
@@ -987,7 +987,7 @@ fun ImporterScreen(
                                     statusBanner = "已保存课表。"
                                 }
                             },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("保存课表", maxLines = 1, softWrap = false)
                         }
@@ -996,7 +996,7 @@ fun ImporterScreen(
                                 diffPreview = null
                                 pendingInterchangeMeta = null
                             },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("取消", maxLines = 1, softWrap = false)
                         }
@@ -1009,8 +1009,13 @@ fun ImporterScreen(
                     Text("导入记录", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(6.dp))
                     for (audit in audits.take(5)) {
+                        val srcLabel = when (audit.importSource) {
+                            CourseSource.ZF_HTML -> "教务同步"
+                            CourseSource.CSV_ICS -> "文件/文本导入"
+                            CourseSource.MANUAL -> "手动添加"
+                        }
                         Text(
-                            text = "${audit.importSource.name} · ${audit.outcome} (${audit.rowCount}条)",
+                            text = "$srcLabel · 成功导入 ${audit.rowCount} 条",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

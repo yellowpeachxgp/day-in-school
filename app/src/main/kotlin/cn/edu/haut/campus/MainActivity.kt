@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity() {
                         FocusCoordinator.getInstance(applicationContext).restoreOrCompleteActiveSessionAsync()
                     }
                     if (readyPrefs == null) {
-                        HautCampusTheme { AccountSessionStatusScreen("正在读取当前身份的数据") }
+                        HautCampusTheme { AccountSessionStatusScreen("正在加载...") }
                     } else {
                         HautCampusTheme(
                             themeMode = readyPrefs.themeMode,
@@ -255,8 +255,8 @@ class MainActivity : ComponentActivity() {
                         AccountSessionStatusScreen(
                             message = when (state) {
                                 is AccountSessionState.Failure -> state.message
-                                is AccountSessionState.Switching -> "正在安全切换身份"
-                                else -> "正在准备本地数据"
+                                is AccountSessionState.Switching -> "正在切换账号..."
+                                else -> "正在准备数据..."
                             },
                             onRetry = if (state is AccountSessionState.Failure) {
                                 { lifecycleScope.launch { runCatching { sessions.initialize() } }; Unit }
@@ -399,7 +399,7 @@ private fun AccountSessionStatusScreen(message: String, onRetry: (() -> Unit)? =
         Text(message, style = MaterialTheme.typography.titleMedium)
         if (onRetry != null) {
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onRetry) { Text("重试读取本地数据") }
+            Button(onClick = onRetry, shape = RoundedCornerShape(12.dp)) { Text("重试") }
         }
     }
 }
@@ -769,7 +769,10 @@ fun HautCampusRootApp(
                 }
             },
             title = {
-                Text("发现新版本 ${releaseToPrompt.tagName}")
+                Text(
+                    text = "发现新版本 ${releaseToPrompt.tagName}",
+                    style = MaterialTheme.typography.titleLarge
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -861,7 +864,7 @@ fun HautCampusRootApp(
                             }
                         }
                     },
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
                         text = when {
@@ -970,14 +973,14 @@ private fun OnboardingWelcomeScreen(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "可切换学校、查看各校能力核验边界，或创建非工大离线身份",
+                            text = "切换学校或使用离线课表模式",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     OutlinedButton(
                         onClick = onOpenSchoolCenter,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text("切换学校", maxLines = 1, softWrap = false)
@@ -1010,8 +1013,8 @@ private fun OnboardingWelcomeScreen(
                     if (hasLocationPermission) {
                         XPeachStatusBadge(
                             text = "已授权",
-                            containerColor = Color(0xFFDCFCE7),
-                            contentColor = Color(0xFF15803D)
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                         )
                     } else {
                         Button(
@@ -1023,7 +1026,7 @@ private fun OnboardingWelcomeScreen(
                                     )
                                 )
                             },
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text("授权", maxLines = 1, softWrap = false)
@@ -1073,7 +1076,7 @@ private fun OnboardingWelcomeScreen(
                                     }
                                     if (applied.isFailure) {
                                         isErrorStatus = true
-                                        syncStatusMessage = "同步数据保存失败，请重试；原有数据未主动清除"
+                                        syncStatusMessage = "保存失败，请重试（已有数据不受影响）"
                                         return@onSuccess
                                     }
                                     val saved = runCatching {
@@ -1083,7 +1086,7 @@ private fun OnboardingWelcomeScreen(
                                     }
                                     repository.setAutoSyncEnabled(saved.isSuccess)
                                     syncStatusMessage = syncData.syncSummaryText() +
-                                        if (saved.isFailure) "\n安全凭据保存失败，自动同步已关闭；已导入数据仍可离线使用" else ""
+                                        if (saved.isFailure) "\n密码保存失败，已关闭自动更新" else ""
                                     repository.completeOnboarding()
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 }.onFailure { err ->
@@ -1103,7 +1106,7 @@ private fun OnboardingWelcomeScreen(
                         keyboardActions = KeyboardActions(
                             onNext = { focusManager.moveFocus(FocusDirection.Down) }
                         ),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -1127,7 +1130,7 @@ private fun OnboardingWelcomeScreen(
                                 )
                             }
                         },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -1185,7 +1188,7 @@ private fun OnboardingWelcomeScreen(
                     Button(
                         enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
                         onClick = triggerLoginAndSync,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         if (isSyncing) {
@@ -1204,7 +1207,7 @@ private fun OnboardingWelcomeScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 } else {
                     Text(
-                        text = "当前学校尚未启用线上教务直连核验。可先使用网页/CSV 导入或直接进入离线课表手工录入，数据保存在当前身份的独立本地空间。",
+                        text = "暂不支持该校教务直接登录，可通过文件/CSV 导入或手动添加课程。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1217,7 +1220,7 @@ private fun OnboardingWelcomeScreen(
                 ) {
                     OutlinedButton(
                         onClick = onOpenAdvancedImporter,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("网页 / CSV 导入", maxLines = 1, softWrap = false)
@@ -1228,7 +1231,7 @@ private fun OnboardingWelcomeScreen(
                                 repository.completeOnboarding()
                             }
                         },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(if (isHautSchool) "先去看看" else "进入离线课表", maxLines = 1, softWrap = false)
@@ -1469,7 +1472,7 @@ private fun XPeachBottomDock(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = tab.label,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                 color = contentColor,
                                 maxLines = 1,

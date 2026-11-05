@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
@@ -159,54 +161,143 @@ private val DarkColors = darkColorScheme(
     outlineVariant = XPeachBorderDark
 )
 
+/**
+ * 对齐 Flutter SDK (Material 3 `_CardDefaultsM3` / `_FilterChipDefaultsM3` / `_SegmentedButtonDefaultsM3` /
+ * `_FilledButtonDefaultsM3` 及 Cupertino `CupertinoSlidingSegmentedControl`) 的全局组件尺寸与圆角规范。
+ */
+object FlutterM3Tokens {
+    val PageHorizontalPadding: Dp = 20.dp
+    val SectionSpacing: Dp = 12.dp
+    val CardCornerRadius: Dp = 16.dp
+    val CardPadding: Dp = 16.dp
+    val WellCornerRadius: Dp = 12.dp
+    val WellPadding: Dp = 12.dp
+    val ControlCornerRadius: Dp = 12.dp
+    val ButtonMinHeight: Dp = 42.dp
+    val CompactButtonMinHeight: Dp = 36.dp
+    val IconButtonSize: Dp = 38.dp
+    val IconButtonCornerRadius: Dp = 12.dp
+    val FilterPillMinHeight: Dp = 32.dp
+    val CompactFilterPillMinHeight: Dp = 28.dp
+    val SegmentedControlMinHeight: Dp = 36.dp
+    val SegmentedContainerRadius: Dp = 12.dp
+    val SegmentedThumbRadius: Dp = 9.dp
+    val BadgeMinHeight: Dp = 22.dp
+}
+
+val HautShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(FlutterM3Tokens.ControlCornerRadius),
+    medium = RoundedCornerShape(FlutterM3Tokens.CardCornerRadius),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp)
+)
+
 val HautTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 36.sp,
+        lineHeight = 44.sp,
+        letterSpacing = (-0.25).sp
+    ),
+    displayMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 32.sp,
+        lineHeight = 40.sp,
+        letterSpacing = 0.sp
+    ),
+    displaySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 28.sp,
+        lineHeight = 34.sp,
+        letterSpacing = 0.sp
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = 0.sp
+    ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 20.sp,
-        lineHeight = 26.sp
+        lineHeight = 26.sp,
+        letterSpacing = 0.sp
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.sp
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 17.sp,
-        lineHeight = 23.sp
+        lineHeight = 23.sp,
+        letterSpacing = 0.sp
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 15.sp,
-        lineHeight = 21.sp
+        lineHeight = 21.sp,
+        letterSpacing = 0.1.sp
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        lineHeight = 19.sp,
+        letterSpacing = 0.1.sp
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
+        fontSize = 15.sp,
+        lineHeight = 22.sp,
+        letterSpacing = 0.15.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
-        fontSize = 13.sp,
-        lineHeight = 19.sp
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        letterSpacing = 0.15.sp
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 17.sp,
+        letterSpacing = 0.2.sp
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 13.sp,
-        lineHeight = 18.sp
+        lineHeight = 18.sp,
+        letterSpacing = 0.1.sp
     ),
     labelMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        letterSpacing = 0.2.sp
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Normal,
+        fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
-        lineHeight = 15.sp
+        lineHeight = 15.sp,
+        letterSpacing = 0.2.sp
     )
 )
 
@@ -571,7 +662,8 @@ fun HautCampusTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = HautTypography
+        typography = HautTypography,
+        shapes = HautShapes
     ) {
         val activeBmp = wallpaperBitmap
         if (activeBmp != null) {
@@ -764,15 +856,16 @@ fun XPeachIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
     Box(
         modifier = modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .size(FlutterM3Tokens.IconButtonSize)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .border(
                 0.8.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                RoundedCornerShape(12.dp)
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                shape
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
@@ -792,15 +885,16 @@ fun XPeachIconButton(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
     Box(
         modifier = modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .size(FlutterM3Tokens.IconButtonSize)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .border(
                 0.8.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                RoundedCornerShape(12.dp)
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                shape
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
@@ -815,7 +909,8 @@ fun XPeachFilterPill(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    leadingIcon: ImageVector? = null
+    leadingIcon: ImageVector? = null,
+    compact: Boolean = false
 ) {
     val bg by animateColorAsState(
         targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
@@ -824,7 +919,7 @@ fun XPeachFilterPill(
     )
     val border by animateColorAsState(
         targetValue = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
@@ -836,14 +931,21 @@ fun XPeachFilterPill(
         animationSpec = tween(180),
         label = "pillFg"
     )
+    val pillShape = RoundedCornerShape(999.dp)
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .defaultMinSize(
+                minHeight = if (compact) FlutterM3Tokens.CompactFilterPillMinHeight else FlutterM3Tokens.FilterPillMinHeight
+            )
+            .clip(pillShape)
             .background(bg)
-            .border(0.8.dp, border, RoundedCornerShape(20.dp))
+            .border(0.8.dp, border, pillShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(
+                horizontal = if (compact) 10.dp else 12.dp,
+                vertical = if (compact) 4.dp else 6.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -852,7 +954,7 @@ fun XPeachFilterPill(
                 imageVector = leadingIcon,
                 contentDescription = null,
                 tint = fg,
-                modifier = Modifier.size(13.dp)
+                modifier = Modifier.size(14.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
         }
@@ -874,6 +976,7 @@ fun XPeachFilterPill(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     leadingIcon: @Composable () -> Unit
 ) {
     val bg by animateColorAsState(
@@ -883,7 +986,7 @@ fun XPeachFilterPill(
     )
     val border by animateColorAsState(
         targetValue = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
@@ -895,14 +998,21 @@ fun XPeachFilterPill(
         animationSpec = tween(180),
         label = "pillFgCustom"
     )
+    val pillShape = RoundedCornerShape(999.dp)
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .defaultMinSize(
+                minHeight = if (compact) FlutterM3Tokens.CompactFilterPillMinHeight else FlutterM3Tokens.FilterPillMinHeight
+            )
+            .clip(pillShape)
             .background(bg)
-            .border(0.8.dp, border, RoundedCornerShape(20.dp))
+            .border(0.8.dp, border, pillShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(
+                horizontal = if (compact) 10.dp else 12.dp,
+                vertical = if (compact) 4.dp else 6.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -928,9 +1038,12 @@ fun <T> XPeachSegmentedTabs(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val containerShape = RoundedCornerShape(FlutterM3Tokens.SegmentedContainerRadius)
+    val thumbShape = RoundedCornerShape(FlutterM3Tokens.SegmentedThumbRadius)
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .defaultMinSize(minHeight = FlutterM3Tokens.SegmentedControlMinHeight)
+            .clip(containerShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
@@ -951,15 +1064,27 @@ fun <T> XPeachSegmentedTabs(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(9.dp))
+                    .defaultMinSize(minHeight = 30.dp)
+                    .clip(thumbShape)
                     .background(tabBg)
+                    .then(
+                        if (isSelected) {
+                            Modifier.border(
+                                0.6.dp,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                thumbShape
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
                     .clickable { onSelect(option) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = labelProvider(option),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                     color = tabFg,
                     maxLines = 1,
@@ -996,13 +1121,15 @@ fun XPeachStatusBadge(
     contentColor: Color = MaterialTheme.colorScheme.primary,
     borderColor: Color = Color.Transparent
 ) {
+    val badgeShape = RoundedCornerShape(999.dp)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .defaultMinSize(minHeight = FlutterM3Tokens.BadgeMinHeight)
+            .clip(badgeShape)
             .background(containerColor)
             .then(
                 if (borderColor != Color.Transparent) {
-                    Modifier.border(0.8.dp, borderColor, RoundedCornerShape(20.dp))
+                    Modifier.border(0.8.dp, borderColor, badgeShape)
                 } else Modifier
             )
             .padding(horizontal = 9.dp, vertical = 3.dp),

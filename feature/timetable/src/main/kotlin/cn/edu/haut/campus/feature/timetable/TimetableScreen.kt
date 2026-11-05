@@ -202,9 +202,9 @@ fun TimetableScreen(
             }
         )
 
-        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             XPeachSegmentedTabs(
-                items = listOf("周网格", "周清单", "原始课表"),
+                items = listOf("周网格", "周清单", "总课表"),
                 selectedIndex = viewMode,
                 onSelect = { viewMode = it }
             )
@@ -219,8 +219,8 @@ fun TimetableScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f))
                     .clickable { showUnscheduled = true }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -228,7 +228,7 @@ fun TimetableScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${pendingCourses.size} 门实践/集中课程时间待定 · 不生成上课闹钟",
+                    text = "${pendingCourses.size} 门实践课时间待定",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.weight(1f)
@@ -244,14 +244,19 @@ fun TimetableScreen(
         if (showUnscheduled) {
             AlertDialog(
                 onDismissRequest = { showUnscheduled = false },
-                title = { Text("实践与时间待定课程 (${pendingCourses.size})") },
+                title = {
+                    Text(
+                        text = "实践与时间待定课程 (${pendingCourses.size})",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
                 text = {
                     Column(
                         modifier = Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "学校教务系统尚未为以下实践或集中环节课程分配固定星期与节次，系统不会生成误导性上课提醒。",
+                            text = "以下实践课暂未安排固定上课时间。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -302,8 +307,8 @@ fun TimetableScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
                         .clickable {
                             if (otherTermsWithCourses.size == 1) {
@@ -462,7 +467,7 @@ fun TimetableScreen(
                                     )
                                     Text(
                                         text = date.format(SHORT_DATE_FMT),
-                                        fontSize = 10.sp,
+                                        style = MaterialTheme.typography.labelSmall,
                                         color = if (isToday) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         softWrap = false
@@ -509,7 +514,7 @@ fun TimetableScreen(
                                         if (pt != null) {
                                             Text(
                                                 text = pt.startLocalTime.format(PERIOD_TIME_FMT),
-                                                fontSize = 9.sp,
+                                                style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                                 softWrap = false
@@ -584,18 +589,20 @@ fun TimetableScreen(
                                                     Text(
                                                         text = occ.courseName,
                                                         color = MaterialTheme.colorScheme.onSurface,
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        lineHeight = 13.sp,
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            lineHeight = 14.sp
+                                                        ),
                                                         maxLines = 3,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Text(
                                                         text = occ.rawRoom,
                                                         color = baseColor,
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        lineHeight = 11.sp,
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontWeight = FontWeight.Medium,
+                                                            lineHeight = 13.sp
+                                                        ),
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -1039,7 +1046,7 @@ private fun TimetableWeekListView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         val totalClasses = weekOccurrencesMap.values.sumOf { it.size }
@@ -1052,7 +1059,7 @@ private fun TimetableWeekListView(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "可切换至「原始课表」查看全学期全部周次课程，或点击右上角切换周次。",
+                    text = "可切换至「总课表」查看全学期全部周次课程，或点击右上角切换周次。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1195,7 +1202,7 @@ private fun RawMasterTimetableView(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. 原始全学期总表概览与课表互通入口
@@ -1212,19 +1219,19 @@ private fun RawMasterTimetableView(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = "$termDisplayName · 原始总课表",
+                        text = "$termDisplayName · 全学期总课表",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "共 $distinctCourseCount 门课程 · ${sortedRules.size} 条全学期排课记录（含不同周次与单双周）",
+                        text = "共 $distinctCourseCount 门课程，${sortedRules.size} 个上课时段",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 FilledTonalButton(
                     onClick = onNavigateToImporter,
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("导入/导出", maxLines = 1, softWrap = false)
                 }
@@ -1234,7 +1241,7 @@ private fun RawMasterTimetableView(
         // 2. 教务原始 7×5 大节全周次总览表（不论当前第几周，展示所有周次排课叠加）
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "全学期 7×5 大节排课总表",
+                text = "全学期课表速览",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1280,7 +1287,7 @@ private fun RawMasterTimetableView(
                         ) {
                             Text(
                                 text = "$sp-$ep",
-                                fontSize = 10.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -1318,17 +1325,19 @@ private fun RawMasterTimetableView(
                                         ) {
                                             Text(
                                                 text = c?.name ?: "课程",
-                                                fontSize = 9.sp,
-                                                lineHeight = 11.sp,
-                                                fontWeight = FontWeight.SemiBold,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    lineHeight = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                ),
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
                                                 text = WeeksSetParser.format(r.weeks),
-                                                fontSize = 8.sp,
-                                                lineHeight = 10.sp,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    lineHeight = 12.sp
+                                                ),
                                                 color = color,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
@@ -1346,7 +1355,7 @@ private fun RawMasterTimetableView(
         // 3. 原始排课完整明细清单（含周次、节次、教师、教室、来源）
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "原始排课记录明细 (${sortedRules.size})",
+                text = "全部课程明细 (${sortedRules.size})",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1354,7 +1363,7 @@ private fun RawMasterTimetableView(
 
             if (sortedRules.isEmpty()) {
                 Text(
-                    text = "当前学期尚未导入原始课表记录，点击上方「导入/导出」即可从教务系统同步。",
+                    text = "当前学期暂无课程记录，点击上方「导入/导出」可从教务系统同步。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1366,7 +1375,7 @@ private fun RawMasterTimetableView(
                         val weeksText = WeeksSetParser.format(rule.weeks)
                         val sourceLabel = when (course?.source) {
                             CourseSource.MANUAL -> "手动添加"
-                            else -> "教务原始"
+                            else -> "教务同步"
                         }
 
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
@@ -1427,13 +1436,13 @@ private fun RawMasterTimetableView(
         if (unscheduledCourses.isNotEmpty()) {
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "本学期实践与集中环节课程 (${unscheduledCourses.size})",
+                    text = "本学期实践课程 (${unscheduledCourses.size})",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "以下课程在教务系统中未指定固定星期与节次，仅作原始记录展示，不触发上课提醒。",
+                    text = "以下实践课暂未安排固定上课时间。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

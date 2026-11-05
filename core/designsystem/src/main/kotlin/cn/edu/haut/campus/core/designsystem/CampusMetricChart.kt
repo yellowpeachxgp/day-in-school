@@ -220,7 +220,7 @@ fun CampusMetricChart(
             )
             if (validPoints.any { it.segmentBreakBefore }) {
                 Text(
-                    text = "注：缺测日或充值变动处已自动断开折线",
+                    text = "注：未记录或充值当日折线断开",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
