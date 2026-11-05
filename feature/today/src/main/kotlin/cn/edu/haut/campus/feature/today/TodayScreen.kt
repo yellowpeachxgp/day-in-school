@@ -1948,7 +1948,7 @@ private fun FullWidthModularCard(spec: HomeModularCardSpec) {
                     text = spec.subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -2155,7 +2155,7 @@ private fun BentoModuleTile(
         } else {
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
         },
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
         onClick = onClick
     ) {
         Row(
@@ -2197,7 +2197,8 @@ private fun BentoModuleTile(
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
-            maxLines = 1,
+            minLines = 2,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }

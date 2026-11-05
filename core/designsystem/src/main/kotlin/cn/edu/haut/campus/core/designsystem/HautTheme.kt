@@ -1042,6 +1042,7 @@ fun <T> XPeachSegmentedTabs(
     val thumbShape = RoundedCornerShape(FlutterM3Tokens.SegmentedThumbRadius)
     Row(
         modifier = modifier
+            .fillMaxWidth()
             .defaultMinSize(minHeight = FlutterM3Tokens.SegmentedControlMinHeight)
             .clip(containerShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -1079,12 +1080,16 @@ fun <T> XPeachSegmentedTabs(
                         }
                     )
                     .clickable { onSelect(option) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = labelProvider(option),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = if (options.size >= 3) {
+                        MaterialTheme.typography.labelMedium
+                    } else {
+                        MaterialTheme.typography.labelLarge
+                    },
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                     color = tabFg,
                     maxLines = 1,

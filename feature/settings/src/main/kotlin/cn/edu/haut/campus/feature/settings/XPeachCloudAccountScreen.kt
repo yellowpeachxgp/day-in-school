@@ -5,12 +5,14 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import org.json.JSONArray
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -211,10 +213,15 @@ fun XPeachCloudAccountScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Button(
                                 onClick = { showBindDialog = true },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Text("登录账号")
                             }
@@ -228,7 +235,9 @@ fun XPeachCloudAccountScreen(
                                         )
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Text("打开网页端")
                             }
@@ -241,7 +250,12 @@ fun XPeachCloudAccountScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
                                     text = binding.displayName,
                                     style = MaterialTheme.typography.titleMedium,
@@ -297,6 +311,7 @@ fun XPeachCloudAccountScreen(
                                 }
                             },
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(if (isSyncingSnapshot) "正在同步云端数据…" else "同步云端数据")
@@ -321,9 +336,10 @@ fun XPeachCloudAccountScreen(
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("刷新余额", maxLines = 1, softWrap = false)
+                                Text("刷新余额")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -336,9 +352,10 @@ fun XPeachCloudAccountScreen(
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("网页端", maxLines = 1, softWrap = false)
+                                Text("网页端")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -348,9 +365,10 @@ fun XPeachCloudAccountScreen(
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("退出账号", color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
+                                Text("退出账号", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -381,6 +399,13 @@ fun XPeachCloudAccountScreen(
                                 "PAYMENT_DUE" -> "余额不足待补缴"
                                 else -> "免费"
                             }
+                            val areaText = plan.preferredAreaName.trim().takeIf {
+                                it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+                            } ?: "图书馆自习区"
+                            val seatText = plan.preferredSeatLabel.trim().takeIf {
+                                it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+                            } ?: "自动优选"
+
                             XPeachWell(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -388,13 +413,21 @@ fun XPeachCloudAccountScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime} · ${plan.preferredAreaName} ${plan.preferredSeatLabel}号",
+                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime}",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     )
                                     XPeachStatusBadge(text = payLabel)
                                 }
+                                Text(
+                                    text = "$areaText · ${seatText}号座",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                                 Text(
                                     text = friendlyStatus,
                                     style = MaterialTheme.typography.labelSmall,
@@ -411,42 +444,53 @@ fun XPeachCloudAccountScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "校园扩展功能",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "按需开启或关闭驿站卡片、图书馆座位快捷提示等附加功能。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = "校园扩展功能",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        )
                         Button(
                             onClick = { showInstallPluginDialog = true },
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                         ) {
                             Text("添加扩展")
                         }
                     }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "按需开启或关闭驿站卡片、图书馆座位快捷提示等附加功能。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 for (plugin in plugins) {
+                    val slotSummary = remember(plugin.uiSlotsJson) {
+                        parsePluginSlotSummary(plugin.uiSlotsJson)
+                    }
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
                                     text = plugin.name,
-                                    style = MaterialTheme.typography.titleSmall,
+                                    style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "版本 ${plugin.activeVersion}",
+                                    text = "标识：${plugin.pluginId} · 版本 ${plugin.activeVersion}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -465,8 +509,31 @@ fun XPeachCloudAccountScreen(
                                 }
                             )
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                        if (slotSummary != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = slotSummary.first,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (slotSummary.second.isNotBlank()) {
+                                    Text(
+                                        text = slotSummary.second,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             FilledTonalButton(
                                 onClick = {
                                     scope.launch {
@@ -480,19 +547,24 @@ fun XPeachCloudAccountScreen(
                                         feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text(if (plugin.status == "ENABLED") "停用" else "启用")
+                                Text(if (plugin.status == "ENABLED") "停用扩展" else "启用扩展")
                             }
-                            TextButton(
+                            OutlinedButton(
                                 onClick = {
                                     scope.launch {
                                         repository.removeExtensionPlugin(plugin.pluginId)
                                         feedbackBanner = "已移除「${plugin.name}」"
                                     }
-                                }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text("移除", color = MaterialTheme.colorScheme.error)
+                                Text("移除扩展", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -726,7 +798,12 @@ private fun XpeachNativeOidcLoginDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Text(
                             text = "登录云账号",
                             style = MaterialTheme.typography.titleLarge,
@@ -740,7 +817,8 @@ private fun XpeachNativeOidcLoginDialog(
                     }
                     TextButton(
                         enabled = !isSubmitting,
-                        onClick = onDismiss
+                        onClick = onDismiss,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Text("关闭")
                     }
@@ -788,7 +866,10 @@ private fun XpeachNativeOidcLoginDialog(
                         PasswordVisualTransformation()
                     },
                     trailingIcon = {
-                        TextButton(onClick = { showPassword = !showPassword }) {
+                        TextButton(
+                            onClick = { showPassword = !showPassword },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
                             Text(if (showPassword) "隐藏" else "显示")
                         }
                     },
@@ -819,7 +900,10 @@ private fun XpeachNativeOidcLoginDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
                     ) {
-                        TextButton(onClick = { needsTotp = true }) {
+                        TextButton(
+                            onClick = { needsTotp = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
                             Text("开启了两步验证？点击填写验证码")
                         }
                     }
@@ -829,6 +913,7 @@ private fun XpeachNativeOidcLoginDialog(
                     enabled = !isSubmitting && identifierInput.isNotBlank() && passwordInput.isNotBlank(),
                     onClick = { submitNativeLogin() },
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(if (isSubmitting) "正在登录…" else "登录")
@@ -870,6 +955,7 @@ private fun XpeachNativeOidcLoginDialog(
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("通行密钥 / 浏览器授权登录")
@@ -877,4 +963,15 @@ private fun XpeachNativeOidcLoginDialog(
             }
         }
     }
+}
+
+private fun parsePluginSlotSummary(uiSlotsJson: String): Pair<String, String>? {
+    return runCatching {
+        val arr = JSONArray(uiSlotsJson)
+        if (arr.length() == 0) return null
+        val obj = arr.optJSONObject(0) ?: return null
+        val title = obj.optString("title").trim()
+        val subtitle = obj.optString("subtitle").trim()
+        if (title.isEmpty() && subtitle.isEmpty()) null else (title to subtitle)
+    }.getOrNull()
 }

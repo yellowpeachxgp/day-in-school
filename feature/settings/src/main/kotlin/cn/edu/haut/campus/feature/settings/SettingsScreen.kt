@@ -504,54 +504,84 @@ fun SettingsScreen(
                 val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
                 val extensionPlugins by repository.installedExtensionPluginsFlow.collectAsState(initial = emptyList())
 
-                Row(
+                XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    onClick = onNavigateToXpeachCloud
                 ) {
-                    XPeachCard(
-                        modifier = Modifier.weight(1f),
-                        onClick = onNavigateToSchoolCenter
+                    val peachFormatted = cloudBinding?.let {
+                        "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
+                    }
+                    val enabledPluginCount = extensionPlugins.count { it.status == "ENABLED" }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "切换学校",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = activeSchool.displayName,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "云账号与扩展功能",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = if (cloudBinding != null) {
+                                    "已登录 ${cloudBinding?.displayName} · 已启用 $enabledPluginCount/${extensionPlugins.size} 项扩展"
+                                } else {
+                                    "支持关机自动代抢图书馆座位 · 已安装 ${extensionPlugins.size} 项扩展功能"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = if (peachFormatted != null) "${peachFormatted} 🍑" else "未登录",
+                            containerColor = if (cloudBinding != null) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            contentColor = if (cloudBinding != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         )
                     }
+                }
 
-                    XPeachCard(
-                        modifier = Modifier.weight(1f),
-                        onClick = onNavigateToXpeachCloud
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onNavigateToSchoolCenter
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val peachFormatted = cloudBinding?.let {
-                            "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "切换学校与身份",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "${activeSchool.displayName} · 当前身份：$activeProfileLabel",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                        Text(
-                            text = if (peachFormatted != null) "云账号 · ${peachFormatted} 🍑" else "云账号",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = if (cloudBinding != null) {
-                                "已登录 ${cloudBinding?.displayName}"
-                            } else {
-                                "支持离线代抢图书馆座位"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                        XPeachStatusBadge(
+                            text = "切换学校",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -1169,18 +1199,20 @@ fun SettingsScreen(
                             requestPin("2×2 下一节", "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider")
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 2×2 下一节", maxLines = 1, softWrap = false)
+                        Text("添加 2×2 下一节")
                     }
                     OutlinedButton(
                         onClick = {
                             requestPin("4×2 今日课程", "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider")
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×2 今日", maxLines = 1, softWrap = false)
+                        Text("添加 4×2 今日")
                     }
                 }
 
@@ -1195,18 +1227,20 @@ fun SettingsScreen(
                             requestPin("4×4 时间轴", "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider")
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×4 时间轴", maxLines = 1, softWrap = false)
+                        Text("添加 4×4 时间轴")
                     }
                     OutlinedButton(
                         onClick = {
                             requestPin("4×4 周课表", "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider")
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("添加 4×4 周课表", maxLines = 1, softWrap = false)
+                        Text("添加 4×4 周课表")
                     }
                 }
 
@@ -1608,9 +1642,10 @@ fun SettingsScreen(
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("刷新提醒", maxLines = 1, softWrap = false)
+                        Text("刷新提醒")
                     }
 
                     FilledTonalButton(
@@ -1631,9 +1666,10 @@ fun SettingsScreen(
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("测试通知", maxLines = 1, softWrap = false)
+                        Text("测试通知")
                     }
                 }
 
@@ -1893,9 +1929,10 @@ fun SettingsScreen(
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("重新进入引导页", maxLines = 1, softWrap = false)
+                        Text("重新进入引导页")
                     }
 
                     Button(
@@ -1904,9 +1941,10 @@ fun SettingsScreen(
                             containerColor = MaterialTheme.colorScheme.error
                         ),
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("清除个人数据", maxLines = 1, softWrap = false)
+                        Text("清除个人数据")
                     }
                 }
             }
@@ -2067,12 +2105,11 @@ fun SettingsScreen(
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            text = if (isCheckingRelease) "正在检查..." else "检查更新",
-                            maxLines = 1,
-                            softWrap = false
+                            text = if (isCheckingRelease) "正在检查..." else "检查更新"
                         )
                     }
 
@@ -2143,6 +2180,7 @@ fun SettingsScreen(
                             }
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
@@ -2151,9 +2189,7 @@ fun SettingsScreen(
                                 downloadedApkFile?.exists() == true -> "安装更新"
                                 releaseInfoState?.hasNewerVersion == true -> "下载新版本"
                                 else -> "下载安装包"
-                            },
-                            maxLines = 1,
-                            softWrap = false
+                            }
                         )
                     }
                 }
@@ -3768,12 +3804,11 @@ private fun NetworkProxyAndCloudConfigSection(
                     }
                 },
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = if (isTestingConnectivity) "正在测试..." else "测试连接",
-                    maxLines = 1,
-                    softWrap = false
+                    text = if (isTestingConnectivity) "正在测试..." else "测试连接"
                 )
             }
 
@@ -3782,9 +3817,10 @@ private fun NetworkProxyAndCloudConfigSection(
                     connectivityMessage = null
                     onResetProxyConfig()
                 },
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                Text("恢复默认", maxLines = 1, softWrap = false)
+                Text("恢复默认")
             }
         }
     }
