@@ -65,9 +65,12 @@ class GitHubReleaseUpdaterTest {
 
     @Test
     fun `preset campus clubs and qq channels catalog is populated`() {
-        assertTrue(PresetCampusCommunityCatalog.defaultQqChannels.size >= 4)
-        assertTrue(PresetCampusCommunityCatalog.defaultCampusClubs.size >= 15)
-        assertTrue(PresetCampusCommunityCatalog.defaultCampusClubs.all { it.qqGroupNumber.isNotBlank() })
+        assertTrue(PresetCampusCommunityCatalog.defaultQqChannels.isEmpty())
+        assertEquals(3, PresetCampusCommunityCatalog.defaultCampusClubs.size)
+        assertEquals(
+            setOf("314623763", "789860526", "1043885481"),
+            PresetCampusCommunityCatalog.defaultCampusClubs.map { it.qqGroupNumber }.toSet()
+        )
     }
 
     @Test

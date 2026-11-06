@@ -901,12 +901,13 @@ object CampusCloudOidcHelper {
         return runCatching {
             val schoolId = data.optCleanString("school_id", "haut").ifBlank { "haut" }
             val version = data.optLong("version", 1L).coerceAtLeast(1L)
+            if (version < 2L) return@runCatching null
             val updatedAt = data.optCleanString("updated_at", "")
             val bObj = data.optJSONObject("bulletin")
             val bulletin = if (bObj != null) {
                 CampusCommunityBulletin(
                     enabled = bObj.optBoolean("enabled", true),
-                    title = bObj.optCleanString("title", "河工大社团纳新与校园频道云端直通车"),
+                    title = bObj.optCleanString("title", "河工大合作社团与交流群云端直通车"),
                     content = bObj.optCleanString("content", ""),
                     tag = bObj.optCleanString("tag", "云端实时同步").ifBlank { "云端实时同步" },
                     actionUrl = bObj.optCleanString("action_url", "")
@@ -983,9 +984,9 @@ object CampusCloudOidcHelper {
                 version = version,
                 updatedAtIso = updatedAt,
                 bulletin = bulletin,
-                channels = parsedChannels.ifEmpty { PresetCampusCommunityCatalog.defaultQqChannels },
-                clubs = parsedClubs.ifEmpty { PresetCampusCommunityCatalog.defaultCampusClubs },
-                isFromCloud = parsedChannels.isNotEmpty() || parsedClubs.isNotEmpty()
+                channels = if (chArr != null) parsedChannels else PresetCampusCommunityCatalog.defaultQqChannels,
+                clubs = if (clArr != null) parsedClubs else PresetCampusCommunityCatalog.defaultCampusClubs,
+                isFromCloud = chArr != null || clArr != null
             )
         }.getOrNull()
     }

@@ -580,6 +580,22 @@ fun CampusCommunityScreen(
                     }
                 }
             } else {
+                if (catalog.channels.isEmpty()) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "校园频道暂时置空",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "当前仅开放合作学生社团与技术交流群，校园频道后续将通过云端实时下发。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 for (channel in catalog.channels) {
                     val effectiveUrl = prefs.customChannelUrls[channel.id]?.takeIf { it.isNotBlank() }
                         ?: channel.defaultInviteUrl
