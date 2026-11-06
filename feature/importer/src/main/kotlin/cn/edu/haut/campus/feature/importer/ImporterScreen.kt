@@ -92,6 +92,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportDiffPreview
@@ -137,7 +138,7 @@ fun ImporterScreen(
                     stream.bufferedReader(Charsets.UTF_8).readText()
                 }.orEmpty()
                 val parsed = TimetableInterchangeAdapter.parse(rawText)
-                val termId = currentTerm?.id ?: "2025-2026-2"
+                val termId = currentTerm?.id ?: AcademicTermResolver.defaultTermId()
                 pendingInterchangeMeta = parsed
                 diffPreview = repository.previewCourseImportDiff(
                     termId = termId,
@@ -461,7 +462,7 @@ fun ImporterScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                                    for (yr in listOf("2026", "2025", "2024", "2023")) {
+                                    for (yr in AcademicTermResolver.recentAcademicYears()) {
                                         XPeachFilterPill(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
@@ -573,7 +574,7 @@ fun ImporterScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                                    for (yr in listOf("2026", "2025", "2024", "2023")) {
+                                    for (yr in AcademicTermResolver.recentAcademicYears()) {
                                         XPeachFilterPill(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
@@ -885,7 +886,7 @@ fun ImporterScreen(
                                 Button(
                                     onClick = {
                                         scope.launch {
-                                            val termId = currentTerm?.id ?: "2025-2026-2"
+                                            val termId = currentTerm?.id ?: AcademicTermResolver.defaultTermId()
                                             val trimmed = csvInputText.trim()
                                             val isInterchangeFormat = trimmed.startsWith("{") ||
                                                 trimmed.startsWith("[") ||

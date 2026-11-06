@@ -61,10 +61,8 @@ import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ZoomOutMap
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -2783,6 +2781,56 @@ private fun RealCampusTileMap(
         return gcjToScreenDynamic(glat, glon)
     }
 
+    val boldSansTypeface = remember { Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD) }
+    val labelBgPaint = remember(isDarkMap) {
+        Paint().apply {
+            isAntiAlias = true
+            color = if (isDarkMap) {
+                android.graphics.Color.argb(242, 30, 39, 52)
+            } else {
+                android.graphics.Color.argb(244, 255, 255, 255)
+            }
+            style = Paint.Style.FILL
+        }
+    }
+    val targetBgPaint = remember {
+        Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.rgb(2, 132, 199)
+            style = Paint.Style.FILL
+        }
+    }
+    val labelBorderPaint = remember(isDarkMap) {
+        Paint().apply {
+            isAntiAlias = true
+            color = if (isDarkMap) {
+                android.graphics.Color.argb(180, 71, 85, 105)
+            } else {
+                android.graphics.Color.argb(120, 148, 163, 184)
+            }
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+    }
+    val labelTextPaint = remember(isDarkMap, boldSansTypeface) {
+        Paint().apply {
+            isAntiAlias = true
+            typeface = boldSansTypeface
+            color = if (isDarkMap) {
+                android.graphics.Color.rgb(241, 245, 249)
+            } else {
+                android.graphics.Color.rgb(17, 24, 39)
+            }
+        }
+    }
+    val targetTextPaint = remember(boldSansTypeface) {
+        Paint().apply {
+            isAntiAlias = true
+            typeface = boldSansTypeface
+            color = android.graphics.Color.WHITE
+        }
+    }
+
     Canvas(
         modifier = Modifier
             .fillMaxSize()
@@ -3196,47 +3244,8 @@ private fun RealCampusTileMap(
 
         // 4. 绘制各校内楼宇锚点与严格防碰撞深浅色自适应标签（优先保证选中建筑完整显示，重叠标签自动退化为小圆点）
         val placedLabelRects = mutableListOf<RectF>()
-        val labelBgPaint = Paint().apply {
-            isAntiAlias = true
-            color = if (isDarkMap) {
-                android.graphics.Color.argb(242, 30, 39, 52)
-            } else {
-                android.graphics.Color.argb(244, 255, 255, 255)
-            }
-            style = Paint.Style.FILL
-        }
-        val targetBgPaint = Paint().apply {
-            isAntiAlias = true
-            color = android.graphics.Color.rgb(2, 132, 199)
-            style = Paint.Style.FILL
-        }
-        val labelBorderPaint = Paint().apply {
-            isAntiAlias = true
-            color = if (isDarkMap) {
-                android.graphics.Color.argb(180, 71, 85, 105)
-            } else {
-                android.graphics.Color.argb(120, 148, 163, 184)
-            }
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        val labelTextSizePx = 11.sp.toPx()
-        val labelTextPaint = Paint().apply {
-            isAntiAlias = true
-            textSize = labelTextSizePx
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = if (isDarkMap) {
-                android.graphics.Color.rgb(241, 245, 249)
-            } else {
-                android.graphics.Color.rgb(17, 24, 39)
-            }
-        }
-        val targetTextPaint = Paint().apply {
-            isAntiAlias = true
-            textSize = 11.5.sp.toPx()
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = android.graphics.Color.WHITE
-        }
+        labelTextPaint.textSize = 11.sp.toPx()
+        targetTextPaint.textSize = 11.5.sp.toPx()
 
         // 将当前选中的目标楼宇排在第一位优先占位，其余楼宇按屏幕碰撞检测决定是否展示文字胶囊
         val orderedBuildings = buildList {

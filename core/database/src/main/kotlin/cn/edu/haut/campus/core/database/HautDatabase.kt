@@ -125,6 +125,15 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWidgetConfig(config: WidgetInstanceConfigEntity)
 
+    @Query("UPDATE widget_instance_configs SET compact = :compact, privacyMode = :privacyMode")
+    suspend fun updateAllWidgetConfigsDefaults(compact: Boolean, privacyMode: Boolean)
+
+    @Query("UPDATE widget_instance_configs SET compact = :compact")
+    suspend fun updateAllWidgetConfigsCompact(compact: Boolean)
+
+    @Query("UPDATE widget_instance_configs SET privacyMode = :privacyMode")
+    suspend fun updateAllWidgetConfigsPrivacyMode(privacyMode: Boolean)
+
     @Query("DELETE FROM widget_instance_configs WHERE appWidgetId = :appWidgetId")
     suspend fun deleteWidgetConfig(appWidgetId: Int)
 

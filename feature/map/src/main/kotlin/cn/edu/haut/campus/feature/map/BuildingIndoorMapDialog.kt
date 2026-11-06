@@ -670,27 +670,27 @@ private fun IndoorLegendFilterChip(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    Surface(
+    val isGlass = XPeachTheme.isLiquidGlass
+    val isDark = XPeachTheme.isDark
+    val containerColor = when {
+        selected && isGlass -> XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.28f else 0.18f)
+        selected && isDark -> XPeachTheme.readablePrimary.copy(alpha = 0.20f)
+        selected -> MaterialTheme.colorScheme.primaryContainer
+        isGlass -> XPeachTheme.glassChipColor
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+    }
+    val borderColor = when {
+        selected -> XPeachTheme.readablePrimary.copy(alpha = if (isGlass) 0.55f else 0.45f)
+        isGlass -> XPeachTheme.glassBorderColor
+        isDark -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        else -> Color.Transparent
+    }
+    XPeachGlassSurface(
         shape = RoundedCornerShape(999.dp),
-        color = if (selected) {
-            if (XPeachTheme.isDark) XPeachTheme.readablePrimary.copy(alpha = 0.20f) else MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-        },
-        border = if (selected) {
-            androidx.compose.foundation.BorderStroke(
-                0.8.dp,
-                XPeachTheme.readablePrimary.copy(alpha = 0.45f)
-            )
-        } else if (XPeachTheme.isDark) {
-            androidx.compose.foundation.BorderStroke(
-                0.7.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
-            )
-        } else {
-            null
-        },
-        modifier = Modifier.clickable(onClick = onClick)
+        containerColor = containerColor,
+        borderColor = borderColor,
+        borderWidth = if (borderColor == Color.Transparent) 0.dp else 0.8.dp,
+        onClick = onClick
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -792,6 +792,44 @@ private fun IndoorFloorPlanCanvas(
         val cx = canvasWidthPx * 0.46f + currentPan.x
         val cy = canvasHeightPx * 0.48f + currentPan.y
         return Offset(cx + xm * effectiveScale, cy + ym * effectiveScale)
+    }
+
+    val boldSansTypeface = remember { Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD) }
+    val roomLabelPaint = remember(isDarkPlan, boldSansTypeface) {
+        Paint().apply {
+            isAntiAlias = true
+            typeface = boldSansTypeface
+            color = if (isDarkPlan) {
+                android.graphics.Color.rgb(226, 232, 240)
+            } else {
+                android.graphics.Color.rgb(30, 41, 59)
+            }
+        }
+    }
+    val calloutTextPaint = remember(boldSansTypeface) {
+        Paint().apply {
+            isAntiAlias = true
+            typeface = boldSansTypeface
+            color = android.graphics.Color.WHITE
+        }
+    }
+    val calloutBgPaint = remember {
+        Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.rgb(234, 88, 12)
+            style = Paint.Style.FILL
+        }
+    }
+    val scaleBarTextPaint = remember(isDarkPlan, boldSansTypeface) {
+        Paint().apply {
+            isAntiAlias = true
+            typeface = boldSansTypeface
+            color = if (isDarkPlan) {
+                android.graphics.Color.rgb(148, 163, 184)
+            } else {
+                android.graphics.Color.rgb(71, 85, 105)
+            }
+        }
     }
 
     Canvas(
@@ -1035,19 +1073,10 @@ private fun IndoorFloorPlanCanvas(
 
         // 5. 严格防碰撞的房间门牌号标注（仅当文字能放入房间多边形内部且不与已有标签重叠时才绘制）
         val placedRects = mutableListOf<RectF>()
-        val roomLabelPaint = Paint().apply {
-            isAntiAlias = true
-            textSize = when {
-                zoom >= 2.2f -> 12.sp.toPx()
-                zoom >= 1.4f -> 10.5.sp.toPx()
-                else -> 9.5.sp.toPx()
-            }
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = if (isDarkPlan) {
-                android.graphics.Color.rgb(226, 232, 240)
-            } else {
-                android.graphics.Color.rgb(30, 41, 59)
-            }
+        roomLabelPaint.textSize = when {
+            zoom >= 2.2f -> 12.sp.toPx()
+            zoom >= 1.4f -> 10.5.sp.toPx()
+            else -> 9.5.sp.toPx()
         }
 
         for (room in rooms) {
@@ -1107,17 +1136,7 @@ private fun IndoorFloorPlanCanvas(
             )
 
             val calloutText = "★ ${selectedRoom.name} (${selectedRoom.floorLabel})"
-            val calloutTextPaint = Paint().apply {
-                isAntiAlias = true
-                textSize = 11.5.sp.toPx()
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                color = android.graphics.Color.WHITE
-            }
-            val calloutBgPaint = Paint().apply {
-                isAntiAlias = true
-                color = android.graphics.Color.rgb(234, 88, 12)
-                style = Paint.Style.FILL
-            }
+            calloutTextPaint.textSize = 11.5.sp.toPx()
             val tw = calloutTextPaint.measureText(calloutText)
             val rectLeft = center.x - tw / 2f - 12f
             val rectTop = center.y - 44f
@@ -1142,16 +1161,7 @@ private fun IndoorFloorPlanCanvas(
 
         // 7. 左下角绘制真实米制比例尺与指北标识
         val scaleBarColor = if (isDarkPlan) Color(0xFF94A3B8) else Color(0xFF475569)
-        val scaleBarTextPaint = Paint().apply {
-            isAntiAlias = true
-            textSize = 10.sp.toPx()
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            color = if (isDarkPlan) {
-                android.graphics.Color.rgb(148, 163, 184)
-            } else {
-                android.graphics.Color.rgb(71, 85, 105)
-            }
-        }
+        scaleBarTextPaint.textSize = 10.sp.toPx()
         val barLeft = 20.dp.toPx()
         val barY = size.height - 196.dp.toPx()
         drawLine(

@@ -1,12 +1,6 @@
 package cn.edu.haut.campus.feature.settings
 
 import android.Manifest
-import android.appwidget.AppWidgetManager
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -53,11 +47,9 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -98,8 +90,8 @@ import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
-import cn.edu.haut.campus.core.database.DEFAULT_HOME_CARD_ORDER
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
+import cn.edu.haut.campus.core.database.isPendingPickup
 import cn.edu.haut.campus.core.designsystem.PresetThemePalette
 import cn.edu.haut.campus.core.designsystem.UiDesignStyle
 import cn.edu.haut.campus.core.designsystem.WallpaperThemeEngine
@@ -121,23 +113,20 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.CalendarOverrideType
-import cn.edu.haut.campus.core.model.CampusClubCategory
-import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.HomeCardModule
 import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
-import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.PresetLocalProxyClient
 import cn.edu.haut.campus.core.model.PresetMirrorNode
-import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import cn.edu.haut.campus.core.model.ProxyMode
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.SchoolProfile
-import cn.edu.haut.campus.core.model.WidgetInstanceConfig
-import cn.edu.haut.campus.core.model.WidgetThemeStyle
-import cn.edu.haut.campus.core.model.WidgetType
+import cn.edu.haut.campus.core.model.ThemeVisualDefaults
+import cn.edu.haut.campus.core.model.todayFocusMinutes
+import cn.edu.haut.campus.core.model.totalFocusMinutes
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderPermissions
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -156,32 +145,6 @@ import java.util.UUID
 import kotlin.math.abs
 
 private val AUDIT_TIME_FMT = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"))
-
-/**
- * 莲花街校区主要教学楼典型自习/公共教室池，结合用户本地已导入课表排课数据进行实时空闲教室反查
- */
-private val LIANHUAJIE_STUDY_ROOMS_BY_BUILDING: Map<String, List<String>> = linkedMapOf(
-    "5号教学楼" to listOf("5101", "5103", "5105", "5201", "5202", "5204", "5301", "5303", "5402"),
-    "6号教学楼" to listOf("6101", "6102", "6201", "6203", "6205", "6301", "6304", "6401"),
-    "7号教学楼" to listOf("7102", "7104", "7201", "7203", "7302", "7305", "7401"),
-    "8号教学楼" to listOf("8101", "8103", "8201", "8202", "8301", "8303", "8402"),
-    "9号教学楼" to listOf("9101", "9102", "9201", "9204", "9301", "9303"),
-    "11号教学楼" to listOf("11101", "11102", "11201", "11203", "11301", "11302")
-)
-
-private data class StudyPeriodSlot(
-    val label: String,
-    val startPeriod: Int,
-    val endPeriod: Int
-)
-
-private val STUDY_PERIOD_SLOTS = listOf(
-    StudyPeriodSlot("1-2节", 1, 2),
-    StudyPeriodSlot("3-4节", 3, 4),
-    StudyPeriodSlot("5-6节", 5, 6),
-    StudyPeriodSlot("7-8节", 7, 8),
-    StudyPeriodSlot("9-10节", 9, 10)
-)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -328,20 +291,12 @@ fun SettingsScreen(
     var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
     var showWipeConfirmDialog by remember { mutableStateOf(false) }
     var feedbackText by remember { mutableStateOf<String?>(null) }
-    var widgetPrivacyDefault by remember { mutableStateOf(false) }
-    var widgetCompactDefault by remember { mutableStateOf(false) }
     var expandPeriodTable by remember { mutableStateOf(false) }
-    var expandStudyFinder by remember { mutableStateOf(true) }
-    var expandClubsSection by remember { mutableStateOf(true) }
-    var selectedClubCategory by remember { mutableStateOf<CampusClubCategory?>(null) }
-    var clubSearchQuery by remember { mutableStateOf("") }
-    var editingChannelItem by remember { mutableStateOf<PresetQqChannelItem?>(null) }
-    var editingClubItem by remember { mutableStateOf<CampusClubItem?>(null) }
 
     // GitHub Release 自动版本检测与在线拉取直装状态
     val currentInstalledVersion = remember(context) {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.9.0" }
-            .getOrDefault("0.9.0")
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.18.0" }
+            .getOrDefault("0.18.0")
     }
     var isCheckingRelease by remember { mutableStateOf(false) }
     var releaseInfoState by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
@@ -362,21 +317,6 @@ fun SettingsScreen(
                 "当前已是最新版本（v$currentInstalledVersion）"
             }
         }
-    }
-
-    // 空教室速查过滤状态
-    val buildingKeys = remember { LIANHUAJIE_STUDY_ROOMS_BY_BUILDING.keys.toList() }
-    var selectedStudyBuilding by remember { mutableStateOf(buildingKeys.first()) }
-    var selectedSlotIndex by remember {
-        val nowHour = ZonedDateTime.now(HAUT_ZONE_ID).hour
-        val defaultIdx = when {
-            nowHour < 10 -> 0
-            nowHour < 12 -> 1
-            nowHour < 16 -> 2
-            nowHour < 18 -> 3
-            else -> 4
-        }
-        mutableIntStateOf(defaultIdx)
     }
 
     Column(
@@ -712,16 +652,12 @@ fun SettingsScreen(
                     else -> "点击绑定寝室水电"
                 }
                 val todayFocusMinutes = remember(completedFocusSessions, today) {
-                    completedFocusSessions.sumOf { s ->
-                        val doneMs = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
-                        val d = Instant.ofEpochMilli(doneMs).atZone(HAUT_ZONE_ID).toLocalDate()
-                        if (d == today) s.durationMinutes else 0
-                    }
+                    completedFocusSessions.todayFocusMinutes(today, HAUT_ZONE_ID)
                 }
                 val totalFocusMinutes = remember(completedFocusSessions) {
-                    completedFocusSessions.sumOf { it.durationMinutes }
+                    completedFocusSessions.totalFocusMinutes()
                 }
-                val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
+                val waitingCount = parcelItems.count { it.isPendingPickup() }
                 val peachFormatted = cloudBinding?.let {
                     "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
                 }
@@ -1105,17 +1041,11 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     fun requestPin(label: String, providerClass: String) {
-                        val mgr = AppWidgetManager.getInstance(context)
-                        val provider = ComponentName(context.packageName, providerClass)
-                        if (mgr.isRequestPinAppWidgetSupported) {
-                            val ok = mgr.requestPinAppWidget(provider, null, null)
-                            feedbackText = if (ok) {
-                                "请在系统弹窗中确认添加「$label」"
-                            } else {
-                                "请长按手机桌面空白处添加小组件"
-                            }
+                        val ok = WidgetRefreshCoordinator.requestPinAppWidget(context, providerClass)
+                        feedbackText = if (ok) {
+                            "请在系统弹窗中确认添加「$label」"
                         } else {
-                            feedbackText = "请长按手机桌面空白处添加小组件"
+                            "请长按手机桌面空白处添加小组件"
                         }
                     }
 
@@ -1134,7 +1064,7 @@ fun SettingsScreen(
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                                 .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                                 .clickable {
-                                    requestPin("2×2 下一节", "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider")
+                                    requestPin("2×2 下一节", WidgetRefreshCoordinator.PROVIDER_NEXT_CLASS_2X2)
                                 }
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1204,7 +1134,7 @@ fun SettingsScreen(
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                                 .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                                 .clickable {
-                                    requestPin("4×2 今日课程", "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider")
+                                    requestPin("4×2 今日课程", WidgetRefreshCoordinator.PROVIDER_TODAY_4X2)
                                 }
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1292,7 +1222,7 @@ fun SettingsScreen(
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                                 .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                                 .clickable {
-                                    requestPin("4×2 快递取件码", "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider")
+                                    requestPin("4×2 快递取件码", WidgetRefreshCoordinator.PROVIDER_PARCEL_4X2)
                                 }
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1345,7 +1275,7 @@ fun SettingsScreen(
                     ) {
                         FilledTonalButton(
                             onClick = {
-                                requestPin("4×4 时间轴", "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider")
+                                requestPin("4×4 时间轴", WidgetRefreshCoordinator.PROVIDER_TIMELINE_4X4)
                             },
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -1355,7 +1285,7 @@ fun SettingsScreen(
                         }
                         FilledTonalButton(
                             onClick = {
-                                requestPin("4×4 周课表", "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider")
+                                requestPin("4×4 周课表", WidgetRefreshCoordinator.PROVIDER_WEEK_4X4)
                             },
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -1374,19 +1304,10 @@ fun SettingsScreen(
                     ) {
                         Text("小组件紧凑布局", style = MaterialTheme.typography.bodyMedium)
                         Switch(
-                            checked = widgetCompactDefault,
+                            checked = prefs.widgetDefaultCompact,
                             onCheckedChange = { checked ->
-                                widgetCompactDefault = checked
                                 scope.launch {
-                                    for (id in 0..20) {
-                                        val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
-                                        repository.saveWidgetConfig(
-                                            existing.copy(
-                                                compact = checked,
-                                                privacyMode = widgetPrivacyDefault
-                                            )
-                                        )
-                                    }
+                                    repository.updateAllWidgetDefaults(compact = checked)
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     feedbackText = "已更新小组件紧凑布局。"
                                 }
@@ -1400,19 +1321,10 @@ fun SettingsScreen(
                     ) {
                         Text("小组件隐藏课程名与教室", style = MaterialTheme.typography.bodyMedium)
                         Switch(
-                            checked = widgetPrivacyDefault,
+                            checked = prefs.widgetDefaultPrivacyMode,
                             onCheckedChange = { checked ->
-                                widgetPrivacyDefault = checked
                                 scope.launch {
-                                    for (id in 0..20) {
-                                        val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
-                                        repository.saveWidgetConfig(
-                                            existing.copy(
-                                                compact = widgetCompactDefault,
-                                                privacyMode = checked
-                                            )
-                                        )
-                                    }
+                                    repository.updateAllWidgetDefaults(privacyMode = checked)
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     feedbackText = "已更新小组件隐私保护。"
                                 }
@@ -2107,29 +2019,6 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("跟随系统壁纸颜色", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = "开启后使用系统壁纸配色，关闭则使用默认蓝色",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = prefs.useDynamicColor,
-                        onCheckedChange = { enabled ->
-                            scope.launch { repository.setUseDynamicColor(enabled) }
-                        }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
                         Text("隐藏成绩与学号", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             text = "隐藏绩点和分数，并禁止在应用内截屏",
@@ -2737,169 +2626,7 @@ fun SettingsScreen(
             }
         )
     }
-
-    // 弹窗 6：修改 QQ 频道邀请链接
-    val channelToEdit = editingChannelItem
-    if (channelToEdit != null) {
-        var channelUrlInput by remember(channelToEdit, prefs.customChannelUrls) {
-            mutableStateOf(
-                prefs.customChannelUrls[channelToEdit.id]?.takeIf { it.isNotBlank() }
-                    ?: channelToEdit.defaultInviteUrl
-            )
-        }
-
-        XPeachAlertDialog(
-            onDismissRequest = { editingChannelItem = null },
-            title = { Text("修改「${channelToEdit.title}」链接") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "填入 QQ 频道邀请链接（如 https://pd.qq.com/s/xxxx），保存后点击即可打开。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = channelUrlInput,
-                        onValueChange = { channelUrlInput = it },
-                        label = { Text("QQ 频道链接") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            repository.saveCustomChannelUrl(channelToEdit.id, channelUrlInput.trim())
-                            editingChannelItem = null
-                            feedbackText = "已更新「${channelToEdit.title}」链接。"
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingChannelItem = null }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
-
-    // 弹窗 7：修改社团 QQ 群号
-    val clubToEdit = editingClubItem
-    if (clubToEdit != null) {
-        var groupNoInput by remember(clubToEdit, prefs.customClubGroupNumbers) {
-            mutableStateOf(
-                prefs.customClubGroupNumbers[clubToEdit.id]?.takeIf { it.isNotBlank() }
-                    ?: clubToEdit.qqGroupNumber
-            )
-        }
-
-        XPeachAlertDialog(
-            onDismissRequest = { editingClubItem = null },
-            title = { Text("修改「${clubToEdit.name}」群号") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "输入最新社团 QQ 群号，保存后点击加群即可跳转。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = groupNoInput,
-                        onValueChange = { groupNoInput = it },
-                        label = { Text("QQ 群号") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            repository.saveCustomClubGroupNumber(clubToEdit.id, groupNoInput.trim())
-                            editingClubItem = null
-                            feedbackText = "已更新「${clubToEdit.name}」群号为 ${groupNoInput.trim()}。"
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingClubItem = null }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
 }
-
-
-private fun copyTextToClipboard(context: Context, label: String, text: String) {
-    runCatching {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
-    }
-}
-
-
-/**
- * 唤醒手机 QQ 群资料卡或复制社团群号：
- * 使用官方 `mqqapi://card/show_pslcard?src_type=internal&version=1&uin=<群号>&card_type=group&source=qrcode` 协议直达加群。
- */
-private fun joinOrCopyClubQqGroup(
-    context: Context,
-    clubName: String,
-    groupNumber: String
-): String {
-    val cleanNo = groupNumber.trim()
-    copyTextToClipboard(context, "$clubName QQ群号", cleanNo)
-    val qqCardUri = Uri.parse(
-        "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=$cleanNo&card_type=group&source=qrcode"
-    )
-    return runCatching {
-        val intent = Intent(Intent.ACTION_VIEW, qqCardUri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        "已复制群号 $cleanNo，正在打开手机 QQ..."
-    }.getOrElse {
-        "已复制群号 $cleanNo 到剪贴板"
-    }
-}
-
-
-/**
- * 跳转加入 QQ 频道：
- * 同时将频道邀请链接复制到剪贴板，并通过系统 ACTION_VIEW 直接调起 QQ 频道或浏览器落地页。
- */
-private fun jumpToPresetQqChannel(
-    context: Context,
-    channelTitle: String,
-    inviteUrl: String
-): String {
-    val cleanUrl = inviteUrl.trim().ifBlank { "https://pd.qq.com" }
-    copyTextToClipboard(context, channelTitle, cleanUrl)
-    return runCatching {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(cleanUrl)).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        "正在打开「$channelTitle」..."
-    }.getOrElse {
-        "已复制「$channelTitle」链接：$cleanUrl"
-    }
-}
-
 
 @Composable
 private fun StudentDigitalIdHeader(
@@ -3101,17 +2828,6 @@ private fun ProfileMetricItem(
         )
     }
 }
-
-private val SETTINGS_HOME_CARD_LABELS: List<Pair<String, String>> = listOf(
-    "EXAM_SUMMARY" to "近期考试与学业",
-    "STUDY_FOCUS" to "自习专注",
-    "DORM_ELECTRICITY" to "宿舍水电",
-    "LIBRARY_SEAT" to "座位预约",
-    "PARCEL_HUB" to "驿站快递",
-    "LIBRARY_CATALOG" to "馆藏检索",
-    "EMPTY_CLASSROOM" to "空教室查询",
-    "CAMPUS_COMMUNITY" to "社团与频道"
-)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -3474,12 +3190,12 @@ private fun ThemePaletteAndCardLayoutSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Slider(
-                        value = localCardAlpha.coerceIn(0.18f, 0.98f),
+                        value = ThemeVisualDefaults.clampGlassOpacity(localCardAlpha),
                         onValueChange = {
                             localCardAlpha = it
                             onUpdateWallpaperParams(null, null, it)
                         },
-                        valueRange = 0.18f..0.98f
+                        valueRange = ThemeVisualDefaults.MIN_GLASS_OPACITY..ThemeVisualDefaults.MAX_GLASS_OPACITY
                     )
 
                     Text(
@@ -3488,12 +3204,12 @@ private fun ThemePaletteAndCardLayoutSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Slider(
-                        value = localWallpaperBlur.coerceIn(0f, 35f),
+                        value = ThemeVisualDefaults.clampBlurRadiusDp(localWallpaperBlur),
                         onValueChange = {
                             localWallpaperBlur = it
                             onUpdateWallpaperParams(null, it, null)
                         },
-                        valueRange = 0f..35f
+                        valueRange = ThemeVisualDefaults.MIN_BLUR_RADIUS_DP..ThemeVisualDefaults.MAX_BLUR_RADIUS_DP
                     )
 
                     Text(
@@ -3774,9 +3490,10 @@ private fun ThemePaletteAndCardLayoutSection(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
-                val visibleCount = (DEFAULT_HOME_CARD_ORDER.size - prefs.hiddenHomeCards.size).coerceAtLeast(0)
+                val totalCards = HomeCardModule.defaultOrderIds.size
+                val visibleCount = (totalCards - prefs.hiddenHomeCards.size).coerceAtLeast(0)
                 Text(
-                    text = "已显示 $visibleCount / ${DEFAULT_HOME_CARD_ORDER.size} 个卡片 · 可调整顺序与宽度",
+                    text = "已显示 $visibleCount / $totalCards 个卡片 · 可调整顺序与宽度",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3790,9 +3507,8 @@ private fun ThemePaletteAndCardLayoutSection(
         }
 
         AnimatedVisibility(visible = expandCardManager) {
-            val labelMap = remember { SETTINGS_HOME_CARD_LABELS.toMap() }
             val currentOrder = remember(prefs.homeCardOrder) {
-                (prefs.homeCardOrder.filter { it in labelMap.keys } + DEFAULT_HOME_CARD_ORDER).distinct()
+                HomeCardModule.normalizeOrderIds(prefs.homeCardOrder)
             }
             Column(
                 modifier = Modifier
@@ -3804,7 +3520,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     if (index > 0) {
                         XPeachInsetDivider(verticalPadding = 6.dp)
                     }
-                    val title = labelMap[cardId] ?: cardId
+                    val title = HomeCardModule.fromId(cardId)?.title ?: cardId
                     val isVisible = cardId !in prefs.hiddenHomeCards
                     val isFull = cardId in prefs.fullWidthHomeCards
 

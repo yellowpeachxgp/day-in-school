@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -63,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachEmptyState
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
@@ -74,6 +74,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.GpaCalculator
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
@@ -579,6 +580,18 @@ fun GradesScreen(
                 }
             }
 
+            val effectiveSelectionTermId = latestTermId ?: AcademicTermResolver.defaultTermId()
+            val selectionScope = remember(effectiveSelectionTermId) {
+                SelectionScope(
+                    schoolId = SchoolDirectory.HAUT_SCHOOL_ID,
+                    accountId = AccountId("active-local-profile"),
+                    termId = effectiveSelectionTermId.ifBlank { "current" }
+                )
+            }
+            var hoistedSelectionDraft by remember(selectionScope) {
+                mutableStateOf(SelectionDraft.empty(selectionScope))
+            }
+
             AnimatedContent(
                 targetState = activeSubTab,
                 transitionSpec = {
@@ -700,6 +713,13 @@ fun GradesScreen(
                                         }
                                     }
                                 }
+                            } else {
+                                XPeachEmptyState(
+                                    title = "暂无符合筛选条件的成绩记录",
+                                    subtitle = "可切换学期或课程性质筛选，或从教务系统同步最新成绩",
+                                    actionLabel = "同步成绩",
+                                    onActionClick = onNavigateToImporter
+                                )
                             }
                         }
                         1 -> {
@@ -795,7 +815,9 @@ fun GradesScreen(
                         }
                         else -> {
                             SelectionDraftSection(
-                                termId = latestTermId ?: "2025-2026-2",
+                                scope = selectionScope,
+                                draft = hoistedSelectionDraft,
+                                onDraftChange = { hoistedSelectionDraft = it },
                                 courses = courses,
                                 scheduleRules = scheduleRules
                             )
@@ -1103,18 +1125,12 @@ private fun AcademicPlanProgressSection(
 
 @Composable
 private fun SelectionDraftSection(
-    termId: String,
+    scope: SelectionScope,
+    draft: SelectionDraft,
+    onDraftChange: (SelectionDraft) -> Unit,
     courses: List<cn.edu.haut.campus.core.model.Course>,
     scheduleRules: List<cn.edu.haut.campus.core.model.CourseScheduleRule>
 ) {
-    val scope = remember(termId) {
-        SelectionScope(
-            schoolId = SchoolDirectory.HAUT_SCHOOL_ID,
-            accountId = AccountId("active-local-profile"),
-            termId = termId.ifBlank { "current" }
-        )
-    }
-    var draft by remember(scope) { mutableStateOf(SelectionDraft.empty(scope)) }
     var courseNameInput by remember { mutableStateOf("") }
     var classIdInput by remember { mutableStateOf("01班") }
     var selectedWeekday by remember { mutableIntStateOf(1) }
@@ -1246,14 +1262,16 @@ private fun SelectionDraftSection(
                 onClick = {
                     val name = courseNameInput.trim()
                     val cls = classIdInput.trim().ifBlank { "01班" }
-                    draft = draft.add(
-                        DraftEntry(
-                            offeringId = "draft-$name",
-                            courseName = name,
-                            teachingClassId = cls,
-                            slots = previewCandidate.slots
-                        )
-                    ).draft
+                    onDraftChange(
+                        draft.add(
+                            DraftEntry(
+                                offeringId = "draft-$name",
+                                courseName = name,
+                                teachingClassId = cls,
+                                slots = previewCandidate.slots
+                            )
+                        ).draft
+                    )
                     courseNameInput = ""
                     submissionNotice = "已加入选课预排草稿"
                 },
@@ -1284,7 +1302,7 @@ private fun SelectionDraftSection(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
-                    TextButton(onClick = { draft = draft.clear().draft }) {
+                    TextButton(onClick = { onDraftChange(draft.clear().draft) }) {
                         Text("清空")
                     }
                 }
@@ -1308,7 +1326,7 @@ private fun SelectionDraftSection(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        TextButton(onClick = { draft = draft.remove(entry.offeringId).draft }) {
+                        TextButton(onClick = { onDraftChange(draft.remove(entry.offeringId).draft) }) {
                             Text("移除")
                         }
                     }

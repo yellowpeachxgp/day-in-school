@@ -13,6 +13,7 @@ import android.widget.RemoteViews
 import android.net.Uri
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
+import cn.edu.haut.campus.core.model.CampusDeepLinkContract
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.DayTimelineSnapshot
@@ -172,14 +173,29 @@ object ScheduleSnapshotUseCase {
 
 object WidgetRefreshCoordinator {
     const val ACTION_REFRESH_ALL_WIDGETS = "cn.edu.haut.campus.action.REFRESH_ALL_WIDGETS"
-    const val EXTRA_NAVIGATE_TAB = "extra_navigate_tab"
-    const val EXTRA_COURSE_ID = "extra_course_id"
-    const val EXTRA_RAW_ROOM = "extra_raw_room"
-    const val EXTRA_PROFILE_ID = "widget_profile_id"
-    const val EXTRA_GENERATION = "widget_session_generation"
+    const val EXTRA_NAVIGATE_TAB = CampusDeepLinkContract.EXTRA_NAVIGATE_TAB
+    const val EXTRA_COURSE_ID = CampusDeepLinkContract.EXTRA_COURSE_ID
+    const val EXTRA_RAW_ROOM = CampusDeepLinkContract.EXTRA_RAW_ROOM
+    const val EXTRA_PROFILE_ID = CampusDeepLinkContract.EXTRA_PROFILE_ID
+    const val EXTRA_GENERATION = CampusDeepLinkContract.EXTRA_GENERATION
+
+    const val PROVIDER_NEXT_CLASS_2X2 = "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider"
+    const val PROVIDER_TODAY_4X2 = "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider"
+    const val PROVIDER_PARCEL_4X2 = "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider"
+    const val PROVIDER_TIMELINE_4X4 = "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider"
+    const val PROVIDER_WEEK_4X4 = "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
+
+    fun requestPinAppWidget(context: Context, providerClassName: String): Boolean {
+        return runCatching {
+            val mgr = AppWidgetManager.getInstance(context)
+            if (!mgr.isRequestPinAppWidgetSupported) return false
+            val provider = ComponentName(context.packageName, providerClassName)
+            mgr.requestPinAppWidget(provider, null, null)
+        }.getOrDefault(false)
+    }
 
     fun stampIntent(intent: Intent, snapshot: WidgetScheduleSnapshot, widgetId: Int, action: String) {
-        intent.data = Uri.Builder().scheme("dayinschool").authority("widget")
+        intent.data = Uri.Builder().scheme(CampusDeepLinkContract.SCHEME).authority(CampusDeepLinkContract.HOST_WIDGET)
             .appendPath(snapshot.profileId).appendPath(snapshot.generation.toString())
             .appendPath(widgetId.toString()).appendPath(action).build()
         intent.putExtra(EXTRA_PROFILE_ID, snapshot.profileId)

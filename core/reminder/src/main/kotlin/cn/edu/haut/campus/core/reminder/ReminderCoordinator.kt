@@ -278,7 +278,7 @@ class ReminderCoordinator internal constructor(
             return
         }
 
-        val eventEndInstant = currentEvent.endAt ?: currentEvent.startAt.plus(Duration.ofMinutes(45))
+        val eventEndInstant = currentEvent.endAt ?: currentEvent.startAt.plus(Duration.ofMinutes(95))
         if (!now.isBefore(eventEndInstant)) {
             reminderDao.markTerminal(
                 taskId = taskId,

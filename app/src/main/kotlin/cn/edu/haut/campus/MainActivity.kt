@@ -5,10 +5,8 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
@@ -30,12 +28,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -51,34 +47,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarViewWeek
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -94,8 +79,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -104,22 +87,12 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
 import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
-import cn.edu.haut.campus.core.academic.syncSummaryText
-import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import java.io.File
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
@@ -128,16 +101,9 @@ import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
-import cn.edu.haut.campus.core.designsystem.XPeachCard
-import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
-import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
-import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
-import cn.edu.haut.campus.core.designsystem.XPeachWell
-import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.domain.SchoolDirectory
-import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderNotificationFactory
 import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
@@ -474,8 +440,8 @@ fun HautCampusRootApp(
         if (prefs.hasCompletedOnboarding && prefs.autoCheckUpdateEnabled && !hasCheckedStartupRelease) {
             hasCheckedStartupRelease = true
             val currentVer = runCatching {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.9.0"
-            }.getOrDefault("0.9.0")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: BuildConfig.VERSION_NAME
+            }.getOrDefault(BuildConfig.VERSION_NAME)
             GitHubReleaseUpdater.checkLatestRelease(
                 currentVersionName = currentVer,
                 proxyConfig = prefs.networkProxyConfig
@@ -634,7 +600,7 @@ fun HautCampusRootApp(
                 )
             }
             "onboarding" -> {
-                OnboardingWelcomeScreen(
+                OnboardingFlowScreen(
                     repository = repository,
                     activeSchool = activeSession.school,
                     onOpenSchoolCenter = { overlayScreen = "school_center" },
@@ -890,357 +856,6 @@ fun HautCampusRootApp(
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun OnboardingWelcomeScreen(
-    repository: CampusRepository,
-    activeSchool: cn.edu.haut.campus.core.model.SchoolProfile = SchoolDirectory.hautProfile(),
-    onOpenSchoolCenter: () -> Unit = {},
-    onOpenAdvancedImporter: () -> Unit
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val scope = rememberCoroutineScope()
-    val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
-    val isHautSchool = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID
-
-    var hasLocationPermission by remember {
-        mutableStateOf(CampusMapNavigator.hasLocationPermission(context))
-    }
-
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        hasLocationPermission = result.values.any { it } || CampusMapNavigator.hasLocationPermission(context)
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                hasLocationPermission = CampusMapNavigator.hasLocationPermission(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    var studentIdInput by rememberSaveable { mutableStateOf("") }
-    var passwordInput by remember { mutableStateOf("") }
-    var showPassword by remember { mutableStateOf(false) }
-    var selectedXnm by rememberSaveable { mutableStateOf("2025") }
-    var selectedXqm by rememberSaveable { mutableStateOf("12") }
-    var isSyncing by remember { mutableStateOf(false) }
-    var syncStatusMessage by remember { mutableStateOf<String?>(null) }
-    var isErrorStatus by remember { mutableStateOf(false) }
-
-    Surface(
-        color = MaterialTheme.colorScheme.background,
-        modifier = Modifier.fillMaxSize()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "日在校园",
-                    style = MaterialTheme.typography.headlineMedium
-                )
-                Text(
-                    text = "${activeSchool.displayName} · ${activeSchool.primaryCampus?.name ?: "离线模式"}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // 0. 学校与身份选择（支持多校目录浏览与离线建档）
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Text(
-                            text = "当前学校：${activeSchool.displayName}",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = "切换学校或使用离线课表模式",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = onOpenSchoolCenter,
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text("切换学校", maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-
-            // 1. 定位权限
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Text(
-                            text = "位置权限",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = "在地图中显示当前位置和步行路线",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (hasLocationPermission) {
-                        XPeachStatusDotText(
-                            text = "已授权",
-                            dotColor = MaterialTheme.colorScheme.tertiary,
-                            textColor = XPeachTheme.onSuccessContainer
-                        )
-                    } else {
-                        Button(
-                            onClick = {
-                                locationPermissionLauncher.launch(
-                                    arrayOf(
-                                        android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                        android.Manifest.permission.ACCESS_COARSE_LOCATION
-                                    )
-                                )
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("授权", maxLines = 1, softWrap = false)
-                        }
-                    }
-                }
-            }
-
-            // 2. 教务同步 / 离线建档
-            XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isHautSchool) "同步课表与成绩" else "导入或手工录入课表",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    XPeachStatusDotText(text = if (isHautSchool) "统一身份认证" else "离线模式")
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (isHautSchool) {
-                    val focusManager = LocalFocusManager.current
-                    val triggerLoginAndSync: () -> Unit = {
-                        if (!isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank()) {
-                            focusManager.clearFocus()
-                            scope.launch {
-                                val plainPwd = passwordInput
-                                isSyncing = true
-                                isErrorStatus = false
-                                syncStatusMessage = "正在获取课表、考试和成绩..."
-                                val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                                    studentId = studentIdInput,
-                                    passwordPlain = plainPwd,
-                                    xnm = selectedXnm,
-                                    xqm = selectedXqm
-                                )
-                                passwordInput = ""
-                                isSyncing = false
-
-                                result.onSuccess { syncData ->
-                                    val applied = runCatching {
-                                        repository.applyLiveSyncData(syncData, overwriteUserConflicts = false)
-                                    }
-                                    if (applied.isFailure) {
-                                        isErrorStatus = true
-                                        syncStatusMessage = "保存失败，请重试（已有数据不受影响）"
-                                        return@onSuccess
-                                    }
-                                    val saved = runCatching {
-                                        repository.saveAuthorizedSyncCredentials(
-                                            studentIdInput, plainPwd, selectedXnm, selectedXqm
-                                        )
-                                    }
-                                    repository.setAutoSyncEnabled(saved.isSuccess)
-                                    syncStatusMessage = syncData.syncSummaryText() +
-                                        if (saved.isFailure) "\n密码保存失败，已关闭自动更新" else ""
-                                    repository.completeOnboarding()
-                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                }.onFailure { err ->
-                                    isErrorStatus = true
-                                    syncStatusMessage = err.message ?: "登录或同步失败"
-                                }
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = studentIdInput,
-                        onValueChange = { studentIdInput = it },
-                        label = { Text("学号") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        keyboardActions = KeyboardActions(
-                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = passwordInput,
-                        onValueChange = { passwordInput = it },
-                        label = { Text("密码") },
-                        singleLine = true,
-                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = { triggerLoginAndSync() }
-                        ),
-                        trailingIcon = {
-                            IconButton(onClick = { showPassword = !showPassword }) {
-                                Icon(
-                                    imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showPassword) "隐藏密码" else "显示密码"
-                                )
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("学年", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                        for (yr in listOf("2026", "2025", "2024", "2023")) {
-                            XPeachFilterPill(
-                                label = "$yr-${yr.toInt() + 1}",
-                                selected = selectedXnm == yr,
-                                onClick = { selectedXnm = yr }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("学期", style = MaterialTheme.typography.labelMedium, maxLines = 1, softWrap = false)
-                        XPeachFilterPill(
-                            label = "第 1 学期",
-                            selected = selectedXqm == "3",
-                            onClick = { selectedXqm = "3" }
-                        )
-                        XPeachFilterPill(
-                            label = "第 2 学期",
-                            selected = selectedXqm == "12",
-                            onClick = { selectedXqm = "12" }
-                        )
-                    }
-
-                    if (syncStatusMessage != null) {
-                        XPeachInsetDivider(verticalPadding = 8.dp)
-                        Text(
-                            text = syncStatusMessage!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (isErrorStatus) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(
-                        enabled = !isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank(),
-                        onClick = triggerLoginAndSync,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isSyncing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("正在同步...", maxLines = 1, softWrap = false)
-                        } else {
-                            Text("登录并同步", maxLines = 1, softWrap = false)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                } else {
-                    Text(
-                        text = "暂不支持该校教务直接登录，可通过文件/CSV 导入或手动添加课程。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onOpenAdvancedImporter,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("网页 / CSV 导入", maxLines = 1, softWrap = false)
-                    }
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                repository.completeOnboarding()
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(if (isHautSchool) "先去看看" else "进入离线课表", maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-        }
     }
 }
 

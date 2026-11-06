@@ -86,6 +86,50 @@ data class ParcelItemEntity(
     val updatedAtEpochMillis: Long
 )
 
+private val PARCEL_ARRIVAL_CUE_REGEX = Regex("驿站|快递柜|取件|代收|自提")
+
+private fun String?.cleanParcelFieldOrNull(): String? =
+    this?.trim()?.takeUnless {
+        it.isEmpty() || it.equals("null", ignoreCase = true) || it.equals("undefined", ignoreCase = true)
+    }
+
+/**
+ * 判断包裹是否带有明确到站/取件线索（取件码、驿站名或投递摘要关键词）。
+ */
+fun ParcelItemEntity.hasArrivalCue(): Boolean {
+    val cleanCode = pickupCode.cleanParcelFieldOrNull()
+    val cleanStation = stationName.cleanParcelFieldOrNull()
+    return cleanCode != null ||
+        cleanStation != null ||
+        estimatedDeliveryText.contains(PARCEL_ARRIVAL_CUE_REGEX)
+}
+
+/**
+ * 统一「今日校园」、「我的主页」角标与「校园快递中心」的待取包裹判定规则，消除多处状态判断不一致。
+ */
+fun ParcelItemEntity.isPendingPickup(): Boolean {
+    val cleanCode = pickupCode.cleanParcelFieldOrNull()
+    val arrived = hasArrivalCue()
+    return (status == "READY_FOR_PICKUP" && arrived) ||
+        (cleanCode != null && status != "PICKED_UP")
+}
+
+/**
+ * 判断包裹是否处于运输/派送途中。
+ */
+fun ParcelItemEntity.isInTransitUi(): Boolean {
+    if (status == "PICKED_UP" || isPendingPickup()) return false
+    return status == "IN_TRANSIT" ||
+        status == "OUT_FOR_DELIVERY" ||
+        status == "CREATED" ||
+        status == "READY_FOR_PICKUP"
+}
+
+/**
+ * 判断包裹是否已取件签收。
+ */
+fun ParcelItemEntity.isPickedUpUi(): Boolean = status == "PICKED_UP"
+
 @Entity(
     tableName = "parcel_source_connections",
     indices = [Index(value = ["providerId"])]

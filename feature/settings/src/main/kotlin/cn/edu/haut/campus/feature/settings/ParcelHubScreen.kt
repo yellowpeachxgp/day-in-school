@@ -26,11 +26,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -67,6 +65,9 @@ import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import cn.edu.haut.campus.core.campusservices.optCleanString
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ParcelItemEntity
+import cn.edu.haut.campus.core.database.isInTransitUi
+import cn.edu.haut.campus.core.database.isPendingPickup
+import cn.edu.haut.campus.core.database.isPickedUpUi
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
@@ -115,28 +116,13 @@ fun ParcelHubScreen(
     }
 
     val readyParcels = remember(parcels) {
-        parcels.filter {
-            val cleanCode = it.pickupCode.cleanNullableLiteral()
-            val cleanStation = it.stationName.cleanNullableLiteral()
-            val hasArrivalCue = cleanCode != null || cleanStation != null ||
-                it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
-            it.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && hasArrivalCue
-        }
+        parcels.filter { it.isPendingPickup() }
     }
     val inTransitParcels = remember(parcels) {
-        parcels.filter {
-            val cleanCode = it.pickupCode.cleanNullableLiteral()
-            val cleanStation = it.stationName.cleanNullableLiteral()
-            val hasArrivalCue = cleanCode != null || cleanStation != null ||
-                it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
-            it.status == ParcelLifecycleStatus.IN_TRANSIT.wireName ||
-                it.status == ParcelLifecycleStatus.OUT_FOR_DELIVERY.wireName ||
-                it.status == ParcelLifecycleStatus.CREATED.wireName ||
-                (it.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && !hasArrivalCue)
-        }
+        parcels.filter { it.isInTransitUi() }
     }
     val pickedUpParcels = remember(parcels) {
-        parcels.filter { it.status == ParcelLifecycleStatus.PICKED_UP.wireName }
+        parcels.filter { it.isPickedUpUi() }
     }
 
     Column(

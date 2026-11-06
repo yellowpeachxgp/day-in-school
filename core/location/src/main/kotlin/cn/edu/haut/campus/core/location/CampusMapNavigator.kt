@@ -1033,7 +1033,13 @@ object CampusMapNavigator {
 
     fun openWalkingNavigation(context: Context, building: Building) {
         val (gcjLat, gcjLng) = wgs84ToGcj02(building.latitude, building.longitude)
-        val label = Uri.encode("河南工业大学莲花街校区-${building.name}")
+        val campusPrefix = when {
+            building.campusId.contains("songshan", ignoreCase = true) -> "河南工业大学嵩山路校区"
+            building.campusId.contains("lianhuajie", ignoreCase = true) -> "河南工业大学莲花街校区"
+            building.campusId.startsWith("custom_", ignoreCase = true) -> "自定义校区"
+            else -> "校区导航"
+        }
+        val label = Uri.encode("$campusPrefix-${building.name}")
 
         val geoUri = Uri.parse("geo:$gcjLat,$gcjLng?q=$gcjLat,$gcjLng($label)")
         val geoIntent = Intent(Intent.ACTION_VIEW, geoUri).apply {

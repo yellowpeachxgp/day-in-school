@@ -40,10 +40,8 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -71,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachCoursePalette
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
@@ -84,6 +83,7 @@ import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.domain.WeeksSetParser
+import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
@@ -747,10 +747,7 @@ fun TimetableScreen(
         }
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
 
-        val palette = listOf(
-            0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,
-            0xFF4F46E5, 0xFF7C3AED, 0xFFD97706, 0xFFE11D48
-        )
+        val palette = XPeachCoursePalette.SwatchesArgb
 
         XPeachAlertDialog(
             onDismissRequest = { editingOccurrence = null },
@@ -987,7 +984,7 @@ fun TimetableScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val activeTermId = term?.id ?: "2025-2026-2"
+                        val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                         if (newName.isNotBlank()) {
                             scope.launch {
                                 val sp = (newStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 10)

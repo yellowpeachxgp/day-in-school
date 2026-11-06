@@ -26,7 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,39 +59,16 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CampusClubCategory
 import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
-import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
-
-internal val LIANHUAJIE_STUDY_ROOMS_MAP: Map<String, List<String>> = linkedMapOf(
-    "5号教学楼" to listOf("5101", "5103", "5105", "5201", "5202", "5204", "5301", "5303", "5402"),
-    "6号教学楼" to listOf("6101", "6102", "6201", "6203", "6205", "6301", "6304", "6401"),
-    "7号教学楼" to listOf("7102", "7104", "7201", "7203", "7302", "7305", "7401"),
-    "8号教学楼" to listOf("8101", "8103", "8201", "8202", "8301", "8303", "8402"),
-    "9号教学楼" to listOf("9101", "9102", "9201", "9204", "9301", "9303"),
-    "11号教学楼" to listOf("11101", "11102", "11201", "11203", "11301", "11302")
-)
-
-internal data class CampusStudyPeriodSlot(
-    val label: String,
-    val startPeriod: Int,
-    val endPeriod: Int
-)
-
-internal val CAMPUS_STUDY_PERIOD_SLOTS = listOf(
-    CampusStudyPeriodSlot("1-2节", 1, 2),
-    CampusStudyPeriodSlot("3-4节", 3, 4),
-    CampusStudyPeriodSlot("5-6节", 5, 6),
-    CampusStudyPeriodSlot("7-8节", 7, 8),
-    CampusStudyPeriodSlot("9-10节", 9, 10)
-)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -113,28 +88,20 @@ fun EmptyClassroomScreen(
 
     var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
     var selectedSlotIndex by remember {
-        val nowHour = ZonedDateTime.now(HAUT_ZONE_ID).hour
-        val defaultIdx = when {
-            nowHour < 10 -> 0
-            nowHour < 12 -> 1
-            nowHour < 16 -> 2
-            nowHour < 18 -> 3
-            else -> 4
-        }
-        mutableIntStateOf(defaultIdx)
+        mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).hour))
     }
-    val buildingKeys = remember { LIANHUAJIE_STUDY_ROOMS_MAP.keys.toList() }
+    val buildingKeys = remember { CampusStudyRoomCatalog.LIANHUAJIE_STUDY_ROOMS_MAP.keys.toList() }
     var selectedBuildingFilter by remember { mutableStateOf<String?>(null) }
 
-    val activeSlot = CAMPUS_STUDY_PERIOD_SLOTS[selectedSlotIndex]
+    val activeSlot = CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[selectedSlotIndex]
     val busyRoomsInSlot = remember(rules, currentTerm?.id, currentTeachingWeek, selectedDayOfWeek, activeSlot) {
-        rules.filter { rule ->
-            (currentTerm == null || rule.termId == currentTerm?.id) &&
-                rule.weekday == selectedDayOfWeek &&
-                (rule.weeks.isEmpty() || currentTeachingWeek in rule.weeks) &&
-                rule.startPeriod <= activeSlot.endPeriod &&
-                rule.endPeriod >= activeSlot.startPeriod
-        }.map { it.rawRoom }
+        CampusStudyRoomCatalog.findBusyRawRooms(
+            rules = rules,
+            termId = currentTerm?.id,
+            teachingWeek = currentTeachingWeek,
+            weekday = selectedDayOfWeek,
+            slot = activeSlot
+        )
     }
 
     Column(
@@ -189,7 +156,7 @@ fun EmptyClassroomScreen(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    CAMPUS_STUDY_PERIOD_SLOTS.forEachIndexed { idx, slot ->
+                    CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS.forEachIndexed { idx, slot ->
                         XPeachFilterPill(
                             label = slot.label,
                             selected = selectedSlotIndex == idx,
@@ -226,9 +193,9 @@ fun EmptyClassroomScreen(
             }
 
             for (buildingName in buildingsToShow) {
-                val candidateRooms = LIANHUAJIE_STUDY_ROOMS_MAP[buildingName].orEmpty()
+                val candidateRooms = CampusStudyRoomCatalog.LIANHUAJIE_STUDY_ROOMS_MAP[buildingName].orEmpty()
                 val freeRooms = candidateRooms.filter { code ->
-                    busyRoomsInSlot.none { raw -> raw.contains(code) }
+                    CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
                 }
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(

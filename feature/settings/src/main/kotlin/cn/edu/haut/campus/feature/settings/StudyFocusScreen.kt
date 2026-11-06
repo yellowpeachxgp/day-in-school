@@ -57,6 +57,8 @@ import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.todayFocusMinutes
+import cn.edu.haut.campus.core.model.totalFocusMinutes
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
 import kotlinx.coroutines.delay
@@ -157,14 +159,10 @@ fun StudyFocusScreen(
 
     val todayDate = Instant.ofEpochMilli(nowMs).atZone(HAUT_ZONE_ID).toLocalDate()
     val todayCompletedMinutes = remember(completedSessions, todayDate) {
-        completedSessions.sumOf { s ->
-            val doneAt = s.completedAtEpochMs ?: s.expectedEndAtEpochMs
-            val d = Instant.ofEpochMilli(doneAt).atZone(HAUT_ZONE_ID).toLocalDate()
-            if (d == todayDate) s.durationMinutes else 0
-        }
+        completedSessions.todayFocusMinutes(todayDate)
     }
     val totalCompletedMinutes = remember(completedSessions) {
-        completedSessions.sumOf { it.durationMinutes }
+        completedSessions.totalFocusMinutes()
     }
 
     Column(

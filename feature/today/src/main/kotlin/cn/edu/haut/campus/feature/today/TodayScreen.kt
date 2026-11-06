@@ -44,7 +44,6 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Snooze
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -78,6 +77,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
+import cn.edu.haut.campus.core.database.isPendingPickup
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
@@ -88,6 +88,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.domain.ReminderPolicyEngine
@@ -98,6 +99,7 @@ import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.HomeCardModule
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.ReminderEventOverride
@@ -365,13 +367,7 @@ fun TodayScreen(
 
             // 1.5 动态待取快递弹出提醒卡（有待取快递时自动在主页显著弹出，按驿站聚合超大取件码，全部取完自动收起）
             val pendingPickups = remember(parcelItems) {
-                parcelItems.filter {
-                    val code = it.pickupCode.cleanUiText()
-                    val station = it.stationName.cleanUiText()
-                    val hasArrivalCue = code != null || station != null ||
-                        it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
-                    (it.status == "READY_FOR_PICKUP" && hasArrivalCue) || (code != null && it.status != "PICKED_UP")
-                }
+                parcelItems.filter { it.isPendingPickup() }
             }
             AnimatedVisibility(
                 visible = pendingPickups.isNotEmpty(),
@@ -1300,17 +1296,6 @@ private data class HomeModularCardSpec(
     val onClick: () -> Unit
 )
 
-private val HOME_CARD_META: List<Pair<String, String>> = listOf(
-    "EXAM_SUMMARY" to "近期考试与学业",
-    "STUDY_FOCUS" to "自习专注",
-    "DORM_ELECTRICITY" to "宿舍水电",
-    "LIBRARY_SEAT" to "座位预约",
-    "PARCEL_HUB" to "我的快递",
-    "LIBRARY_CATALOG" to "馆藏检索",
-    "EMPTY_CLASSROOM" to "空教室查询",
-    "CAMPUS_COMMUNITY" to "社团与频道"
-)
-
 private fun String?.cleanUiText(): String? {
     val trimmed = this?.trim() ?: return null
     if (trimmed.isEmpty()) return null
@@ -1693,33 +1678,15 @@ private fun TodayCampusBentoSection(
     }
 
     val (currentSlotLabel, freeRoomsCount) = remember(currentNow, selectedDate, teachingWeek, activeTermId, rules) {
-        val nowTime = currentNow.toLocalTime()
-        val (slotStart, slotEnd, label) = when {
-            nowTime < LocalTime.of(9, 50) -> Triple(1, 2, "1-2节")
-            nowTime < LocalTime.of(12, 0) -> Triple(3, 4, "3-4节")
-            nowTime < LocalTime.of(15, 50) -> Triple(5, 6, "5-6节")
-            nowTime < LocalTime.of(17, 50) -> Triple(7, 8, "7-8节")
-            else -> Triple(9, 10, "9-10节")
-        }
-        val activeRules = rules.filter { r ->
-            (activeTermId == null || r.termId == activeTermId) &&
-                r.weekday == selectedDate.dayOfWeek &&
-                (r.weeks.isEmpty() || teachingWeek in r.weeks) &&
-                r.startPeriod <= slotEnd &&
-                r.endPeriod >= slotStart
-        }
-        val candidateRooms = listOf(
-            "5101", "5103", "5105", "5201", "5202", "5204", "5301", "5303", "5402",
-            "6101", "6102", "6201", "6203", "6205", "6301", "6304", "6401",
-            "7102", "7104", "7201", "7203", "7302", "7305", "7401",
-            "8101", "8103", "8201", "8202", "8301", "8303", "8402",
-            "9101", "9102", "9201", "9204", "9301", "9303",
-            "11101", "11102", "11201", "11203", "11301", "11302"
+        val slot = CampusStudyRoomCatalog.resolveActiveSlot(currentNow.toLocalTime())
+        val freeCount = CampusStudyRoomCatalog.computeFreeRoomsCount(
+            rules = rules,
+            activeTermId = activeTermId,
+            teachingWeek = teachingWeek,
+            weekday = selectedDate.dayOfWeek,
+            slot = slot
         )
-        val freeCount = candidateRooms.count { roomCode ->
-            activeRules.none { r -> r.rawRoom.contains(roomCode) }
-        }
-        label to freeCount
+        slot.label to freeCount
     }
 
     val examSpec = if (nearestExam != null) {
@@ -1797,19 +1764,13 @@ private fun TodayCampusBentoSection(
                 )
             }
         },
-        "PARCEL_HUB" to run {
-            val waitingParcels = parcelItems.filter {
-                val code = it.pickupCode.cleanUiText()
-                val station = it.stationName.cleanUiText()
-                val hasArrivalCue = code != null || station != null ||
-                    it.estimatedDeliveryText.contains(Regex("驿站|快递柜|取件|代收|自提"))
-                (it.status == "READY_FOR_PICKUP" && hasArrivalCue) || (code != null && it.status != "PICKED_UP")
-            }
+        HomeCardModule.PARCEL_HUB.id to run {
+            val waitingParcels = parcelItems.filter { it.isPendingPickup() }
             val waitingCount = waitingParcels.size
             val firstWaiting = waitingParcels.firstOrNull()
             HomeModularCardSpec(
-                id = "PARCEL_HUB",
-                title = "我的快递",
+                id = HomeCardModule.PARCEL_HUB.id,
+                title = HomeCardModule.PARCEL_HUB.title,
                 badgeText = if (waitingCount > 0) "待取 $waitingCount" else "取件码",
                 subtitle = if (firstWaiting != null) {
                     val codeLabel = firstWaiting.pickupCode.cleanUiText() ?: "待取件"
@@ -1986,11 +1947,8 @@ private fun HomeCardLayoutCustomizerDialog(
     onResetDefault: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val labelMap = remember { HOME_CARD_META.toMap() }
     var workingOrder by remember(currentOrder) {
-        val base = currentOrder.filter { it in labelMap.keys }
-        val full = (base + HOME_CARD_META.map { it.first }).distinct()
-        mutableStateOf(full)
+        mutableStateOf(HomeCardModule.normalizeOrderIds(currentOrder))
     }
     var workingHidden by remember(currentHidden) { mutableStateOf(currentHidden) }
     var workingFullWidth by remember(currentFullWidth) { mutableStateOf(currentFullWidth) }
@@ -2014,7 +1972,7 @@ private fun HomeCardLayoutCustomizerDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 workingOrder.forEachIndexed { index, cardId ->
-                    val title = labelMap[cardId] ?: cardId
+                    val title = HomeCardModule.fromId(cardId)?.title ?: cardId
                     val isVisible = cardId !in workingHidden
                     val isFull = cardId in workingFullWidth
 

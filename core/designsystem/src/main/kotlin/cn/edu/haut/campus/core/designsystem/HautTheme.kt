@@ -112,6 +112,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import cn.edu.haut.campus.core.model.ThemeVisualDefaults
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -149,9 +150,9 @@ enum class UiDesignStyle(
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
 val LocalUiDesignStyle = staticCompositionLocalOf { UiDesignStyle.FLUTTER_M3 }
 val LocalHasActiveBackdrop = staticCompositionLocalOf { false }
-val LocalGlassCardAlpha = staticCompositionLocalOf { 0.82f }
-val LocalGlassBlurDp = staticCompositionLocalOf { 10f }
-val LocalBackdropAlpha = staticCompositionLocalOf { 0.48f }
+val LocalGlassCardAlpha = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA }
+val LocalGlassBlurDp = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP }
+val LocalBackdropAlpha = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA }
 
 val XPeachBrandLight = Color(0xFF0066CC)
 val XPeachBrandHoverLight = Color(0xFF0052A3)
@@ -1343,9 +1344,9 @@ fun HautCampusTheme(
     themePaletteKey: String = "HAUT_BLUE",
     customSeedArgb: Long = 0xFF0066CC,
     customWallpaperPath: String? = null,
-    wallpaperAlpha: Float = 0.48f,
-    wallpaperBlurDp: Float = 10f,
-    wallpaperCardAlpha: Float = 0.82f,
+    wallpaperAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA,
+    wallpaperBlurDp: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP,
+    wallpaperCardAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA,
     content: @Composable () -> Unit
 ) {
     val effectiveDark = when (themeMode) {
@@ -1378,9 +1379,9 @@ fun HautCampusTheme(
 
     val hasActiveWallpaper = wallpaperBitmap != null
     val hasActiveBackdrop = isLiquidGlass || hasActiveWallpaper
-    val safeCardAlpha = wallpaperCardAlpha.coerceIn(0.18f, 0.98f)
-    val safeWallpaperAlpha = wallpaperAlpha.coerceIn(0.05f, 1.0f)
-    val safeBlurDp = wallpaperBlurDp.coerceIn(0f, 35f)
+    val safeCardAlpha = ThemeVisualDefaults.clampWallpaperCardAlpha(wallpaperCardAlpha)
+    val safeWallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(wallpaperAlpha)
+    val safeBlurDp = ThemeVisualDefaults.clampWallpaperBlurDp(wallpaperBlurDp)
 
     val rawScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
@@ -2147,52 +2148,14 @@ fun XPeachIconButton(
     modifier: Modifier = Modifier
 ) {
     val isDark = XPeachTheme.isDark
-    val isLiquid = XPeachTheme.isLiquidGlass
-    val hasBackdrop = XPeachTheme.hasActiveBackdrop
-    val glassAlpha = XPeachTheme.glassCardAlpha
-
-    val baseBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
-    val bgColor = if (isLiquid || hasBackdrop) {
-        baseBg.copy(alpha = (glassAlpha * 0.85f).coerceIn(0.22f, 0.94f))
-    } else {
-        baseBg
-    }
     val iconTint = if (isDark) {
         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = 560f),
-        label = "iconBtnScale"
-    )
-    val shape = RoundedCornerShape(if (isLiquid) 14.dp else FlutterM3Tokens.IconButtonCornerRadius)
-    val borderMod = if (isLiquid) {
-        Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(intensity = 0.9f), shape)
-    } else {
-        val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
-        Modifier.border(0.5.dp, borderColor, shape)
-    }
-
-    Box(
+    XPeachIconButton(
+        onClick = onClick,
         modifier = modifier
-            .size(FlutterM3Tokens.IconButtonSize)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(shape)
-            .background(bgColor)
-            .then(borderMod)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
@@ -2266,106 +2229,41 @@ fun XPeachFilterPill(
     compact: Boolean = false
 ) {
     val isDark = XPeachTheme.isDark
-    val isLiquid = XPeachTheme.isLiquidGlass
-    val hasBackdrop = XPeachTheme.hasActiveBackdrop
-    val glassAlpha = XPeachTheme.glassCardAlpha
-
-    val unselectedBg = if (isLiquid || hasBackdrop) {
-        val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
-        base.copy(alpha = (glassAlpha * 0.76f).coerceIn(0.20f, 0.88f))
-    } else if (isDark) {
-        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
-    }
-    val selectedBg = if (isDark) {
-        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.26f else 0.20f)
-    } else if (isLiquid || hasBackdrop) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = (glassAlpha * 0.92f).coerceIn(0.32f, 0.95f))
-    } else {
-        MaterialTheme.colorScheme.primaryContainer
-    }
     val selectedFg = XPeachTheme.readablePrimary
     val unselectedFg = if (isDark) {
         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val bg by animateColorAsState(
-        targetValue = if (selected) selectedBg else unselectedBg,
-        animationSpec = tween(180),
-        label = "pillBg"
-    )
-    val border by animateColorAsState(
-        targetValue = when {
-            selected -> XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.55f else 0.42f)
-            isLiquid -> if (isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.68f)
-            else -> Color.Transparent
-        },
-        animationSpec = tween(180),
-        label = "pillBorder"
-    )
     val fg by animateColorAsState(
         targetValue = if (selected) selectedFg else unselectedFg,
         animationSpec = tween(180),
-        label = "pillFg"
+        label = "pillIconFg"
     )
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.955f else 1f,
-        animationSpec = spring(dampingRatio = 0.68f, stiffness = 540f),
-        label = "pillScale"
-    )
-    val pillShape = RoundedCornerShape(999.dp)
-
-    Row(
-        modifier = modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
+    if (leadingIcon != null) {
+        XPeachFilterPill(
+            label = label,
+            selected = selected,
+            onClick = onClick,
+            modifier = modifier,
+            compact = compact,
+            leadingIcon = {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = fg,
+                    modifier = Modifier.size(14.dp)
+                )
             }
-            .defaultMinSize(
-                minHeight = if (compact) FlutterM3Tokens.CompactFilterPillMinHeight else FlutterM3Tokens.FilterPillMinHeight
-            )
-            .clip(pillShape)
-            .background(bg)
-            .then(
-                if (border != Color.Transparent) {
-                    Modifier.border(if (isLiquid) 0.85.dp else 0.75.dp, border, pillShape)
-                } else {
-                    Modifier
-                }
-            )
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
-            .padding(
-                horizontal = if (compact) 10.dp else 12.dp,
-                vertical = if (compact) 4.dp else 6.dp
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        if (leadingIcon != null) {
-            Icon(
-                imageVector = leadingIcon,
-                contentDescription = null,
-                tint = fg,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = fg,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
+        )
+    } else {
+        XPeachFilterPillInternal(
+            label = label,
+            selected = selected,
+            onClick = onClick,
+            modifier = modifier,
+            compact = compact,
+            leadingIcon = null
         )
     }
 }
@@ -2378,6 +2276,25 @@ fun XPeachFilterPill(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     leadingIcon: @Composable () -> Unit
+) {
+    XPeachFilterPillInternal(
+        label = label,
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier,
+        compact = compact,
+        leadingIcon = leadingIcon
+    )
+}
+
+@Composable
+private fun XPeachFilterPillInternal(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    leadingIcon: (@Composable () -> Unit)? = null
 ) {
     val isDark = XPeachTheme.isDark
     val isLiquid = XPeachTheme.isLiquidGlass
@@ -2463,8 +2380,10 @@ fun XPeachFilterPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        leadingIcon()
-        Spacer(modifier = Modifier.width(4.dp))
+        if (leadingIcon != null) {
+            leadingIcon()
+            Spacer(modifier = Modifier.width(4.dp))
+        }
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,

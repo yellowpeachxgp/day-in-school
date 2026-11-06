@@ -59,6 +59,7 @@ import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -69,6 +70,7 @@ import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.FocusSessionDomain
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.HomeCardModule
 import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
@@ -84,6 +86,7 @@ import cn.edu.haut.campus.core.model.ReminderGlobalConfig
 import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.model.ThemeVisualDefaults
 import cn.edu.haut.campus.core.model.UtilityMeterDomain
 import cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain
 import cn.edu.haut.campus.core.model.UtilityReadingDomain
@@ -110,16 +113,7 @@ import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-val DEFAULT_HOME_CARD_ORDER = listOf(
-    "EXAM_SUMMARY",
-    "STUDY_FOCUS",
-    "DORM_ELECTRICITY",
-    "LIBRARY_SEAT",
-    "PARCEL_HUB",
-    "LIBRARY_CATALOG",
-    "EMPTY_CLASSROOM",
-    "CAMPUS_COMMUNITY"
-)
+val DEFAULT_HOME_CARD_ORDER: List<String> = HomeCardModule.defaultOrderIds
 
 data class AppPreferencesState(
     val gpaPrivacyShieldEnabled: Boolean = false,
@@ -129,14 +123,16 @@ data class AppPreferencesState(
     val themePaletteKey: String = "HAUT_BLUE",
     val customThemeSeedArgb: Long = 0xFF0066CC,
     val customWallpaperPath: String? = null,
-    val wallpaperAlpha: Float = 0.48f,
-    val wallpaperBlurDp: Float = 10f,
-    val wallpaperCardAlpha: Float = 0.82f,
+    val wallpaperAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA,
+    val wallpaperBlurDp: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP,
+    val wallpaperCardAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA,
     val extractedWallpaperColors: List<Long> = emptyList(),
-    val homeCardOrder: List<String> = DEFAULT_HOME_CARD_ORDER,
-    val hiddenHomeCards: Set<String> = emptySet(),
-    val fullWidthHomeCards: Set<String> = setOf("EXAM_SUMMARY"),
-    val timelineZoomScale: Float = 2.0f,
+    val homeCardOrder: List<String> = HomeCardModule.defaultOrderIds,
+    val hiddenHomeCards: Set<String> = HomeCardModule.defaultHiddenIds,
+    val fullWidthHomeCards: Set<String> = HomeCardModule.defaultFullWidthIds,
+    val timelineZoomScale: Float = ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE,
+    val widgetDefaultCompact: Boolean = false,
+    val widgetDefaultPrivacyMode: Boolean = false,
     val officialGpaValuePlain: String? = null,
     val officialGpaNote: String? = null,
     val hasSeededInitialMockData: Boolean = false,
@@ -146,8 +142,8 @@ data class AppPreferencesState(
     val savedStudentId: String? = null,
     val hasSavedCredentials: Boolean = false,
     val academicReauthenticationRequired: Boolean = false,
-    val syncXnm: String = "2025",
-    val syncXqm: String = "12",
+    val syncXnm: String = AcademicTermResolver.defaultAcademicYearCode(),
+    val syncXqm: String = AcademicTermResolver.defaultSemesterCode(),
     val lastAutoSyncEpochMillis: Long? = null,
     val customChannelUrls: Map<String, String> = emptyMap(),
     val customClubGroupNumbers: Map<String, String> = emptyMap(),
@@ -315,6 +311,8 @@ class CampusRepository internal constructor(
         val CLOUD_REFRESH_TOKEN = stringPreferencesKey("cloud_refresh_token_v1")
         val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
         val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
+        val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
+        val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
     }
 
     init {
@@ -409,21 +407,23 @@ class CampusRepository internal constructor(
         val rawOrder = prefs[PrefKeys.HOME_CARD_ORDER]
             ?.split(",")
             ?.map { it.trim() }
-            ?.filter { it in DEFAULT_HOME_CARD_ORDER }
             .orEmpty()
-        val normalizedOrder = (rawOrder + DEFAULT_HOME_CARD_ORDER).distinct()
-        val hiddenSet = prefs[PrefKeys.HIDDEN_HOME_CARDS]
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotBlank() }
-            ?.toSet()
-            ?: emptySet()
-        val fullWidthSet = prefs[PrefKeys.FULL_WIDTH_HOME_CARDS]
-            ?.let { raw ->
-                if (raw == "_NONE_") emptySet()
-                else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
-            }
-            ?: setOf("EXAM_SUMMARY")
+        val normalizedOrder = HomeCardModule.normalizeOrderIds(rawOrder)
+        val hiddenSet = HomeCardModule.normalizeHiddenIds(
+            prefs[PrefKeys.HIDDEN_HOME_CARDS]
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                ?.toSet()
+                ?: emptySet()
+        )
+        val fullWidthSet = HomeCardModule.normalizeFullWidthIds(
+            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS]
+                ?.let { raw ->
+                    if (raw == HomeCardModule.EMPTY_SET_SENTINEL) setOf(HomeCardModule.EMPTY_SET_SENTINEL)
+                    else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+                }
+        )
 
         AppPreferencesState(
             gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
@@ -434,9 +434,15 @@ class CampusRepository internal constructor(
             themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
             customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC,
             customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
-            wallpaperAlpha = (prefs[PrefKeys.WALLPAPER_ALPHA] ?: 0.55f).coerceIn(0.05f, 1.0f),
-            wallpaperBlurDp = (prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: 10f).coerceIn(0f, 35f),
-            wallpaperCardAlpha = (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: 0.72f).coerceIn(0.18f, 0.98f),
+            wallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(
+                prefs[PrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
+            ),
+            wallpaperBlurDp = ThemeVisualDefaults.clampWallpaperBlurDp(
+                prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+            ),
+            wallpaperCardAlpha = ThemeVisualDefaults.clampWallpaperCardAlpha(
+                prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+            ),
             extractedWallpaperColors = prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS]
                 ?.split(",")
                 ?.mapNotNull { it.trim().toLongOrNull() }
@@ -444,7 +450,11 @@ class CampusRepository internal constructor(
             homeCardOrder = normalizedOrder,
             hiddenHomeCards = hiddenSet,
             fullWidthHomeCards = fullWidthSet,
-            timelineZoomScale = prefs[PrefKeys.TIMELINE_SCALE] ?: 2.0f,
+            timelineZoomScale = ThemeVisualDefaults.clampTimelineZoomScale(
+                prefs[PrefKeys.TIMELINE_SCALE] ?: ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE
+            ),
+            widgetDefaultCompact = prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
+            widgetDefaultPrivacyMode = prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false,
             officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
             officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
             hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false,
@@ -454,8 +464,8 @@ class CampusRepository internal constructor(
             savedStudentId = savedStudentId,
             hasSavedCredentials = savedStudentId != null && !requiresReauthentication,
             academicReauthenticationRequired = requiresReauthentication,
-            syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025",
-            syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12",
+            syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: AcademicTermResolver.defaultAcademicYearCode(),
+            syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: AcademicTermResolver.defaultSemesterCode(),
             lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
             customChannelUrls = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]),
             customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]),
@@ -511,7 +521,7 @@ class CampusRepository internal constructor(
         val quietMode = prefs[PrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
         return ReminderGlobalConfig(
             enabled = prefs[PrefKeys.REMINDERS_ENABLED] ?: true,
-            classLeadMinutes = (prefs[PrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 60),
+            classLeadMinutes = (prefs[PrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 120),
             classSnoozeDefaultMinutes = (prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
             classSnoozeMaxCount = (prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
             classSnoozeCutoffMinutes = (prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
@@ -1667,17 +1677,17 @@ class CampusRepository internal constructor(
         cardAlpha: Float? = null
     ) {
         preferences.edit { prefs ->
-            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = it.coerceIn(0.05f, 1.0f) }
-            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = it.coerceIn(0f, 35f) }
-            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = it.coerceIn(0.18f, 0.98f) }
+            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.clampWallpaperAlpha(it) }
+            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.clampWallpaperBlurDp(it) }
+            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.clampWallpaperCardAlpha(it) }
         }
     }
 
     suspend fun resetWallpaperVisualParams() {
         preferences.edit { prefs ->
-            prefs[PrefKeys.WALLPAPER_ALPHA] = 0.55f
-            prefs[PrefKeys.WALLPAPER_BLUR_DP] = 10f
-            prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+            prefs[PrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
+            prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+            prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
@@ -1703,11 +1713,13 @@ class CampusRepository internal constructor(
         hidden: Set<String>,
         fullWidth: Set<String>
     ) {
-        val normalizedOrder = (order.filter { it in DEFAULT_HOME_CARD_ORDER } + DEFAULT_HOME_CARD_ORDER).distinct()
+        val normalizedOrder = HomeCardModule.normalizeOrderIds(order)
+        val normalizedHidden = HomeCardModule.normalizeHiddenIds(hidden)
         preferences.edit { prefs ->
             prefs[PrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
-            prefs[PrefKeys.HIDDEN_HOME_CARDS] = hidden.joinToString(",")
-            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS] = if (fullWidth.isEmpty()) "_NONE_" else fullWidth.joinToString(",")
+            prefs[PrefKeys.HIDDEN_HOME_CARDS] = normalizedHidden.joinToString(",")
+            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS] =
+                if (fullWidth.isEmpty()) HomeCardModule.EMPTY_SET_SENTINEL else fullWidth.joinToString(",")
         }
     }
 
@@ -1837,7 +1849,7 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setTimelineZoomScale(scale: Float) {
-        preferences.edit { it[PrefKeys.TIMELINE_SCALE] = scale.coerceIn(1.2f, 3.6f) }
+        preferences.edit { it[PrefKeys.TIMELINE_SCALE] = ThemeVisualDefaults.clampTimelineZoomScale(scale) }
     }
 
     suspend fun saveWidgetConfig(config: WidgetInstanceConfig) {
@@ -1845,8 +1857,30 @@ class CampusRepository internal constructor(
     }
 
     suspend fun getWidgetConfigOrDefault(appWidgetId: Int, defaultType: cn.edu.haut.campus.core.model.WidgetType): WidgetInstanceConfig {
-        return dao.getWidgetConfig(appWidgetId)?.toDomain()
-            ?: WidgetInstanceConfig(appWidgetId = appWidgetId, widgetType = defaultType)
+        dao.getWidgetConfig(appWidgetId)?.toDomain()?.let { return it }
+        val prefs = preferences.data.first()
+        return WidgetInstanceConfig(
+            appWidgetId = appWidgetId,
+            widgetType = defaultType,
+            compact = prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
+            privacyMode = prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false
+        )
+    }
+
+    suspend fun updateAllWidgetDefaults(
+        compact: Boolean? = null,
+        privacyMode: Boolean? = null
+    ) {
+        preferences.edit { prefs ->
+            compact?.let { prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] = it }
+            privacyMode?.let { prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] = it }
+        }
+        when {
+            compact != null && privacyMode != null -> dao.updateAllWidgetConfigsDefaults(compact, privacyMode)
+            compact != null -> dao.updateAllWidgetConfigsCompact(compact)
+            privacyMode != null -> dao.updateAllWidgetConfigsPrivacyMode(privacyMode)
+        }
+        notifyScheduleOrPolicyChanged("WIDGET_CONFIG_UPDATED")
     }
 
     suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig {
@@ -1867,7 +1901,7 @@ class CampusRepository internal constructor(
             val current = extractReminderConfig(prefs)
             val updated = transform(current)
             prefs[PrefKeys.REMINDERS_ENABLED] = updated.enabled
-            prefs[PrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 60)
+            prefs[PrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 120)
             prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
             prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
             prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
