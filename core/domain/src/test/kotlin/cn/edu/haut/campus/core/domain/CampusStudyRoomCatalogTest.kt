@@ -29,9 +29,8 @@ class CampusStudyRoomCatalogTest {
                 startPeriod = 1,
                 endPeriod = 2,
                 weeks = setOf(1, 2, 3),
-                rawWeeks = "1-3周",
                 rawRoom = "莲5号教学楼5101",
-                normalizedBuildingId = "lh_b5"
+                buildingId = "lh_b5"
             ),
             CourseScheduleRule(
                 id = "r2",
@@ -41,9 +40,8 @@ class CampusStudyRoomCatalogTest {
                 startPeriod = 3,
                 endPeriod = 4,
                 weeks = setOf(1, 2, 3),
-                rawWeeks = "1-3周",
                 rawRoom = "莲6号教学楼6101",
-                normalizedBuildingId = "lh_b6"
+                buildingId = "lh_b6"
             )
         )
 

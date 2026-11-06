@@ -46,18 +46,28 @@ object CampusStudyRoomCatalog {
         return matched?.index ?: STUDY_PERIOD_SLOTS.lastIndex
     }
 
+    fun resolveActiveSlotIndex(nowHour: Int): Int = when {
+        nowHour < 10 -> 0
+        nowHour < 12 -> 1
+        nowHour < 16 -> 2
+        nowHour < 18 -> 3
+        else -> 4
+    }
+
     fun resolveActiveSlot(nowTime: LocalTime): CampusStudyPeriodSlot =
         STUDY_PERIOD_SLOTS[resolveActiveSlotIndex(nowTime)]
 
     fun findBusyRawRooms(
         rules: List<CourseScheduleRule>,
-        activeTermId: String?,
+        activeTermId: String? = null,
+        termId: String? = activeTermId,
         teachingWeek: Int,
         weekday: DayOfWeek,
         slot: CampusStudyPeriodSlot,
     ): List<String> {
+        val effectiveTermId = activeTermId ?: termId
         return rules.filter { rule ->
-            (activeTermId == null || rule.termId == activeTermId) &&
+            (effectiveTermId == null || rule.termId == effectiveTermId) &&
                 rule.weekday == weekday &&
                 (rule.weeks.isEmpty() || teachingWeek in rule.weeks) &&
                 rule.startPeriod <= slot.endPeriod &&
@@ -70,15 +80,17 @@ object CampusStudyRoomCatalog {
 
     fun computeFreeRoomsCount(
         rules: List<CourseScheduleRule>,
-        activeTermId: String?,
+        activeTermId: String? = null,
+        termId: String? = activeTermId,
         teachingWeek: Int,
         weekday: DayOfWeek,
         slot: CampusStudyPeriodSlot,
         candidateRooms: List<String> = ALL_LIANHUAJIE_CANDIDATE_ROOMS,
     ): Int {
+        val effectiveTermId = activeTermId ?: termId
         val busyRawRooms = findBusyRawRooms(
             rules = rules,
-            activeTermId = activeTermId,
+            activeTermId = effectiveTermId,
             teachingWeek = teachingWeek,
             weekday = weekday,
             slot = slot,
