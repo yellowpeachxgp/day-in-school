@@ -566,7 +566,9 @@ fun XPeachEmptyState(
     icon: ImageVector? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    onActionClick: (() -> Unit)? = null,
 ) {
+    val resolvedAction = onAction ?: onActionClick
     XPeachWell(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -606,10 +608,10 @@ fun XPeachEmptyState(
                     textAlign = TextAlign.Center,
                 )
             }
-            if (!actionLabel.isNullOrBlank() && onAction != null) {
+            if (!actionLabel.isNullOrBlank() && resolvedAction != null) {
                 Spacer(modifier = Modifier.height(2.dp))
                 FilledTonalButton(
-                    onClick = onAction,
+                    onClick = resolvedAction,
                     shape = RoundedCornerShape(XPeachTokens.Radius.Control),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                 ) {

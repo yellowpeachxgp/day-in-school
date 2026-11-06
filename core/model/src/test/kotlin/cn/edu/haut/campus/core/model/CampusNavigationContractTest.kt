@@ -12,7 +12,7 @@ class CampusNavigationContractTest {
     fun `bottom tab routes resolve from index and route id`() {
         assertEquals(CampusBottomTabRoute.TODAY, CampusBottomTabRoute.fromIndex(0))
         assertEquals(CampusBottomTabRoute.TIMETABLE, CampusBottomTabRoute.fromIndex(1))
-        assertEquals(CampusBottomTabRoute.ACADEMIC, CampusBottomTabRoute.fromIndex(2))
+        assertEquals(CampusBottomTabRoute.GRADES, CampusBottomTabRoute.fromIndex(2))
         assertEquals(CampusBottomTabRoute.MAP, CampusBottomTabRoute.fromIndex(3))
         assertEquals(CampusBottomTabRoute.SETTINGS, CampusBottomTabRoute.fromIndex(4))
         assertEquals(CampusBottomTabRoute.TODAY, CampusBottomTabRoute.fromIndex(99))
@@ -22,12 +22,14 @@ class CampusNavigationContractTest {
     }
 
     @Test
-    fun `home card module normalizes raw csv and preserves defaults when empty`() {
-        val normalized = HomeCardModule.normalizeOrderedIds("utility,invalid_id,parcel,utility")
-        assertEquals(listOf("utility", "parcel"), normalized)
+    fun `home card module normalizes raw order and appends missing defaults`() {
+        val normalized = HomeCardModule.normalizeOrderIds(listOf("PARCEL_HUB", "invalid_id", "DORM_ELECTRICITY", "PARCEL_HUB"))
+        assertEquals("PARCEL_HUB", normalized[0])
+        assertEquals("DORM_ELECTRICITY", normalized[1])
+        assertEquals(HomeCardModule.defaultOrderIds.size, normalized.size)
 
-        val fallback = HomeCardModule.normalizeOrderedIds("")
-        assertEquals(HomeCardModule.DEFAULT_ORDER_CSV.split(","), fallback)
+        val fallback = HomeCardModule.normalizeOrderIds(emptyList())
+        assertEquals(HomeCardModule.defaultOrderIds, fallback)
     }
 
     @Test
@@ -63,23 +65,23 @@ class CampusNavigationContractTest {
         val prevDayEpochMs = targetDate.minusDays(1).atStartOfDay(HAUT_ZONE_ID).plusHours(15).toInstant().toEpochMilli()
 
         val sessions = listOf(
-            FocusSessionRecord(
-                id = 1L,
+            FocusSessionDomain(
+                id = "s1",
+                generation = 1,
                 durationMinutes = 25,
                 startedAtEpochMs = targetEpochMs - 1_500_000L,
                 expectedEndAtEpochMs = targetEpochMs,
                 completedAtEpochMs = targetEpochMs,
-                status = FocusSessionStatus.COMPLETED,
-                generation = 1L
+                status = FocusSessionStatus.COMPLETED
             ),
-            FocusSessionRecord(
-                id = 2L,
+            FocusSessionDomain(
+                id = "s2",
+                generation = 2,
                 durationMinutes = 45,
                 startedAtEpochMs = prevDayEpochMs - 2_700_000L,
                 expectedEndAtEpochMs = prevDayEpochMs,
                 completedAtEpochMs = prevDayEpochMs,
-                status = FocusSessionStatus.COMPLETED,
-                generation = 2L
+                status = FocusSessionStatus.COMPLETED
             )
         )
 

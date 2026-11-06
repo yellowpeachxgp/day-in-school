@@ -418,6 +418,21 @@ object XPeachTheme {
             MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
         }
 
+    val glassChipColor: Color
+        @Composable get() = if (isLiquidGlass || hasActiveBackdrop) {
+            val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+            base.copy(alpha = (glassCardAlpha * 0.78f).coerceIn(0.22f, 0.90f))
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        }
+
+    val glassBorderColor: Color
+        @Composable get() = if (isDark) {
+            Color.White.copy(alpha = 0.20f)
+        } else {
+            Color.White.copy(alpha = 0.72f)
+        }
+
     /**
      * 弹窗 (`XPeachAlertDialog` / 模态面板) 表面色：
      * 在液态毛玻璃模式下呈现晶莹磨砂质感，同时保障弹窗表单与正文的对比度。
@@ -1791,7 +1806,11 @@ fun XPeachGlassSurface(
     shape: Shape = RoundedCornerShape(16.dp),
     containerColor: Color = XPeachTheme.hudSurfaceColor,
     accentTint: Color? = null,
+    borderColor: Color = Color.Unspecified,
+    borderWidth: Dp = 0.6.dp,
     shadowElevation: Dp = 2.dp,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val isLiquid = XPeachTheme.isLiquidGlass
@@ -1802,16 +1821,18 @@ fun XPeachGlassSurface(
     } else {
         containerColor
     }
-    val borderStroke = if (isLiquid) {
-        BorderStroke(0.95.dp, XPeachTheme.specularRimBrush(accentTint = accentTint, intensity = 1.05f))
-    } else {
-        BorderStroke(
-            0.6.dp,
-            accentTint ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (XPeachTheme.isDark) 0.45f else 0.55f)
+    val effectiveTint = accentTint ?: borderColor.takeIf { it != Color.Unspecified && it != Color.Transparent }
+    val borderStroke: BorderStroke? = when {
+        borderWidth <= 0.dp -> null
+        isLiquid -> BorderStroke(0.95.dp, XPeachTheme.specularRimBrush(accentTint = effectiveTint, intensity = 1.05f))
+        borderColor != Color.Unspecified && borderColor != Color.Transparent -> BorderStroke(borderWidth, borderColor)
+        else -> BorderStroke(
+            borderWidth,
+            effectiveTint ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (XPeachTheme.isDark) 0.45f else 0.55f)
         )
     }
     Surface(
-        modifier = modifier,
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
         shape = shape,
         color = resolvedColor,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -1819,7 +1840,10 @@ fun XPeachGlassSurface(
         shadowElevation = if (isLiquid) (shadowElevation * 1.2f) else shadowElevation,
         border = borderStroke
     ) {
-        Box(content = content)
+        Box(
+            modifier = Modifier.padding(contentPadding),
+            content = content
+        )
     }
 }
 

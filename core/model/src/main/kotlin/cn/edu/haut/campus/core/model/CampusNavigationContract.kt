@@ -21,6 +21,11 @@ enum class CampusBottomTabRoute(
     companion object {
         val default: CampusBottomTabRoute = TODAY
 
+        fun fromIndex(index: Int): CampusBottomTabRoute =
+            entries.getOrElse(index) { default }
+
+        fun fromRouteId(rawKey: String?): CampusBottomTabRoute? = fromKey(rawKey)
+
         fun fromKey(rawKey: String?): CampusBottomTabRoute? {
             if (rawKey.isNullOrBlank()) return null
             val normalized = rawKey.trim()
@@ -185,15 +190,23 @@ object ThemeVisualDefaults {
     const val DEFAULT_WALLPAPER_CARD_ALPHA: Float = 0.68f
     const val DEFAULT_TIMELINE_ZOOM_SCALE: Float = 2.0f
 
+    const val MIN_GLASS_OPACITY: Float = 0.18f
+    const val MAX_GLASS_OPACITY: Float = 0.98f
+    const val MIN_BLUR_RADIUS_DP: Float = 0f
+    const val MAX_BLUR_RADIUS_DP: Float = 35f
+
     val WALLPAPER_ALPHA_RANGE: ClosedFloatingPointRange<Float> = 0.05f..1.0f
-    val WALLPAPER_BLUR_DP_RANGE: ClosedFloatingPointRange<Float> = 0f..35f
-    val WALLPAPER_CARD_ALPHA_RANGE: ClosedFloatingPointRange<Float> = 0.18f..0.98f
+    val WALLPAPER_BLUR_DP_RANGE: ClosedFloatingPointRange<Float> = MIN_BLUR_RADIUS_DP..MAX_BLUR_RADIUS_DP
+    val WALLPAPER_CARD_ALPHA_RANGE: ClosedFloatingPointRange<Float> = MIN_GLASS_OPACITY..MAX_GLASS_OPACITY
     val TIMELINE_ZOOM_SCALE_RANGE: ClosedFloatingPointRange<Float> = 1.2f..3.6f
 
     fun clampWallpaperAlpha(value: Float): Float = value.coerceIn(WALLPAPER_ALPHA_RANGE)
     fun clampWallpaperBlurDp(value: Float): Float = value.coerceIn(WALLPAPER_BLUR_DP_RANGE)
     fun clampWallpaperCardAlpha(value: Float): Float = value.coerceIn(WALLPAPER_CARD_ALPHA_RANGE)
     fun clampTimelineZoomScale(value: Float): Float = value.coerceIn(TIMELINE_ZOOM_SCALE_RANGE)
+
+    fun clampGlassOpacity(value: Float): Float = clampWallpaperCardAlpha(value)
+    fun clampBlurRadiusDp(value: Float): Float = clampWallpaperBlurDp(value)
 }
 
 /**
@@ -220,12 +233,25 @@ object AcademicTermResolver {
     }
 
     /**
+     * 根据给定日期推算标准学期 ID（如 `"2025-2026-2"`）。
+     */
+    fun defaultTermId(today: LocalDate = LocalDate.now()): String {
+        val startYear = defaultAcademicYearCode(today).toIntOrNull() ?: 2025
+        val endYear = startYear + 1
+        val semNo = if (defaultSemesterCode(today) == SPRING_SEMESTER_CODE) "2" else "1"
+        return "$startYear-$endYear-$semNo"
+    }
+
+    /**
      * 生成候选学年代码列表（供下拉或分段选择）。
      */
     fun candidateAcademicYearCodes(today: LocalDate = LocalDate.now(), count: Int = 4): List<String> {
         val baseYear = defaultAcademicYearCode(today).toIntOrNull() ?: 2025
         return (0 until count).map { offset -> (baseYear - offset).toString() }
     }
+
+    fun recentAcademicYears(count: Int = 4, today: LocalDate = LocalDate.now()): List<String> =
+        candidateAcademicYearCodes(today = today, count = count)
 
     /**
      * 格式化为人类可读的学年学期描述，如 `"2025-2026 学年 第 2 学期"`。

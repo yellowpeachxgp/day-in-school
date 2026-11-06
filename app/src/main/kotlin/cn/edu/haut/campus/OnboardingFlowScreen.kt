@@ -219,20 +219,21 @@ fun OnboardingFlowScreen(
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                val imported = WallpaperThemeEngine.importWallpaperFromUri(context, uri)
-                if (imported != null) {
-                    repository.saveCustomWallpaperTheme(
-                        localPath = imported.localFilePath,
-                        primarySeedArgb = imported.primarySeedArgb,
-                        extractedSwatches = imported.extractedSwatches,
-                        enableLiquidGlass = true,
-                    )
-                    bannerTone = XPeachFeedbackTone.SUCCESS
-                    bannerMessage = imported.statusMessage
-                } else {
-                    bannerTone = XPeachFeedbackTone.WARNING
-                    bannerMessage = "读取相册图片失败，请换一张图片重试"
-                }
+                WallpaperThemeEngine.importWallpaperAndExtractPalette(context, uri)
+                    .onSuccess { imported ->
+                        repository.saveCustomWallpaperTheme(
+                            localPath = imported.localFilePath,
+                            primarySeedArgb = imported.primarySeedArgb,
+                            extractedSwatches = imported.extractedSwatches,
+                            enableLiquidGlass = true,
+                        )
+                        bannerTone = XPeachFeedbackTone.SUCCESS
+                        bannerMessage = imported.statusMessage
+                    }
+                    .onFailure {
+                        bannerTone = XPeachFeedbackTone.WARNING
+                        bannerMessage = "读取相册图片失败，请换一张图片重试"
+                    }
             }
         }
     }
@@ -423,31 +424,39 @@ fun OnboardingFlowScreen(
                             },
                             onSyncDesktopWallpaper = {
                                 scope.launch {
-                                    val res = WallpaperThemeEngine.syncSystemDesktopWallpaper(context)
-                                    if (res != null) {
-                                        repository.saveCustomWallpaperTheme(
-                                            localPath = res.localFilePath,
-                                            primarySeedArgb = res.primarySeedArgb,
-                                            extractedSwatches = res.extractedSwatches,
-                                            enableLiquidGlass = true,
-                                        )
-                                        bannerTone = XPeachFeedbackTone.SUCCESS
-                                        bannerMessage = res.statusMessage
-                                    } else {
-                                        bannerTone = XPeachFeedbackTone.WARNING
-                                        bannerMessage = "未能直接读取系统壁纸，你可以点击「从相册选图」上传背景"
-                                    }
+                                    WallpaperThemeEngine.syncSystemDesktopWallpaper(context)
+                                        .onSuccess { res ->
+                                            repository.saveCustomWallpaperTheme(
+                                                localPath = res.localFilePath,
+                                                primarySeedArgb = res.primarySeedArgb,
+                                                extractedSwatches = res.extractedSwatches,
+                                                enableLiquidGlass = true,
+                                            )
+                                            bannerTone = XPeachFeedbackTone.SUCCESS
+                                            bannerMessage = res.statusMessage
+                                        }
+                                        .onFailure {
+                                            bannerTone = XPeachFeedbackTone.WARNING
+                                            bannerMessage = "未能直接读取系统壁纸，你可以点击「从相册选图」上传背景"
+                                        }
                                 }
                             },
                             onExtractDesktopColors = {
                                 scope.launch {
-                                    val res = WallpaperThemeEngine.extractSystemDesktopColorsOnly(context)
-                                    repository.saveExtractedDesktopSwatches(
-                                        primarySeedArgb = res.primarySeedArgb,
-                                        extractedSwatches = res.extractedSwatches,
-                                    )
-                                    bannerTone = XPeachFeedbackTone.SUCCESS
-                                    bannerMessage = res.statusMessage
+                                    WallpaperThemeEngine.extractSystemDesktopColorsOnly(context)
+                                        .onSuccess { swatches ->
+                                            val primarySeed = swatches.firstOrNull() ?: 0xFF0EA5E9L
+                                            repository.saveExtractedDesktopSwatches(
+                                                primarySeedArgb = primarySeed,
+                                                extractedSwatches = swatches,
+                                            )
+                                            bannerTone = XPeachFeedbackTone.SUCCESS
+                                            bannerMessage = "已提取系统桌面主题色并应用到全局控件"
+                                        }
+                                        .onFailure {
+                                            bannerTone = XPeachFeedbackTone.WARNING
+                                            bannerMessage = "暂未能读取系统桌面主题色，你可以选择下方预设色板"
+                                        }
                                 }
                             },
                             onPickGalleryWallpaper = { wallpaperPickerLauncher.launch("image/*") },
