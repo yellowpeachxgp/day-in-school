@@ -304,7 +304,7 @@ fun LibraryCatalogScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 6.dp),
-            padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),

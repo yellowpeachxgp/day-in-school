@@ -334,7 +334,7 @@ fun SchoolCenterScreen(
                     item(key = "search") {
                         XPeachCard(
                             modifier = Modifier.fillMaxWidth(),
-                            padding = PaddingValues(12.dp)
+                            contentPadding = PaddingValues(12.dp)
                         ) {
                             OutlinedTextField(
                                 value = query,
