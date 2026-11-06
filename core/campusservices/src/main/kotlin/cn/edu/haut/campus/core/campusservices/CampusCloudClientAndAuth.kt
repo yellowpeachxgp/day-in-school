@@ -220,7 +220,7 @@ object CampusCloudOidcHelper {
         }
         val data = root.getJSONObject("data")
         val loginTxn = data.getString("login_txn")
-        val authorizeUrl = data.getString("authorize_url")
+        val authorizeUrl = validateAllowedCloudUrl(data.getString("authorize_url")).toString()
         return MobileAuthTransactionStart(
             loginTxn = loginTxn,
             authorizeUrl = authorizeUrl,
@@ -711,14 +711,15 @@ object CampusCloudOidcHelper {
             val cleanBase = cloudBaseUrl.trimEnd('/')
             val bodyObj = JSONObject()
             if (!studentNo.isNullOrBlank()) {
+                val bindingObj = JSONObject()
+                    .put("school_id", "haut")
+                    .put("student_no", studentNo.trim())
+                if (!delegatedSecret.isNullOrBlank()) {
+                    bindingObj.put("delegated_secret", delegatedSecret)
+                }
                 bodyObj.put(
                     "school_binding_upserts",
-                    JSONArray().put(
-                        JSONObject()
-                            .put("school_id", "haut")
-                            .put("student_no", studentNo.trim())
-                            .put("delegated_secret", delegatedSecret?.takeIf { it.isNotBlank() } ?: "android_delegated")
-                    )
+                    JSONArray().put(bindingObj)
                 )
             }
             val parcelUpserts = JSONArray()
@@ -1147,31 +1148,34 @@ object CampusCloudOidcHelper {
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
             }
         }
-        if (bodyJson != null) {
-            conn.outputStream.use { out ->
-                out.write(bodyJson.toByteArray(StandardCharsets.UTF_8))
-            }
-        }
-        val code = conn.responseCode
-        val stream = if (code >= 400) conn.errorStream else conn.inputStream
-        val text = stream?.use { input ->
-            val maxBytes = 2 * 1024 * 1024
-            val buffer = ByteArray(8192)
-            val out = java.io.ByteArrayOutputStream()
-            var total = 0
-            while (true) {
-                val n = input.read(buffer)
-                if (n <= 0) break
-                total += n
-                if (total > maxBytes) {
-                    throw IllegalStateException("云端响应体积超出 2MB 安全上限")
+        try {
+            if (bodyJson != null) {
+                conn.outputStream.use { out ->
+                    out.write(bodyJson.toByteArray(StandardCharsets.UTF_8))
                 }
-                out.write(buffer, 0, n)
             }
-            out.toString(StandardCharsets.UTF_8.name())
-        }.orEmpty()
-        conn.disconnect()
-        return text
+            val code = conn.responseCode
+            val stream = if (code >= 400) conn.errorStream else conn.inputStream
+            val text = stream?.use { input ->
+                val maxBytes = 2 * 1024 * 1024
+                val buffer = ByteArray(8192)
+                val out = java.io.ByteArrayOutputStream()
+                var total = 0
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n <= 0) break
+                    total += n
+                    if (total > maxBytes) {
+                        throw IllegalStateException("云端响应体积超出 2MB 安全上限")
+                    }
+                    out.write(buffer, 0, n)
+                }
+                out.toString(StandardCharsets.UTF_8.name())
+            }.orEmpty()
+            return text
+        } finally {
+            conn.disconnect()
+        }
     }
 
     fun buildDebitIdempotencyKey(orderId: String): String =

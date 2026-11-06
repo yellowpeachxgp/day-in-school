@@ -2233,22 +2233,27 @@ class CampusRepository internal constructor(
             cloudAndParcelDao.clearLibraryBookingPlans()
             cloudAndParcelDao.clearParcelItems()
         }
-        preferences.edit { prefs ->
-            prefs.remove(PrefKeys.OFFICIAL_GPA)
-            prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
-            prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
-            prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-            prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
-            prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
-            prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
-            prefs.remove(PrefKeys.REMINDER_DIAGNOSTIC_LOGS)
-            prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
-            prefs.remove(PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
-            prefs.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
-            prefs.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
-            prefs[PrefKeys.SEEDED] = true
-            prefs[PrefKeys.CLEAN_BASE_V2] = true
-            prefs[PrefKeys.ONBOARDING_COMPLETED] = false
+        cloudTokenMutex.withLock {
+            cachedCloudAccessToken = ""
+            cachedCloudRefreshToken = ""
+            lastCloudTokenRefreshAtMs = 0L
+            preferences.edit { prefs ->
+                prefs.remove(PrefKeys.OFFICIAL_GPA)
+                prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
+                prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
+                prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+                prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
+                prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
+                prefs.remove(PrefKeys.REMINDER_DIAGNOSTIC_LOGS)
+                prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
+                prefs.remove(PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
+                prefs.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
+                prefs.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
+                prefs[PrefKeys.SEEDED] = true
+                prefs[PrefKeys.CLEAN_BASE_V2] = true
+                prefs[PrefKeys.ONBOARDING_COMPLETED] = false
+            }
         }
     }
 
@@ -2300,6 +2305,7 @@ class CampusRepository internal constructor(
     private var lastCloudTokenRefreshAtMs: Long = 0L
 
     private val cloudTokenMutex = Mutex()
+    private val cloudSyncMutex = Mutex()
 
     private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         val parts = token.split(".")
@@ -2314,10 +2320,21 @@ class CampusRepository internal constructor(
         }.getOrDefault(false)
     }
 
-    private suspend fun resolveValidCloudAccessToken(forceRefresh: Boolean = false): String =
+    private suspend fun resolveValidCloudAccessToken(
+        forceRefresh: Boolean = false,
+        failedAccessToken: String? = null
+    ): String =
         cloudTokenMutex.withLock {
             val nowMs = System.currentTimeMillis()
             if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken, nowMs)) {
+                return@withLock cachedCloudAccessToken
+            }
+            if (forceRefresh &&
+                !failedAccessToken.isNullOrBlank() &&
+                cachedCloudAccessToken.isNotBlank() &&
+                cachedCloudAccessToken != failedAccessToken &&
+                isJwtNotExpired(cachedCloudAccessToken, nowMs)
+            ) {
                 return@withLock cachedCloudAccessToken
             }
             if (forceRefresh && cachedCloudAccessToken.isNotBlank() && nowMs - lastCloudTokenRefreshAtMs < 10_000L) {
@@ -2332,17 +2349,20 @@ class CampusRepository internal constructor(
                 return@withLock storedAt
             }
             if (storedRt.isNotBlank()) {
-                val refreshed = withContext(Dispatchers.IO) {
-                    CampusCloudOidcHelper.refreshCloudSession(storedRt)
+                val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt)
+                    if (pair != null) {
+                        cachedCloudAccessToken = pair.first
+                        cachedCloudRefreshToken = pair.second
+                        lastCloudTokenRefreshAtMs = System.currentTimeMillis()
+                        preferences.edit {
+                            it[PrefKeys.CLOUD_ACCESS_TOKEN] = pair.first
+                            it[PrefKeys.CLOUD_REFRESH_TOKEN] = pair.second
+                        }
+                    }
+                    pair
                 }
                 if (refreshed != null) {
-                    cachedCloudAccessToken = refreshed.first
-                    cachedCloudRefreshToken = refreshed.second
-                    lastCloudTokenRefreshAtMs = System.currentTimeMillis()
-                    preferences.edit {
-                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = refreshed.first
-                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = refreshed.second
-                    }
                     return@withLock refreshed.first
                 }
             }
@@ -2400,7 +2420,7 @@ class CampusRepository internal constructor(
         if (token.isBlank()) return@withContext null
         var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
         if (livePeach == null) {
-            token = resolveValidCloudAccessToken(forceRefresh = true)
+            token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
             if (token.isNotBlank()) {
                 livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
             }
@@ -2447,54 +2467,61 @@ class CampusRepository internal constructor(
      * 2. 拉取 XPeach 最新 🍑 余额、网页端创建的占座预约计划与快递取件码并落库 Room
      */
     suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
-                ?: throw IllegalStateException("尚未连接 XPeach 通行证")
-            var token = resolveValidCloudAccessToken(forceRefresh = false)
-            if (token.isBlank()) {
-                throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
-            }
+        cloudSyncMutex.withLock {
+            runCatching {
+                val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                    ?: throw IllegalStateException("尚未连接 XPeach 通行证")
+                var token = resolveValidCloudAccessToken(forceRefresh = false)
+                if (token.isBlank()) {
+                    throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
+                }
 
-            val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
+                val existingPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+                val hasActiveCloudBookingPlan = existingPlansSnapshot.any {
+                    it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                        it.status !in setOf("CANCELLED", "FAILED", "EXPIRED")
+                }
+                val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
+                val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
 
-            val localParcels = cloudAndParcelDao.getParcelItemsSnapshot().map { p ->
-                CloudSyncedParcelDto(
-                    id = p.id,
-                    trackingNumber = p.trackingNumber,
-                    carrierCode = p.carrierCode,
-                    carrierName = p.carrierName,
-                    status = p.status,
-                    pickupCode = p.pickupCode,
-                    stationName = p.stationName,
-                    itemTitle = p.itemTitle,
-                    rawNotificationText = p.estimatedDeliveryText
-                )
-            }
-            val cancelledJobIds = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-                .filter { it.status == "CANCELLED" && !it.cloudJobId.isNullOrBlank() }
-                .mapNotNull { it.cloudJobId?.removePrefix("cjob_") }
-
-            var snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
-                accessToken = token,
-                studentNo = localStudentNo,
-                delegatedSecret = localDelegatedSecret,
-                localParcels = localParcels,
-                cancelledJobOrPlanIds = cancelledJobIds
-            )
-            if (snapshot == null) {
-                token = resolveValidCloudAccessToken(forceRefresh = true)
-                if (token.isNotBlank()) {
-                    snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
-                        accessToken = token,
-                        studentNo = localStudentNo,
-                        delegatedSecret = localDelegatedSecret,
-                        localParcels = localParcels,
-                        cancelledJobOrPlanIds = cancelledJobIds
+                val localParcels = cloudAndParcelDao.getParcelItemsSnapshot().map { p ->
+                    CloudSyncedParcelDto(
+                        id = p.id,
+                        trackingNumber = p.trackingNumber,
+                        carrierCode = p.carrierCode,
+                        carrierName = p.carrierName,
+                        status = p.status,
+                        pickupCode = p.pickupCode,
+                        stationName = p.stationName,
+                        itemTitle = p.itemTitle,
+                        rawNotificationText = p.estimatedDeliveryText
                     )
                 }
-            }
-            val verifiedSnapshot = snapshot ?: throw IllegalStateException("同步云端数据失败，请稍后重试")
-            val now = System.currentTimeMillis()
+                val cancelledJobIds = existingPlansSnapshot
+                    .filter { it.status == "CANCELLED" && !it.cloudJobId.isNullOrBlank() }
+                    .mapNotNull { it.cloudJobId?.removePrefix("cjob_") }
+
+                var snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
+                    accessToken = token,
+                    studentNo = localStudentNo,
+                    delegatedSecret = effectiveDelegatedSecret,
+                    localParcels = localParcels,
+                    cancelledJobOrPlanIds = cancelledJobIds
+                )
+                if (snapshot == null) {
+                    token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                    if (token.isNotBlank()) {
+                        snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
+                            accessToken = token,
+                            studentNo = localStudentNo,
+                            delegatedSecret = effectiveDelegatedSecret,
+                            localParcels = localParcels,
+                            cancelledJobOrPlanIds = cancelledJobIds
+                        )
+                    }
+                }
+                val verifiedSnapshot = snapshot ?: throw IllegalStateException("同步云端数据失败，请稍后重试")
+                val now = System.currentTimeMillis()
 
             // 1) 更新本地 XPeach 通行证与 🍑 余额
             cloudAndParcelDao.upsertCloudIdentityBinding(
@@ -2634,16 +2661,20 @@ class CampusRepository internal constructor(
                 notifyScheduleOrPolicyChanged("PARCEL_CLOUD_SYNCED")
             }
             verifiedSnapshot
+            }
         }
     }
 
     suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
         val now = System.currentTimeMillis()
-        cachedCloudAccessToken = ""
-        cachedCloudRefreshToken = ""
-        preferences.edit {
-            it.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
-            it.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
+        cloudTokenMutex.withLock {
+            cachedCloudAccessToken = ""
+            cachedCloudRefreshToken = ""
+            lastCloudTokenRefreshAtMs = 0L
+            preferences.edit {
+                it.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
+                it.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
+            }
         }
         cloudAndParcelDao.clearCloudIdentityBinding()
         val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()

@@ -150,6 +150,7 @@ object GitHubReleaseUpdater {
                         readTimeoutMs = 10_000
                     ).apply {
                         requestMethod = "GET"
+                        instanceFollowRedirects = false
                         setRequestProperty("Accept", "application/vnd.github+json")
                     }
                     try {
