@@ -10,9 +10,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +28,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Campaign
+import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.VolunteerActivism
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,21 +55,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachEmptyState
+import cn.edu.haut.campus.core.designsystem.XPeachFeedbackBanner
+import cn.edu.haut.campus.core.designsystem.XPeachFeedbackTone
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
+import cn.edu.haut.campus.core.designsystem.XPeachSearchField
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
@@ -258,6 +278,7 @@ fun EmptyClassroomScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CampusCommunityScreen(
     repository: CampusRepository,
@@ -289,7 +310,7 @@ fun CampusCommunityScreen(
     ) {
         XPeachTopBar(
             title = "社团与校园频道",
-            subtitle = "河南工业大学 · 学生社团与校园频道",
+            subtitle = "河南工业大学 · 官方合作社团与交流群",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -299,7 +320,7 @@ fun CampusCommunityScreen(
             },
             actions = {
                 XPeachFilterPill(
-                    label = if (isRefreshingCloud) "刷新中…" else "刷新",
+                    label = if (isRefreshingCloud) "刷新中…" else "同步云端",
                     selected = false,
                     onClick = {
                         if (!isRefreshingCloud) {
@@ -307,7 +328,7 @@ fun CampusCommunityScreen(
                                 isRefreshingCloud = true
                                 repository.refreshCampusCommunityContent()
                                     .onSuccess { updated ->
-                                        feedbackText = "已更新校园频道（${updated.channels.size} 个）与学生社团（${updated.clubs.size} 个）"
+                                        feedbackText = "已同步云端最新目录：合作社团 ${updated.clubs.size} 个 · 校园频道 ${updated.channels.size} 个"
                                     }
                                     .onFailure {
                                         feedbackText = "当前展示本地缓存目录，稍后可重试刷新"
@@ -328,73 +349,48 @@ fun CampusCommunityScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (catalog.bulletin.enabled && catalog.bulletin.title.isNotBlank()) {
-                XPeachCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = XPeachTheme.secondaryAccentCardColor
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "📢 ${catalog.bulletin.title}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (catalog.bulletin.tag.isNotBlank()) {
-                            XPeachStatusDotText(
-                                text = catalog.bulletin.tag,
-                                dotColor = XPeachTheme.readablePrimary
-                            )
-                        }
-                    }
-                    if (catalog.bulletin.content.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = catalog.bulletin.content,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                CommunityBulletinHeroCard(
+                    title = catalog.bulletin.title,
+                    content = catalog.bulletin.content,
+                    tag = catalog.bulletin.tag,
+                    version = catalog.version,
+                    clubsCount = catalog.clubs.size
+                )
             }
 
             XPeachSegmentedTabs(
                 items = listOf(
-                    "学生社团 (${catalog.clubs.size})",
+                    "合作社团 (${catalog.clubs.size})",
                     "校园频道 (${catalog.channels.size})"
                 ),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
             )
 
-            if (feedbackText != null) {
-                XPeachCard(
-                    containerColor = XPeachTheme.primaryAccentCardColor
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = feedbackText!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { feedbackText = null }) {
-                            Text("知道了", maxLines = 1, softWrap = false)
-                        }
-                    }
-                }
-            }
+            XPeachFeedbackBanner(
+                message = feedbackText,
+                tone = XPeachFeedbackTone.INFO,
+                onDismiss = { feedbackText = null }
+            )
 
             if (selectedTab == 0) {
+                val categoryCounts = remember(catalog.clubs) {
+                    catalog.clubs.groupingBy { it.category }.eachCount()
+                }
+                val activeCategories = remember(categoryCounts) {
+                    val nonEmpty = CampusClubCategory.entries.filter { (categoryCounts[it] ?: 0) > 0 }
+                    nonEmpty.ifEmpty { CampusClubCategory.entries }
+                }
+
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    XPeachSearchField(
+                        value = clubSearchQuery,
+                        onValueChange = { clubSearchQuery = it },
+                        placeholder = "搜索社团名称、活动方向、场地或 QQ 群号"
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -407,26 +403,16 @@ fun CampusCommunityScreen(
                             compact = true,
                             onClick = { selectedClubCategory = null }
                         )
-                        for (cat in CampusClubCategory.entries) {
+                        for (cat in activeCategories) {
+                            val count = categoryCounts[cat] ?: 0
                             XPeachFilterPill(
-                                label = cat.label,
+                                label = if (count > 0) "${cat.label} ($count)" else cat.label,
                                 selected = selectedClubCategory == cat,
                                 compact = true,
                                 onClick = { selectedClubCategory = cat }
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = clubSearchQuery,
-                        onValueChange = { clubSearchQuery = it },
-                        label = { Text("搜索社团名称、场地或群号") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
 
                 val filteredClubs = remember(
@@ -450,241 +436,70 @@ fun CampusCommunityScreen(
                     }
                 }
 
+                if (filteredClubs.isEmpty()) {
+                    XPeachEmptyState(
+                        title = "未找到匹配的社团",
+                        subtitle = "请尝试更换搜索关键词或切换全部分类查看",
+                        icon = Icons.Rounded.Groups,
+                        actionLabel = "重置筛选条件",
+                        onAction = {
+                            selectedClubCategory = null
+                            clubSearchQuery = ""
+                        }
+                    )
+                }
+
                 for (club in filteredClubs) {
                     val effectiveGroupNo = prefs.customClubGroupNumbers[club.id]?.takeIf { it.isNotBlank() }
                         ?: club.qqGroupNumber
+                    val isGroupCustomized = !prefs.customClubGroupNumbers[club.id].isNullOrBlank()
 
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    text = club.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                if (club.pinned) {
-                                    XPeachStatusBadge(
-                                        text = "置顶",
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                    )
-                                }
-                                XPeachStatusDotText(
-                                    text = club.category.label,
-                                    dotColor = XPeachTheme.readablePrimary
-                                )
-                            }
-                            Text(
-                                text = club.affiliatedUnit,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(start = 8.dp)
+                    CampusClubCard(
+                        club = club,
+                        effectiveGroupNo = effectiveGroupNo,
+                        isGroupCustomized = isGroupCustomized,
+                        onEditGroupNo = { editingClubItem = club },
+                        onCopyGroupNo = {
+                            copyCommunityText(context, "社团QQ群号", effectiveGroupNo)
+                            feedbackText = "已复制「${club.name}」群号：$effectiveGroupNo"
+                        },
+                        onJoinGroup = {
+                            feedbackText = openOrCopyClubQqGroup(
+                                context = context,
+                                clubName = club.name,
+                                groupNumber = effectiveGroupNo
                             )
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = club.summary,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        if (club.highlights.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                for (tag in club.highlights) {
-                                    Text(
-                                        text = "#$tag",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = XPeachTheme.readablePrimary,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "场地：${club.activityVenue}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "QQ 群：$effectiveGroupNo",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = XPeachTheme.readablePrimary,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                XPeachFilterPill(
-                                    label = "改群号",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = { editingClubItem = club }
-                                )
-                                XPeachFilterPill(
-                                    label = "复制",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = {
-                                        copyCommunityText(context, "社团QQ群号", effectiveGroupNo)
-                                        feedbackText = "已复制「${club.name}」群号：$effectiveGroupNo"
-                                    }
-                                )
-                                XPeachFilterPill(
-                                    label = "加群",
-                                    selected = true,
-                                    compact = true,
-                                    onClick = {
-                                        feedbackText = openOrCopyClubQqGroup(
-                                            context = context,
-                                            clubName = club.name,
-                                            groupNumber = effectiveGroupNo
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    )
                 }
             } else {
                 if (catalog.channels.isEmpty()) {
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "校园频道暂时置空",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "当前仅开放合作学生社团与技术交流群，校园频道后续将通过云端实时下发。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    XPeachEmptyState(
+                        title = "校园频道暂时置空",
+                        subtitle = "当前仅开放官方合作学生社团与技术交流群，校园频道后续将通过云端实时下发开放。",
+                        icon = Icons.Rounded.Forum,
+                        actionLabel = "查看合作社团 (${catalog.clubs.size})",
+                        onAction = { selectedTab = 0 }
+                    )
                 }
                 for (channel in catalog.channels) {
                     val effectiveUrl = prefs.customChannelUrls[channel.id]?.takeIf { it.isNotBlank() }
                         ?: channel.defaultInviteUrl
                     val isCustomized = !prefs.customChannelUrls[channel.id].isNullOrBlank()
 
-                    XPeachCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
+                    CampusChannelCard(
+                        channel = channel,
+                        effectiveUrl = effectiveUrl,
+                        isCustomized = isCustomized,
+                        onEditUrl = { editingChannelItem = channel },
+                        onOpenChannel = {
                             feedbackText = openPresetQqChannel(
                                 context = context,
                                 channelTitle = channel.title,
                                 inviteUrl = effectiveUrl
                             )
                         }
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(
-                                        text = channel.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    if (channel.pinned) {
-                                        XPeachStatusBadge(
-                                            text = "置顶",
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                    }
-                                    XPeachStatusDotText(
-                                        text = if (isCustomized) "已修改" else channel.tagLabel,
-                                        dotColor = XPeachTheme.readablePrimary
-                                    )
-                                }
-                                Text(
-                                    text = channel.subtitle,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = effectiveUrl,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = XPeachTheme.readablePrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                XPeachFilterPill(
-                                    label = "改链接",
-                                    selected = false,
-                                    compact = true,
-                                    onClick = { editingChannelItem = channel }
-                                )
-                                XPeachFilterPill(
-                                    label = "打开",
-                                    selected = true,
-                                    compact = true,
-                                    onClick = {
-                                        feedbackText = openPresetQqChannel(
-                                            context = context,
-                                            channelTitle = channel.title,
-                                            inviteUrl = effectiveUrl
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    )
                 }
             }
 
@@ -792,6 +607,443 @@ fun CampusCommunityScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun CommunityBulletinHeroCard(
+    title: String,
+    content: String,
+    tag: String,
+    version: Long,
+    clubsCount: Int
+) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = XPeachTheme.secondaryAccentCardColor
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Campaign,
+                    contentDescription = null,
+                    tint = XPeachTheme.readablePrimary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (tag.isNotBlank()) {
+                        XPeachStatusDotText(
+                            text = tag,
+                            dotColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = "云控 v$version · $clubsCount 个合作社团",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = XPeachTheme.readablePrimary
+                    )
+                }
+
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                if (content.isNotBlank()) {
+                    Text(
+                        text = content,
+                        style = MaterialTheme.typography.bodySmall,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class ClubCategoryVisualMeta(
+    val icon: ImageVector,
+    val accentColor: Color
+)
+
+@Composable
+private fun resolveClubCategoryVisual(category: CampusClubCategory): ClubCategoryVisualMeta {
+    val isDark = XPeachTheme.isDark
+    return when (category) {
+        CampusClubCategory.TECH_INNOVATION -> ClubCategoryVisualMeta(
+            icon = Icons.Rounded.Memory,
+            accentColor = if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
+        )
+        CampusClubCategory.ART_PERFORMANCE -> ClubCategoryVisualMeta(
+            icon = Icons.Rounded.Palette,
+            accentColor = if (isDark) Color(0xFFF472B6) else Color(0xFFDB2777)
+        )
+        CampusClubCategory.ACADEMIC_CULTURE -> ClubCategoryVisualMeta(
+            icon = Icons.Rounded.AutoAwesome,
+            accentColor = if (isDark) Color(0xFFA78BFA) else Color(0xFF7C3AED)
+        )
+        CampusClubCategory.SPORTS_FITNESS -> ClubCategoryVisualMeta(
+            icon = Icons.Rounded.EmojiEvents,
+            accentColor = if (isDark) Color(0xFF34D399) else Color(0xFF059669)
+        )
+        CampusClubCategory.VOLUNTEER_ORG -> ClubCategoryVisualMeta(
+            icon = Icons.Rounded.VolunteerActivism,
+            accentColor = if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706)
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CampusClubCard(
+    club: CampusClubItem,
+    effectiveGroupNo: String,
+    isGroupCustomized: Boolean,
+    onEditGroupNo: () -> Unit,
+    onCopyGroupNo: () -> Unit,
+    onJoinGroup: () -> Unit
+) {
+    val visual = resolveClubCategoryVisual(club.category)
+
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        // 1. 顶部身份区：左侧分类徽章图标 + 右侧独占一行的完整社团名称 + 下方置顶/类别/挂靠学院标签流
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(visual.accentColor.copy(alpha = if (XPeachTheme.isDark) 0.20f else 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = visual.icon,
+                    contentDescription = null,
+                    tint = visual.accentColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = club.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (club.pinned) {
+                        XPeachStatusBadge(
+                            text = "官方合作 · 置顶",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = club.category.label,
+                        containerColor = visual.accentColor.copy(alpha = if (XPeachTheme.isDark) 0.22f else 0.12f),
+                        contentColor = visual.accentColor
+                    )
+                    if (club.affiliatedUnit.isNotBlank()) {
+                        XPeachStatusBadge(
+                            text = club.affiliatedUnit,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. 社团简介（独占完整宽度，不与任何徽章或标题挤压）
+        if (club.summary.isNotBlank()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = club.summary,
+                style = MaterialTheme.typography.bodyMedium,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        // 3. 特色亮点标签流
+        if (club.highlights.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (tag in club.highlights) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (XPeachTheme.isDark) 0.26f else 0.45f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "#$tag",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 4. 场地与官方 QQ 群信息凹槽
+        XPeachWell(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.LocationOn,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = "常规活动场地：${club.activityVenue}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Groups,
+                        contentDescription = null,
+                        tint = XPeachTheme.readablePrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "招新/交流 QQ 群：$effectiveGroupNo",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = XPeachTheme.readablePrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isGroupCustomized) {
+                        XPeachStatusDotText(
+                            text = "已自定义",
+                            dotColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 5. 独立底部操作栏（不挤压左侧群号与场地文字）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            XPeachFilterPill(
+                label = "自定义群号",
+                selected = false,
+                compact = true,
+                onClick = onEditGroupNo
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                XPeachFilterPill(
+                    label = "复制群号",
+                    selected = false,
+                    compact = true,
+                    onClick = onCopyGroupNo
+                )
+                XPeachFilterPill(
+                    label = "一键加群",
+                    selected = true,
+                    compact = false,
+                    onClick = onJoinGroup
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CampusChannelCard(
+    channel: PresetQqChannelItem,
+    effectiveUrl: String,
+    isCustomized: Boolean,
+    onEditUrl: () -> Unit,
+    onOpenChannel: () -> Unit
+) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onOpenChannel
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Forum,
+                    contentDescription = null,
+                    tint = XPeachTheme.readablePrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = channel.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (channel.pinned) {
+                        XPeachStatusBadge(
+                            text = "置顶频道",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = if (isCustomized) "已自定义" else channel.tagLabel,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+
+        if (channel.subtitle.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = channel.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        XPeachWell(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = effectiveUrl,
+                style = MaterialTheme.typography.labelSmall,
+                color = XPeachTheme.readablePrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                XPeachFilterPill(
+                    label = "修改链接",
+                    selected = false,
+                    compact = true,
+                    onClick = onEditUrl
+                )
+                XPeachFilterPill(
+                    label = "进入频道",
+                    selected = true,
+                    compact = false,
+                    onClick = onOpenChannel
+                )
+            }
+        }
     }
 }
 

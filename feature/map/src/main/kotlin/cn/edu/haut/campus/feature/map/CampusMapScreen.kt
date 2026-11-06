@@ -1461,7 +1461,14 @@ fun CampusMapScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("学生社团", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "合作社团",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
                             XPeachStatusDotText(
                                 text = "${preferences.campusCommunityCatalog.clubs.size} 社团",
                                 dotColor = XPeachTheme.readablePrimary
@@ -1469,7 +1476,7 @@ fun CampusMapScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "校区社团名录与一键加群",
+                            text = "官方合作社团与一键加群",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1477,6 +1484,7 @@ fun CampusMapScreen(
                         )
                     }
 
+                    val channelsCount = preferences.campusCommunityCatalog.channels.size
                     XPeachCard(
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
@@ -1487,15 +1495,22 @@ fun CampusMapScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("校园频道", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "校园频道",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
                             XPeachStatusDotText(
-                                text = "${preferences.campusCommunityCatalog.channels.size} 频道",
+                                text = if (channelsCount > 0) "$channelsCount 频道" else "暂置空",
                                 dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "迎新互助、二手与失物招领",
+                            text = if (channelsCount > 0) "迎新互助、二手与失物招领" else "后续通过云端实时下发",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

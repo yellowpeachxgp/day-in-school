@@ -1803,7 +1803,7 @@ private fun TodayCampusBentoSection(
             id = "CAMPUS_COMMUNITY",
             title = "社团与频道",
             badgeText = "$campusClubsCount 社团",
-            subtitle = "社团招新群与校园频道",
+            subtitle = "官方合作社团与技术交流群",
             onClick = onNavigateToCommunity
         )
     )
