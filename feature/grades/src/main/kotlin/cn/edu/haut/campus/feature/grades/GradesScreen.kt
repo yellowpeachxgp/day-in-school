@@ -115,6 +115,7 @@ fun GradesScreen(
     onNavigateToLibraryCatalog: () -> Unit = {},
     onNavigateToFocus: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
+    onNavigateToCompetitions: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -382,6 +383,56 @@ fun GradesScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                XPeachCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = XPeachTheme.secondaryAccentCardColor,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    onClick = onNavigateToCompetitions
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "学科竞赛与专业发展指南",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        XPeachStatusBadge(
+                            text = "${prefs.campusCommunityCatalog.competitions.size} 项白名单赛事",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "按本专业与兴趣方向匹配高含金量比赛、直达官网并关联合作社团组队",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        )
+                        XPeachFilterPill(
+                            label = "匹配比赛",
+                            selected = true,
+                            compact = true,
+                            onClick = onNavigateToCompetitions
                         )
                     }
                 }

@@ -389,6 +389,7 @@ fun HautCampusRootApp(
 ) {
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
     var overlayScreen by rememberSaveable { mutableStateOf<String?>(null) }
+    var communityInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var tabResetCounter by remember { mutableIntStateOf(0) }
 
@@ -584,6 +585,7 @@ fun HautCampusRootApp(
             "community" -> {
                 CampusCommunityScreen(
                     repository = repository,
+                    initialTab = communityInitialTab,
                     onBack = { overlayScreen = null }
                 )
             }
@@ -647,7 +649,14 @@ fun HautCampusRootApp(
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                                 onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToCommunity = {
+                                    communityInitialTab = 0
+                                    overlayScreen = "community"
+                                },
+                                onNavigateToCompetitions = {
+                                    communityInitialTab = 1
+                                    overlayScreen = "community"
+                                },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
                                 resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
@@ -672,6 +681,10 @@ fun HautCampusRootApp(
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                                 onNavigateToFocus = { overlayScreen = "focus" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
+                                onNavigateToCompetitions = {
+                                    communityInitialTab = 1
+                                    overlayScreen = "community"
+                                },
                                 resetTrigger = if (currentTab == PrimaryBottomTab.GRADES) tabResetCounter else 0
                             )
                             PrimaryBottomTab.CAMPUS -> CampusMapScreen(
@@ -679,7 +692,14 @@ fun HautCampusRootApp(
                                 initialClassroomQuery = mapRoomQuery,
                                 onNavigateToElectricity = { overlayScreen = "electricity" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToCommunity = {
+                                    communityInitialTab = 0
+                                    overlayScreen = "community"
+                                },
+                                onNavigateToCompetitions = {
+                                    communityInitialTab = 1
+                                    overlayScreen = "community"
+                                },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
                                 activeSchool = activeSession.school,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0

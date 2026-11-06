@@ -5,6 +5,9 @@ import cn.edu.haut.campus.core.model.CampusClubCategory
 import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CampusCommunityBulletin
 import cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog
+import cn.edu.haut.campus.core.model.CampusCompetitionCategory
+import cn.edu.haut.campus.core.model.CampusCompetitionItem
+import cn.edu.haut.campus.core.model.CampusMajorTrack
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import org.json.JSONArray
@@ -979,6 +982,118 @@ object CampusCloudOidcHelper {
                 }
             }.sortedWith(compareByDescending<CampusClubItem> { it.pinned }.thenBy { it.sortOrder })
 
+            val compArr = data.optJSONArray("competitions")
+            val parsedCompetitions = buildList {
+                if (compArr != null) {
+                    for (i in 0 until compArr.length()) {
+                        val cp = compArr.optJSONObject(i) ?: continue
+                        if (!cp.optBoolean("enabled", true)) continue
+                        val id = cp.optCleanString("id")
+                        val title = cp.optCleanString("title", cp.optCleanString("name"))
+                        if (id.isEmpty() || title.isEmpty()) continue
+                        val presetFallback = PresetCampusCommunityCatalog.defaultCompetitions.firstOrNull { it.id == id }
+                        val majorArr = cp.optJSONArray("recommended_major_tracks")
+                            ?: cp.optJSONArray("recommendedMajorTracks")
+                        val majorTracks = buildList {
+                            if (majorArr != null) {
+                                for (k in 0 until majorArr.length()) {
+                                    val m = majorArr.optString(k).cleanNullLiteral()
+                                    if (m.isNotEmpty()) add(CampusMajorTrack.fromWireName(m))
+                                }
+                            }
+                        }.distinct().ifEmpty {
+                            presetFallback?.recommendedMajorTracks ?: listOf(CampusMajorTrack.ALL_MAJORS)
+                        }
+                        val tagsArr = cp.optJSONArray("interest_tags")
+                            ?: cp.optJSONArray("interestTags")
+                        val interestTags = buildList {
+                            if (tagsArr != null) {
+                                for (k in 0 until tagsArr.length()) {
+                                    val t = tagsArr.optString(k).cleanNullLiteral()
+                                    if (t.isNotEmpty()) add(t)
+                                }
+                            }
+                        }.ifEmpty { presetFallback?.interestTags.orEmpty() }
+                        val rawUrl = cp.optCleanString(
+                            "official_website_url",
+                            cp.optCleanString("officialWebsiteUrl", presetFallback?.officialWebsiteUrl.orEmpty())
+                        )
+                        val safeWebsiteUrl = if (rawUrl.startsWith("https://", ignoreCase = true)) {
+                            rawUrl
+                        } else {
+                            presetFallback?.officialWebsiteUrl.orEmpty()
+                        }
+                        add(
+                            CampusCompetitionItem(
+                                id = id,
+                                title = title,
+                                shortTitle = cp.optCleanString(
+                                    "short_title",
+                                    cp.optCleanString("shortTitle", presetFallback?.shortTitle ?: title)
+                                ).ifBlank { title },
+                                tierBadge = cp.optCleanString(
+                                    "tier_badge",
+                                    cp.optCleanString("tierBadge", presetFallback?.tierBadge ?: "教育部白名单 A 类赛事")
+                                ).ifBlank { "教育部白名单 A 类赛事" },
+                                category = CampusCompetitionCategory.fromWireName(
+                                    cp.optCleanString("category", presetFallback?.category?.name)
+                                ),
+                                recommendedMajorTracks = majorTracks,
+                                interestTags = interestTags,
+                                organizer = cp.optCleanString("organizer", presetFallback?.organizer.orEmpty()),
+                                hautHostCollege = cp.optCleanString(
+                                    "haut_host_college",
+                                    cp.optCleanString("hautHostCollege", presetFallback?.hautHostCollege ?: "创新创业学院")
+                                ),
+                                registrationWindow = cp.optCleanString(
+                                    "registration_window",
+                                    cp.optCleanString("registrationWindow", presetFallback?.registrationWindow ?: "关注赛事官网通知")
+                                ),
+                                teamMode = cp.optCleanString(
+                                    "team_mode",
+                                    cp.optCleanString("teamMode", presetFallback?.teamMode ?: "1–5人组队")
+                                ),
+                                difficultyLabel = cp.optCleanString(
+                                    "difficulty_label",
+                                    cp.optCleanString("difficultyLabel", presetFallback?.difficultyLabel ?: "大一友好")
+                                ),
+                                beginnerFriendly = cp.optBoolean(
+                                    "beginner_friendly",
+                                    cp.optBoolean("beginnerFriendly", presetFallback?.beginnerFriendly ?: true)
+                                ),
+                                summary = cp.optCleanString("summary", presetFallback?.summary.orEmpty()),
+                                skillRoadmap = cp.optCleanString(
+                                    "skill_roadmap",
+                                    cp.optCleanString("skillRoadmap", presetFallback?.skillRoadmap.orEmpty())
+                                ),
+                                officialWebsiteUrl = safeWebsiteUrl,
+                                partnerClubId = cp.optCleanString(
+                                    "partner_club_id",
+                                    cp.optCleanString("partnerClubId", presetFallback?.partnerClubId.orEmpty())
+                                ),
+                                partnerClubName = cp.optCleanString(
+                                    "partner_club_name",
+                                    cp.optCleanString("partnerClubName", presetFallback?.partnerClubName.orEmpty())
+                                ),
+                                partnerClubQq = cp.optCleanString(
+                                    "partner_club_qq",
+                                    cp.optCleanString("partnerClubQq", presetFallback?.partnerClubQq.orEmpty())
+                                ),
+                                enabled = true,
+                                pinned = cp.optBoolean("pinned", presetFallback?.pinned ?: false),
+                                sortOrder = cp.optInt("sort_order", cp.optInt("sortOrder", (i + 1) * 10))
+                            )
+                        )
+                    }
+                }
+            }.sortedWith(compareByDescending<CampusCompetitionItem> { it.pinned }.thenBy { it.sortOrder })
+
+            val effectiveCompetitions = if (compArr != null && (parsedCompetitions.isNotEmpty() || version >= 3L)) {
+                parsedCompetitions.ifEmpty { PresetCampusCommunityCatalog.defaultCompetitions }
+            } else {
+                PresetCampusCommunityCatalog.defaultCompetitions
+            }
+
             CampusCommunityCloudCatalog(
                 schoolId = schoolId,
                 version = version,
@@ -986,7 +1101,8 @@ object CampusCloudOidcHelper {
                 bulletin = bulletin,
                 channels = if (chArr != null) parsedChannels else PresetCampusCommunityCatalog.defaultQqChannels,
                 clubs = if (clArr != null) parsedClubs else PresetCampusCommunityCatalog.defaultCampusClubs,
-                isFromCloud = chArr != null || clArr != null
+                competitions = effectiveCompetitions,
+                isFromCloud = chArr != null || clArr != null || compArr != null
             )
         }.getOrNull()
     }

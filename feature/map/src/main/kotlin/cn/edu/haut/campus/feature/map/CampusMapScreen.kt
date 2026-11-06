@@ -270,6 +270,7 @@ fun CampusMapScreen(
     onNavigateToElectricity: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToSchoolCenter: () -> Unit = {},
     activeSchool: SchoolProfile = remember { SchoolDirectory.hautProfile() },
     resetTrigger: Int = 0
@@ -1484,11 +1485,11 @@ fun CampusMapScreen(
                         )
                     }
 
-                    val channelsCount = preferences.campusCommunityCatalog.channels.size
+                    val competitionsCount = preferences.campusCommunityCatalog.competitions.size
                     XPeachCard(
                         modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                        onClick = onNavigateToCommunity
+                        onClick = onNavigateToCompetitions
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1496,7 +1497,7 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "校园频道",
+                                text = "竞赛指南",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -1504,13 +1505,13 @@ fun CampusMapScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             XPeachStatusDotText(
-                                text = if (channelsCount > 0) "$channelsCount 频道" else "暂置空",
+                                text = "$competitionsCount 赛事",
                                 dotColor = XPeachTheme.readablePrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = if (channelsCount > 0) "迎新互助、二手与失物招领" else "后续通过云端实时下发",
+                            text = "按专业匹配白名单赛事与官网",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

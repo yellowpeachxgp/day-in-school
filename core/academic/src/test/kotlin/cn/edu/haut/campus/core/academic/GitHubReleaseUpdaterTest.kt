@@ -71,6 +71,20 @@ class GitHubReleaseUpdaterTest {
             setOf("314623763", "789860526", "1043885481"),
             PresetCampusCommunityCatalog.defaultCampusClubs.map { it.qqGroupNumber }.toSet()
         )
+        assertTrue(PresetCampusCommunityCatalog.defaultCompetitions.size >= 14)
+        assertTrue(
+            PresetCampusCommunityCatalog.defaultCompetitions.all {
+                it.officialWebsiteUrl.startsWith("https://")
+            }
+        )
+        assertEquals(
+            cn.edu.haut.campus.core.model.CampusMajorTrack.CS_AI_SOFTWARE,
+            cn.edu.haut.campus.core.model.CampusMajorTrack.inferFromMajorText("软件工程")
+        )
+        assertEquals(
+            cn.edu.haut.campus.core.model.CampusMajorTrack.EE_AUTOMATION_IOT,
+            cn.edu.haut.campus.core.model.CampusMajorTrack.inferFromMajorText("电气工程及其自动化")
+        )
     }
 
     @Test

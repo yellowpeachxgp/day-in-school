@@ -141,6 +141,7 @@ fun TodayScreen(
     onNavigateToLibrarySeats: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToGrades: () -> Unit = {},
     resetTrigger: Int = 0
@@ -578,6 +579,7 @@ fun TodayScreen(
                 hiddenCards = prefs.hiddenHomeCards,
                 fullWidthCards = prefs.fullWidthHomeCards,
                 campusClubsCount = prefs.campusCommunityCatalog.clubs.size,
+                competitionsCount = prefs.campusCommunityCatalog.competitions.size,
                 onOpenCustomizer = { showCardCustomizerDialog = true },
                 onNavigateToGrades = onNavigateToGrades,
                 onNavigateToMapWithRoom = onNavigateToMapWithRoom,
@@ -587,6 +589,7 @@ fun TodayScreen(
                 onNavigateToLibraryCatalog = onNavigateToLibraryCatalog,
                 onNavigateToEmptyClassrooms = onNavigateToEmptyClassrooms,
                 onNavigateToCommunity = onNavigateToCommunity,
+                onNavigateToCompetitions = onNavigateToCompetitions,
                 onNavigateToParcelHub = onNavigateToParcelHub
             )
 
@@ -1594,6 +1597,7 @@ private fun TodayCampusBentoSection(
     hiddenCards: Set<String>,
     fullWidthCards: Set<String>,
     campusClubsCount: Int = PresetCampusCommunityCatalog.defaultCampusClubs.size,
+    competitionsCount: Int = PresetCampusCommunityCatalog.defaultCompetitions.size,
     onOpenCustomizer: () -> Unit,
     onNavigateToGrades: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit,
@@ -1603,6 +1607,7 @@ private fun TodayCampusBentoSection(
     onNavigateToLibraryCatalog: () -> Unit,
     onNavigateToEmptyClassrooms: () -> Unit,
     onNavigateToCommunity: () -> Unit,
+    onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit
 ) {
     // 顶部板块栏：左标题 + 右侧「定制卡片」按钮
@@ -1801,9 +1806,11 @@ private fun TodayCampusBentoSection(
         ),
         "CAMPUS_COMMUNITY" to HomeModularCardSpec(
             id = "CAMPUS_COMMUNITY",
-            title = "社团与频道",
-            badgeText = "$campusClubsCount 社团",
-            subtitle = "官方合作社团与技术交流群",
+            title = "社团与竞赛",
+            badgeText = "$competitionsCount 赛事",
+            subtitle = "${campusClubsCount}个合作社团 · 专业匹配学科竞赛与官网",
+            actionPillText = "竞赛指南",
+            onActionPillClick = onNavigateToCompetitions,
             onClick = onNavigateToCommunity
         )
     )
