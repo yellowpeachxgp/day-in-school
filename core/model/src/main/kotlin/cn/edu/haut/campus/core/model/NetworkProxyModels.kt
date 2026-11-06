@@ -120,7 +120,16 @@ data class NetworkProxyConfig(
     val customCloudApiBaseUrl: String = DEFAULT_CLOUD_API_BASE_URL
 ) {
     companion object {
-        const val DEFAULT_CLOUD_API_BASE_URL = "https://cloud.dayinschool.haut.edu.cn"
+        const val DEFAULT_CLOUD_API_BASE_URL = "https://campus.yellowpeachxgp.com"
+        const val LEGACY_PLACEHOLDER_CLOUD_API_BASE_URL = "https://cloud.dayinschool.haut.edu.cn"
+
+        fun normalizeCloudApiBaseUrl(rawUrl: String?): String {
+            val trimmed = rawUrl?.trim().orEmpty().trimEnd('/')
+            if (trimmed.isEmpty() || trimmed.equals(LEGACY_PLACEHOLDER_CLOUD_API_BASE_URL, ignoreCase = true)) {
+                return DEFAULT_CLOUD_API_BASE_URL
+            }
+            return trimmed
+        }
 
         fun normalizePrefixUrl(rawPrefix: String): String {
             val trimmed = rawPrefix.trim()
@@ -213,7 +222,7 @@ data class NetworkProxyConfig(
      * - 若处于 `CUSTOM_REVERSE_PROXY` 且目标为外部云网关，也支持按需使用自定义网关
      */
     fun resolveCloudServiceUrl(endpointPath: String): String {
-        val base = customCloudApiBaseUrl.trim().ifBlank { DEFAULT_CLOUD_API_BASE_URL }.trimEnd('/')
+        val base = normalizeCloudApiBaseUrl(customCloudApiBaseUrl)
         val cleanPath = endpointPath.trim().trimStart('/')
         return if (cleanPath.isEmpty()) base else "$base/$cleanPath"
     }

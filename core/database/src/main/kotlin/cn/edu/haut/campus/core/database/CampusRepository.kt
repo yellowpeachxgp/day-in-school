@@ -262,8 +262,9 @@ class CampusRepository internal constructor(
         val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
         val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
         val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
-        val CLOUD_CAMPUS_CONTENT_JSON = stringPreferencesKey("cloud_campus_content_json_v1")
-        val CLOUD_CAMPUS_CONTENT_SYNCED_MS = longPreferencesKey("cloud_campus_content_synced_ms_v1")
+        val CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1 = stringPreferencesKey("cloud_campus_content_json_v1")
+        val CLOUD_CAMPUS_CONTENT_JSON = stringPreferencesKey("cloud_campus_content_json_v2")
+        val CLOUD_CAMPUS_CONTENT_SYNCED_MS = longPreferencesKey("cloud_campus_content_synced_ms_v2")
         val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
         val CLASS_LEAD_MINUTES = intPreferencesKey("class_lead_minutes")
         val CLASS_SNOOZE_DEFAULT_MINUTES = intPreferencesKey("class_snooze_default_minutes")
@@ -512,8 +513,7 @@ class CampusRepository internal constructor(
             proxyHost = prefs[PrefKeys.PROXY_HOST]?.takeIf { it.isNotBlank() } ?: "127.0.0.1",
             proxyPort = (prefs[PrefKeys.PROXY_PORT] ?: 7890).coerceIn(1, 65535),
             autoFallbackMirror = prefs[PrefKeys.PROXY_AUTO_FALLBACK] ?: true,
-            customCloudApiBaseUrl = prefs[PrefKeys.CLOUD_API_BASE_URL]?.takeIf { it.isNotBlank() }
-                ?: NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
+            customCloudApiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
         )
     }
 
@@ -1768,8 +1768,7 @@ class CampusRepository internal constructor(
             prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
             prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
             prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-            prefs[PrefKeys.CLOUD_API_BASE_URL] = config.customCloudApiBaseUrl.trim()
-                .ifBlank { NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL }
+            prefs[PrefKeys.CLOUD_API_BASE_URL] = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
         }
     }
 
@@ -1816,17 +1815,16 @@ class CampusRepository internal constructor(
     suspend fun refreshCampusCommunityContent(): Result<cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val baseUrl = preferencesFlow.first()
-                    .networkProxyConfig
-                    .customCloudApiBaseUrl
-                    .trim()
-                    .ifBlank { CampusCloudOidcHelper.DEFAULT_CLOUD_BASE_URL }
+                val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+                )
                 val (catalog, rawJson) = CampusCloudOidcHelper.fetchPublicCampusContent(
                     schoolId = schoolId,
                     cloudBaseUrl = baseUrl
                 ) ?: throw IllegalStateException("无法连接云端获取最新校园频道与社团内容")
                 val now = System.currentTimeMillis()
                 preferences.edit { prefs ->
+                    prefs.remove(PrefKeys.CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1)
                     prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
                     prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
                 }
