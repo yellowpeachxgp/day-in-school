@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="tl_widget_bg">#FFFFFF</color>
-    <color name="tl_widget_stroke">#E5EAF2</color>
-    <color name="tl_widget_primary">#111827</color>
-    <color name="tl_widget_secondary">#526071</color>
+    <color name="tl_widget_bg">#FAFCFF</color>
+    <color name="tl_widget_stroke">#E2E8F2</color>
+    <color name="tl_widget_primary">#0F172A</color>
+    <color name="tl_widget_secondary">#475569</color>
     <color name="tl_widget_accent">#0066CC</color>
-    <color name="tl_widget_card">#F4F7FB</color>
-    <color name="tl_widget_card_stroke">#E8EEF6</color>
-    <color name="tl_widget_active_bg">#F2F7FF</color>
-    <color name="tl_widget_active_stroke">#D0E3FF</color>
-    <color name="tl_widget_badge_bg">#E6F0FF</color>
+    <color name="tl_widget_card">#F1F5FA</color>
+    <color name="tl_widget_card_stroke">#E6EDF6</color>
+    <color name="tl_widget_active_bg">#EDF5FF</color>
+    <color name="tl_widget_active_stroke">#D4E6FF</color>
+    <color name="tl_widget_badge_bg">#E0EEFF</color>
     <string name="widget_timeline_desc">展示今日全天课程时间轴与完整上课教室</string>
 </resources>

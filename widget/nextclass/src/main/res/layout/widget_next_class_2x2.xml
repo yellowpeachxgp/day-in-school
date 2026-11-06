@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_widget_surface"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="13dp">
 
     <!-- 第一层：顶部状态胶囊 + 实时倒计时 + 教学周 -->
     <LinearLayout
@@ -19,7 +19,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_widget_badge"
-            android:paddingHorizontal="8dp"
+            android:paddingHorizontal="9dp"
             android:paddingVertical="3dp"
             android:singleLine="true"
             android:text="下一节课"
@@ -31,14 +31,14 @@
             android:id="@+id/chronometer_countdown"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginHorizontal="4dp"
+            android:layout_marginHorizontal="6dp"
             android:layout_weight="1"
             android:countDown="true"
             android:ellipsize="end"
             android:gravity="end"
             android:singleLine="true"
             android:textColor="@color/widget_accent"
-            android:textSize="10.5sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
         <TextView
@@ -46,8 +46,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_widget_pill"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="2dp"
+            android:paddingHorizontal="7dp"
+            android:paddingVertical="2.5dp"
             android:singleLine="true"
             android:text="第8周"
             android:textColor="@color/widget_text_secondary"
@@ -55,22 +55,23 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 第二层：焦点课程卡片（带左侧强调色竖条 + 课程名 + 时间节次） -->
+    <!-- 第二层：焦点课程 Bento 卡片（左侧强调色胶囊竖条 + 课程名 + 时间节次） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="8dp"
         android:layout_weight="1"
         android:background="@drawable/bg_widget_well"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="7dp">
+        android:paddingHorizontal="11dp"
+        android:paddingVertical="8dp">
 
         <TextView
             android:id="@+id/view_accent_bar"
             android:layout_width="4dp"
             android:layout_height="match_parent"
+            android:layout_marginVertical="2dp"
             android:background="@drawable/bg_widget_accent_bar" />
 
         <LinearLayout
@@ -85,17 +86,18 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
+                android:lineSpacingExtra="1.5dp"
                 android:maxLines="2"
                 android:text="数据结构与算法"
                 android:textColor="@color/widget_text_primary"
-                android:textSize="14.5sp"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tv_time_range"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="3.5dp"
                 android:ellipsize="end"
                 android:singleLine="true"
                 android:text="10:10–11:50 · 3-4节"
@@ -105,17 +107,17 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 第三层：独立完整教室信息栏（支持自动换行完整展示教室，绝不截断房间号） -->
+    <!-- 第三层：独立完整教室信息栏 -->
     <LinearLayout
         android:id="@+id/layout_room_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="7dp"
         android:background="@drawable/bg_widget_pill"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="6dp">
+        android:paddingHorizontal="11dp"
+        android:paddingVertical="6.5dp">
 
         <TextView
             android:id="@+id/tv_room_and_teacher"
@@ -123,7 +125,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:ellipsize="end"
-            android:maxLines="2"
+            android:maxLines="1"
             android:text="5号教学楼 5204"
             android:textColor="@color/widget_accent"
             android:textSize="12sp"

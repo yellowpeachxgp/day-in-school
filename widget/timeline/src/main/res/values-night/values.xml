@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="tl_widget_bg">#181B22</color>
-    <color name="tl_widget_stroke">#282E3B</color>
-    <color name="tl_widget_primary">#F3F4F6</color>
-    <color name="tl_widget_secondary">#9CA3AF</color>
+    <color name="tl_widget_bg">#121722</color>
+    <color name="tl_widget_stroke">#252E3E</color>
+    <color name="tl_widget_primary">#F1F5F9</color>
+    <color name="tl_widget_secondary">#94A3B8</color>
     <color name="tl_widget_accent">#58A6FF</color>
-    <color name="tl_widget_card">#212630</color>
-    <color name="tl_widget_card_stroke">#2D3442</color>
-    <color name="tl_widget_active_bg">#1B2638</color>
-    <color name="tl_widget_active_stroke">#2B4263</color>
-    <color name="tl_widget_badge_bg">#1A2D47</color>
+    <color name="tl_widget_card">#1B2230</color>
+    <color name="tl_widget_card_stroke">#263042</color>
+    <color name="tl_widget_active_bg">#182438</color>
+    <color name="tl_widget_active_stroke">#263D5E</color>
+    <color name="tl_widget_badge_bg">#1C3454</color>
 </resources>

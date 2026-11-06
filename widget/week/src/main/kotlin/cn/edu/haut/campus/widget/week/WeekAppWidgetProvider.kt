@@ -54,6 +54,14 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        private data class WeekDayRowSpec(
+            val weekday: DayOfWeek,
+            val rowContainerId: Int,
+            val labelViewId: Int,
+            val summaryViewId: Int,
+            val badgeViewId: Int
+        )
+
         suspend fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
@@ -71,14 +79,14 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.tv_wk_header, "本周课表 · $weekLabel")
             views.setTextViewText(R.id.tv_wk_sub, "今日 ${day.date.dayOfWeek.ChineseLabel}")
 
-            val rowIds = listOf(
-                DayOfWeek.MONDAY to R.id.tv_wk_day_1,
-                DayOfWeek.TUESDAY to R.id.tv_wk_day_2,
-                DayOfWeek.WEDNESDAY to R.id.tv_wk_day_3,
-                DayOfWeek.THURSDAY to R.id.tv_wk_day_4,
-                DayOfWeek.FRIDAY to R.id.tv_wk_day_5,
-                DayOfWeek.SATURDAY to R.id.tv_wk_day_6,
-                DayOfWeek.SUNDAY to R.id.tv_wk_day_7
+            val rowSpecs = listOf(
+                WeekDayRowSpec(DayOfWeek.MONDAY, R.id.layout_wk_row_1, R.id.tv_wk_label_1, R.id.tv_wk_day_1, R.id.tv_wk_badge_1),
+                WeekDayRowSpec(DayOfWeek.TUESDAY, R.id.layout_wk_row_2, R.id.tv_wk_label_2, R.id.tv_wk_day_2, R.id.tv_wk_badge_2),
+                WeekDayRowSpec(DayOfWeek.WEDNESDAY, R.id.layout_wk_row_3, R.id.tv_wk_label_3, R.id.tv_wk_day_3, R.id.tv_wk_badge_3),
+                WeekDayRowSpec(DayOfWeek.THURSDAY, R.id.layout_wk_row_4, R.id.tv_wk_label_4, R.id.tv_wk_day_4, R.id.tv_wk_badge_4),
+                WeekDayRowSpec(DayOfWeek.FRIDAY, R.id.layout_wk_row_5, R.id.tv_wk_label_5, R.id.tv_wk_day_5, R.id.tv_wk_badge_5),
+                WeekDayRowSpec(DayOfWeek.SATURDAY, R.id.layout_wk_row_6, R.id.tv_wk_label_6, R.id.tv_wk_day_6, R.id.tv_wk_badge_6),
+                WeekDayRowSpec(DayOfWeek.SUNDAY, R.id.layout_wk_row_7, R.id.tv_wk_label_7, R.id.tv_wk_day_7, R.id.tv_wk_badge_7)
             )
 
             val primaryColor = ContextCompat.getColor(context, R.color.wk_widget_primary)
@@ -90,34 +98,45 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 date.dayOfWeek to (date to list)
             }
 
-            for ((weekday, viewId) in rowIds) {
-                val pair = byWeekday[weekday]
-                val isToday = pair?.first == day.date || weekday == day.date.dayOfWeek
-                val prefix = if (isToday) "● ${weekday.ChineseLabel}" else "   ${weekday.ChineseLabel}"
-                val occurrences = pair?.second.orEmpty()
+            for (spec in rowSpecs) {
+                val pair = byWeekday[spec.weekday]
+                val isToday = pair?.first == day.date || spec.weekday == day.date.dayOfWeek
+                val dayLabel = if (isToday) "● ${spec.weekday.ChineseLabel}" else spec.weekday.ChineseLabel
+                val occurrences = pair?.second.orEmpty().sortedBy { it.startPeriod }
                 val summary = if (occurrences.isEmpty()) {
-                    "无课"
+                    "自由学习与休息"
                 } else {
                     occurrences.joinToString("  ·  ") { occ ->
                         val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(6)
                         val compactRoom = WidgetRoomFormatter.formatCompactRoom(occ.rawRoom, snapshot.config.privacyMode)
-                        "${occ.startPeriod}-${occ.endPeriod}节 $shortName @$compactRoom"
+                        "${occ.startPeriod}-${occ.endPeriod} $shortName @$compactRoom"
                     }
                 }
+                val badgeText = if (occurrences.isEmpty()) "无课" else "${occurrences.size}节"
+
                 views.setInt(
-                    viewId,
+                    spec.rowContainerId,
                     "setBackgroundResource",
                     if (isToday) R.drawable.bg_week_row_today else R.drawable.bg_week_row
                 )
+                views.setTextViewText(spec.labelViewId, dayLabel)
+                views.setTextColor(spec.labelViewId, if (isToday) accentColor else secondaryColor)
+
+                views.setTextViewText(spec.summaryViewId, summary)
                 views.setTextColor(
-                    viewId,
+                    spec.summaryViewId,
                     when {
                         isToday -> accentColor
                         occurrences.isEmpty() -> secondaryColor
                         else -> primaryColor
                     }
                 )
-                views.setTextViewText(viewId, "$prefix   $summary")
+
+                views.setTextViewText(spec.badgeViewId, badgeText)
+                views.setTextColor(
+                    spec.badgeViewId,
+                    if (isToday || occurrences.isNotEmpty()) accentColor else secondaryColor
+                )
             }
 
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {

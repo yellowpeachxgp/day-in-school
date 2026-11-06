@@ -138,6 +138,7 @@ fun TimetableScreen(
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
     var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 原始课表
+    var manualSevenDayOverride by remember { mutableStateOf<Boolean?>(null) }
 
     val weekOccurrencesMap = remember(
         selectedWeek,
@@ -423,40 +424,61 @@ fun TimetableScreen(
                     )
                 }
                 else -> {
-                    // 极简课表卡片容器（去重框线，柔和圆角色块）
+                    val hasWeekendClasses = remember(activeWeekDates, activeWeekOccurrencesMap) {
+                        activeWeekDates.drop(5).any { activeWeekOccurrencesMap[it].orEmpty().isNotEmpty() }
+                    }
+                    val showSevenDays = manualSevenDayOverride ?: (hasWeekendClasses || today.dayOfWeek.value >= 6)
+                    val visibleDates = remember(activeWeekDates, showSevenDays) {
+                        if (showSevenDays) activeWeekDates else activeWeekDates.take(5)
+                    }
+
+                    // 宽阔课表卡片容器（自适应 5日/7日 + 课程名与底部教室胶囊分层解耦）
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                             .background(MaterialTheme.colorScheme.surface)
                     ) {
-                        // 顶部星期栏
+                        // 顶部星期栏（左上角一键切换 5日/7日，无周末课时自动展开 5 列大宽格）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier.width(38.dp),
-                                contentAlignment = Alignment.Center
+                            Column(
+                                modifier = Modifier
+                                    .width(34.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { manualSevenDayOverride = !showSevenDays }
+                                    .padding(vertical = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "${dateMonthLabel(activeWeekDates.firstOrNull())}",
+                                    text = dateMonthLabel(activeWeekDates.firstOrNull()),
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontWeight = FontWeight.Bold,
                                     color = XPeachTheme.readablePrimary,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Text(
+                                    text = if (showSevenDays) "7日" else "5日",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     softWrap = false
                                 )
                             }
 
-                            for (date in activeWeekDates) {
+                            for (date in visibleDates) {
                                 val isToday = date == today
+                                val dayCount = activeWeekOccurrencesMap[date].orEmpty().size
                                 Column(
                                     modifier = Modifier
                                         .weight(1f)
+                                        .padding(horizontal = 1.5.dp)
                                         .clip(RoundedCornerShape(10.dp))
                                         .background(
                                             if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent
@@ -467,7 +489,7 @@ fun TimetableScreen(
                                     Text(
                                         text = date.dayOfWeek.ChineseLabel.replace("周", ""),
                                         style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
+                                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.SemiBold,
                                         color = if (isToday) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         softWrap = false
@@ -475,7 +497,13 @@ fun TimetableScreen(
                                     Text(
                                         text = date.format(SHORT_DATE_FMT),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (isToday) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = if (isToday) {
+                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.88f)
+                                        } else if (dayCount > 0) {
+                                            XPeachTheme.readablePrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
                                         maxLines = 1,
                                         softWrap = false
                                     )
@@ -487,8 +515,8 @@ fun TimetableScreen(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
                         )
 
-                        // 1-10 节无竖框轻盈网格
-                        val slotHeightDp = 58.dp
+                        // 1-10 节高透气网格（含午休/晚间视觉分段线 + 顶底分离式课程卡片）
+                        val slotHeightDp = 68.dp
                         val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
                         val periodByNo = periodTimes.associateBy { it.periodNo }
 
@@ -499,41 +527,60 @@ fun TimetableScreen(
                                 .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 92.dp)
                         ) {
                             Column(
-                                modifier = Modifier.width(38.dp)
+                                modifier = Modifier.width(34.dp)
                             ) {
                                 for (p in 1..maxPeriods) {
                                     val pt = periodByNo[p]
-                                    Column(
+                                    val isSectionEnd = p == 4 || p == 8
+                                    Box(
                                         modifier = Modifier
                                             .height(slotHeightDp)
-                                            .fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
+                                            .fillMaxWidth()
                                     ) {
-                                        Text(
-                                            text = "$p",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            softWrap = false
-                                        )
-                                        if (pt != null) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize(),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
                                             Text(
-                                                text = pt.startLocalTime.format(PERIOD_TIME_FMT),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                text = "$p",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
                                                 softWrap = false
+                                            )
+                                            if (pt != null) {
+                                                Text(
+                                                    text = pt.startLocalTime.format(PERIOD_TIME_FMT),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
+                                        }
+                                        if (isSectionEnd) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(1.2.dp)
+                                                    .align(Alignment.BottomCenter)
+                                                    .background(XPeachTheme.readablePrimary.copy(alpha = 0.22f))
                                             )
                                         }
                                     }
                                 }
                             }
 
-                            for (date in activeWeekDates) {
+                            for (date in visibleDates) {
                                 val dayOccurrences = activeWeekOccurrencesMap[date].orEmpty()
                                 val isToday = date == today
+                                val groupedBySlot = remember(dayOccurrences) {
+                                    dayOccurrences
+                                        .sortedBy { it.startPeriod }
+                                        .groupBy { it.startPeriod to it.endPeriod }
+                                }
 
                                 Box(
                                     modifier = Modifier
@@ -541,12 +588,13 @@ fun TimetableScreen(
                                         .height(slotHeightDp * maxPeriods)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(
-                                            if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                                            if (isToday) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.18f)
                                             else Color.Transparent
                                         )
                                 ) {
                                     Column(modifier = Modifier.fillMaxSize()) {
-                                        repeat(maxPeriods) {
+                                        for (p in 1..maxPeriods) {
+                                            val isSectionEnd = p == 4 || p == 8
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
@@ -555,67 +603,97 @@ fun TimetableScreen(
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .height(0.5.dp)
+                                                        .height(if (isSectionEnd) 1.2.dp else 0.5.dp)
                                                         .align(Alignment.BottomCenter)
-                                                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                                        .background(
+                                                            if (isSectionEnd) {
+                                                                XPeachTheme.readablePrimary.copy(alpha = 0.22f)
+                                                            } else {
+                                                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.30f)
+                                                            }
+                                                        )
                                                 )
                                             }
                                         }
                                     }
 
-                                    for (occ in dayOccurrences) {
+                                    for ((_, slotGroup) in groupedBySlot) {
+                                        val occ = slotGroup.first()
+                                        val overlapExtra = slotGroup.size - 1
                                         val span = (occ.endPeriod - occ.startPeriod + 1).coerceAtLeast(1)
                                         val topOffset = slotHeightDp * (occ.startPeriod - 1)
                                         val blockHeight = slotHeightDp * span
                                         val accentColor = XPeachTheme.courseAccent(occ.colorArgb)
-                                        val blockBg = XPeachTheme.courseContainer(occ.colorArgb, active = false)
-                                        val blockBorder = XPeachTheme.courseBorder(occ.colorArgb, active = false)
+                                        val blockBg = XPeachTheme.courseContainer(occ.colorArgb, active = isToday)
+                                        val blockBorder = XPeachTheme.courseBorder(occ.colorArgb, active = isToday)
+                                        val compactRoom = formatCompactGridRoom(occ.rawRoom)
 
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .offset(y = topOffset)
                                                 .height(blockHeight)
-                                                .padding(horizontal = 2.dp, vertical = 2.dp)
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 2.dp, vertical = 2.5.dp)
+                                                .clip(RoundedCornerShape(10.dp))
                                                 .background(blockBg)
-                                                .border(0.7.dp, blockBorder, RoundedCornerShape(8.dp))
+                                                .border(0.8.dp, blockBorder, RoundedCornerShape(10.dp))
                                                 .clickable { editingOccurrence = occ }
                                         ) {
-                                            // 顶部柔和色条 + 紧凑文字排布
                                             Column(modifier = Modifier.fillMaxSize()) {
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .height(3.dp)
+                                                        .height(3.5.dp)
                                                         .background(accentColor)
                                                 )
                                                 Column(
-                                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                                    verticalArrangement = Arrangement.SpaceBetween,
                                                     modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 4.5.dp, vertical = 4.5.dp)
                                                 ) {
-                                                    Text(
-                                                        text = occ.courseName,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                        style = MaterialTheme.typography.labelSmall.copy(
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            lineHeight = 14.sp
-                                                        ),
-                                                        maxLines = 3,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    Text(
-                                                        text = occ.rawRoom,
-                                                        color = accentColor,
-                                                        style = MaterialTheme.typography.labelSmall.copy(
-                                                            fontWeight = FontWeight.Medium,
-                                                            lineHeight = 13.sp
-                                                        ),
-                                                        maxLines = 2,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                        Text(
+                                                            text = occ.courseName,
+                                                            color = MaterialTheme.colorScheme.onSurface,
+                                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                                fontWeight = FontWeight.Bold,
+                                                                lineHeight = 14.sp
+                                                            ),
+                                                            maxLines = if (span >= 3) 4 else 3,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        if (overlapExtra > 0) {
+                                                            Text(
+                                                                text = "+${overlapExtra}门重课",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = accentColor,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                maxLines = 1
+                                                            )
+                                                        }
+                                                    }
+
+                                                    if (compactRoom.isNotBlank()) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clip(RoundedCornerShape(5.dp))
+                                                                .background(accentColor.copy(alpha = 0.13f))
+                                                                .padding(horizontal = 3.5.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = compactRoom,
+                                                                color = accentColor,
+                                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                    lineHeight = 12.sp
+                                                                ),
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1050,6 +1128,26 @@ fun TimetableScreen(
 private fun dateMonthLabel(date: LocalDate?): String =
     date?.let { "${it.monthValue}月" } ?: ""
 
+private val GRID_BUILDING_REGEX = Regex("""^(\d+)号教学楼(\d+[A-Za-z0-9\-]*)$""")
+
+private fun formatCompactGridRoom(rawRoom: String): String {
+    val cleaned = rawRoom
+        .replace("河南工业大学", "")
+        .replace("莲花街校区", "")
+        .replace("莲花街", "")
+        .trim()
+    if (cleaned.isEmpty()) return ""
+    val m = GRID_BUILDING_REGEX.matchEntire(cleaned)
+    if (m != null) {
+        return "${m.groupValues[1]}教${m.groupValues[2]}"
+    }
+    return cleaned
+        .replace("号教学楼", "教")
+        .replace("教学楼", "教")
+        .replace("号楼", "楼")
+        .replace("报告厅", "")
+}
+
 @Composable
 private fun TimetableWeekListView(
     weekDates: List<LocalDate>,
@@ -1263,17 +1361,29 @@ private fun RawMasterTimetableView(
             }
         }
 
-        // 2. 教务原始 7×5 大节全周次总览表（不论当前第几周，展示所有周次排课叠加）
+        // 2. 教务原始 7×5 大节全周次总览表（支持横向宽列滑动，多周次课程独立成卡绝不糊字）
         XPeachCard(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 14.dp)
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp)
         ) {
-            Text(
-                text = "全学期课表速览",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "全学期课表速览",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "左右滑动查看完整7日 ›",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             val bigSlots = listOf(
@@ -1283,42 +1393,61 @@ private fun RawMasterTimetableView(
                 7 to 8,
                 9 to 10
             )
-            val days = DayOfWeek.entries
-
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.width(24.dp))
-                for (d in days) {
-                    Text(
-                        text = d.ChineseLabel.replace("周", ""),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1
-                    )
-                }
+            val hasWeekendRules = remember(sortedRules) {
+                sortedRules.any { it.weekday.value >= 6 }
             }
+            val days = remember(hasWeekendRules) {
+                if (hasWeekendRules) DayOfWeek.entries else DayOfWeek.entries.take(5)
+            }
+            val colWidth = if (days.size == 5) 74.dp else 70.dp
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.width(32.dp))
+                    for (d in days) {
+                        Box(
+                            modifier = Modifier
+                                .width(colWidth)
+                                .padding(horizontal = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = d.ChineseLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for ((sp, ep) in bigSlots) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Column(
                             modifier = Modifier
-                                .width(24.dp)
-                                .padding(top = 6.dp),
+                                .width(32.dp)
+                                .padding(top = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
                                 text = "$sp-$ep",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 color = XPeachTheme.readablePrimary
+                            )
+                            Text(
+                                text = "节",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         for (d in days) {
@@ -1327,53 +1456,67 @@ private fun RawMasterTimetableView(
                             }
                             Column(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(6.dp))
+                                    .width(colWidth)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .background(
                                         if (slotRules.isNotEmpty()) {
-                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                         } else {
-                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
                                         }
                                     )
-                                    .padding(2.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    .padding(3.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 if (slotRules.isEmpty()) {
-                                    Spacer(modifier = Modifier.height(28.dp))
+                                    Spacer(modifier = Modifier.height(36.dp))
                                 } else {
                                     for (r in slotRules) {
                                         val c = courseMap[r.courseId]
                                         val rawArgb = c?.colorArgb ?: 0xFF0072BC
                                         val accentColor = XPeachTheme.courseAccent(rawArgb)
+                                        val compactRoom = formatCompactGridRoom(r.rawRoom)
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clip(RoundedCornerShape(4.dp))
+                                                .clip(RoundedCornerShape(6.dp))
                                                 .background(XPeachTheme.courseContainer(rawArgb, active = false))
                                                 .border(
-                                                    0.5.dp,
+                                                    0.7.dp,
                                                     XPeachTheme.courseBorder(rawArgb, active = false),
-                                                    RoundedCornerShape(4.dp)
+                                                    RoundedCornerShape(6.dp)
                                                 )
-                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                .padding(horizontal = 4.dp, vertical = 3.5.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
                                         ) {
                                             Text(
                                                 text = c?.name ?: "课程",
                                                 style = MaterialTheme.typography.labelSmall.copy(
-                                                    lineHeight = 13.sp,
-                                                    fontWeight = FontWeight.SemiBold
+                                                    lineHeight = 13.5.sp,
+                                                    fontWeight = FontWeight.Bold
                                                 ),
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis
                                             )
+                                            if (compactRoom.isNotBlank()) {
+                                                Text(
+                                                    text = compactRoom,
+                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                        lineHeight = 12.sp,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    ),
+                                                    color = accentColor,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
                                             Text(
                                                 text = WeeksSetParser.format(r.weeks),
                                                 style = MaterialTheme.typography.labelSmall.copy(
-                                                    lineHeight = 12.sp
+                                                    lineHeight = 11.5.sp
                                                 ),
-                                                color = accentColor,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )

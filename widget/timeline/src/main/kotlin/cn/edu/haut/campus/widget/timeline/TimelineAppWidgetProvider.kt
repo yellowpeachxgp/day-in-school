@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.domain.ChineseLabel
@@ -117,6 +118,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.tv_tl_time_1, "今日")
                 views.setTextViewText(R.id.tv_tl_slot_1, "今天没有安排课程")
                 views.setTextViewText(R.id.tv_tl_room_1, day.calendarNotice ?: "无课")
+                views.setViewVisibility(R.id.tv_tl_room_1, View.VISIBLE)
 
                 views.setTextViewText(
                     R.id.tv_tl_time_2,
@@ -126,18 +128,19 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                     R.id.tv_tl_slot_2,
                     hint?.firstCourseName ?: "近期暂无排课"
                 )
-                views.setTextViewText(
-                    R.id.tv_tl_room_2,
-                    hint?.let { WidgetRoomFormatter.formatFullRoom(it.firstCourseRoom, snapshot.config.privacyMode) } ?: ""
-                )
+                val hintRoom = hint?.let { WidgetRoomFormatter.formatCompactRoom(it.firstCourseRoom, snapshot.config.privacyMode) }.orEmpty()
+                views.setTextViewText(R.id.tv_tl_room_2, hintRoom)
+                views.setViewVisibility(R.id.tv_tl_room_2, if (hintRoom.isNotBlank()) View.VISIBLE else View.GONE)
 
                 views.setTextViewText(R.id.tv_tl_time_3, "自习")
                 views.setTextViewText(R.id.tv_tl_slot_3, "图书馆选座与空教室查询")
-                views.setTextViewText(R.id.tv_tl_room_3, "去学业页 ›")
+                views.setTextViewText(R.id.tv_tl_room_3, "去学业 ›")
+                views.setViewVisibility(R.id.tv_tl_room_3, View.VISIBLE)
 
                 views.setTextViewText(R.id.tv_tl_time_4, "课表")
                 views.setTextViewText(R.id.tv_tl_slot_4, "查看完整学期课表")
                 views.setTextViewText(R.id.tv_tl_room_4, "打开 ›")
+                views.setViewVisibility(R.id.tv_tl_room_4, View.VISIBLE)
             } else {
                 for (index in slotGroups.indices) {
                     val item = day.items.getOrNull(index)
@@ -169,17 +172,17 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                             grp.titleId,
                             if (snapshot.config.privacyMode) "课程已隐藏" else occ.courseName
                         )
-                        views.setTextViewText(
-                            grp.roomId,
-                            WidgetRoomFormatter.formatFullRoom(occ.rawRoom, snapshot.config.privacyMode)
-                        )
+                        val compactRoom = WidgetRoomFormatter.formatCompactRoom(occ.rawRoom, snapshot.config.privacyMode)
+                        views.setTextViewText(grp.roomId, compactRoom)
+                        views.setViewVisibility(grp.roomId, if (compactRoom.isNotBlank()) View.VISIBLE else View.GONE)
                     } else {
                         views.setTextColor(grp.timeId, secondaryColor)
                         views.setTextColor(grp.titleId, secondaryColor)
                         views.setTextColor(grp.roomId, secondaryColor)
-                        views.setTextViewText(grp.timeId, "空闲")
-                        views.setTextViewText(grp.titleId, "自由学习或休息时段")
+                        views.setTextViewText(grp.timeId, "空闲时段")
+                        views.setTextViewText(grp.titleId, "自由学习或休息")
                         views.setTextViewText(grp.roomId, "")
+                        views.setViewVisibility(grp.roomId, View.GONE)
                     }
                 }
             }

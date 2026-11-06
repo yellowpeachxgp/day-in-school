@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_today_widget"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="13dp">
 
     <!-- 顶部栏：标题 + 待取快递胶囊 -->
     <LinearLayout
@@ -21,7 +21,7 @@
             android:layout_weight="1"
             android:ellipsize="end"
             android:singleLine="true"
-            android:text="📦 校园快递取件码"
+            android:text="校园驿站取件码"
             android:textColor="@color/today_widget_primary"
             android:textSize="12.5sp"
             android:textStyle="bold" />
@@ -31,8 +31,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_today_badge"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
+            android:paddingHorizontal="9dp"
+            android:paddingVertical="2.5dp"
             android:singleLine="true"
             android:text="待取 2 件"
             android:textColor="@color/today_widget_accent"
@@ -40,11 +40,11 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 主体：左侧首要取件码大卡 + 右侧其余待取包裹列 -->
+    <!-- 主体：左侧首要取件码 Bento 票据卡 + 右侧无框待取队列 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="8dp"
         android:layout_weight="1"
         android:baselineAligned="false"
         android:orientation="horizontal">
@@ -57,18 +57,19 @@
             android:background="@drawable/bg_today_highlight"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="8dp">
+            android:paddingHorizontal="11dp"
+            android:paddingVertical="9dp">
 
             <TextView
-                android:layout_width="3.5dp"
+                android:layout_width="4dp"
                 android:layout_height="match_parent"
+                android:layout_marginVertical="2dp"
                 android:background="@drawable/bg_today_accent_bar" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="9dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -78,7 +79,7 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:singleLine="true"
-                    android:text="📍 莲花街北苑菜鸟驿站"
+                    android:text="莲花街北苑菜鸟驿站"
                     android:textColor="@color/today_widget_secondary"
                     android:textSize="10.5sp"
                     android:textStyle="bold" />
@@ -93,7 +94,7 @@
                     android:singleLine="true"
                     android:text="3-2-1048"
                     android:textColor="@color/today_widget_accent"
-                    android:textSize="18sp"
+                    android:textSize="19sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -115,7 +116,7 @@
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_marginStart="8dp"
-            android:layout_weight="1.02"
+            android:layout_weight="1.0"
             android:orientation="vertical">
 
             <LinearLayout
@@ -125,8 +126,8 @@
                 android:background="@drawable/bg_today_sub_slot"
                 android:gravity="center_vertical"
                 android:orientation="vertical"
-                android:paddingHorizontal="9dp"
-                android:paddingVertical="4dp">
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp">
 
                 <TextView
                     android:id="@+id/tv_parcel_sub_1_code"
@@ -137,14 +138,14 @@
                     android:singleLine="true"
                     android:text="5-1-2089"
                     android:textColor="@color/today_widget_accent"
-                    android:textSize="12.5sp"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tv_parcel_sub_1_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="1.5dp"
+                    android:layout_marginTop="2dp"
                     android:ellipsize="end"
                     android:singleLine="true"
                     android:text="中通快递 · 北苑驿站"
@@ -160,8 +161,8 @@
                 android:background="@drawable/bg_today_sub_slot"
                 android:gravity="center_vertical"
                 android:orientation="vertical"
-                android:paddingHorizontal="9dp"
-                android:paddingVertical="4dp">
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp">
 
                 <TextView
                     android:id="@+id/tv_parcel_sub_2_code"
@@ -178,7 +179,7 @@
                     android:id="@+id/tv_parcel_sub_2_desc"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="1.5dp"
+                    android:layout_marginTop="2dp"
                     android:ellipsize="end"
                     android:singleLine="true"
                     android:text="同步小米快递 / 短信识码"

@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_week_widget"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="13dp">
 
     <!-- 顶部第1层：周课表标题与今日高亮胶囊 -->
     <LinearLayout
@@ -30,127 +30,332 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_week_badge"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
+            android:paddingHorizontal="9dp"
+            android:paddingVertical="2.5dp"
             android:singleLine="true"
             android:text="今日高亮"
             android:textColor="@color/wk_widget_accent"
-            android:textSize="10sp"
+            android:textSize="10.5sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 主体第2层：7 张分层行卡片（包含课程名与教室号） -->
+    <!-- 主体第2层：7 张严整三栏 Bento 日程条（固定宽星期栏 + 课程与教室摘要 + 右侧节数胶囊） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="8dp"
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tv_wk_day_1"
+        <LinearLayout
+            android:id="@+id/layout_wk_row_1"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周一  1-2 数据结构 @5教5204 · 3-4 概率论 @6教6201"
-            android:textColor="@color/wk_widget_primary"
-            android:textSize="10.5sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_wk_day_2"
+            <TextView
+                android:id="@+id/tv_wk_label_1"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周一"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="1-2 数据结构 @5教5204 · 3-4 概率论 @6教6201"
+                android:textColor="@color/wk_widget_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="2节"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_2"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="3.5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周二  1-2 操作系统 @5教5103 · 5-6 数据库 @7教7201"
-            android:textColor="@color/wk_widget_primary"
-            android:textSize="10.5sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_wk_day_3"
+            <TextView
+                android:id="@+id/tv_wk_label_2"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周二"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="1-2 操作系统 @5教5103 · 5-6 数据库 @7教7201"
+                android:textColor="@color/wk_widget_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="2节"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_3"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="3.5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周三  3-4 数据结构 @5教5204 · 5-6 计算机网络 @8教8301"
-            android:textColor="@color/wk_widget_primary"
-            android:textSize="10.5sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_wk_day_4"
+            <TextView
+                android:id="@+id/tv_wk_label_3"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周三"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_3"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="3-4 数据结构 @5教5204 · 5-6 计算机网络 @8教8301"
+                android:textColor="@color/wk_widget_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="2节"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_4"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="3.5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周四  1-2 概率论 @6教6201 · 3-4 操作系统 @5教5103"
-            android:textColor="@color/wk_widget_primary"
-            android:textSize="10.5sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_wk_day_5"
+            <TextView
+                android:id="@+id/tv_wk_label_4"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周四"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_4"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="1-2 概率论 @6教6201 · 3-4 操作系统 @5教5103"
+                android:textColor="@color/wk_widget_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_4"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="2节"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_5"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
-            android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周五  1-2 数据库 @7教7201 · 5-6 实验 @工业中心"
-            android:textColor="@color/wk_widget_primary"
-            android:textSize="10.5sp" />
-
-        <TextView
-            android:id="@+id/tv_wk_day_6"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="3.5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row_today"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周六  无课"
-            android:textColor="@color/wk_widget_accent"
-            android:textSize="10.5sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
 
-        <TextView
-            android:id="@+id/tv_wk_day_7"
+            <TextView
+                android:id="@+id/tv_wk_label_5"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="● 周五"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_5"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="1-2 数据库 @7教7201 · 5-6 实验 @工业中心"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_5"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="2节"
+                android:textColor="@color/wk_widget_accent"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_6"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="3dp"
+            android:layout_marginTop="3.5dp"
             android:layout_weight="1"
             android:background="@drawable/bg_week_row"
-            android:ellipsize="end"
             android:gravity="center_vertical"
-            android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:text="周日  无课"
-            android:textColor="@color/wk_widget_secondary"
-            android:textSize="10.5sp" />
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <TextView
+                android:id="@+id/tv_wk_label_6"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周六"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_6"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="自由学习与休息"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_6"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="无课"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/layout_wk_row_7"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="3.5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_week_row"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp">
+
+            <TextView
+                android:id="@+id/tv_wk_label_7"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="周日"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_wk_day_7"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="自由学习与休息"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tv_wk_badge_7"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:singleLine="true"
+                android:text="无课"
+                android:textColor="@color/wk_widget_secondary"
+                android:textSize="10sp" />
+        </LinearLayout>
     </LinearLayout>
 
 </LinearLayout>

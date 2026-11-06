@@ -124,12 +124,12 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 val stationCount = pending.map { it.stationName.cleanWidgetText() ?: "校园驿站" }.distinct().size
                 views.setTextViewText(
                     R.id.tv_parcel_header,
-                    if (stationCount > 1) "📦 待取快递 · $stationCount 个驿站" else "📦 校园快递取件码"
+                    if (stationCount > 1) "待取快递 · $stationCount 个驿站" else "校园驿站取件码"
                 )
                 views.setTextViewText(R.id.tv_parcel_count_badge, "待取 ${pending.size} 件")
                 views.setTextViewText(
                     R.id.tv_parcel_station,
-                    "📍 ${first.stationName.cleanWidgetText() ?: "校园快递驿站"}"
+                    first.stationName.cleanWidgetText() ?: "校园快递驿站"
                 )
                 views.setTextViewText(
                     R.id.tv_parcel_code_main,
@@ -171,12 +171,12 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 }
             } else {
                 val inTransitCount = allParcels.count { it.status != "PICKED_UP" }
-                views.setTextViewText(R.id.tv_parcel_header, "📦 校园快递取件码")
+                views.setTextViewText(R.id.tv_parcel_header, "校园驿站取件码")
                 views.setTextViewText(
                     R.id.tv_parcel_count_badge,
                     if (inTransitCount > 0) "运输中 $inTransitCount" else "无待取"
                 )
-                views.setTextViewText(R.id.tv_parcel_station, "📍 校园菜鸟驿站 / 快递柜")
+                views.setTextViewText(R.id.tv_parcel_station, "校园菜鸟驿站 / 快递柜")
                 views.setTextViewText(R.id.tv_parcel_code_main, "暂无待取件")
                 views.setTextViewText(
                     R.id.tv_parcel_meta_main,

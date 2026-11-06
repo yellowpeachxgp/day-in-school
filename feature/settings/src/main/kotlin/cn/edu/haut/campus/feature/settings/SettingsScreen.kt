@@ -1073,160 +1073,349 @@ fun SettingsScreen(
                     }
                 }
 
-                // 6. 桌面小组件中心
+                // 6. 桌面小组件中心（含 Bento 视觉预览卡片与一键添加）
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("桌面小组件", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("小组件紧凑布局", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = widgetCompactDefault,
-                        onCheckedChange = { checked ->
-                            widgetCompactDefault = checked
-                            scope.launch {
-                                for (id in 0..20) {
-                                    val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
-                                    repository.saveWidgetConfig(
-                                        existing.copy(
-                                            compact = checked,
-                                            privacyMode = widgetPrivacyDefault
-                                        )
-                                    )
-                                }
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                feedbackText = "已更新小组件紧凑布局。"
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("桌面小组件画廊", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "全新 Bento 视觉风格 · 点击预览卡片可一键添加至桌面",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("小组件隐藏课程名与教室", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = widgetPrivacyDefault,
-                        onCheckedChange = { checked ->
-                            widgetPrivacyDefault = checked
-                            scope.launch {
-                                for (id in 0..20) {
-                                    val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
-                                    repository.saveWidgetConfig(
-                                        existing.copy(
-                                            compact = widgetCompactDefault,
-                                            privacyMode = checked
-                                        )
-                                    )
-                                }
+                        TextButton(
+                            onClick = {
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                feedbackText = "已更新小组件隐私保护。"
+                                feedbackText = "已刷新全部桌面小组件。"
                             }
+                        ) {
+                            Text("刷新全部", maxLines = 1, softWrap = false)
                         }
-                    )
-                }
+                    }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                fun requestPin(label: String, providerClass: String) {
-                    val mgr = AppWidgetManager.getInstance(context)
-                    val provider = ComponentName(context.packageName, providerClass)
-                    if (mgr.isRequestPinAppWidgetSupported) {
-                        val ok = mgr.requestPinAppWidget(provider, null, null)
-                        feedbackText = if (ok) {
-                            "请在系统弹窗中确认添加「$label」"
+                    fun requestPin(label: String, providerClass: String) {
+                        val mgr = AppWidgetManager.getInstance(context)
+                        val provider = ComponentName(context.packageName, providerClass)
+                        if (mgr.isRequestPinAppWidgetSupported) {
+                            val ok = mgr.requestPinAppWidget(provider, null, null)
+                            feedbackText = if (ok) {
+                                "请在系统弹窗中确认添加「$label」"
+                            } else {
+                                "请长按手机桌面空白处添加小组件"
+                            }
                         } else {
-                            "请长按手机桌面空白处添加小组件"
+                            feedbackText = "请长按手机桌面空白处添加小组件"
                         }
-                    } else {
-                        feedbackText = "请长按手机桌面空白处添加小组件"
                     }
-                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            requestPin("2×2 下一节", "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider")
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(1f)
+                    // 横向 Bento 小组件高保真预览画廊
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("添加 2×2 下一节", maxLines = 1, softWrap = false)
+                        // 1) 2x2 下一节课预览卡
+                        Column(
+                            modifier = Modifier
+                                .width(156.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                                .clickable {
+                                    requestPin("2×2 下一节", "cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider")
+                                }
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                XPeachStatusBadge(
+                                    text = "下一节课",
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = "2×2",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "数据结构与算法",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "10:10–11:50 · 3-4节",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "5教 5204",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = "添加 ›",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                            }
+                        }
+
+                        // 2) 4x2 今日双栏预览卡
+                        Column(
+                            modifier = Modifier
+                                .width(214.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                                .clickable {
+                                    requestPin("4×2 今日课程", "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider")
+                                }
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "今日课表双栏",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "4×2 · 添加 ›",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1.1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+                                        .padding(horizontal = 7.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "操作系统原理",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = "6教 6201 · 3-4节",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        maxLines = 1
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.weight(0.9f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "14:30 计网 @8教",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "19:00 选修 @钟楼",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3) 4x2 快递取件码预览卡
+                        Column(
+                            modifier = Modifier
+                                .width(204.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                .border(0.7.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                                .clickable {
+                                    requestPin("4×2 快递取件码", "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider")
+                                }
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "驿站取件码",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "4×2 · 添加 ›",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "3-2-1048",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = "北苑菜鸟驿站 · 顺丰速运",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
                     }
-                    OutlinedButton(
-                        onClick = {
-                            requestPin("4×2 今日课程", "cn.edu.haut.campus.widget.today.TodayAppWidgetProvider")
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(1f)
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("添加 4×2 今日", maxLines = 1, softWrap = false)
+                        FilledTonalButton(
+                            onClick = {
+                                requestPin("4×4 时间轴", "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider")
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("添加 4×4 时间轴", maxLines = 1, softWrap = false)
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                requestPin("4×4 周课表", "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider")
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("添加 4×4 周课表", maxLines = 1, softWrap = false)
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                    XPeachInsetDivider(verticalPadding = 8.dp)
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            requestPin("4×4 时间轴", "cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider")
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("添加 4×4 时间轴", maxLines = 1, softWrap = false)
+                        Text("小组件紧凑布局", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = widgetCompactDefault,
+                            onCheckedChange = { checked ->
+                                widgetCompactDefault = checked
+                                scope.launch {
+                                    for (id in 0..20) {
+                                        val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
+                                        repository.saveWidgetConfig(
+                                            existing.copy(
+                                                compact = checked,
+                                                privacyMode = widgetPrivacyDefault
+                                            )
+                                        )
+                                    }
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    feedbackText = "已更新小组件紧凑布局。"
+                                }
+                            }
+                        )
                     }
-                    OutlinedButton(
-                        onClick = {
-                            requestPin("4×4 周课表", "cn.edu.haut.campus.widget.week.WeekAppWidgetProvider")
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("添加 4×4 周课表", maxLines = 1, softWrap = false)
+                        Text("小组件隐藏课程名与教室", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = widgetPrivacyDefault,
+                            onCheckedChange = { checked ->
+                                widgetPrivacyDefault = checked
+                                scope.launch {
+                                    for (id in 0..20) {
+                                        val existing = repository.getWidgetConfigOrDefault(id, WidgetType.NEXT_CLASS_2X2)
+                                        repository.saveWidgetConfig(
+                                            existing.copy(
+                                                compact = widgetCompactDefault,
+                                                privacyMode = checked
+                                            )
+                                        )
+                                    }
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    feedbackText = "已更新小组件隐私保护。"
+                                }
+                            }
+                        )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Button(
-                    onClick = {
-                        requestPin("4×2 快递取件码", "cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider")
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("添加 4×2 快递取件码", maxLines = 1, softWrap = false)
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                FilledTonalButton(
-                    onClick = {
-                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = "已刷新全部桌面小组件。"
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("立即刷新全部小组件", maxLines = 1, softWrap = false)
-                }
-            }
 
             // 7. 作息节次表（默认折叠）
             XPeachCard(modifier = Modifier.fillMaxWidth()) {

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="wk_widget_bg">#FFFFFF</color>
-    <color name="wk_widget_stroke">#E5EAF2</color>
-    <color name="wk_widget_primary">#111827</color>
-    <color name="wk_widget_secondary">#526071</color>
+    <color name="wk_widget_bg">#FAFCFF</color>
+    <color name="wk_widget_stroke">#E2E8F2</color>
+    <color name="wk_widget_primary">#0F172A</color>
+    <color name="wk_widget_secondary">#475569</color>
     <color name="wk_widget_accent">#0066CC</color>
-    <color name="wk_widget_grid_bg">#F4F7FB</color>
-    <color name="wk_widget_row_stroke">#E8EEF6</color>
-    <color name="wk_widget_today_bg">#F2F7FF</color>
-    <color name="wk_widget_today_stroke">#D0E3FF</color>
-    <color name="wk_widget_badge_bg">#E6F0FF</color>
+    <color name="wk_widget_grid_bg">#F1F5FA</color>
+    <color name="wk_widget_row_stroke">#E6EDF6</color>
+    <color name="wk_widget_today_bg">#EDF5FF</color>
+    <color name="wk_widget_today_stroke">#D4E6FF</color>
+    <color name="wk_widget_badge_bg">#E0EEFF</color>
     <string name="widget_week_desc">周一至周日周课表概览，完整标注每节课节次与教室</string>
 </resources>
