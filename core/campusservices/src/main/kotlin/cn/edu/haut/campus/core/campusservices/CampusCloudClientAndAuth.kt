@@ -1036,7 +1036,7 @@ object CampusCloudOidcHelper {
                                     cp.optCleanString("tierBadge", presetFallback?.tierBadge ?: "教育部白名单 A 类赛事")
                                 ).ifBlank { "教育部白名单 A 类赛事" },
                                 category = CampusCompetitionCategory.fromWireName(
-                                    cp.optCleanString("category", presetFallback?.category?.name)
+                                    cp.optCleanString("category", presetFallback?.category?.name.orEmpty())
                                 ),
                                 recommendedMajorTracks = majorTracks,
                                 interestTags = interestTags,
