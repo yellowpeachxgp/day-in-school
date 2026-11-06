@@ -226,10 +226,19 @@ class CampusServicesUnitTest {
             OfficialServiceRoutePolicy.sanitizeCoverUrl("//img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg")
         )
 
-        // Search URL uses Huiwen OPAC strSearchType & strText parameters
+        // Search URL uses Huiwen OPAC strSearchType, strText & optr parameters
         val searchUrl = LibraryCatalogSnapshot.buildSearchUrl("数据结构", "keyword")
         assertTrue(searchUrl.contains("strSearchType=keyword"))
         assertTrue(searchUrl.contains("strText="))
+        assertTrue(searchUrl.contains("optr="))
+
+        val callNoSearchUrl = LibraryCatalogSnapshot.buildSearchUrl("TP311", "callno")
+        assertTrue(callNoSearchUrl.contains("strSearchType=callno"))
+        assertTrue(callNoSearchUrl.contains("optr=%E5%89%8D%E6%96%B9%E5%8C%B9%E9%85%8D"))
+
+        val syncScript = OfficialWebScripts.buildLibspaceSearchSyncScript("数据结构", "all")
+        assertTrue(syncScript.contains("idx.opac"))
+        assertTrue(syncScript.contains("search/param"))
     }
 
     @Test
@@ -254,6 +263,20 @@ class CampusServicesUnitTest {
                     "circCount": 1,
                     "abstract": "数据结构经典教材",
                     "holdings": "[{\"location\":\"总馆 - X81 八楼西书库\",\"tempLocation\":\"总馆 - 01 嵩山路流通库\",\"callNo\":\"TP311.12-43/30-2.2\",\"barCode\":\"111856016\",\"status\":\"可借\",\"dueDate\":null,\"shelfMark\":\"03架A面\"},{\"location\":\"总馆 - X81 八楼西书库\",\"tempLocation\":\"总馆 - X81 八楼西书库\",\"callNo\":\"TP311.12-43/30-2.2\",\"barCode\":\"111856017\",\"status\":\"借出\",\"dueDate\":\"2026-11-20\",\"shelfMark\":null}]"
+                  },
+                  {
+                    "bibId": "m_null_fields_book",
+                    "title": "电子馆藏测试书目",
+                    "author": null,
+                    "publisher": null,
+                    "pub_year": null,
+                    "isbn": null,
+                    "callno": null,
+                    "docTypeDesc": null,
+                    "itemCount": 0,
+                    "circCount": 0,
+                    "abstract": null,
+                    "holdings": null
                   }
                 ]
               }
@@ -268,7 +291,7 @@ class CampusServicesUnitTest {
             pageSize = 20
         )
         assertEquals(12, pageResult.totalCount)
-        assertEquals(1, pageResult.books.size)
+        assertEquals(2, pageResult.books.size)
         val book = pageResult.books.first()
         assertEquals("数据结构:C语言版", book.title)
         assertEquals("m7e3788925dc6cfeb9cd7d3a74db7fae2", book.bibId)
@@ -278,6 +301,61 @@ class CampusServicesUnitTest {
         assertEquals(2, book.inlineHoldings.size)
         assertTrue(book.inlineHoldings.first().isAvailable)
         assertEquals("架位：03架A面", book.inlineHoldings.first().shelf)
+        assertFalse(book.inlineHoldings.first().lines.any { it.contains("null") })
+
+        val nullBook = pageResult.books[1]
+        assertEquals("电子馆藏测试书目", nullBook.title)
+        assertEquals("", nullBook.bibliography)
+        assertEquals("", nullBook.summary)
+        assertEquals("可借 0 / 馆藏 0 册", nullBook.resources)
+        assertTrue(nullBook.inlineHoldings.isEmpty())
+
+        assertEquals("数据结构", HautLibraryOpacClient.normalizeSearchKeyword("《数据结构》", LibrarySearchField.ALL))
+        assertEquals("978-7-115-57666-8", HautLibraryOpacClient.normalizeSearchKeyword("ISBN: 978-7-115-57666-8", LibrarySearchField.ISBN))
+        assertEquals("TP311", HautLibraryOpacClient.normalizeSearchKeyword("索书号：tp311", LibrarySearchField.CALL_NO))
+
+        val detailInfoJson = """
+            {
+              "code": 0,
+              "data": {
+                "map": {
+                  "baseInfo": {
+                    "map": {
+                      "title": "傲慢与偏见",
+                      "callno": ["I561.44/1-12"]
+                    }
+                  },
+                  "detailInfo": {
+                    "map": {
+                      "出版发行项": "北京:<a style='color:#006fcc' href='{meta}/#/search'>作家出版社</a>,2024.5",
+                      "学科主题": "<a href='#'>长篇小说</a>-英国-近代"
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val parsedDetail = HautLibraryOpacClient.parseBookDetailPayloads(
+            fallbackBook = nullBook,
+            infoJson = detailInfoJson,
+            holdingsJson = null
+        )
+        assertEquals("傲慢与偏见", parsedDetail.title)
+        assertEquals("I561.44/1-12", parsedDetail.callNo)
+        assertTrue(parsedDetail.bibliography.contains("出版发行项：北京:作家出版社,2024.5"))
+        assertTrue(parsedDetail.bibliography.contains("学科主题：长篇小说-英国-近代"))
+
+        val rawHttp11 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"code\":0,\"data\":[]}"
+        val parsedHttpBody = HautLibraryOpacClient.readHttp11Response(
+            java.io.ByteArrayInputStream(rawHttp11.toByteArray(StandardCharsets.UTF_8))
+        )
+        assertEquals("{\"code\":0,\"data\":[]}", parsedHttpBody)
+
+        val rawChunkedHttp11 = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n{\"code\":0,\r\n9\r\n\"data\":[]}\r\n0\r\n\r\n"
+        val parsedChunkedBody = HautLibraryOpacClient.readHttp11Response(
+            java.io.ByteArrayInputStream(rawChunkedHttp11.toByteArray(StandardCharsets.UTF_8))
+        )
+        assertEquals("{\"code\":0,\"data\":[]}", parsedChunkedBody)
 
         val extendJson = """
             {

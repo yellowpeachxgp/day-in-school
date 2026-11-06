@@ -6,6 +6,7 @@
  */
 package cn.edu.haut.campus.core.campusservices
 
+import org.json.JSONObject
 import java.net.URI
 import java.util.Locale
 
@@ -119,9 +120,13 @@ object OfficialServiceRoutePolicy {
      * - 强制剥离 query、fragment、userInfo 与显式端口，仅保留纯净 path
      */
     fun sanitizeCoverUrl(rawUrl: String?): String {
-        val rawTrimmed = rawUrl?.trim().orEmpty()
+        val rawTrimmed = rawUrl?.cleanNullLiteral("")?.trim().orEmpty()
         if (rawTrimmed.isEmpty() || rawTrimmed.length > 2048) return ""
-        val text = if (rawTrimmed.startsWith("//")) "https:$rawTrimmed" else rawTrimmed
+        val text = when {
+            rawTrimmed.startsWith("//") -> "https:$rawTrimmed"
+            rawTrimmed.startsWith("http://", ignoreCase = true) -> "https://${rawTrimmed.substring(7)}"
+            else -> rawTrimmed
+        }
         val endpoint = parseHttpsEndpoint(text) ?: return ""
         if (!isAllowedCoverHost(endpoint.host)) return ""
         val rawPath = endpoint.uri.rawPath ?: return ""
@@ -473,4 +478,90 @@ object OfficialWebScripts {
             }
         })();
     """
+
+    /**
+     * 构造汇文移动馆藏 (`libspace.haut.edu.cn/mspace/searchList`) 检索参数同步脚本。
+     *
+     * 根因修复说明：
+     * `chunk-60a0bc2b.4a97534d.js` 中 `watch.requestParams` 配置了 `immediate: true`，
+     * 在 `created()` 异步执行 `getMatchOperator()` 完成前（`isInitDataDone === false`），
+     * 若 Vuex `search/param` (`sessionStorage`) 为空，会立即触发 `$router.push({name: "Index"})` 跳回首页。
+     * 此脚本在导航启动与完成时同步将检索条件写入 `sessionStorage` 与 `#app.__vue__.$store`，消除跳回首页问题。
+     */
+    fun buildLibspaceSearchSyncScript(
+        rawKeyword: String?,
+        fieldCode: String = "all"
+    ): String {
+        val cleanKeyword = rawKeyword?.trim()?.take(80).orEmpty()
+        val escapedKeyword = JSONObject.quote(cleanKeyword)
+        val normalizedField = when (fieldCode) {
+            "titles", "authors", "isbns", "callno", "subjects", "publisher" -> fieldCode
+            else -> "all"
+        }
+        val operatorCode = when (normalizedField) {
+            "isbns" -> "="
+            "callno" -> "<="
+            else -> "*"
+        }
+        return """
+            (function() {
+                try {
+                    if (location.origin !== 'https://libspace.haut.edu.cn') return false;
+                    var kw = $escapedKeyword;
+                    var fld = '$normalizedField';
+                    var op = '$operatorCode';
+                    var qs = new URLSearchParams(location.search || '');
+                    if (!kw && qs.get('strText')) {
+                        kw = qs.get('strText') || '';
+                    }
+                    var qsField = qs.get('strSearchType') || '';
+                    if (qsField && qsField !== 'keyword') {
+                        fld = qsField;
+                        op = (fld === 'isbns') ? '=' : ((fld === 'callno') ? '<=' : '*');
+                    }
+                    if (!kw) return false;
+                    var searchParam = {
+                        page: 1,
+                        pageSize: 20,
+                        indexName: 'idx.opac',
+                        sortField: 'relevance',
+                        sortType: 'desc',
+                        collapseField: 'groupId',
+                        queryFieldList: [{ logic: 0, field: fld, values: [kw], operator: op }],
+                        filterFieldList: []
+                    };
+                    try {
+                        var keys = Object.keys(sessionStorage);
+                        var updatedAny = false;
+                        for (var i = 0; i < keys.length; i++) {
+                            var k = keys[i];
+                            var raw = sessionStorage.getItem(k);
+                            if (raw && raw.charAt(0) === '{') {
+                                var parsed = JSON.parse(raw);
+                                if (parsed && typeof parsed === 'object' && ('search' in parsed || 'cache' in parsed)) {
+                                    parsed.search = parsed.search || {};
+                                    parsed.search.param = searchParam;
+                                    sessionStorage.setItem(k, JSON.stringify(parsed));
+                                    updatedAny = true;
+                                }
+                            }
+                        }
+                        if (!updatedAny) {
+                            sessionStorage.setItem('mspace', JSON.stringify({ search: { param: searchParam, words: [] } }));
+                        }
+                    } catch (_) {}
+                    try {
+                        var appEl = document.querySelector('#app');
+                        var vue = appEl && appEl.__vue__;
+                        if (vue && vue.${'$'}store && typeof vue.${'$'}store.set === 'function') {
+                            vue.${'$'}store.set('search/param', searchParam);
+                        }
+                    } catch (_) {}
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            })();
+        """.trimIndent()
+    }
 }

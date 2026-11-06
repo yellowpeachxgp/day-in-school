@@ -92,6 +92,7 @@ import cn.edu.haut.campus.core.campusservices.HautLibraryOpacClient
 import cn.edu.haut.campus.core.campusservices.LibraryCatalogSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySearchField
 import cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy
+import cn.edu.haut.campus.core.campusservices.OfficialWebScripts
 import cn.edu.haut.campus.core.campusservices.SafeCatalogCoverLoader
 import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
@@ -171,6 +172,8 @@ fun LibraryCatalogScreen(
         activeBookDetail = null
 
         if (showOfficialWebMode) {
+            val syncScript = OfficialWebScripts.buildLibspaceSearchSyncScript(clean, field.fieldCode)
+            webViewRef?.evaluateJavascript(syncScript, null)
             val url = LibraryCatalogSnapshot.buildSearchUrl(clean, field.fieldCode)
             webViewRef?.loadUrl(url)
         }
@@ -197,6 +200,7 @@ fun LibraryCatalogScreen(
             isLoadingMore = false
 
             res.onSuccess { pageData ->
+                selectedField = pageData.field
                 currentPage = pageData.page
                 totalCount = pageData.totalCount
                 hasMorePages = pageData.hasMore
@@ -224,7 +228,8 @@ fun LibraryCatalogScreen(
             coverUrl = book.coverUrl,
             bibliography = book.bibliography,
             description = book.summary,
-            holdings = book.inlineHoldings
+            holdings = book.inlineHoldings,
+            callNo = book.callNo
         )
         if (showOfficialWebMode && book.bibId.isNotBlank()) {
             webViewRef?.loadUrl(LibraryCatalogSnapshot.buildDetailUrl(book.bibId))
@@ -234,6 +239,15 @@ fun LibraryCatalogScreen(
             isDetailLoading = true
             HautLibraryOpacClient.fetchBookDetail(book).onSuccess { detail ->
                 activeBookDetail = detail
+                val resolvedCallNo = detail.callNo.ifBlank { book.callNo }
+                selectedBook = selectedBook?.let { current ->
+                    current.copy(
+                        callNo = resolvedCallNo,
+                        availableCount = if (detail.holdings.isNotEmpty()) detail.availableHoldingsCount else current.availableCount,
+                        totalCount = if (detail.holdings.isNotEmpty()) detail.totalHoldingsCount else current.totalCount,
+                        inlineHoldings = detail.holdings.ifEmpty { current.inlineHoldings }
+                    )
+                }
             }
             isDetailLoading = false
         }
@@ -412,6 +426,35 @@ fun LibraryCatalogScreen(
                         WebView(ctx).apply {
                             SchoolWebSessionManager.configureHardenedSchoolWebView(this)
                             webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(
+                                    view: WebView?,
+                                    url: String?,
+                                    favicon: Bitmap?
+                                ) {
+                                    super.onPageStarted(view, url, favicon)
+                                    if (url != null && url.startsWith("https://libspace.haut.edu.cn")) {
+                                        val kw = activeQuery.ifBlank { keywordInput }
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibspaceSearchSyncScript(kw, selectedField.fieldCode),
+                                            null
+                                        )
+                                    }
+                                }
+
+                                override fun onPageFinished(
+                                    view: WebView?,
+                                    url: String?
+                                ) {
+                                    super.onPageFinished(view, url)
+                                    if (url != null && url.startsWith("https://libspace.haut.edu.cn")) {
+                                        val kw = activeQuery.ifBlank { keywordInput }
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibspaceSearchSyncScript(kw, selectedField.fieldCode),
+                                            null
+                                        )
+                                    }
+                                }
+
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView?,
                                     request: WebResourceRequest?
@@ -456,7 +499,9 @@ fun LibraryCatalogScreen(
                         stage == 2 && selectedBook != null && detailToShow != null -> {
                             CatalogBookDetailView(
                                 detail = detailToShow,
-                                callNo = selectedBook?.callNo.orEmpty(),
+                                callNo = detailToShow.callNo.ifBlank { selectedBook?.callNo.orEmpty() },
+                                fallbackAvailableCount = selectedBook?.availableCount ?: 0,
+                                fallbackTotalCount = selectedBook?.totalCount ?: 0,
                                 isRefreshing = isDetailLoading,
                                 onCopyCallNo = { callNo ->
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -724,6 +769,8 @@ private fun CatalogBookItemCard(
 private fun CatalogBookDetailView(
     detail: CatalogBookDetail,
     callNo: String,
+    fallbackAvailableCount: Int,
+    fallbackTotalCount: Int,
     isRefreshing: Boolean,
     onCopyCallNo: (String) -> Unit,
     onBackToResults: () -> Unit
@@ -784,9 +831,15 @@ private fun CatalogBookDetailView(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val avail = detail.availableHoldingsCount
+                    val total = if (detail.totalHoldingsCount > 0) detail.totalHoldingsCount else fallbackTotalCount
+                    val avail = if (detail.totalHoldingsCount > 0) detail.availableHoldingsCount else fallbackAvailableCount
+                    val badgeText = if (total == 0 && isRefreshing) {
+                        "正在查询实时馆藏..."
+                    } else {
+                        "可借 $avail / 馆藏 $total 册"
+                    }
                     XPeachStatusBadge(
-                        text = "可借 $avail / 馆藏 ${detail.totalHoldingsCount} 册",
+                        text = badgeText,
                         containerColor = if (avail > 0) XPeachTheme.successContainer else MaterialTheme.colorScheme.surfaceVariant,
                         contentColor = if (avail > 0) XPeachTheme.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )

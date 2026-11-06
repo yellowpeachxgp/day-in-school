@@ -50,7 +50,8 @@ data class CatalogBookDetail(
     val coverUrl: String,
     val bibliography: String,
     val description: String,
-    val holdings: List<CatalogHolding>
+    val holdings: List<CatalogHolding>,
+    val callNo: String = ""
 ) {
     val totalHoldingsCount: Int
         get() = holdings.size
@@ -130,7 +131,7 @@ object LibraryCatalogSnapshot {
 
         return runCatching {
             val root = JSONObject(trimmed)
-            when (root.optString("kind")) {
+            when (root.optCleanString("kind")) {
                 "home" -> {
                     val recs = root.optJSONArray("recommendations").toStringList(maxItems = 8, maxLen = 100)
                     CatalogPageSnapshot.Home(recommendations = recs)
@@ -141,17 +142,17 @@ object LibraryCatalogSnapshot {
                     val count = booksArray.length().coerceAtMost(MAX_BOOKS)
                     val books = (0 until count).mapNotNull { idx ->
                         val item = booksArray.optJSONObject(idx) ?: return@mapNotNull null
-                        val title = item.optString("title").cleanText(300)
+                        val title = item.optCleanString("title").cleanText(300)
                         if (title.isBlank()) return@mapNotNull null
                         val domIndex = item.optInt("index", idx)
                         if (domIndex !in 0 until MAX_BOOKS) return@mapNotNull null
                         CatalogBook(
                             index = domIndex,
                             title = title,
-                            bibliography = item.optString("bibliography").cleanText(500),
-                            summary = item.optString("summary").cleanText(500),
-                            resources = item.optString("resources").cleanText(300),
-                            coverUrl = OfficialServiceRoutePolicy.sanitizeCoverUrl(item.optString("coverUrl")),
+                            bibliography = item.optCleanString("bibliography").cleanText(500),
+                            summary = item.optCleanString("summary").cleanText(500),
+                            resources = item.optCleanString("resources").cleanText(300),
+                            coverUrl = OfficialServiceRoutePolicy.sanitizeCoverUrl(item.optCleanString("coverUrl")),
                             pageGeneration = pageGeneration
                         )
                     }
@@ -165,7 +166,7 @@ object LibraryCatalogSnapshot {
                 }
 
                 "detail" -> {
-                    val title = root.optString("title").cleanText(300)
+                    val title = root.optCleanString("title").cleanText(300)
                     if (title.isBlank()) {
                         return@runCatching CatalogPageSnapshot.OfficialFallback("未识别到图书详情标题")
                     }
@@ -173,10 +174,10 @@ object LibraryCatalogSnapshot {
                     val holdingsCount = holdingsArray.length().coerceAtMost(MAX_HOLDINGS)
                     val holdings = (0 until holdingsCount).mapNotNull { idx ->
                         val row = holdingsArray.optJSONObject(idx) ?: return@mapNotNull null
-                        val location = row.optString("location").cleanText(200)
+                        val location = row.optCleanString("location").cleanText(200)
                         val lines = row.optJSONArray("lines").toStringList(maxItems = 8, maxLen = 200)
-                        val status = row.optString("status").cleanText(80)
-                        val shelf = row.optString("shelf").cleanText(200)
+                        val status = row.optCleanString("status").cleanText(80)
+                        val shelf = row.optCleanString("shelf").cleanText(200)
                         if (location.isBlank() && lines.isEmpty() && status.isBlank()) {
                             return@mapNotNull null
                         }
@@ -190,9 +191,9 @@ object LibraryCatalogSnapshot {
                     CatalogPageSnapshot.Detail(
                         detail = CatalogBookDetail(
                             title = title,
-                            coverUrl = OfficialServiceRoutePolicy.sanitizeCoverUrl(root.optString("coverUrl")),
-                            bibliography = root.optString("bibliography").cleanMultiline(2000),
-                            description = root.optString("description").cleanMultiline(10000),
+                            coverUrl = OfficialServiceRoutePolicy.sanitizeCoverUrl(root.optCleanString("coverUrl")),
+                            bibliography = root.optCleanString("bibliography").cleanMultiline(2000),
+                            description = root.optCleanString("description").cleanMultiline(10000),
                             holdings = holdings
                         )
                     )
@@ -207,18 +208,24 @@ object LibraryCatalogSnapshot {
     }
 
     /**
-     * 生成安全检索 URL：对关键词做长度截断与 URI 编码（对接汇文 OPAC `/mspace/searchList?strSearchType=...&strText=...`）。
+     * 生成安全检索 URL：对关键词做长度截断与 URI 编码（对接汇文 OPAC `/mspace/searchList?strSearchType=...&strText=...&optr=...`）。
      */
     fun buildSearchUrl(rawKeyword: String, searchField: String = "keyword"): String {
         val clean = rawKeyword.trim().take(80)
         require(clean.isNotEmpty()) { "请输入检索关键词" }
         val safeField = when (searchField) {
-            "all", "keyword" -> "keyword"
-            "titles", "authors", "isbns", "callno", "subjects", "publisher" -> searchField
+            "keyword" -> "keyword"
+            "all", "titles", "authors", "isbns", "callno", "subjects", "publisher" -> searchField
             else -> "keyword"
         }
-        val encoded = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
-        return "https://libspace.haut.edu.cn/mspace/searchList?strSearchType=$safeField&strText=$encoded"
+        val operatorName = when (safeField) {
+            "isbns" -> "完全匹配"
+            "callno" -> "前方匹配"
+            else -> "任意匹配"
+        }
+        val encodedText = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
+        val encodedOptr = java.net.URLEncoder.encode(operatorName, "UTF-8").replace("+", "%20")
+        return "https://libspace.haut.edu.cn/mspace/searchList?strSearchType=$safeField&strText=$encodedText&optr=$encodedOptr"
     }
 
     /**
@@ -269,7 +276,9 @@ object LibraryCatalogSnapshot {
         if (this == null) return emptyList()
         val limit = length().coerceAtMost(maxItems)
         return (0 until limit)
-            .map { optString(it).cleanText(maxLen) }
+            .mapNotNull { idx ->
+                if (isNull(idx)) null else optString(idx, "").cleanNullLiteral("").cleanText(maxLen)
+            }
             .filter { it.isNotEmpty() }
     }
 
