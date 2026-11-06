@@ -636,9 +636,9 @@ object CampusCloudOidcHelper {
                 seatTitle = seatAlias,
                 evidenceSha256 = evidenceHash,
                 diagnosticMessage = if (confirmed) {
-                    "云端抢座成功！已锁定 ${seatAlias.ifBlank { "所选座位" }}（预约号 $extId），扣除 0.1 🍑"
+                    "云端抢座（测试版）成功！已锁定 ${seatAlias.ifBlank { "所选座位" }}（预约号 $extId），已消耗 0.1 🍑 内测防滥用配额"
                 } else {
-                    "云端抢座未锁定座位（状态：${job?.optCleanString("state", "未命中") ?: "未命中"}），未扣费"
+                    "云端抢座（测试版）未锁定座位（状态：${job?.optCleanString("state", "未命中") ?: "未命中"}），未消耗内测配额"
                 }
             )
         }.getOrNull()

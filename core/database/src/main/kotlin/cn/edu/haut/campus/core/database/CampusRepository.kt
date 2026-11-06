@@ -2494,11 +2494,11 @@ class CampusRepository internal constructor(
                 val parsedTime = runCatching { DualEngineReservationPlanner.parseTargetLocalTime(rj.targetLocalTime) }.getOrNull() ?: LocalTime.of(7, 0)
                 val fireEpochMs = parsedDate.atTime(parsedTime).atZone(DualEngineReservationPlanner.HAUT_ZONE).toInstant().toEpochMilli()
                 val diagText = when (rj.state) {
-                    "CONFIRMED" -> "云端已成功为您抢到 $cleanAreaName $primarySeat，请按时到馆刷脸签到"
-                    "CANCELLED" -> "该预约计划已取消（未扣取 🍑）"
-                    "FAILED" -> "目标座位已被抢满，本次未扣取 🍑"
-                    "EXPIRED" -> "已过开抢有效期窗口（本次未扣取 🍑）"
-                    else -> "云端代抢已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动抢座"
+                    "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到"
+                    "CANCELLED" -> "该预约计划已取消（未消耗内测配额 🍑）"
+                    "FAILED" -> "目标座位已被抢满，本次未消耗内测配额 🍑"
+                    "EXPIRED" -> "已过开抢有效期窗口（本次未消耗内测配额 🍑）"
+                    else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座"
                 }
                 val mergedPlan = LibraryBookingPlanEntity(
                     id = matchingLocal?.id ?: "plan_${rj.planId.replace("-", "").take(14)}",
@@ -2591,9 +2591,9 @@ class CampusRepository internal constructor(
         val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
             val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
-                ?: throw IllegalStateException("云端托管预约需先绑定 XPEACH 账号；您也可随时切换为「本机免费预约」（无需登录 XPEACH）")
+                ?: throw IllegalStateException("云端代抢（测试版）需先绑定 XPEACH 内测账号；您也可随时切换为「本机抢座 (测试版)」（无需登录云账号）")
             if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("XPEACH 🍑 余额不足 (需 0.10 🍑)，请先充值或改用「本机免费预约」")
+                throw IllegalStateException("内测防滥用积分不足（需 0.10 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
             }
         }
 

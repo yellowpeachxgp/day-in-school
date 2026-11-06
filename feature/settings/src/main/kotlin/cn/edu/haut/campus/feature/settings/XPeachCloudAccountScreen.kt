@@ -118,7 +118,7 @@ fun XPeachCloudAccountScreen(
                         res.onSuccess { profile ->
                             val saved = repository.saveVerifiedXpeachCloudAccount(profile)
                             runCatching { repository.syncWithCampusCloud() }
-                            feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
+                            feedbackBanner = "已登录并同步内测账户：${saved.displayName}（内测配额 🍑 %.2f）".format(
                                 saved.peachBalanceMicropeach / 10_000.0
                             )
                         }
@@ -142,8 +142,8 @@ fun XPeachCloudAccountScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "云账号与扩展功能",
-            subtitle = "用于关机自动代抢图书馆座位",
+            title = "云账号与扩展功能 (测试版)",
+            subtitle = "代抢座位服务（测试版） · 积分仅用于内部测试防止恶意利用",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -189,13 +189,13 @@ fun XPeachCloudAccountScreen(
             if (selectedTab == 0) {
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "关于云账号",
+                        text = "关于代抢座位（测试版）与内测积分",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "课表、成绩、电费、空教室、本机自动抢座与查快递均无需登录云账号。仅在使用「云端关机代抢图书馆座位」时需要登录。",
+                        text = "课表、成绩、电费、空教室与查快递均无需登录云账号。代抢座位服务目前为内部测试版，账户中的 🍑 积分仅用于内部测试防止恶意高频调用与滥用，无任何商业收费、充值或提现属性。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -205,13 +205,13 @@ fun XPeachCloudAccountScreen(
                 if (binding == null) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "尚未登录云账号",
+                            text = "尚未登录内测云账号",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "登录后可同步昵称与账户余额，开启云端关机代抢。",
+                            text = "登录后可同步内测防滥用配额积分，开启云端关机代抢（测试版）。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -284,7 +284,7 @@ fun XPeachCloudAccountScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             Text(
-                                text = "可用余额",
+                                text = "内测防滥用配额积分",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -299,7 +299,7 @@ fun XPeachCloudAccountScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "仅在云端成功抢到座位后结算 0.10 🍑；未抢到或提前取消不扣费。",
+                            text = "🍑 积分仅用于内部测试防止恶意利用与高频滥用，无任何收费或货币属性；每次云端命中消耗 0.10 测试配额，未命中或取消不消耗。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -315,9 +315,9 @@ fun XPeachCloudAccountScreen(
                                     isSyncingSnapshot = false
                                     if (snap != null || refreshed != null) {
                                         val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
-                                        feedbackBanner = "已完成云端同步（余额 %.2f 🍑）".format(bal)
+                                        feedbackBanner = "已完成云端同步（内测配额 %.2f 🍑）".format(bal)
                                     } else {
-                                        feedbackBanner = "云端繁忙，已保留本地数据（%.2f 🍑）".format(
+                                        feedbackBanner = "云端繁忙，已保留本地数据（内测配额 %.2f 🍑）".format(
                                             binding.peachBalanceMicropeach / 10_000.0
                                         )
                                     }
@@ -340,9 +340,9 @@ fun XPeachCloudAccountScreen(
                                     scope.launch {
                                         val refreshed = repository.refreshXpeachWalletBalance()
                                         if (refreshed != null) {
-                                            feedbackBanner = "已刷新最新余额：%.2f 🍑".format(refreshed)
+                                            feedbackBanner = "已刷新内测配额：%.2f 🍑".format(refreshed)
                                         } else {
-                                            feedbackBanner = "当前余额：%.2f 🍑".format(
+                                            feedbackBanner = "当前内测配额：%.2f 🍑".format(
                                                 binding.peachBalanceMicropeach / 10_000.0
                                             )
                                         }
@@ -352,7 +352,7 @@ fun XPeachCloudAccountScreen(
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("刷新余额")
+                                Text("刷新配额")
                             }
                             OutlinedButton(
                                 onClick = {
@@ -374,7 +374,7 @@ fun XPeachCloudAccountScreen(
                                 onClick = {
                                     scope.launch {
                                         repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢任务"
+                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢（测试版）任务"
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
@@ -391,7 +391,7 @@ fun XPeachCloudAccountScreen(
                 if (cloudPlans.isNotEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "云端代抢记录 (${cloudPlans.size})",
+                            text = "云端代抢记录 · 测试版 (${cloudPlans.size})",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -406,16 +406,16 @@ fun XPeachCloudAccountScreen(
                                 "CONFIRMED" -> "抢座成功"
                                 "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
                                 "PRECHECK_OK" -> "已完成登录保活，等待开抢"
-                                "ARMED" -> "定时任务待命（未抢成不扣费）"
-                                "CANCELLED" -> "已取消（未扣费）"
+                                "ARMED" -> "定时任务待命（未命中不消耗配额）"
+                                "CANCELLED" -> "已取消（未消耗配额）"
                                 else -> plan.lastDiagnosticMessage ?: "处理中"
                             }
                             val payLabel = when (plan.paymentState) {
-                                "PAID" -> "已结算 (${plan.priceMicropeach / 10_000.0} 🍑)"
-                                "REFUNDED" -> "已退回 🍑"
-                                "DEBIT_PENDING" -> "抢成后扣 0.1 🍑"
-                                "PAYMENT_DUE" -> "余额不足待补缴"
-                                else -> "免费"
+                                "PAID" -> "已消耗配额 (${plan.priceMicropeach / 10_000.0} 🍑)"
+                                "REFUNDED" -> "已退回配额 🍑"
+                                "DEBIT_PENDING" -> "命中后消耗 0.1 🍑 测试配额"
+                                "PAYMENT_DUE" -> "内测配额不足"
+                                else -> "不消耗配额"
                             }
                             val areaText = plan.preferredAreaName.trim().takeIf {
                                 it.isNotEmpty() && !it.equals("null", ignoreCase = true)
@@ -610,7 +610,7 @@ fun XPeachCloudAccountScreen(
                     val saved = repository.saveVerifiedXpeachCloudAccount(profile)
                     runCatching { repository.syncWithCampusCloud() }
                     showBindDialog = false
-                    feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
+                    feedbackBanner = "已登录并同步内测账户：${saved.displayName}（内测配额 🍑 %.2f）".format(
                         saved.peachBalanceMicropeach / 10_000.0
                     )
                 }
@@ -706,7 +706,7 @@ private fun XpeachNativeOidcLoginDialog(
     var needsTotp by remember { mutableStateOf(false) }
 
     var isSubmitting by remember { mutableStateOf(false) }
-    var statusHint by remember { mutableStateOf("输入账号密码登录后将自动同步余额") }
+    var statusHint by remember { mutableStateOf("输入账号密码登录后将自动同步内测配额") }
     var errorHint by remember { mutableStateOf<String?>(null) }
 
     var activeBrowserTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
@@ -715,7 +715,7 @@ private fun XpeachNativeOidcLoginDialog(
         if (isSubmitting) return
         isSubmitting = true
         errorHint = null
-        statusHint = "授权成功，正在同步你的昵称与 🍑 余额…"
+        statusHint = "授权成功，正在同步你的昵称与 🍑 内测配额…"
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -774,7 +774,7 @@ private fun XpeachNativeOidcLoginDialog(
         }
         isSubmitting = true
         errorHint = null
-        statusHint = "正在验证账号并同步余额…"
+        statusHint = "正在验证账号并同步内测配额…"
         scope.launch {
             val res = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.loginWithNativeOidcCredentials(

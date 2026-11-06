@@ -500,170 +500,50 @@ fun SettingsScreen(
                 ) {
             if (!inSystemSettings) {
                 // =========================================================================
-                // 一级页面：「我的」—— 仅展示个人必要核心数据
+                // 一级页面：「我的」—— 融合浓缩学籍学业总览、常用服务内测中心与底部免责条款
                 // =========================================================================
-
-                // 1. 数字学生证 / 个人学籍名片
                 val cloudBinding by repository.cloudIdentityBindingFlow.collectAsState(initial = null)
                 val parcelItems by repository.parcelItemsFlow.collectAsState(initial = emptyList())
                 val extensionPlugins by repository.installedExtensionPluginsFlow.collectAsState(initial = emptyList())
+                val latestAudit = importAudits.firstOrNull()
 
+                // 1. 融合数字学籍、核心学业指标、学分构成与本学期校历进度主卡
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    val peachFormatted = cloudBinding?.let {
-                        "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
-                    }
-                    val enabledPluginCount = extensionPlugins.count { it.status == "ENABLED" }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onNavigateToXpeachCloud)
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Text(
-                                text = "云账号与扩展功能",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = if (cloudBinding != null) {
-                                    "已登录 ${cloudBinding?.displayName} · 已启用 $enabledPluginCount/${extensionPlugins.size} 项扩展"
-                                } else {
-                                    "支持关机自动代抢图书馆座位 · 已安装 ${extensionPlugins.size} 项扩展功能"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (peachFormatted != null) {
-                            XPeachStatusBadge(
-                                text = "${peachFormatted} 🍑",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = XPeachTheme.readablePrimary
-                            )
-                        } else {
-                            XPeachStatusDotText(
-                                text = "未登录",
-                                dotColor = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-
-                    XPeachInsetDivider(verticalPadding = 10.dp)
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onNavigateToSchoolCenter)
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Text(
-                                text = "切换学校与身份",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "${activeSchool.displayName} · 当前身份：$activeProfileLabel",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            text = "切换 ›",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = XPeachTheme.readablePrimary
-                        )
-                    }
-
-                    XPeachInsetDivider(verticalPadding = 10.dp)
-
-                    val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onNavigateToParcelHub)
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Text("我的快递", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = "自动同步物流与驿站取件码",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (waitingCount > 0) {
-                            XPeachStatusBadge(
-                                text = "待取 $waitingCount 件",
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            XPeachStatusDotText(
-                                text = "共 ${parcelItems.size} 件",
-                                dotColor = XPeachTheme.readablePrimary
-                            )
-                        }
-                    }
-                }
-
-                StudentDigitalIdCard(
-                    profile = studentProfile,
-                    schoolLabel = activeSchool.displayName,
-                    privacyMasked = prefs.gpaPrivacyShieldEnabled,
-                    lastAudit = importAudits.firstOrNull(),
-                    onEditProfile = { showEditProfileDialog = true },
-                    onSyncNow = {
-                        if (!isHautCampus) {
-                            onNavigateToImporter()
-                        } else if (prefs.hasSavedCredentials && !isDynamicSyncing) {
-                            scope.launch {
-                                isDynamicSyncing = true
-                                feedbackText = "正在同步课表、考试和成绩..."
-                                val res = repository.performDynamicAcademicSync(force = true)
-                                isDynamicSyncing = false
-                                if (res == null) {
-                                    onNavigateToImporter()
-                                } else {
-                                    res.onSuccess { syncData ->
-                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                        feedbackText = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试、${syncData.gradeAttempts.size} 条成绩"
-                                    }.onFailure { err ->
-                                        feedbackText = "同步失败：${err.message ?: "请检查网络"}"
+                    StudentDigitalIdHeader(
+                        profile = studentProfile,
+                        schoolLabel = activeSchool.displayName,
+                        privacyMasked = prefs.gpaPrivacyShieldEnabled,
+                        lastAudit = latestAudit,
+                        onSwitchSchool = onNavigateToSchoolCenter,
+                        onEditProfile = { showEditProfileDialog = true },
+                        onSyncNow = {
+                            if (!isHautCampus) {
+                                onNavigateToImporter()
+                            } else if (prefs.hasSavedCredentials && !isDynamicSyncing) {
+                                scope.launch {
+                                    isDynamicSyncing = true
+                                    feedbackText = "正在同步课表、考试和成绩..."
+                                    val res = repository.performDynamicAcademicSync(force = true)
+                                    isDynamicSyncing = false
+                                    if (res == null) {
+                                        onNavigateToImporter()
+                                    } else {
+                                        res.onSuccess { syncData ->
+                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                            feedbackText = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试、${syncData.gradeAttempts.size} 条成绩"
+                                        }.onFailure { err ->
+                                            feedbackText = "同步失败：${err.message ?: "请检查网络"}"
+                                        }
                                     }
                                 }
+                            } else {
+                                onNavigateToImporter()
                             }
-                        } else {
-                            onNavigateToImporter()
                         }
-                    }
-                )
+                    )
 
-                // 2. 个人 4 维核心数据看板
-                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    XPeachInsetDivider(verticalPadding = 10.dp)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -691,12 +571,8 @@ fun SettingsScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                }
 
-                // 3. 学分分类结构统计
-                if (attempts.isNotEmpty()) {
-                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text("已修学分构成", style = MaterialTheme.typography.titleMedium)
+                    if (attempts.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         val categoryCredits = remember(attempts) {
                             val passed = attempts.filter { it.passed }.distinctBy { it.courseKey }
@@ -707,29 +583,24 @@ fun SettingsScreen(
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             for (cat in CourseCategory.entries) {
                                 val cred = categoryCredits[cat] ?: BigDecimal.ZERO
-                                Column(
+                                val credText = if (prefs.gpaPrivacyShieldEnabled) "**" else cred.stripTrailingZeros().toPlainString()
+                                Row(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                        .padding(vertical = 10.dp, horizontal = 6.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .padding(vertical = 6.dp, horizontal = 6.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (prefs.gpaPrivacyShieldEnabled) "**" else cred.stripTrailingZeros().toPlainString(),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                    Text(
-                                        text = cat.label,
+                                        text = "${cat.label} $credText",
                                         style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         softWrap = false
@@ -738,10 +609,9 @@ fun SettingsScreen(
                             }
                         }
                     }
-                }
 
-                // 4. 本学期校历进度卡（纯展示与快速切换学期，调休管理归入二级设置菜单）
-                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    XPeachInsetDivider(verticalPadding = 10.dp)
+
                     val totalWeeks = (currentTerm?.weekCount ?: 20).coerceAtLeast(1)
                     val weekProgress = (currentTeachingWeek.toFloat() / totalWeeks.toFloat()).coerceIn(0.05f, 1f)
                     val examStartDate = currentTerm?.startDate?.plusWeeks(18)
@@ -752,41 +622,40 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = currentTerm?.displayName ?: "2025-2026 学年",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = if (daysToExam != null && daysToExam > 0) {
-                                    "第 $currentTeachingWeek / $totalWeeks 周 · 距期末周约 $daysToExam 天"
-                                } else {
-                                    "第 $currentTeachingWeek / $totalWeeks 周 · 学期进行中"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = buildString {
+                                append(currentTerm?.displayName ?: "当前学期")
+                                append(" · 第 $currentTeachingWeek/$totalWeeks 周")
+                                if (daysToExam != null && daysToExam > 0) {
+                                    append(" · 距期末约 ${daysToExam} 天")
+                                }
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         XPeachStatusDotText(
                             text = "进度 ${(weekProgress * 100).toInt()}%",
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     LinearProgressIndicator(
                         progress = { weekProgress },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(7.dp)
+                            .height(6.dp)
                             .clip(CircleShape),
                         color = XPeachTheme.readablePrimary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
 
                     if (terms.size > 1) {
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -794,13 +663,6 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "当前学期",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                softWrap = false
-                            )
                             for (t in terms) {
                                 val count = rules.count { it.termId == t.id }
                                 XPeachFilterPill(
@@ -820,7 +682,7 @@ fun SettingsScreen(
                     }
                 }
 
-                // 5. 个人绑定与累计数据摘要卡
+                // 2. 融合个人校园服务与内测扩展中心卡
                 val primaryOnlineRoom = onlineRooms.firstOrNull()
                 val onlineDevices = remember(primaryOnlineRoom) {
                     primaryOnlineRoom?.let { decodeOnlineDevicesJson(it.devicesJson) }.orEmpty()
@@ -855,24 +717,72 @@ fun SettingsScreen(
                 val totalFocusMinutes = remember(completedFocusSessions) {
                     completedFocusSessions.sumOf { it.durationMinutes }
                 }
-                val latestAudit = importAudits.firstOrNull()
+                val waitingCount = parcelItems.count { it.status == "READY_FOR_PICKUP" }
+                val peachFormatted = cloudBinding?.let {
+                    "%.2f".format(it.peachBalanceMicropeach.toDouble() / 10_000.0)
+                }
+                val enabledPluginCount = extensionPlugins.count { it.status == "ENABLED" }
 
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("常用服务", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToParcelHub)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "我的快递",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "自动同步物流与驿站取件码",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (waitingCount > 0) {
+                            XPeachStatusBadge(
+                                text = "待取 $waitingCount 件",
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            XPeachStatusDotText(
+                                text = "共 ${parcelItems.size} 件",
+                                dotColor = XPeachTheme.readablePrimary
+                            )
+                        }
+                    }
+
                     if (isHautCampus) {
+                        XPeachInsetDivider(verticalPadding = 8.dp)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable(onClick = onNavigateToElectricity)
-                                .padding(vertical = 4.dp),
+                                .padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
-                                    text = "绑定宿舍 · $roomSummaryTitle",
+                                    text = "宿舍水电 · $roomSummaryTitle",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -888,24 +798,30 @@ fun SettingsScreen(
                                 color = XPeachTheme.readablePrimary
                             )
                         }
-                        XPeachInsetDivider(verticalPadding = 8.dp)
                     }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .clickable(onClick = onNavigateToFocus)
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
                                 text = if (activeFocusSession != null) {
                                     "自习专注 · 进行中（${activeFocusSession?.durationMinutes}分钟）"
                                 } else {
-                                    "自习专注记录"
+                                    "自习专注"
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
@@ -929,34 +845,89 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
-                            .clickable { showImportHistoryDialog = true }
-                            .padding(vertical = 4.dp),
+                            .clickable(onClick = onNavigateToXpeachCloud)
+                            .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
-                                text = "教务同步",
+                                text = "云账号与抢座服务 (测试版)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (cloudBinding != null) {
+                                    "已登录 ${cloudBinding?.displayName} · 积分仅作内测防恶意滥用 · 扩展 $enabledPluginCount/${extensionPlugins.size}"
+                                } else {
+                                    "代抢座位服务（测试版） · 积分仅用于内部测试防止恶意利用"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (peachFormatted != null) {
+                            XPeachStatusBadge(
+                                text = "内测 ${peachFormatted} 🍑",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = XPeachTheme.readablePrimary
+                            )
+                        } else {
+                            XPeachStatusBadge(
+                                text = "测试版",
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { showImportHistoryDialog = true }
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "教务同步与多身份管理",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
                                 text = if (latestAudit != null) {
-                                    "最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)} · 已存 ${courses.size} 门课 / ${attempts.size} 条成绩"
+                                    "身份：$activeProfileLabel · 最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)}（${courses.size} 门课 / ${attempts.size} 条成绩）"
                                 } else {
-                                    "尚未同步教务数据 · 点击查看记录"
+                                    "当前身份：$activeProfileLabel · 尚未同步教务数据"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
-                            text = "同步记录 ›",
+                            text = "记录 ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )
                     }
                 }
+
+                // 3. 个人主页底部免责条款与内测说明
+                ProfileDisclaimerSection()
             } else {
                 // =========================================================================
                 // 二级页面：「设置」—— 提醒、调休、作息、小组件、隐私安全与版本更新
@@ -2667,11 +2638,12 @@ private fun jumpToPresetQqChannel(
 
 
 @Composable
-private fun StudentDigitalIdCard(
+private fun StudentDigitalIdHeader(
     profile: StudentProfile?,
     schoolLabel: String,
     privacyMasked: Boolean,
     lastAudit: cn.edu.haut.campus.core.model.ImportAudit?,
+    onSwitchSchool: () -> Unit,
     onEditProfile: () -> Unit,
     onSyncNow: () -> Unit
 ) {
@@ -2687,111 +2659,149 @@ private fun StudentDigitalIdCard(
         profile?.enrollmentYear?.let { append(" · ${it}级") }
     }
 
-    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.weight(1f)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.weight(1f)
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .border(
+                        width = 1.dp,
+                        color = XPeachTheme.readablePrimary.copy(alpha = 0.25f),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                // 简约圆角头像徽章
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .border(
-                            width = 1.dp,
-                            color = XPeachTheme.readablePrimary.copy(alpha = 0.25f),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
+                Text(
+                    text = displayName.take(1),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = XPeachTheme.readablePrimary
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = displayName.take(1),
-                        style = MaterialTheme.typography.titleLarge,
+                        text = displayName,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = XPeachTheme.readablePrimary
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        XPeachStatusDotText(
-                            text = if (profile != null) "已绑定" else "未同步",
-                            dotColor = if (profile != null) {
-                                XPeachTheme.readablePrimary
-                            } else {
-                                MaterialTheme.colorScheme.outline
-                            }
-                        )
-                    }
-                    Text(
-                        text = displaySchoolId,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    XPeachStatusDotText(
+                        text = if (profile != null) "已绑定" else "未同步",
+                        dotColor = if (profile != null) {
+                            XPeachTheme.readablePrimary
+                        } else {
+                            MaterialTheme.colorScheme.outline
+                        }
+                    )
                     Text(
-                        text = majorText,
-                        style = MaterialTheme.typography.labelMedium,
+                        text = "$schoolLabel ›",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = XPeachTheme.readablePrimary,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onSwitchSchool)
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+                Text(
+                    text = "$displaySchoolId · $majorText",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (lastAudit != null) {
+                    Text(
+                        text = "上次同步：${AUDIT_TIME_FMT.format(lastAudit.importedAt)}",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
+        }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             XPeachIconButton(
                 icon = Icons.Default.Edit,
                 contentDescription = "编辑资料",
                 onClick = onEditProfile
             )
+            XPeachFilterPill(
+                label = "同步教务",
+                selected = true,
+                compact = true,
+                onClick = onSyncNow
+            )
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(10.dp))
-        HorizontalDivider(
-            thickness = 0.6.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
+@Composable
+private fun ProfileDisclaimerSection() {
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (lastAudit != null) {
-                    "上次同步：${AUDIT_TIME_FMT.format(lastAudit.importedAt)}"
-                } else {
-                    "尚未同步教务数据"
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = "免责条款与服务说明",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            XPeachFilterPill(
-                label = "同步教务",
-                selected = true,
-                onClick = onSyncNow
+            XPeachStatusBadge(
+                text = "内测声明",
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "1. 非官方工具声明：本应用为独立开发的非营利校园效率辅助工具，与高校官方教务、图书馆及后勤系统无任何隶属或委托关系。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "2. 代抢座位服务（测试版）：图书馆抢座辅助与云端代抢目前处于内部测试版（Beta）阶段，受网络波动及场馆策略影响不承诺成功率；请遵守场馆管理规定按时签到，未签到产生的违约记录由使用者自行承担。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "3. 内测防滥用积分（🍑）：账户内的 🍑 积分仅用于内部测试期间防止恶意高频请求与算力滥用，不具备任何货币价值，不提供任何商业充值、付费购买或提现变现服务。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "4. 隐私与数据准则：教务与场馆凭据仅加密存储于本机（主动开启测试版云端代抢任务除外）。课表、成绩、绩点、水电及快递数据仅供参考，请以学校官方系统为准。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

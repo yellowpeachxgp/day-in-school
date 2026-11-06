@@ -387,7 +387,7 @@ fun LibrarySeatBookingScreen(
         XPeachTopBar(
             title = "图书馆选座",
             subtitle = if (selectedBookingViewMode == 1) {
-                "选好自习室和座位，到点自动帮你抢"
+                "代抢座位服务（测试版） · 选好自习室和座位到点自动尝试"
             } else {
                 "河南工业大学图书馆"
             },
@@ -411,7 +411,7 @@ fun LibrarySeatBookingScreen(
                 XPeachSegmentedTabs(
                     items = listOf(
                         "网页选座",
-                        if (activePlanCount > 0) "快速选座 / 定时 ($activePlanCount)" else "快速选座 / 定时"
+                        if (activePlanCount > 0) "抢座辅助 · 测试版 ($activePlanCount)" else "抢座辅助 (测试版)"
                     ),
                     selectedIndex = selectedBookingViewMode,
                     onSelect = { selectedBookingViewMode = it }
@@ -2564,7 +2564,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         // 第四步：选择抢座方式并一键开启
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "4. 抢座方式",
+                text = "4. 抢座方式（测试版）",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -2585,7 +2585,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
             Text(
                 text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
-                    "使用云端代抢请先在「设置 → 云账号与扩展功能」登录账号。"
+                    "使用云端代抢（测试版）请先在「我的 → 云账号与扩展功能」登录内测账号（🍑 积分仅用于内部测试防止恶意利用）。"
                 } else {
                     selectedMode.subtitle
                 },
@@ -2842,13 +2842,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         // 我的定时抢座任务列表
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "定时抢座任务 (${bookingPlans.size})",
+                text = "定时抢座任务 · 测试版 (${bookingPlans.size})",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             if (bookingPlans.isEmpty()) {
                 Text(
-                    text = "暂无定时抢座任务。在上方选择自习室和座位后，点击「开启定时抢座」即可添加。",
+                    text = "暂无定时抢座任务。代抢座位服务为内部测试版，在上方选择自习室和座位后点击「开启定时抢座」即可添加。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
@@ -2872,9 +2872,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             else -> plan.status
                         }
                         val friendlyMode = when (plan.executionMode) {
-                            "CLOUD_HOSTED" -> "云端代抢"
+                            "CLOUD_HOSTED" -> "云端代抢(测试版)"
                             "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "到点提醒"
-                            else -> "本机抢座"
+                            else -> "本机抢座(测试版)"
                         }
                         val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
                         val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")

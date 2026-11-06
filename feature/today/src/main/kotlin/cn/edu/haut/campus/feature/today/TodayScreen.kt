@@ -1531,9 +1531,9 @@ private fun TodayLibrarySeatDynamicCard(
                     else -> "已预约定时抢座"
                 }
                 val engineLabel = if (plan.executionMode == "CLOUD_HOSTED") {
-                    "云端代抢"
+                    "云端代抢(测试版)"
                 } else {
-                    "本机定时"
+                    "本机抢座(测试版)"
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1790,8 +1790,8 @@ private fun TodayCampusBentoSection(
                 HomeModularCardSpec(
                     id = "LIBRARY_SEAT",
                     title = "座位预约",
-                    badgeText = "智能抢座",
-                    subtitle = "点选区域与座位号 · 准点自动抢座",
+                    badgeText = "测试版",
+                    subtitle = "点选区域与座位号 · 准点抢座辅助（测试版）",
                     onClick = onNavigateToLibrarySeats
                 )
             }
