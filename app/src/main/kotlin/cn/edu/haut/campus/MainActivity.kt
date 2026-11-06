@@ -717,7 +717,14 @@ fun HautCampusRootApp(
                                 onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
                                 onNavigateToFocus = { overlayScreen = "focus" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
-                                onNavigateToCommunity = { overlayScreen = "community" },
+                                onNavigateToCommunity = {
+                                    communityInitialTab = 0
+                                    overlayScreen = "community"
+                                },
+                                onNavigateToCompetitions = {
+                                    communityInitialTab = 1
+                                    overlayScreen = "community"
+                                },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },

@@ -566,7 +566,10 @@ internal fun BuildingIndoorMapDialog(
                                     Text(
                                         text = selectedRoom.name,
                                         style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
                                     XPeachStatusDotText(
                                         text = "${selectedRoom.floorLabel} · ${selectedRoom.category.label}",

@@ -589,12 +589,19 @@ fun LibraryCatalogScreen(
                                     Text(
                                         text = "共找到 $totalCount 本相关馆藏 · 已显示 ${resultBooks.size} 本",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
                                     )
                                     Text(
-                                        text = "点击查看索书号与书库位置",
+                                        text = "点击查看索书号",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = XPeachTheme.readablePrimary
+                                        color = XPeachTheme.readablePrimary,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
 
@@ -771,6 +778,7 @@ private fun CatalogBookItemCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CatalogBookDetailView(
     detail: CatalogBookDetail,
@@ -789,7 +797,8 @@ private fun CatalogBookDetailView(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Text(
                     text = "书目与馆藏明细",
@@ -833,9 +842,9 @@ private fun CatalogBookDetailView(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Row(
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     val total = if (detail.totalHoldingsCount > 0) detail.totalHoldingsCount else fallbackTotalCount
                     val avail = if (detail.totalHoldingsCount > 0) detail.availableHoldingsCount else fallbackAvailableCount

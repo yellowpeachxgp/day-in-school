@@ -262,6 +262,7 @@ fun TodayScreen(
                     XPeachFilterPill(
                         label = "回今天",
                         selected = true,
+                        compact = true,
                         onClick = { selectedDate = todayDate }
                     )
                 }
@@ -1161,7 +1162,7 @@ private fun WeekDaySelectorStrip(
     }
 
     XPeachCard(
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1169,8 +1170,9 @@ private fun WeekDaySelectorStrip(
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
+                    .width(34.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onPreviousWeek),
                 contentAlignment = Alignment.Center
             ) {
@@ -1233,7 +1235,9 @@ private fun WeekDaySelectorStrip(
                             )
                             Text(
                                 text = if (date.dayOfMonth == 1) "${date.monthValue}月" else "${date.dayOfMonth}",
-                                style = if (date.dayOfMonth == 1) {
+                                style = if (date.dayOfMonth == 1 && date.monthValue >= 10) {
+                                    MaterialTheme.typography.labelSmall
+                                } else if (date.dayOfMonth == 1) {
                                     MaterialTheme.typography.labelMedium
                                 } else {
                                     MaterialTheme.typography.titleMedium
@@ -1272,8 +1276,9 @@ private fun WeekDaySelectorStrip(
 
             Box(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
+                    .width(34.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onNextWeek),
                 contentAlignment = Alignment.Center
             ) {
@@ -1799,19 +1804,26 @@ private fun TodayCampusBentoSection(
         ),
         "EMPTY_CLASSROOM" to HomeModularCardSpec(
             id = "EMPTY_CLASSROOM",
-            title = "空教室查询",
+            title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
             subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查空闲教室",
             onClick = onNavigateToEmptyClassrooms
         ),
-        "CAMPUS_COMMUNITY" to HomeModularCardSpec(
-            id = "CAMPUS_COMMUNITY",
-            title = "社团与竞赛",
-            badgeText = "$competitionsCount 赛事",
-            subtitle = "${campusClubsCount}个合作社团 · 专业匹配学科竞赛与官网",
-            actionPillText = "竞赛指南",
-            onActionPillClick = onNavigateToCompetitions,
+        HomeCardModule.CAMPUS_COMMUNITY.id to HomeModularCardSpec(
+            id = HomeCardModule.CAMPUS_COMMUNITY.id,
+            title = HomeCardModule.CAMPUS_COMMUNITY.title,
+            badgeText = "$campusClubsCount 社团",
+            subtitle = "官方合作社团与技术交流群",
             onClick = onNavigateToCommunity
+        ),
+        HomeCardModule.COMPETITION_GUIDE.id to HomeModularCardSpec(
+            id = HomeCardModule.COMPETITION_GUIDE.id,
+            title = HomeCardModule.COMPETITION_GUIDE.title,
+            badgeText = "$competitionsCount 赛事",
+            subtitle = HomeCardModule.COMPETITION_GUIDE.subtitle,
+            actionPillText = "查赛事",
+            onActionPillClick = onNavigateToCompetitions,
+            onClick = onNavigateToCompetitions
         )
     )
 
@@ -1986,17 +1998,16 @@ private fun HomeCardLayoutCustomizerDialog(
                     if (index > 0) {
                         XPeachInsetDivider(verticalPadding = 6.dp)
                     }
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 6.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "${index + 1}. $title",
@@ -2008,9 +2019,12 @@ private fun HomeCardLayoutCustomizerDialog(
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp)
                             )
-                            Text(
+                            XPeachStatusDotText(
                                 text = if (!isVisible) {
                                     "已隐藏"
                                 } else if (isFull) {
@@ -2018,8 +2032,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                 } else {
                                     "小卡片"
                                 },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isVisible) {
+                                dotColor = if (isVisible) {
                                     XPeachTheme.readablePrimary
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -2028,61 +2041,67 @@ private fun HomeCardLayoutCustomizerDialog(
                         }
 
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            XPeachFilterPill(
-                                label = if (isFull) "大卡" else "小卡",
-                                selected = isFull,
-                                compact = true,
-                                onClick = {
-                                    workingFullWidth = if (isFull) {
-                                        workingFullWidth - cardId
-                                    } else {
-                                        workingFullWidth + cardId
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                XPeachFilterPill(
+                                    label = if (isFull) "切换小卡" else "切换大卡",
+                                    selected = isFull,
+                                    compact = true,
+                                    onClick = {
+                                        workingFullWidth = if (isFull) {
+                                            workingFullWidth - cardId
+                                        } else {
+                                            workingFullWidth + cardId
+                                        }
                                     }
-                                }
-                            )
-                            XPeachFilterPill(
-                                label = if (isVisible) "显示" else "隐藏",
-                                selected = isVisible,
-                                compact = true,
-                                onClick = {
-                                    workingHidden = if (isVisible) {
-                                        workingHidden + cardId
-                                    } else {
-                                        workingHidden - cardId
+                                )
+                                XPeachFilterPill(
+                                    label = if (isVisible) "显示中" else "已隐藏",
+                                    selected = isVisible,
+                                    compact = true,
+                                    onClick = {
+                                        workingHidden = if (isVisible) {
+                                            workingHidden + cardId
+                                        } else {
+                                            workingHidden - cardId
+                                        }
                                     }
-                                }
-                            )
-                            XPeachFilterPill(
-                                label = "↑",
-                                selected = false,
-                                compact = true,
-                                onClick = {
-                                    if (index > 0) {
-                                        val mut = workingOrder.toMutableList()
-                                        val tmp = mut[index - 1]
-                                        mut[index - 1] = mut[index]
-                                        mut[index] = tmp
-                                        workingOrder = mut
+                                )
+                                XPeachFilterPill(
+                                    label = "↑",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = {
+                                        if (index > 0) {
+                                            val mut = workingOrder.toMutableList()
+                                            val tmp = mut[index - 1]
+                                            mut[index - 1] = mut[index]
+                                            mut[index] = tmp
+                                            workingOrder = mut
+                                        }
                                     }
-                                }
-                            )
-                            XPeachFilterPill(
-                                label = "↓",
-                                selected = false,
-                                compact = true,
-                                onClick = {
-                                    if (index < workingOrder.lastIndex) {
-                                        val mut = workingOrder.toMutableList()
-                                        val tmp = mut[index + 1]
-                                        mut[index + 1] = mut[index]
-                                        mut[index] = tmp
-                                        workingOrder = mut
+                                )
+                                XPeachFilterPill(
+                                    label = "↓",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = {
+                                        if (index < workingOrder.lastIndex) {
+                                            val mut = workingOrder.toMutableList()
+                                            val tmp = mut[index + 1]
+                                            mut[index + 1] = mut[index]
+                                            mut[index] = tmp
+                                            workingOrder = mut
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }

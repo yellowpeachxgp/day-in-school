@@ -481,8 +481,9 @@ fun TimetableScreen(
                                 modifier = Modifier
                                     .width(34.dp)
                                     .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
                                     .clickable { manualSevenDayOverride = !showSevenDays }
-                                    .padding(vertical = 2.dp),
+                                    .padding(vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
@@ -494,7 +495,7 @@ fun TimetableScreen(
                                     softWrap = false
                                 )
                                 Text(
-                                    text = if (showSevenDays) "7日" else "5日",
+                                    text = if (showSevenDays) "7日▾" else "5日▾",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -660,7 +661,10 @@ fun TimetableScreen(
                                                 .fillMaxWidth()
                                                 .offset(y = topOffset)
                                                 .height(blockHeight)
-                                                .padding(horizontal = 2.dp, vertical = 2.5.dp)
+                                                .padding(
+                                                    horizontal = if (showSevenDays) 1.5.dp else 2.dp,
+                                                    vertical = 2.5.dp
+                                                )
                                                 .clip(RoundedCornerShape(10.dp))
                                                 .background(blockBg)
                                                 .border(0.8.dp, blockBorder, RoundedCornerShape(10.dp))
@@ -677,7 +681,10 @@ fun TimetableScreen(
                                                     verticalArrangement = Arrangement.SpaceBetween,
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .padding(horizontal = 4.5.dp, vertical = 4.5.dp)
+                                                        .padding(
+                                                            horizontal = if (showSevenDays) 3.dp else 4.5.dp,
+                                                            vertical = 4.dp
+                                                        )
                                                 ) {
                                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                                         Text(
@@ -687,7 +694,7 @@ fun TimetableScreen(
                                                                 fontWeight = FontWeight.Bold,
                                                                 lineHeight = 14.sp
                                                             ),
-                                                            maxLines = if (span >= 3) 4 else 3,
+                                                            maxLines = if (span >= 3) 5 else 4,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
                                                         if (overlapExtra > 0) {
@@ -753,7 +760,10 @@ fun TimetableScreen(
             onDismissRequest = { editingOccurrence = null },
             title = { Text("课程编辑") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
                         text = "${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
                         style = MaterialTheme.typography.bodyMedium,
@@ -794,12 +804,14 @@ fun TimetableScreen(
 
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .horizontalScroll(rememberScrollState())
                     ) {
                         for (colorHex in palette) {
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(28.dp)
                                     .clip(CircleShape)
                                     .background(Color(colorHex))
                                     .border(

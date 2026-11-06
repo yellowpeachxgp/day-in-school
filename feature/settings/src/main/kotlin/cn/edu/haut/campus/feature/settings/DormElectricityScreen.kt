@@ -362,7 +362,10 @@ fun DormElectricityScreen(
                                             Text(
                                                 text = "${dev.name} (${dev.category.displayLabel})",
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 8.dp)
                                             )
                                             XPeachStatusDotText(
                                                 text = dev.statusRaw,

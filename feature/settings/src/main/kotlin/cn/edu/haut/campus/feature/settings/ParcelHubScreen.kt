@@ -301,7 +301,11 @@ fun ParcelHubScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
+                                    ) {
                                         Text(
                                             text = "取件码：$cleanPickupCode",
                                             style = MaterialTheme.typography.titleMedium,

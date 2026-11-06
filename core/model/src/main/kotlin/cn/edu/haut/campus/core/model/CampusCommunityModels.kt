@@ -199,6 +199,257 @@ data class CampusCompetitionItem(
         if (track == null || track == CampusMajorTrack.ALL_MAJORS) return false
         return recommendedMajorTracks.contains(track)
     }
+
+    fun matchesSeason(season: CompetitionSeasonWindow?): Boolean {
+        if (season == null) return true
+        return season.matchTokens.any { token -> registrationWindow.contains(token) }
+    }
+
+    fun recognitionValueText(): String = when {
+        id == "comp_cyds" || id == "comp_tiaozhanbei" ->
+            "教育部顶尖双创赛事（高教排行榜 T0 级），河工大保研推免、国家奖学金、创新学分与综测加分权重最高级别。"
+        tierBadge.contains("顶尖") || id == "comp_icpc_ccpc" ->
+            "教育部白名单顶尖算法赛事，大厂核心研发岗免笔试绿卡，信息/AI学院保研与硬核技术简历含金量天花板。"
+        tierBadge.contains("白名单 A 类") ->
+            "教育部全国普通高校学科竞赛排行榜白名单 A 类赛事，河工大各学院综测加分、创新创业学分认定与保研夏令营核心认可奖项。"
+        else ->
+            "国家级高认可度学科综合赛事，按校内参赛比例评奖，是积累竞赛履历、综测加分与检验专业基本功的高性价比选择。"
+    }
+
+    fun targetPersonaText(): String = buildString {
+        append(if (beginnerFriendly) "适合大一/大二零基础或跨专业同学快速上手；" else "适合有一定专业课与实验室集训基础的同学进阶冲刺；")
+        append("参赛模式为「$teamMode」，尤其契合 ")
+        append(recommendedMajorTracks.joinToString("、") { it.shortLabel })
+        append(" 方向学子。")
+    }
+
+    fun stagedProgressionRoadmap(): List<Pair<String, String>> = listOf(
+        "🌱 大一阶段（破冰打底 / 攒首奖）" to if (beginnerFriendly) {
+            "报名参赛摸清赛制流程，完成「${skillRoadmap.substringBefore("→").trim()}」基础储备，冲击校奖/省三以上。"
+        } else {
+            "加入${partnerClubName.ifBlank { "学院实验室与技术社团" }}跟学长学姐实训，重点夯实「${skillRoadmap.substringBefore("→").trim()}」基本功。"
+        },
+        "🚀 大二阶段（核心主力 / 冲省一国奖）" to "作为团队核心主力深入「${skillRoadmap.substringAfter("→", skillRoadmap).trim()}」，利用寒暑假集中打磨作品或真题，全力冲击省一及全国总决赛。",
+        "🏆 大三阶段（成果转化 / 保研秋招）" to "带领学弟学妹梯队传承，将参赛项目沉淀为专利/软著/科研论文，转化为保研夏令营代表作或名企面试核心项目经历。"
+    )
+}
+
+enum class CompetitionGradeStage(
+    val label: String,
+    val shortLabel: String,
+    val strategyAdvice: String
+) {
+    FRESHMAN(
+        label = "大一萌新（打基础/攒首奖）",
+        shortLabel = "🌱 大一萌新",
+        strategyAdvice = "大一重在破冰与试错：优先选择个人赛或零基础友好的白名单省赛练手，同时加入合作社团积累软硬件基础。"
+    ),
+    SOPHOMORE(
+        label = "大二骨干（冲国奖/进实验室）",
+        shortLabel = "🚀 大二骨干",
+        strategyAdvice = "大二是竞赛黄金爆发期：建议以核心主力身份组建 3–5 人跨专业铁三角，冲击全国电赛、数模国赛、智能车等高含金量国奖。"
+    ),
+    JUNIOR(
+        label = "大三冲刺（保研加分/名企实习）",
+        shortLabel = "🏆 大三冲刺",
+        strategyAdvice = "大三聚焦成果变现：9月保研夏令营与秋招前，优先攻克周期短、保研综测加分明确的 A 类赛事或名企直通算法/安全赛。"
+    ),
+    SENIOR_OR_ALL(
+        label = "大四/全阶段",
+        shortLabel = "🎓 大四/全阶段",
+        strategyAdvice = "结合毕业设计或已有科研成果转化参赛（如中国国际大学生创新大赛、挑战杯、计算机设计大赛），实现毕设与双创双丰收。"
+    )
+}
+
+enum class CompetitionCareerGoal(
+    val label: String,
+    val shortLabel: String,
+    val keywords: List<String>
+) {
+    POSTGRAD_BONUS(
+        label = "保研与综测加分",
+        shortLabel = "🎯 保研/综测加分",
+        keywords = listOf("保研", "综测", "白名单", "A 类")
+    ),
+    HIGH_PAY_JOB(
+        label = "高薪就业与硬核简历",
+        shortLabel = "💼 高薪就业/大厂简历",
+        keywords = listOf("大厂", "名企", "算法", "工程", "实战", "CTF", "嵌入式")
+    ),
+    HANDS_ON_RESEARCH(
+        label = "动手造物与科研探索",
+        shortLabel = "🔬 动手造物/科研探索",
+        keywords = listOf("硬件", "单片机", "机器人", "智能车", "机械", "数学建模", "学术")
+    ),
+    BIZ_CROSS_TEAM(
+        label = "商业策划与跨界组队",
+        shortLabel = "🤝 商业策划/跨界组队",
+        keywords = listOf("双创", "商业", "电商", "路演", "跨学科", "广告", "设计")
+    )
+}
+
+enum class CompetitionSkillPreference(
+    val label: String,
+    val shortLabel: String,
+    val matchedCategories: Set<CampusCompetitionCategory>,
+    val tagKeywords: List<String>
+) {
+    CODE_ALGO_AI(
+        label = "写代码/算法/AI",
+        shortLabel = "💻 代码/算法/AI",
+        matchedCategories = setOf(
+            CampusCompetitionCategory.ALGO_PROGRAMMING,
+            CampusCompetitionCategory.CYBER_SECURITY_AI
+        ),
+        tagKeywords = listOf("算法", "编程", "App", "AI", "CTF", "安全")
+    ),
+    CIRCUIT_MCU_ROBO(
+        label = "焊电路/单片机/机器人",
+        shortLabel = "🤖 电路/单片机/机器人",
+        matchedCategories = setOf(CampusCompetitionCategory.ELECTRONICS_ROBO),
+        tagKeywords = listOf("单片机", "STM32", "PCB", "硬件", "机器人", "智能车", "机械")
+    ),
+    MATH_DATA(
+        label = "数学建模/数据分析",
+        shortLabel = "📐 数模/数据分析",
+        matchedCategories = setOf(CampusCompetitionCategory.MATH_MODELING),
+        tagKeywords = listOf("MATLAB", "数据分析", "建模", "可视化")
+    ),
+    PRODUCT_BP_PITCH(
+        label = "做产品/写BP/路演",
+        shortLabel = "📊 做产品/写BP/路演",
+        matchedCategories = setOf(CampusCompetitionCategory.INNOVATION_ENTREPRENEURSHIP),
+        tagKeywords = listOf("商业计划书", "路演", "双创", "电商", "调研")
+    ),
+    DESIGN_VIDEO_ACG(
+        label = "设计/视频/动漫文创",
+        shortLabel = "🎨 设计/视频/动漫文创",
+        matchedCategories = setOf(CampusCompetitionCategory.DIGITAL_MEDIA_ART),
+        tagKeywords = listOf("海报", "动画", "短视频", "数媒", "交互")
+    ),
+    FOREIGN_CRITICAL(
+        label = "外语/综合思辨",
+        shortLabel = "🌍 外语/综合思辨",
+        matchedCategories = setOf(
+            CampusCompetitionCategory.DIGITAL_MEDIA_ART,
+            CampusCompetitionCategory.INNOVATION_ENTREPRENEURSHIP
+        ),
+        tagKeywords = listOf("英语", "外语", "调研", "演讲")
+    )
+}
+
+enum class CompetitionSeasonWindow(
+    val label: String,
+    val shortLabel: String,
+    val periodSubtitle: String,
+    val matchTokens: List<String>
+) {
+    AUTUMN_REG(
+        label = "秋季学期 9–12月报名",
+        shortLabel = "🍂 秋季 9–12月（报名/秋赛）",
+        periodSubtitle = "新生破冰与次年春季 A 类赛事黄金报名窗口（蓝桥杯/三创赛/智能车/数模正赛）",
+        matchTokens = listOf("9月", "10月", "11月", "12月")
+    ),
+    SPRING_PROVINCIAL(
+        label = "春季学期 3–5月省赛",
+        shortLabel = "🌱 春季 3–5月（校赛/省赛）",
+        periodSubtitle = "全年省赛密集爆发期，检验寒假与春季集训成果（蓝桥杯省赛/大英赛/4C/大广赛/挑杯）",
+        matchTokens = listOf("2月", "3月", "4月", "5月")
+    ),
+    SUMMER_NATIONAL(
+        label = "暑期黄金集训 6–8月国赛",
+        shortLabel = "🔥 暑期 6–8月（集训/国赛）",
+        periodSubtitle = "实验室留校封闭集训与全国总决赛巅峰期（全国电赛/智能车国赛/数模夏训/创新大赛）",
+        matchTokens = listOf("6月", "7月", "8月")
+    )
+}
+
+data class CompetitionCompassResult(
+    val topCompetitions: List<CampusCompetitionItem>,
+    val entryStepOrder: List<Pair<String, CampusCompetitionItem>>,
+    val recommendedClubs: List<CampusClubItem>,
+    val stageSummary: String
+)
+
+object CompetitionCompassEngine {
+    fun evaluate(
+        competitions: List<CampusCompetitionItem>,
+        clubs: List<CampusClubItem>,
+        majorTrack: CampusMajorTrack?,
+        gradeStage: CompetitionGradeStage,
+        careerGoal: CompetitionCareerGoal,
+        skillPref: CompetitionSkillPreference
+    ): CompetitionCompassResult {
+        val scored = competitions.map { comp ->
+            var score = 0
+            if (comp.isCoreForMajorTrack(majorTrack)) score += 35
+            else if (comp.matchesMajorTrack(majorTrack)) score += 15
+
+            if (comp.category in skillPref.matchedCategories) score += 45
+            score += skillPref.tagKeywords.count { kw ->
+                comp.interestTags.any { it.contains(kw, ignoreCase = true) } ||
+                    comp.summary.contains(kw, ignoreCase = true) ||
+                    comp.skillRoadmap.contains(kw, ignoreCase = true)
+            } * 12
+
+            when (gradeStage) {
+                CompetitionGradeStage.FRESHMAN -> {
+                    if (comp.beginnerFriendly) score += 28 else score -= 15
+                    if (comp.teamMode.contains("个人")) score += 10
+                }
+                CompetitionGradeStage.SOPHOMORE -> {
+                    if (!comp.beginnerFriendly) score += 20 else score += 12
+                    if (comp.tierBadge.contains("A 类") || comp.tierBadge.contains("顶尖")) score += 15
+                }
+                CompetitionGradeStage.JUNIOR -> {
+                    if (comp.tierBadge.contains("A 类") || comp.tierBadge.contains("顶尖")) score += 22
+                    if (comp.interestTags.any { it.contains("保研") || it.contains("大厂") || it.contains("名企") }) score += 18
+                }
+                CompetitionGradeStage.SENIOR_OR_ALL -> {
+                    if (comp.category == CampusCompetitionCategory.INNOVATION_ENTREPRENEURSHIP || comp.id == "comp_jsjds_4c") score += 25
+                }
+            }
+
+            score += careerGoal.keywords.count { kw ->
+                comp.tierBadge.contains(kw) ||
+                    comp.interestTags.any { it.contains(kw) } ||
+                    comp.summary.contains(kw) ||
+                    comp.difficultyLabel.contains(kw)
+            } * 10
+
+            comp to score
+        }.sortedWith(
+            compareByDescending<Pair<CampusCompetitionItem, Int>> { it.second }
+                .thenBy { it.first.sortOrder }
+        )
+
+        val top3 = scored.take(3).map { it.first }
+        val orderedForProgression = top3.sortedWith(
+            compareByDescending<CampusCompetitionItem> { it.beginnerFriendly }
+                .thenByDescending { it.teamMode.contains("个人") }
+                .thenBy { it.sortOrder }
+        )
+        val stepLabels = listOf(
+            "第一步 · 破冰首战（先打这个攒信心与首奖）",
+            "第二步 · 进阶主力（组队打磨核心作品/省一）",
+            "第三步 · 巅峰冲刺（冲击国奖/保研名企王牌）"
+        )
+        val entryOrder = orderedForProgression.mapIndexed { idx, item ->
+            stepLabels.getOrElse(idx) { "进阶推荐" } to item
+        }
+
+        val partnerIds = top3.mapNotNull { it.partnerClubId.takeIf(String::isNotBlank) }.toSet()
+        val matchedClubs = clubs.filter { it.id in partnerIds }.ifEmpty {
+            clubs.take(2)
+        }
+
+        return CompetitionCompassResult(
+            topCompetitions = top3,
+            entryStepOrder = entryOrder,
+            recommendedClubs = matchedClubs,
+            stageSummary = gradeStage.strategyAdvice
+        )
+    }
 }
 
 /**

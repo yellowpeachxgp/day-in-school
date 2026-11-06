@@ -1329,13 +1329,18 @@ fun LibrarySeatBookingScreen(
                                                 text = item.displaySeatTitle,
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurface
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 8.dp)
                                             )
                                             Text(
                                                 text = item.status.label,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = XPeachTheme.readablePrimary,
-                                                fontWeight = FontWeight.SemiBold
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                         Text(
@@ -2893,7 +2898,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 modifier = Modifier.weight(1f).padding(end = 8.dp)
                             )
                             XPeachStatusBadge(
-                                text = "$friendlyMode · $friendlyStatus",
+                                text = friendlyStatus,
                                 containerColor = when (plan.status) {
                                     "CONFIRMED" -> XPeachTheme.successContainer
                                     "FAILED", "CANCELLED" -> XPeachTheme.dangerContainer
@@ -2907,7 +2912,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             )
                         }
                         Text(
-                            text = "已选座位：$cleanSeatLabel",
+                            text = "$friendlyMode · 已选座位：$cleanSeatLabel",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

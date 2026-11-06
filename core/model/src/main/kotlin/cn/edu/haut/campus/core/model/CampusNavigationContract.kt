@@ -142,8 +142,15 @@ enum class HomeCardModule(
     ),
     CAMPUS_COMMUNITY(
         id = "CAMPUS_COMMUNITY",
-        title = "校园社区",
-        subtitle = "百团名录、交流频道与自习指引",
+        title = "合作社团",
+        subtitle = "官方合作社团与技术交流群",
+        defaultFullWidth = false,
+        defaultVisible = true,
+    ),
+    COMPETITION_GUIDE(
+        id = "COMPETITION_GUIDE",
+        title = "竞赛指南",
+        subtitle = "按专业与兴趣匹配教育部白名单赛事与官网",
         defaultFullWidth = false,
         defaultVisible = true,
     );

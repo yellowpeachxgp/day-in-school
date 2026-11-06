@@ -159,6 +159,7 @@ fun SettingsScreen(
     onNavigateToFocus: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
+    onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToSchoolCenter: () -> Unit = {},
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToXpeachCloud: () -> Unit = {},
@@ -774,6 +775,76 @@ fun SettingsScreen(
                         }
                         Text(
                             text = "进入计时 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToCommunity)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "合作社团与交流群",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "已收录 ${prefs.campusCommunityCatalog.clubs.size} 个官方合作社团 · 一键复制或唤醒手机 QQ 加群",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "社团名录 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToCompetitions)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "学科竞赛与专业发展指南",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "${prefs.campusCommunityCatalog.competitions.size} 项教育部白名单赛事 · 30秒专业兴趣自测与官网直通",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "竞赛指南 ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )
@@ -2880,7 +2951,12 @@ private fun ThemePaletteAndCardLayoutSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
                 Text(
                     text = "主题与视觉风格",
                     style = MaterialTheme.typography.titleMedium,
@@ -3524,71 +3600,86 @@ private fun ThemePaletteAndCardLayoutSection(
                     val isVisible = cardId !in prefs.hiddenHomeCards
                     val isFull = cardId in prefs.fullWidthHomeCards
 
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(vertical = 3.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        Text(
-                            text = "${index + 1}. $title",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 6.dp)
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            XPeachFilterPill(
-                                label = if (isFull) "大卡" else "小卡",
-                                selected = isFull,
-                                compact = true,
-                                onClick = {
-                                    val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
-                                    onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
-                                }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${index + 1}. $title",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isVisible) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 6.dp)
                             )
-                            XPeachFilterPill(
-                                label = if (isVisible) "显示" else "隐藏",
-                                selected = isVisible,
-                                compact = true,
-                                onClick = {
-                                    val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
-                                    onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
-                                }
+                            XPeachStatusDotText(
+                                text = if (!isVisible) "已隐藏" else if (isFull) "大卡片" else "小卡片",
+                                dotColor = if (isVisible) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            XPeachFilterPill(
-                                label = "↑",
-                                selected = false,
-                                compact = true,
-                                onClick = {
-                                    if (index > 0) {
-                                        val mut = currentOrder.toMutableList()
-                                        val tmp = mut[index - 1]
-                                        mut[index - 1] = mut[index]
-                                        mut[index] = tmp
-                                        onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                XPeachFilterPill(
+                                    label = if (isFull) "切换小卡" else "切换大卡",
+                                    selected = isFull,
+                                    compact = true,
+                                    onClick = {
+                                        val nextFull = if (isFull) prefs.fullWidthHomeCards - cardId else prefs.fullWidthHomeCards + cardId
+                                        onUpdateCardLayout(currentOrder, prefs.hiddenHomeCards, nextFull)
                                     }
-                                }
-                            )
-                            XPeachFilterPill(
-                                label = "↓",
-                                selected = false,
-                                compact = true,
-                                onClick = {
-                                    if (index < currentOrder.lastIndex) {
-                                        val mut = currentOrder.toMutableList()
-                                        val tmp = mut[index + 1]
-                                        mut[index + 1] = mut[index]
-                                        mut[index] = tmp
-                                        onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                                )
+                                XPeachFilterPill(
+                                    label = if (isVisible) "显示中" else "已隐藏",
+                                    selected = isVisible,
+                                    compact = true,
+                                    onClick = {
+                                        val nextHidden = if (isVisible) prefs.hiddenHomeCards + cardId else prefs.hiddenHomeCards - cardId
+                                        onUpdateCardLayout(currentOrder, nextHidden, prefs.fullWidthHomeCards)
                                     }
-                                }
-                            )
+                                )
+                                XPeachFilterPill(
+                                    label = "↑",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = {
+                                        if (index > 0) {
+                                            val mut = currentOrder.toMutableList()
+                                            val tmp = mut[index - 1]
+                                            mut[index - 1] = mut[index]
+                                            mut[index] = tmp
+                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                                        }
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = "↓",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = {
+                                        if (index < currentOrder.lastIndex) {
+                                            val mut = currentOrder.toMutableList()
+                                            val tmp = mut[index + 1]
+                                            mut[index + 1] = mut[index]
+                                            mut[index] = tmp
+                                            onUpdateCardLayout(mut, prefs.hiddenHomeCards, prefs.fullWidthHomeCards)
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }

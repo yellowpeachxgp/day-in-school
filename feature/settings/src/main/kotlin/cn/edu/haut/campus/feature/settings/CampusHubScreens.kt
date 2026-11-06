@@ -92,6 +92,11 @@ import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CampusCompetitionCategory
 import cn.edu.haut.campus.core.model.CampusCompetitionItem
 import cn.edu.haut.campus.core.model.CampusMajorTrack
+import cn.edu.haut.campus.core.model.CompetitionCareerGoal
+import cn.edu.haut.campus.core.model.CompetitionCompassEngine
+import cn.edu.haut.campus.core.model.CompetitionGradeStage
+import cn.edu.haut.campus.core.model.CompetitionSeasonWindow
+import cn.edu.haut.campus.core.model.CompetitionSkillPreference
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import kotlinx.coroutines.launch
@@ -307,8 +312,27 @@ fun CampusCommunityScreen(
     var clubSearchQuery by remember { mutableStateOf("") }
     var selectedMajorTrack by remember(inferredMajorTrack) { mutableStateOf<CampusMajorTrack?>(inferredMajorTrack) }
     var selectedCompCategory by remember { mutableStateOf<CampusCompetitionCategory?>(null) }
+    var selectedSeasonWindow by remember { mutableStateOf<CompetitionSeasonWindow?>(null) }
     var onlyBeginnerFriendly by remember { mutableStateOf(false) }
     var compSearchQuery by remember { mutableStateOf("") }
+    var isCompassExpanded by remember { mutableStateOf(false) }
+    var compassGradeStage by remember { mutableStateOf(CompetitionGradeStage.FRESHMAN) }
+    var compassCareerGoal by remember { mutableStateOf(CompetitionCareerGoal.POSTGRAD_BONUS) }
+    var compassSkillPref by remember(inferredMajorTrack) {
+        mutableStateOf(
+            when (inferredMajorTrack) {
+                CampusMajorTrack.CS_AI_SOFTWARE -> CompetitionSkillPreference.CODE_ALGO_AI
+                CampusMajorTrack.EE_AUTOMATION_IOT,
+                CampusMajorTrack.MECH_VEHICLE_ROBO -> CompetitionSkillPreference.CIRCUIT_MCU_ROBO
+                CampusMajorTrack.MATH_PHYSICS_CIVIL -> CompetitionSkillPreference.MATH_DATA
+                CampusMajorTrack.ECON_MGMT_FINANCE,
+                CampusMajorTrack.FOOD_BIO_CHEM_MAT -> CompetitionSkillPreference.PRODUCT_BP_PITCH
+                CampusMajorTrack.DESIGN_MEDIA_FOREIGN -> CompetitionSkillPreference.DESIGN_VIDEO_ACG
+                else -> CompetitionSkillPreference.CODE_ALGO_AI
+            }
+        )
+    }
+    var selectedCompetitionDetail by remember { mutableStateOf<CampusCompetitionItem?>(null) }
     var feedbackText by remember { mutableStateOf<String?>(null) }
     var editingChannelItem by remember { mutableStateOf<PresetQqChannelItem?>(null) }
     var editingClubItem by remember { mutableStateOf<CampusClubItem?>(null) }
@@ -492,7 +516,50 @@ fun CampusCommunityScreen(
                     )
                 }
             } else if (selectedTab == 1) {
-                // 竞赛指南与专业/兴趣发展匹配器
+                // 1. 30秒专业与兴趣发展自测罗盘向导
+                val compassResult = remember(
+                    catalog.competitions,
+                    catalog.clubs,
+                    selectedMajorTrack,
+                    inferredMajorTrack,
+                    compassGradeStage,
+                    compassCareerGoal,
+                    compassSkillPref
+                ) {
+                    CompetitionCompassEngine.evaluate(
+                        competitions = catalog.competitions,
+                        clubs = catalog.clubs,
+                        majorTrack = selectedMajorTrack ?: inferredMajorTrack,
+                        gradeStage = compassGradeStage,
+                        careerGoal = compassCareerGoal,
+                        skillPref = compassSkillPref
+                    )
+                }
+
+                MajorInterestCompassCard(
+                    isExpanded = isCompassExpanded,
+                    onToggleExpand = { isCompassExpanded = !isCompassExpanded },
+                    gradeStage = compassGradeStage,
+                    onSelectGradeStage = { compassGradeStage = it },
+                    careerGoal = compassCareerGoal,
+                    onSelectCareerGoal = { compassCareerGoal = it },
+                    skillPref = compassSkillPref,
+                    onSelectSkillPref = { compassSkillPref = it },
+                    compassResult = compassResult,
+                    onInspectCompetition = { selectedCompetitionDetail = it },
+                    onJoinClub = { club ->
+                        val effectiveNo = prefs.customClubGroupNumbers[club.id]?.takeIf { it.isNotBlank() }
+                            ?: club.qqGroupNumber
+                        feedbackText = openOrCopyClubQqGroup(context, club.name, effectiveNo)
+                    },
+                    onApplyToFilter = {
+                        selectedCompCategory = compassSkillPref.matchedCategories.firstOrNull()
+                        onlyBeginnerFriendly = compassGradeStage == CompetitionGradeStage.FRESHMAN
+                        feedbackText = "已按您的自测画像筛选下方赛事列表"
+                    }
+                )
+
+                // 2. 竞赛指南与专业/兴趣/季节匹配器
                 val majorName = studentProfile?.major?.takeIf { it.isNotBlank() }
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     if (majorName != null && inferredMajorTrack != null) {
@@ -545,7 +612,7 @@ fun CampusCommunityScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "按专业赛道匹配适合你的比赛：",
+                        text = "🎓 按专业赛道匹配适合你的比赛：",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -578,7 +645,7 @@ fun CampusCommunityScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "按兴趣发展方向与入门难度筛选：",
+                        text = "🧭 按兴趣发展方向与入门难度筛选：",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -616,12 +683,54 @@ fun CampusCommunityScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "🗓️ 全年备赛月历视图（按学期窗口防错过报名）：",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        XPeachFilterPill(
+                            label = "全年时段",
+                            selected = selectedSeasonWindow == null,
+                            compact = true,
+                            onClick = { selectedSeasonWindow = null }
+                        )
+                        for (season in CompetitionSeasonWindow.entries) {
+                            XPeachFilterPill(
+                                label = season.shortLabel,
+                                selected = selectedSeasonWindow == season,
+                                compact = true,
+                                onClick = {
+                                    selectedSeasonWindow = if (selectedSeasonWindow == season) null else season
+                                }
+                            )
+                        }
+                    }
+                    if (selectedSeasonWindow != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "💡 ${selectedSeasonWindow!!.periodSubtitle}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
                 }
 
                 val filteredCompetitions = remember(
                     catalog.competitions,
                     selectedMajorTrack,
                     selectedCompCategory,
+                    selectedSeasonWindow,
                     onlyBeginnerFriendly,
                     compSearchQuery
                 ) {
@@ -630,6 +739,7 @@ fun CampusCommunityScreen(
                         .filter { comp ->
                             val majorOk = comp.matchesMajorTrack(selectedMajorTrack)
                             val catOk = selectedCompCategory == null || comp.category == selectedCompCategory
+                            val seasonOk = comp.matchesSeason(selectedSeasonWindow)
                             val begOk = !onlyBeginnerFriendly || comp.beginnerFriendly
                             val queryOk = q.isEmpty() ||
                                 comp.title.lowercase().contains(q) ||
@@ -644,7 +754,7 @@ fun CampusCommunityScreen(
                                 comp.recommendedMajorTracks.any {
                                     it.label.lowercase().contains(q) || it.shortLabel.lowercase().contains(q)
                                 }
-                            majorOk && catOk && begOk && queryOk
+                            majorOk && catOk && seasonOk && begOk && queryOk
                         }
                         .sortedWith(
                             compareByDescending<CampusCompetitionItem> {
@@ -656,12 +766,13 @@ fun CampusCommunityScreen(
                 if (filteredCompetitions.isEmpty()) {
                     XPeachEmptyState(
                         title = "未找到匹配的学科竞赛",
-                        subtitle = "可尝试切换至「全部专业」或清除搜索词查看完整白名单赛事名录",
+                        subtitle = "可尝试切换至「全部专业 / 全年时段」或清除搜索词查看完整白名单赛事名录",
                         icon = Icons.Rounded.EmojiEvents,
                         actionLabel = "重置全部筛选",
                         onAction = {
                             selectedMajorTrack = null
                             selectedCompCategory = null
+                            selectedSeasonWindow = null
                             onlyBeginnerFriendly = false
                             compSearchQuery = ""
                         }
@@ -680,6 +791,7 @@ fun CampusCommunityScreen(
                         comp = comp,
                         isCoreForSelectedMajor = comp.isCoreForMajorTrack(selectedMajorTrack ?: inferredMajorTrack),
                         effectivePartnerQq = effectivePartnerQq,
+                        onOpenDetail = { selectedCompetitionDetail = comp },
                         onCopyWebsite = {
                             copyCommunityText(context, "${comp.shortTitle}官网", comp.officialWebsiteUrl)
                             feedbackText = "已复制「${comp.shortTitle}」官网链接：${comp.officialWebsiteUrl}"
@@ -837,6 +949,268 @@ fun CampusCommunityScreen(
                 }
             }
         )
+    }
+
+    val detailComp = selectedCompetitionDetail
+    if (detailComp != null) {
+        val effectivePartnerQq = if (detailComp.partnerClubId.isNotBlank()) {
+            prefs.customClubGroupNumbers[detailComp.partnerClubId]?.takeIf { it.isNotBlank() }
+                ?: detailComp.partnerClubQq
+        } else {
+            detailComp.partnerClubQq
+        }
+        CompetitionDetailDialog(
+            comp = detailComp,
+            effectivePartnerQq = effectivePartnerQq,
+            onDismiss = { selectedCompetitionDetail = null },
+            onCopyWebsite = {
+                copyCommunityText(context, "${detailComp.shortTitle}官网", detailComp.officialWebsiteUrl)
+                feedbackText = "已复制「${detailComp.shortTitle}」官网链接：${detailComp.officialWebsiteUrl}"
+            },
+            onOpenWebsite = {
+                feedbackText = openCompetitionWebsite(
+                    context = context,
+                    title = detailComp.shortTitle,
+                    url = detailComp.officialWebsiteUrl
+                )
+            },
+            onJoinPartnerClub = {
+                if (effectivePartnerQq.isNotBlank()) {
+                    feedbackText = openOrCopyClubQqGroup(
+                        context = context,
+                        clubName = detailComp.partnerClubName.ifBlank { detailComp.shortTitle },
+                        groupNumber = effectivePartnerQq
+                    )
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MajorInterestCompassCard(
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    gradeStage: CompetitionGradeStage,
+    onSelectGradeStage: (CompetitionGradeStage) -> Unit,
+    careerGoal: CompetitionCareerGoal,
+    onSelectCareerGoal: (CompetitionCareerGoal) -> Unit,
+    skillPref: CompetitionSkillPreference,
+    onSelectSkillPref: (CompetitionSkillPreference) -> Unit,
+    compassResult: cn.edu.haut.campus.core.model.CompetitionCompassResult,
+    onInspectCompetition: (CampusCompetitionItem) -> Unit,
+    onJoinClub: (CampusClubItem) -> Unit,
+    onApplyToFilter: () -> Unit
+) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = XPeachTheme.primaryAccentCardColor
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = XPeachTheme.readablePrimary,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "🧭 30秒专业与兴趣参赛自测罗盘",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "不知道适合打什么比赛？3步生成专属参赛顺序与组队社团",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            XPeachFilterPill(
+                label = if (isExpanded) "收起向导" else "开始自测",
+                selected = isExpanded,
+                compact = true,
+                onClick = onToggleExpand
+            )
+        }
+
+        if (isExpanded) {
+            Spacer(modifier = Modifier.height(12.dp))
+            XPeachInsetDivider(verticalPadding = 2.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "第 1 步：选择你当前的年级阶段",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (st in CompetitionGradeStage.entries) {
+                    XPeachFilterPill(
+                        label = st.shortLabel,
+                        selected = gradeStage == st,
+                        compact = true,
+                        onClick = { onSelectGradeStage(st) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "第 2 步：选择你的核心参赛目标",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (goal in CompetitionCareerGoal.entries) {
+                    XPeachFilterPill(
+                        label = goal.shortLabel,
+                        selected = careerGoal == goal,
+                        compact = true,
+                        onClick = { onSelectCareerGoal(goal) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "第 3 步：选择你感兴趣的技能方向",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                for (pref in CompetitionSkillPreference.entries) {
+                    XPeachFilterPill(
+                        label = pref.shortLabel,
+                        selected = skillPref == pref,
+                        compact = true,
+                        onClick = { onSelectSkillPref(pref) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            XPeachWell(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "✨ 专属参赛诊断与阶梯规划",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = XPeachTheme.readablePrimary
+                    )
+                    Text(
+                        text = compassResult.stageSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    for ((stepTitle, item) in compassResult.entryStepOrder) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                                .clickable { onInspectCompetition(item) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = stepTitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "${item.tierBadge} · ${item.registrationWindow}（点击查看备赛路线）",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (compassResult.recommendedClubs.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "🤝 推荐加入的校内合作社团（找学长学姐带练 & 组队）：",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for (club in compassResult.recommendedClubs) {
+                                XPeachFilterPill(
+                                    label = "加群 · ${club.name} (${club.qqGroupNumber})",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = { onJoinClub(club) }
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "将自测应用到列表",
+                                selected = true,
+                                compact = true,
+                                onClick = onApplyToFilter
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1316,13 +1690,17 @@ private fun CampusCompetitionCard(
     comp: CampusCompetitionItem,
     isCoreForSelectedMajor: Boolean,
     effectivePartnerQq: String,
+    onOpenDetail: () -> Unit,
     onCopyWebsite: () -> Unit,
     onOpenWebsite: () -> Unit,
     onJoinPartnerClub: () -> Unit
 ) {
     val visual = resolveCompetitionCategoryVisual(comp.category)
 
-    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+    XPeachCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onOpenDetail
+    ) {
         // 1. 顶部身份区：44dp 赛事方向图标 + 独占首行完整赛事名称 + 自动换行徽标流
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1555,12 +1933,23 @@ private fun CampusCompetitionCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            XPeachFilterPill(
-                label = "复制官网",
-                selected = false,
-                compact = true,
-                onClick = onCopyWebsite
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                XPeachFilterPill(
+                    label = "深度认知",
+                    selected = false,
+                    compact = true,
+                    onClick = onOpenDetail
+                )
+                XPeachFilterPill(
+                    label = "复制官网",
+                    selected = false,
+                    compact = true,
+                    onClick = onCopyWebsite
+                )
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1583,6 +1972,186 @@ private fun CampusCompetitionCard(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CompetitionDetailDialog(
+    comp: CampusCompetitionItem,
+    effectivePartnerQq: String,
+    onDismiss: () -> Unit,
+    onCopyWebsite: () -> Unit,
+    onOpenWebsite: () -> Unit,
+    onJoinPartnerClub: () -> Unit
+) {
+    XPeachAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = comp.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    XPeachStatusBadge(
+                        text = comp.tierBadge,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = XPeachTheme.readablePrimary
+                    )
+                    XPeachStatusBadge(
+                        text = comp.difficultyLabel,
+                        containerColor = if (comp.beginnerFriendly) {
+                            XPeachTheme.successContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (comp.beginnerFriendly) {
+                            XPeachTheme.onSuccessContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "💎 赛事含金量与保研/综测认可度",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = XPeachTheme.readablePrimary
+                        )
+                        Text(
+                            text = comp.recognitionValueText(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "🎯 适合人群画像与专业方向",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = comp.targetPersonaText(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "🗺️ 大一到大三进阶备赛路线图",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        for ((stageTitle, stageDesc) in comp.stagedProgressionRoadmap()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = stageTitle,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = stageDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "🏛️ 河工大组织单位与官方通道",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "校内承办：${comp.hautHostCollege}\n主办单位：${comp.organizer}\n赛程窗口：${comp.registrationWindow}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (comp.partnerClubName.isNotBlank() && effectivePartnerQq.isNotBlank()) {
+                            Text(
+                                text = "🤝 组队合作社团：${comp.partnerClubName}（QQ群：$effectivePartnerQq）",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                        }
+                        Text(
+                            text = "🌐 官方网站：${comp.officialWebsiteUrl}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onOpenWebsite,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("直达赛事官网")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (comp.partnerClubName.isNotBlank() && effectivePartnerQq.isNotBlank()) {
+                    TextButton(onClick = onJoinPartnerClub) {
+                        Text("加社团群")
+                    }
+                } else {
+                    TextButton(onClick = onCopyWebsite) {
+                        Text("复制链接")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("关闭")
+                }
+            }
+        }
+    )
 }
 
 private fun openCompetitionWebsite(

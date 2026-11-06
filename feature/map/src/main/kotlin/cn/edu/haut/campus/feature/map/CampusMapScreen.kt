@@ -1285,12 +1285,14 @@ fun CampusMapScreen(
                                 XPeachFilterPill(
                                     label = "室内平面",
                                     selected = false,
+                                    compact = true,
                                     onClick = { showIndoorSecondaryMap = true }
                                 )
                             }
                             XPeachFilterPill(
                                 label = "全屏地图",
                                 selected = true,
+                                compact = true,
                                 onClick = { isFullScreenMap = true }
                             )
                         }
@@ -1405,7 +1407,16 @@ fun CampusMapScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("宿舍水电", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "宿舍水电",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             XPeachStatusDotText(
                                 text = elecBadge,
                                 dotColor = XPeachTheme.readablePrimary
@@ -1431,9 +1442,18 @@ fun CampusMapScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("空教室速查", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "空教室速查",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             XPeachStatusDotText(
-                                text = "全校教学楼",
+                                text = "教学楼",
                                 dotColor = XPeachTheme.readablePrimary
                             )
                         }
@@ -1615,7 +1635,7 @@ fun CampusMapScreen(
                                         )
                                         if (hasIndoor) {
                                             XPeachStatusDotText(
-                                                text = "1-${gisInfo!!.second + 1}F 室内图",
+                                                text = "1-${gisInfo!!.second + 1}F",
                                                 dotColor = XPeachTheme.readablePrimary
                                             )
                                         }

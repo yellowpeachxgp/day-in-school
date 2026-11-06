@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
@@ -382,7 +383,7 @@ fun ImporterScreen(
                                 if (prefs.academicReauthenticationRequired) {
                                     Text("登录已过期，请重新输入密码", color = MaterialTheme.colorScheme.error)
                                 }
-                                if (prefs.hasSavedCredentials) {
+                                if (prefs.hasSavedCredentials && !prefs.academicReauthenticationRequired) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                         Row(
@@ -390,7 +391,11 @@ fun ImporterScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 10.dp)
+                                            ) {
                                                 Text(
                                                     text = "已绑定学号 ${prefs.savedStudentId ?: ""}",
                                                     style = MaterialTheme.typography.bodyMedium,
@@ -432,7 +437,11 @@ fun ImporterScreen(
                                     value = passwordInput,
                                     onValueChange = { passwordInput = it },
                                     label = {
-                                        Text(if (prefs.hasSavedCredentials) "密码（已保存，如需更新请重新输入）" else "密码")
+                                        Text(
+                                            text = if (prefs.hasSavedCredentials) "密码（已保存，重输可更新）" else "密码",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     },
                                     singleLine = true,
                                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
@@ -843,7 +852,7 @@ fun ImporterScreen(
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                             modifier = Modifier.weight(1.2f)
                                         ) {
-                                            Text("选择课表文件", maxLines = 1, softWrap = false)
+                                            Text("选择文件", maxLines = 1, softWrap = false)
                                         }
                                         OutlinedButton(
                                             onClick = {

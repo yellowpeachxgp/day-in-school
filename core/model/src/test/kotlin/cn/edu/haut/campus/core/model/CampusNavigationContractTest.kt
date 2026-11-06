@@ -30,6 +30,8 @@ class CampusNavigationContractTest {
 
         val fallback = HomeCardModule.normalizeOrderIds(emptyList())
         assertEquals(HomeCardModule.defaultOrderIds, fallback)
+        assertEquals(HomeCardModule.COMPETITION_GUIDE, HomeCardModule.fromId("COMPETITION_GUIDE"))
+        assertEquals("合作社团", HomeCardModule.CAMPUS_COMMUNITY.title)
     }
 
     @Test

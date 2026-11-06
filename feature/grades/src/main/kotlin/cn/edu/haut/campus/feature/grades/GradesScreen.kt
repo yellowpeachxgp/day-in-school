@@ -127,6 +127,7 @@ fun GradesScreen(
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val scheduleRules by repository.rulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val studentProfile by repository.studentProfileFlow.collectAsState(initial = null)
     val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
     val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
     val todayDate = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
@@ -291,7 +292,16 @@ fun GradesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("图书馆选座", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "图书馆选座",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             XPeachStatusDotText(text = "预约")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -313,7 +323,16 @@ fun GradesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("馆藏检索", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "馆藏检索",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             XPeachStatusDotText(text = "馆藏")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -343,7 +362,16 @@ fun GradesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("自习专注", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "自习专注",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             if (runningFocus != null) {
                                 XPeachStatusBadge(
                                     text = "专注中",
@@ -373,7 +401,16 @@ fun GradesScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("空教室自习", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "空教室自习",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 4.dp)
+                            )
                             XPeachStatusDotText(text = "教学楼")
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -596,8 +633,8 @@ fun GradesScreen(
             // 2. 成绩明细 / 考试安排 / 培养进度 / 选课草稿 分段切换 + 学期筛选条
             XPeachSegmentedTabs(
                 items = listOf(
-                    "成绩 (${gpaReport.auditItems.size})",
-                    "考试 (${examSchedules.size})",
+                    "成绩(${gpaReport.auditItems.size})",
+                    "考试(${examSchedules.size})",
                     "培养进度",
                     "选课草稿"
                 ),
@@ -728,7 +765,7 @@ fun GradesScreen(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
-                                                    text = "${att.termId} · ${att.category.label} · ${att.credits} 学分",
+                                                    text = "${att.credits} 学分 · ${att.category.label} · ${att.termId}",
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     maxLines = 1,
@@ -820,10 +857,10 @@ fun GradesScreen(
                                                     XPeachStatusDotText(text = exam.examStageLabel)
                                                 }
                                                 Text(
-                                                    text = "${exam.termId} · ${exam.rawTimeText}",
+                                                    text = exam.rawTimeText,
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = XPeachTheme.readablePrimary,
-                                                    maxLines = 1,
+                                                    maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
@@ -836,7 +873,7 @@ fun GradesScreen(
                                                     },
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
+                                                    maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                             }
@@ -861,7 +898,10 @@ fun GradesScreen(
                                 attempts = attempts,
                                 retakeStrategy = cn.edu.haut.campus.core.model.RetakeInclusionStrategy.HIGHEST_ATTEMPT,
                                 officialSnapshot = officialSnapshot,
-                                privacyMasked = privacyMasked
+                                privacyMasked = privacyMasked,
+                                studentMajor = studentProfile?.major,
+                                competitions = prefs.campusCommunityCatalog.competitions,
+                                onNavigateToCompetitions = onNavigateToCompetitions
                             )
                         }
                         else -> {
@@ -1014,7 +1054,10 @@ private fun AcademicPlanProgressSection(
     attempts: List<cn.edu.haut.campus.core.model.GradeAttempt>,
     retakeStrategy: cn.edu.haut.campus.core.model.RetakeInclusionStrategy,
     officialSnapshot: OfficialGpaSnapshot?,
-    privacyMasked: Boolean
+    privacyMasked: Boolean,
+    studentMajor: String? = null,
+    competitions: List<cn.edu.haut.campus.core.model.CampusCompetitionItem> = emptyList(),
+    onNavigateToCompetitions: () -> Unit = {}
 ) {
     val aggregation = remember(attempts, retakeStrategy) {
         AttemptAggregator.aggregate(attempts, retakeStrategy)
@@ -1170,6 +1213,98 @@ private fun AcademicPlanProgressSection(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+
+        if (competitions.isNotEmpty()) {
+            val inferredTrack = remember(studentMajor, attempts) {
+                cn.edu.haut.campus.core.model.CampusMajorTrack.inferFromMajorText(studentMajor)
+                    ?: cn.edu.haut.campus.core.model.CampusMajorTrack.inferFromMajorText(
+                        attempts.take(12).joinToString(" ") { it.name }
+                    )
+            }
+            val topRecommended = remember(competitions, inferredTrack) {
+                competitions
+                    .filter { it.matchesMajorTrack(inferredTrack) }
+                    .sortedWith(
+                        compareByDescending<cn.edu.haut.campus.core.model.CampusCompetitionItem> {
+                            it.isCoreForMajorTrack(inferredTrack)
+                        }.thenByDescending { it.pinned }.thenBy { it.sortOrder }
+                    )
+                    .take(3)
+            }
+
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "创新创业与实践学分 · 推荐参赛清单",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "参加教育部白名单 A 类赛事可申请创新学分认定与保研/综测加分",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachStatusDotText(
+                        text = inferredTrack?.shortLabel ?: "全专业通用",
+                        dotColor = XPeachTheme.readablePrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                topRecommended.forEachIndexed { idx, comp ->
+                    if (idx > 0) {
+                        XPeachInsetDivider(verticalPadding = 4.dp)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = comp.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${comp.tierBadge} · ${comp.registrationWindow}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        XPeachFilterPill(
+                            label = "去备赛",
+                            selected = true,
+                            compact = true,
+                            onClick = onNavigateToCompetitions
+                        )
+                    }
+                }
+            }
         }
     }
 }
