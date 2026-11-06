@@ -740,6 +740,8 @@ class CampusServicesUnitTest {
         )
         assertEquals("PRECHECK_LATE_OK", lateCalc.precheckInitialStatus)
         assertEquals("ARMED", lateCalc.finalCheckInitialStatus)
+        assertEquals(10_000L, BookingExecutionMode.CLOUD_HOSTED.priceMicropeach)
+        assertEquals(1.0, BookingExecutionMode.CLOUD_HOSTED.pricePeach, 0.0001)
     }
 
     @Test

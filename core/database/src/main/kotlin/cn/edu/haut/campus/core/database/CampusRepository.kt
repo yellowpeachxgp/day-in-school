@@ -2519,7 +2519,7 @@ class CampusRepository internal constructor(
                     cloudJobId = rj.jobId.cleanNullableLiteral(),
                     externalBookingId = rj.externalBookingId.cleanNullableLiteral() ?: matchingLocal?.externalBookingId.cleanNullableLiteral(),
                     evidenceSha256 = rj.evidenceSha256.cleanNullableLiteral() ?: matchingLocal?.evidenceSha256.cleanNullableLiteral(),
-                    priceMicropeach = 1_000L,
+                    priceMicropeach = 10_000L,
                     paymentState = matchingOrder?.paymentState ?: (if (rj.state == "CONFIRMED") "PAID" else "DEBIT_PENDING"),
                     status = rj.state,
                     stateVersion = (matchingLocal?.stateVersion ?: 0) + 1,
@@ -2593,7 +2593,7 @@ class CampusRepository internal constructor(
             val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 ?: throw IllegalStateException("云端代抢（测试版）需先绑定 XPEACH 内测账号；您也可随时切换为「本机抢座 (测试版)」（无需登录云账号）")
             if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("内测防滥用积分不足（需 0.10 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
+                throw IllegalStateException("内测防滥用积分不足（需 1 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
             }
         }
 

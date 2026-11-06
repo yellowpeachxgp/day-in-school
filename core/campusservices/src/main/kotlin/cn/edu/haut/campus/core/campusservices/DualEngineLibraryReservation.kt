@@ -24,9 +24,9 @@ enum class BookingExecutionMode(
     CLOUD_HOSTED(
         wireName = "CLOUD_HOSTED",
         label = "云端代抢 (测试版)",
-        subtitle = "内部测试版服务，🍑 积分仅用于内部测试防止恶意利用（命中消耗 0.1 测试积分，未命中不消耗，无任何收费属性）",
+        subtitle = "内部测试版服务，🍑 积分仅用于内部测试防止恶意利用（命中消耗 1 🍑 测试积分，未命中不消耗，无任何收费属性）",
         requiresXpeachSso = true,
-        priceMicropeach = 1_000L
+        priceMicropeach = 10_000L
     ),
     MANUAL_REMINDER(
         wireName = "MANUAL_REMINDER",

@@ -299,7 +299,7 @@ fun XPeachCloudAccountScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "🍑 积分仅用于内部测试防止恶意利用与高频滥用，无任何收费或货币属性；每次云端命中消耗 0.10 测试配额，未命中或取消不消耗。",
+                            text = "🍑 积分仅用于内部测试防止恶意利用与高频滥用，无任何收费或货币属性；每次云端命中消耗 1 🍑 测试配额，未命中或取消不消耗。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -413,7 +413,7 @@ fun XPeachCloudAccountScreen(
                             val payLabel = when (plan.paymentState) {
                                 "PAID" -> "已消耗配额 (${plan.priceMicropeach / 10_000.0} 🍑)"
                                 "REFUNDED" -> "已退回配额 🍑"
-                                "DEBIT_PENDING" -> "命中后消耗 0.1 🍑 测试配额"
+                                "DEBIT_PENDING" -> "命中后消耗 1 🍑 测试配额"
                                 "PAYMENT_DUE" -> "内测配额不足"
                                 else -> "不消耗配额"
                             }
