@@ -3123,8 +3123,8 @@ class CampusRepository internal constructor(
             require(token.isNotBlank()) { "小米 serviceToken 不能为空" }
             val effectiveAccountId = accountId.trim().ifBlank { cUserId.trim() }
             require(effectiveAccountId.isNotBlank()) { "小米账号标识不能为空" }
-            val oaid = XiaomiExpressApi.probeIdentifier(appContext, "getOAID")
-            val vaid = XiaomiExpressApi.probeIdentifier(appContext, "getVAID")
+            val oaid = XiaomiExpressApi.resolveOaid(appContext, effectiveAccountId)
+            val vaid = XiaomiExpressApi.resolveVaid(appContext, effectiveAccountId)
             val credId = "xiaomi_$effectiveAccountId"
             val cleanPhones = detectedPhones
                 .map { it.trim() }

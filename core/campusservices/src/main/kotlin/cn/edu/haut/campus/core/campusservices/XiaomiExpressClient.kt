@@ -491,7 +491,8 @@ object XiaomiExpressApi {
         cred: XiaomiAccountCredential,
         limit: Int = 29
     ): List<XiaomiExpressParcelDto> {
-        require(cred.token.isNotBlank() && cred.cUserId.isNotBlank()) {
+        val effectiveCUserId = cred.cUserId.ifBlank { cred.accountId }
+        require(cred.token.isNotBlank() && effectiveCUserId.isNotBlank()) {
             "小米登录令牌不完整，请重新登录小米账号"
         }
         if (cred.phones.isEmpty()) {
@@ -507,12 +508,14 @@ object XiaomiExpressApi {
         )
         val root = JSONObject(raw)
         if (root.optInt("code") != 0) {
-            throw IllegalStateException("小米智能助理返回错误 (${root.optInt("code")}): ${root.optString("message")}")
+            throw IllegalStateException("小米智能助理返回错误 (${root.optInt("code")}): ${root.optCleanString("message", "请求被拒绝")}")
         }
-        val dataStr = root.optString("data")
-        if (dataStr.isBlank() || dataStr == "null") return emptyList()
-        val data = JSONObject(dataStr)
-        val list = data.optJSONArray("expressList") ?: JSONArray()
+        val dataObj = root.optJSONObject("data") ?: run {
+            val dataStr = root.optCleanString("data")
+            if (dataStr.isBlank()) return emptyList()
+            JSONObject(dataStr)
+        }
+        val list = dataObj.optJSONArray("expressList") ?: JSONArray()
         val out = ArrayList<XiaomiExpressParcelDto>(list.length())
         for (i in 0 until list.length()) {
             val e = list.getJSONObject(i)
@@ -671,10 +674,12 @@ object XiaomiExpressApi {
         val version = paVersionCode(context)
         val url =
             "$HOST$path?version=$version&appkey=yellowpage&yellowpage_encparam=${urlEncode(enc)}&sign=$sign&_encparam=${urlEncode(enc)}"
+        val effectiveUserId = cred.accountId.ifBlank { cred.cUserId }
+        val effectiveCUserId = cred.cUserId.ifBlank { cred.accountId }
         val wrapped = wrapBody(
             context = context,
             plain = body,
-            userId = cred.accountId.ifBlank { cred.cUserId },
+            userId = effectiveUserId,
             oaidIn = cred.oaid,
             vaidIn = cred.vaid
         )
@@ -685,7 +690,7 @@ object XiaomiExpressApi {
             doOutput = true
             connectTimeout = 15000
             readTimeout = 15000
-            setRequestProperty("Cookie", "serviceToken=${cred.token}; cUserId=${cred.cUserId}")
+            setRequestProperty("Cookie", "serviceToken=${cred.token.trim()}; cUserId=${effectiveCUserId.trim()}")
             setRequestProperty("Content-Type", "application/json")
         }
         conn.outputStream.use { out ->
@@ -716,8 +721,8 @@ object XiaomiExpressApi {
         }
     }
 
-    private fun wrapBody(
-        context: Context,
+    internal fun wrapBody(
+        context: Context?,
         plain: String,
         userId: String,
         oaidIn: String?,
@@ -725,21 +730,22 @@ object XiaomiExpressApi {
     ): String {
         return try {
             val original = JSONObject(plain)
-            val oaidV = if (oaidIn.isNullOrBlank()) probeIdentifier(context, "getOAID") else oaidIn
-            val vaidV = if (vaidIn.isNullOrBlank()) probeIdentifier(context, "getVAID") else vaidIn
+            val effectiveUserId = userId.cleanNullLiteral().ifBlank { "100000000" }
+            val oaidV = resolveOaid(context, effectiveUserId, oaidIn)
+            val vaidV = resolveVaid(context, effectiveUserId, vaidIn)
             val userSignal = JSONObject()
                 .put("oaid", oaidV)
                 .put("vaid", vaidV)
-                .put("userId", userId)
+                .put("userId", effectiveUserId)
             val env = JSONObject()
                 .put("terminal", "phone")
                 .put("assistantVersion", paVersionCode(context))
                 .put("launchVersion", pkgVersionCode(context, "com.miui.home"))
                 .put("androidVersion", Build.VERSION.RELEASE ?: "14")
-                .put("androidSdkVersion", Build.VERSION.SDK_INT)
+                .put("androidSdkVersion", Build.VERSION.SDK_INT.takeIf { it > 0 } ?: 34)
                 .put("miuiType", miuiType())
-                .put("phoneModel", Build.MODEL ?: "Xiaomi")
-                .put("phoneDevice", Build.DEVICE ?: "xiaomi")
+                .put("phoneModel", Build.MODEL?.takeIf { it.isNotBlank() } ?: "Xiaomi")
+                .put("phoneDevice", Build.DEVICE?.takeIf { it.isNotBlank() } ?: "xiaomi")
                 .put("connectionType", "WIFI")
                 .put("miuiVersionName", systemProp("ro.miui.ui.version.name") ?: "V8")
                 .put("miuiVersion", systemProp("ro.miui.ui.version.code") ?: "")
@@ -748,13 +754,13 @@ object XiaomiExpressApi {
                 .put("miSettingsVersionName", pkgVersionName(context, "com.xiaomi.misettings") ?: "")
                 .put("miSettingsVersionCode", pkgVersionCode(context, "com.xiaomi.misettings"))
                 .put("timeZone", TimeZone.getDefault().getDisplayName(false, 0))
-                .put("language", Locale.getDefault().language)
-                .put("country", Locale.getDefault().country)
+                .put("language", Locale.getDefault().language.ifBlank { "zh" })
+                .put("country", Locale.getDefault().country.ifBlank { "CN" })
                 .put("screen", 1)
                 .put("coordinate", "")
                 .put("reqId", UUID.randomUUID().toString().replace("-", ""))
                 .put("ip", localIp())
-                .put("cpuArchitecture", Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a")
+                .put("cpuArchitecture", Build.SUPPORTED_ABIS?.firstOrNull() ?: "arm64-v8a")
                 .put("marketVersion", pkgVersionCode(context, "com.xiaomi.market"))
                 .put("os", Build.VERSION.INCREMENTAL ?: "")
                 .put("clientFlag", 0)
@@ -771,6 +777,63 @@ object XiaomiExpressApi {
         } catch (_: Throwable) {
             plain
         }
+    }
+
+    internal fun isValidDeviceSignalId(value: String?): Boolean {
+        val clean = value.cleanNullLiteral()
+        if (clean.length < 8) return false
+        if (clean.equals("unknown", ignoreCase = true)) return false
+        return clean.any { it != '0' && it != '-' }
+    }
+
+    fun resolveOaid(context: Context?, userId: String = "", candidate: String? = null): String {
+        return resolveDeviceSignalId(
+            context = context,
+            method = "getOAID",
+            kind = "oaid",
+            userId = userId,
+            candidate = candidate
+        )
+    }
+
+    fun resolveVaid(context: Context?, userId: String = "", candidate: String? = null): String {
+        return resolveDeviceSignalId(
+            context = context,
+            method = "getVAID",
+            kind = "vaid",
+            userId = userId,
+            candidate = candidate
+        )
+    }
+
+    private fun resolveDeviceSignalId(
+        context: Context?,
+        method: String,
+        kind: String,
+        userId: String,
+        candidate: String?
+    ): String {
+        if (isValidDeviceSignalId(candidate)) {
+            return candidate!!.trim()
+        }
+        val probed = probeIdentifier(context, method)
+        if (isValidDeviceSignalId(probed)) {
+            return probed.trim()
+        }
+        val androidId = runCatching {
+            if (context != null) {
+                android.provider.Settings.Secure.getString(
+                    context.contentResolver,
+                    android.provider.Settings.Secure.ANDROID_ID
+                )
+            } else {
+                null
+            }
+        }.getOrNull().cleanNullLiteral()
+        val hwSeed = "${Build.BRAND.orEmpty()}|${Build.MODEL.orEmpty()}|${Build.DEVICE.orEmpty()}"
+        val seed = "haut_xiaomi_${kind}_v1|${androidId.ifBlank { hwSeed }}|${userId.cleanNullLiteral()}"
+        val derived = sha256Hex(seed).take(16)
+        return if (isValidDeviceSignalId(derived)) derived else "8f3d9a2c4b1e7056"
     }
 
     private fun miuiType(): String {
@@ -799,7 +862,8 @@ object XiaomiExpressApi {
         }
     }
 
-    private fun pkgVersionName(context: Context, pkg: String): String? {
+    private fun pkgVersionName(context: Context?, pkg: String): String? {
+        if (context == null) return null
         return try {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(pkg, 0).versionName
@@ -808,7 +872,8 @@ object XiaomiExpressApi {
         }
     }
 
-    private fun pkgVersionCode(context: Context, pkg: String): Int {
+    private fun pkgVersionCode(context: Context?, pkg: String): Int {
+        if (context == null) return 0
         return try {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(pkg, 0).versionCode
@@ -817,16 +882,18 @@ object XiaomiExpressApi {
         }
     }
 
-    fun probeIdentifier(context: Context, method: String): String {
+    fun probeIdentifier(context: Context?, method: String): String {
+        if (context == null) return ""
         return runCatching {
             val cls = Class.forName("com.android.id.impl.IdProviderImpl")
             val inst = cls.getDeclaredConstructor().newInstance()
             val m = cls.getMethod(method, Context::class.java)
-            (m.invoke(inst, context) as? String).orEmpty()
+            (m.invoke(inst, context) as? String).cleanNullLiteral()
         }.getOrDefault("")
     }
 
-    private fun paVersionCode(context: Context): Int {
+    private fun paVersionCode(context: Context?): Int {
+        if (context == null) return 25000031
         return try {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo("com.miui.personalassistant", 0).versionCode
@@ -878,6 +945,11 @@ object XiaomiExpressApi {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    private fun sha256Hex(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     private fun urlEncode(value: String): String = URLEncoder.encode(value, "UTF-8")
 }
 
@@ -899,13 +971,14 @@ class XiaomiAccountSecureVault(
     }
 
     private val lock = Any()
+    private val appContext = context.applicationContext
     private val scopeHash = MessageDigest.getInstance("SHA-256")
         .digest(scopeId.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
         .take(16)
     private val keyAlias = KEY_ALIAS_PREFIX + scopeHash
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_PREFIX + scopeHash, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(PREFS_PREFIX + scopeHash, Context.MODE_PRIVATE)
 
     fun readAccounts(): List<XiaomiAccountCredential> = synchronized(lock) {
         val encoded = prefs.getString(KEY_CIPHERTEXT, null) ?: return emptyList()
@@ -935,21 +1008,28 @@ class XiaomiAccountSecureVault(
 
     fun upsertAccount(cred: XiaomiAccountCredential): List<XiaomiAccountCredential> = synchronized(lock) {
         val current = readAccounts().toMutableList()
-        val idx = current.indexOfFirst { it.id == cred.id || (it.accountId.isNotBlank() && it.accountId == cred.accountId) }
+        val effectiveUserId = cred.accountId.ifBlank { cred.cUserId }
+        val normalizedCred = cred.copy(
+            oaid = XiaomiExpressApi.resolveOaid(appContext, effectiveUserId, cred.oaid),
+            vaid = XiaomiExpressApi.resolveVaid(appContext, effectiveUserId, cred.vaid)
+        )
+        val idx = current.indexOfFirst {
+            it.id == normalizedCred.id || (it.accountId.isNotBlank() && it.accountId == normalizedCred.accountId)
+        }
         if (idx >= 0) {
             val old = current[idx]
-            val mergedPhones = (old.phones + cred.phones).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            current[idx] = cred.copy(
+            val mergedPhones = (old.phones + normalizedCred.phones).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            current[idx] = normalizedCred.copy(
                 id = old.id,
                 phones = mergedPhones,
-                label = buildAccountLabel(cred.accountId, mergedPhones)
+                label = buildAccountLabel(normalizedCred.accountId, mergedPhones)
             )
         } else {
-            val cleanPhones = cred.phones.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val cleanPhones = normalizedCred.phones.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
             current.add(
-                cred.copy(
+                normalizedCred.copy(
                     phones = cleanPhones,
-                    label = buildAccountLabel(cred.accountId, cleanPhones)
+                    label = buildAccountLabel(normalizedCred.accountId, cleanPhones)
                 )
             )
         }
@@ -1038,15 +1118,19 @@ class XiaomiAccountSecureVault(
                 val p = pArr.optString(j).trim()
                 if (p.isNotEmpty()) phones.add(p)
             }
+            val id = o.optCleanString("id")
+            val cUserId = o.optCleanString("cUserId")
+            val accountId = o.optCleanString("accountId").ifBlank { cUserId }
+            val effectiveUserId = accountId.ifBlank { cUserId }.ifBlank { id }
             out.add(
                 XiaomiAccountCredential(
-                    id = o.optCleanString("id"),
+                    id = id,
                     label = o.optCleanString("label", "小米账号"),
                     token = o.optCleanString("token"),
-                    cUserId = o.optCleanString("cUserId"),
-                    accountId = o.optCleanString("accountId"),
-                    oaid = o.optCleanString("oaid"),
-                    vaid = o.optCleanString("vaid"),
+                    cUserId = cUserId.ifBlank { accountId },
+                    accountId = accountId,
+                    oaid = XiaomiExpressApi.resolveOaid(appContext, effectiveUserId, o.optCleanString("oaid")),
+                    vaid = XiaomiExpressApi.resolveVaid(appContext, effectiveUserId, o.optCleanString("vaid")),
                     phones = phones,
                     enabled = o.optBoolean("enabled", true),
                     updatedAtEpochMillis = o.optLong("updatedAtEpochMillis", System.currentTimeMillis())

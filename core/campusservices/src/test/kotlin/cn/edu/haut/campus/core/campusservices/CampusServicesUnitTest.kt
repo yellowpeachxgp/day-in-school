@@ -345,13 +345,13 @@ class CampusServicesUnitTest {
         assertTrue(parsedDetail.bibliography.contains("出版发行项：北京:作家出版社,2024.5"))
         assertTrue(parsedDetail.bibliography.contains("学科主题：长篇小说-英国-近代"))
 
-        val rawHttp11 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"code\":0,\"data\":[]}"
+        val rawHttp11 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n{\"code\":0,\"data\":[]}"
         val parsedHttpBody = HautLibraryOpacClient.readHttp11Response(
             java.io.ByteArrayInputStream(rawHttp11.toByteArray(StandardCharsets.UTF_8))
         )
         assertEquals("{\"code\":0,\"data\":[]}", parsedHttpBody)
 
-        val rawChunkedHttp11 = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n{\"code\":0,\r\n9\r\n\"data\":[]}\r\n0\r\n\r\n"
+        val rawChunkedHttp11 = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n{\"code\":0,\r\na\r\n\"data\":[]}\r\n0\r\n\r\n"
         val parsedChunkedBody = HautLibraryOpacClient.readHttp11Response(
             java.io.ByteArrayInputStream(rawChunkedHttp11.toByteArray(StandardCharsets.UTF_8))
         )
@@ -375,6 +375,46 @@ class CampusServicesUnitTest {
             "https://img3m1.ddimg.cn/22/24/29359561-1_w_6.jpg",
             coverMap["m7e3788925dc6cfeb9cd7d3a74db7fae2"]
         )
+    }
+
+    @Test
+    fun xiaomiExpressClient_resolvesNonBlankOaidAndVaidInUserSignal() {
+        val hex16Regex = Regex("^[0-9a-f]{16}$")
+        val derivedOaid = XiaomiExpressApi.resolveOaid(null, userId = "284910293", candidate = "")
+        val derivedVaid = XiaomiExpressApi.resolveVaid(null, userId = "284910293", candidate = null)
+        assertTrue("Derived OAID must be 16-char hex", hex16Regex.matches(derivedOaid))
+        assertTrue("Derived VAID must be 16-char hex", hex16Regex.matches(derivedVaid))
+        assertTrue("OAID and VAID should be distinct", derivedOaid != derivedVaid)
+        assertEquals(
+            "Fallback must be deterministic for the same user",
+            derivedVaid,
+            XiaomiExpressApi.resolveVaid(null, userId = "284910293", candidate = "0000000000000000")
+        )
+        assertEquals(
+            "All-zero UUID must be rejected in favor of deterministic ID",
+            derivedOaid,
+            XiaomiExpressApi.resolveOaid(null, userId = "284910293", candidate = "00000000-0000-0000-0000-000000000000")
+        )
+        assertEquals(
+            "Valid explicit VAID should be preserved",
+            "a1b2c3d4e5f60718",
+            XiaomiExpressApi.resolveVaid(null, userId = "284910293", candidate = "a1b2c3d4e5f60718")
+        )
+
+        val wrappedJson = XiaomiExpressApi.wrapBody(
+            context = null,
+            plain = """{"info":{"limit":29,"phones":["13800138000"],"deletedMailNos":[],"modifiedMailNos":[]}}""",
+            userId = "284910293",
+            oaidIn = "",
+            vaidIn = ""
+        )
+        val root = org.json.JSONObject(wrappedJson)
+        val userSignal = root.getJSONObject("userSignal")
+        assertEquals(derivedOaid, userSignal.getString("oaid"))
+        assertEquals(derivedVaid, userSignal.getString("vaid"))
+        assertEquals("284910293", userSignal.getString("userId"))
+        assertTrue(userSignal.getString("vaid").isNotBlank())
+        assertTrue(userSignal.getString("oaid").isNotBlank())
     }
 
     @Test
