@@ -23,14 +23,14 @@ class LiquidGlassThemeSdkTest {
         val liquidPreset = PresetThemePalette.fromKey("LIQUID_GLASS")
         assertNotNull(liquidPreset)
         assertEquals(PresetThemePalette.LIQUID_GLASS, liquidPreset)
-        assertEquals("透明毛玻璃", liquidPreset?.displayName)
+        assertEquals("透明毛玻璃", liquidPreset?.label)
         assertEquals(0xFF0EA5E9L, liquidPreset?.seedArgb)
 
-        // All 9 presets should have distinct keys and non-blank display names
+        // All 9 presets should have distinct keys and non-blank labels
         assertEquals(9, PresetThemePalette.entries.size)
         val keys = PresetThemePalette.entries.map { it.key }.toSet()
         assertEquals(9, keys.size)
-        assertTrue(PresetThemePalette.entries.all { it.displayName.isNotBlank() })
+        assertTrue(PresetThemePalette.entries.all { it.label.isNotBlank() })
 
         assertNull(PresetThemePalette.fromKey("CUSTOM"))
         assertNull(PresetThemePalette.fromKey("WALLPAPER"))
