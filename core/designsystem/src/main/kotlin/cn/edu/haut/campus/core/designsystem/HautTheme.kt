@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.designsystem
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.WallpaperManager
 import android.content.Context
@@ -879,6 +880,7 @@ object WallpaperThemeEngine {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun tryReadSystemWallpaperBitmap(wm: WallpaperManager): Bitmap? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             for (flag in intArrayOf(WallpaperManager.FLAG_SYSTEM, WallpaperManager.FLAG_LOCK)) {
@@ -942,6 +944,7 @@ object WallpaperThemeEngine {
         return Bitmap.createScaledBitmap(source, targetW, targetH, true)
     }
 
+    @SuppressLint("MissingPermission")
     private fun extractSystemDesktopSwatchesInternal(
         context: Context,
         wm: WallpaperManager
