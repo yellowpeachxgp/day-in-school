@@ -60,7 +60,9 @@ import cn.edu.haut.campus.core.campusservices.NativeOidcLoginResult
 import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
@@ -623,7 +625,7 @@ fun XPeachCloudAccountScreen(
         var pluginNameInput by remember { mutableStateOf("自定义校园服务卡片") }
         var versionInput by remember { mutableStateOf("1.0.0") }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showInstallPluginDialog = false },
             title = { Text("添加扩展功能") },
             text = {
@@ -806,12 +808,11 @@ private fun XpeachNativeOidcLoginDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        XPeachGlassSurface(
             modifier = Modifier
                 .fillMaxWidth(0.92f),
             shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp
+            containerColor = XPeachTheme.dialogSurfaceColor
         ) {
             Column(
                 modifier = Modifier
@@ -946,7 +947,7 @@ private fun XpeachNativeOidcLoginDialog(
                     Text(if (isSubmitting) "正在登录…" else "登录")
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                XPeachInsetDivider(verticalPadding = 4.dp)
 
                 OutlinedButton(
                     enabled = !isSubmitting,

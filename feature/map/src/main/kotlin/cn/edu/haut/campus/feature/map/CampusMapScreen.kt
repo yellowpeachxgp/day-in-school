@@ -117,9 +117,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachBrandLight
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachOk
@@ -813,7 +815,7 @@ fun CampusMapScreen(
                 }
             }
         }
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showZoneImportExportDialog = false },
             title = {
                 Text(
@@ -909,7 +911,7 @@ fun CampusMapScreen(
 
     if (pendingPinPoint != null) {
         val pt = pendingPinPoint!!
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { pendingPinPoint = null },
             title = {
                 Text(
@@ -1716,13 +1718,8 @@ fun CampusMapScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
+                XPeachGlassSurface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 2.dp,
                     modifier = Modifier.clickable { isFullScreenMap = false }
                 ) {
@@ -1746,14 +1743,9 @@ fun CampusMapScreen(
                         )
                     }
                 }
-                Surface(
+                XPeachGlassSurface(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 2.dp
                 ) {
                     OutlinedTextField(
@@ -1803,13 +1795,8 @@ fun CampusMapScreen(
                 }
 
                 // 朝向指示胶囊
-                Surface(
+                XPeachGlassSurface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 2.dp,
                     modifier = Modifier.clickable {
                         if (!hasLocationPermission) {
@@ -2640,7 +2627,7 @@ private fun OfficialGisWebViewDialog(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
+            color = XPeachTheme.dialogSurfaceColor
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 XPeachTopBar(

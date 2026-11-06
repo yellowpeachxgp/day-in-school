@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.campusservices.CampusServiceProviderRegistry
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.ActiveSession
@@ -331,15 +332,20 @@ fun SchoolCenterScreen(
                         }
                     }
                     item(key = "search") {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it.take(SchoolDirectory.MAX_QUERY_LENGTH) },
-                            label = { Text("搜索学校") },
-                            supportingText = { Text("支持中文、英文、拼音和首字母") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        XPeachCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            padding = PaddingValues(12.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { query = it.take(SchoolDirectory.MAX_QUERY_LENGTH) },
+                                label = { Text("搜索学校") },
+                                supportingText = { Text("支持中文、英文、拼音和首字母") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                     if (matches.isEmpty()) {
                         item(key = "empty") {
@@ -465,7 +471,7 @@ private fun CreateOfflineProfileDialog(
     var schoolName by rememberSaveable(school?.id?.value) { mutableStateOf(school?.displayName.orEmpty()) }
     var profileLabel by rememberSaveable { mutableStateOf("离线身份") }
     val newSchoolId = rememberSaveable { "local-${UUID.randomUUID()}" }
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加离线身份") },
         text = {

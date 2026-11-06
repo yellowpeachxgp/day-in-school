@@ -51,6 +51,7 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.CampusMetricChart
 import cn.edu.haut.campus.core.designsystem.CampusMetricPoint
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -659,7 +660,7 @@ private fun AddUtilityMeterDialog(
     var unit by remember { mutableStateOf("度") }
     var thresholdText by remember { mutableStateOf("15") }
 
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加水电表计") },
         text = {
@@ -668,19 +669,25 @@ private fun AddUtilityMeterDialog(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("表计名称（如：照明电表 / 空调电表）") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = campus,
                     onValueChange = { campus = it },
                     label = { Text("校区（如：莲花街校区 / 嵩山路校区）") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = room,
                     onValueChange = { room = it },
                     label = { Text("宿舍楼栋与房间号") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -688,6 +695,7 @@ private fun AddUtilityMeterDialog(
                         onValueChange = { unit = it },
                         label = { Text("单位(度/元/m³)") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
@@ -695,6 +703,7 @@ private fun AddUtilityMeterDialog(
                         onValueChange = { thresholdText = it },
                         label = { Text("低量预警线") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -730,7 +739,7 @@ private fun AddUtilityReadingDialog(
     var topUpText by remember { mutableStateOf("0") }
     var noteText by remember { mutableStateOf("") }
 
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("记录读数 · ${meter.name}") },
         text = {
@@ -739,19 +748,25 @@ private fun AddUtilityReadingDialog(
                     value = valueText,
                     onValueChange = { valueText = it },
                     label = { Text("当前剩余读数 (${meter.unit})") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = topUpText,
                     onValueChange = { topUpText = it },
                     label = { Text("本次新充值/购入量 (${meter.unit}，无则填 0)") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = noteText,
                     onValueChange = { noteText = it },
                     label = { Text("备注（选填）") },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },

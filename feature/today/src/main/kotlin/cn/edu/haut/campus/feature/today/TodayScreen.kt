@@ -78,6 +78,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -637,7 +638,7 @@ fun TodayScreen(
     }
 
     if (showTermSwitcherDialog) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showTermSwitcherDialog = false },
             title = { Text("切换当前学期") },
             text = {
@@ -786,7 +787,7 @@ private fun CourseDetailAndSnoozeDialog(
         )
     }
 
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1994,7 +1995,7 @@ private fun HomeCardLayoutCustomizerDialog(
     var workingHidden by remember(currentHidden) { mutableStateOf(currentHidden) }
     var workingFullWidth by remember(currentFullWidth) { mutableStateOf(currentFullWidth) }
 
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -2368,6 +2369,10 @@ private fun MinimalistDayScheduleFlow(
                         isHighlighted -> androidx.compose.foundation.BorderStroke(
                             0.9.dp,
                             XPeachTheme.courseBorder(occ.colorArgb, active = false)
+                        )
+                        XPeachTheme.isLiquidGlass -> androidx.compose.foundation.BorderStroke(
+                            0.8.dp,
+                            XPeachTheme.specularRimBrush(intensity = 0.72f)
                         )
                         XPeachTheme.isDark -> androidx.compose.foundation.BorderStroke(
                             0.8.dp,

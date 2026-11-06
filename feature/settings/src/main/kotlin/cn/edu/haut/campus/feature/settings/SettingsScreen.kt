@@ -101,11 +101,14 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.DEFAULT_HOME_CARD_ORDER
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.PresetThemePalette
+import cn.edu.haut.campus.core.designsystem.UiDesignStyle
 import cn.edu.haut.campus.core.designsystem.WallpaperThemeEngine
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
+import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
@@ -1857,7 +1860,34 @@ fun SettingsScreen(
                 }
             }
 
-            // 7.5 主题、自定义背景图取色、调色盘与模块化卡片布局
+            // 7.5 主题、透明液态毛玻璃 UI、系统桌面背景同步、调色盘与模块化卡片布局
+            val runDesktopWallpaperSync: () -> Unit = {
+                scope.launch {
+                    feedbackText = "正在同步系统桌面背景与主题色..."
+                    WallpaperThemeEngine.syncSystemDesktopWallpaper(context)
+                        .onSuccess { result ->
+                            repository.saveCustomWallpaperTheme(
+                                localPath = result.localFilePath,
+                                primarySeedArgb = result.primarySeedArgb,
+                                extractedSwatches = result.extractedSwatches,
+                                enableLiquidGlass = true
+                            )
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            val hexStr = String.format("#%06X", 0xFFFFFF and result.primarySeedArgb.toInt())
+                            feedbackText = "${result.statusMessage} ($hexStr)"
+                        }
+                        .onFailure { err ->
+                            feedbackText = "获取桌面背景失败：${err.message ?: "请稍后重试"}"
+                        }
+                }
+            }
+
+            val desktopWallpaperPermLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) {
+                runDesktopWallpaperSync()
+            }
+
             val wallpaperPickerLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
@@ -1887,6 +1917,17 @@ fun SettingsScreen(
                 onSelectThemeMode = { mode ->
                     scope.launch { repository.setThemeMode(mode) }
                 },
+                onSelectUiDesignStyle = { styleKey ->
+                    scope.launch {
+                        repository.setUiDesignStyle(styleKey)
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        feedbackText = if (styleKey == UiDesignStyle.LIQUID_GLASS.key) {
+                            "已切换为透明液态毛玻璃 UI"
+                        } else {
+                            "已切换为 Flutter 经典质感 UI"
+                        }
+                    }
+                },
                 onToggleDynamicColor = { enabled ->
                     scope.launch { repository.setUseDynamicColor(enabled) }
                 },
@@ -1894,7 +1935,38 @@ fun SettingsScreen(
                     scope.launch {
                         repository.setThemePalette(key, seedArgb)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = "已更新主题配色"
+                        feedbackText = if (key == PresetThemePalette.LIQUID_GLASS.key) {
+                            "已启用透明毛玻璃主题"
+                        } else {
+                            "已更新主题配色"
+                        }
+                    }
+                },
+                onSyncDesktopWallpaper = {
+                    if (WallpaperThemeEngine.hasSystemWallpaperPermission(context)) {
+                        runDesktopWallpaperSync()
+                    } else {
+                        desktopWallpaperPermLauncher.launch(
+                            WallpaperThemeEngine.requiredWallpaperPermissionName()
+                        )
+                    }
+                },
+                onExtractDesktopColors = {
+                    scope.launch {
+                        WallpaperThemeEngine.extractSystemDesktopColorsOnly(context)
+                            .onSuccess { swatches ->
+                                val primary = swatches.firstOrNull() ?: 0xFF0EA5E9L
+                                repository.saveExtractedDesktopSwatches(
+                                    primarySeedArgb = primary,
+                                    extractedSwatches = swatches
+                                )
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                val hexStr = String.format("#%06X", 0xFFFFFF and primary.toInt())
+                                feedbackText = "已提取并应用系统桌面主题色 ($hexStr)"
+                            }
+                            .onFailure { err ->
+                                feedbackText = "提取桌面主题色失败：${err.message ?: "请重试"}"
+                            }
                     }
                 },
                 onPickWallpaperImage = {
@@ -1907,6 +1979,12 @@ fun SettingsScreen(
                             blurDp = blurDp,
                             cardAlpha = cardAlpha
                         )
+                    }
+                },
+                onResetWallpaperParams = {
+                    scope.launch {
+                        repository.resetWallpaperVisualParams()
+                        feedbackText = "已恢复默认毛玻璃透明度与模糊度"
                     }
                 },
                 onClearWallpaper = {
@@ -1998,11 +2076,7 @@ fun SettingsScreen(
                         }
                     )
                 }
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 6.dp),
-                    thickness = 0.6.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                )
+                XPeachInsetDivider(verticalPadding = 6.dp)
                 if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2363,7 +2437,7 @@ fun SettingsScreen(
         var majorInput by remember(studentProfile) { mutableStateOf(studentProfile?.major ?: "") }
         var yearInput by remember(studentProfile) { mutableStateOf(studentProfile?.enrollmentYear?.toString() ?: "2023") }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showEditProfileDialog = false },
             title = { Text("编辑个人信息") },
             text = {
@@ -2435,7 +2509,7 @@ fun SettingsScreen(
         var isMakeup by remember { mutableStateOf(false) }
         var followDateIso by remember { mutableStateOf(today.minusDays(2).toString()) }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showAddCalendarOverrideDialog = false },
             title = { Text("新增调休或停课日期") },
             text = {
@@ -2522,7 +2596,7 @@ fun SettingsScreen(
 
     // 弹窗 3：历史同步审计记录
     if (showImportHistoryDialog) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showImportHistoryDialog = false },
             title = { Text("教务与课表同步记录") },
             text = {
@@ -2574,7 +2648,7 @@ fun SettingsScreen(
         var startIso by remember(ptToEdit) { mutableStateOf(ptToEdit.startLocalTime.toString()) }
         var endIso by remember(ptToEdit) { mutableStateOf(ptToEdit.endLocalTime.toString()) }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingPeriod = null },
             title = { Text("第 ${ptToEdit.periodNo} 节时间") },
             text = {
@@ -2629,7 +2703,7 @@ fun SettingsScreen(
 
     // 弹窗 5：清除个人数据确认
     if (showWipeConfirmDialog) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showWipeConfirmDialog = false },
             title = { Text("清除个人数据") },
             text = {
@@ -2673,7 +2747,7 @@ fun SettingsScreen(
             )
         }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingChannelItem = null },
             title = { Text("修改「${channelToEdit.title}」链接") },
             text = {
@@ -2725,7 +2799,7 @@ fun SettingsScreen(
             )
         }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingClubItem = null },
             title = { Text("修改「${clubToEdit.name}」群号") },
             text = {
@@ -3032,6 +3106,7 @@ private val SETTINGS_HOME_CARD_LABELS: List<Pair<String, String>> = listOf(
     "STUDY_FOCUS" to "自习专注",
     "DORM_ELECTRICITY" to "宿舍水电",
     "LIBRARY_SEAT" to "座位预约",
+    "PARCEL_HUB" to "驿站快递",
     "LIBRARY_CATALOG" to "馆藏检索",
     "EMPTY_CLASSROOM" to "空教室查询",
     "CAMPUS_COMMUNITY" to "社团与频道"
@@ -3042,10 +3117,14 @@ private val SETTINGS_HOME_CARD_LABELS: List<Pair<String, String>> = listOf(
 private fun ThemePaletteAndCardLayoutSection(
     prefs: AppPreferencesState,
     onSelectThemeMode: (String) -> Unit,
+    onSelectUiDesignStyle: (String) -> Unit,
     onToggleDynamicColor: (Boolean) -> Unit,
     onSelectPalette: (String, Long?) -> Unit,
+    onSyncDesktopWallpaper: () -> Unit,
+    onExtractDesktopColors: () -> Unit,
     onPickWallpaperImage: () -> Unit,
     onUpdateWallpaperParams: (alpha: Float?, blurDp: Float?, cardAlpha: Float?) -> Unit,
+    onResetWallpaperParams: () -> Unit,
     onClearWallpaper: () -> Unit,
     onUpdateCardLayout: (List<String>, Set<String>, Set<String>) -> Unit,
     onResetCardLayout: () -> Unit
@@ -3061,9 +3140,9 @@ private fun ThemePaletteAndCardLayoutSection(
         android.graphics.Color.colorToHSV(prefs.customThemeSeedArgb.toInt(), arr)
         arr
     }
-    var hue by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[0]) }
-    var saturation by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[1].coerceIn(0.2f, 1f)) }
-    var brightness by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[2].coerceIn(0.3f, 1f)) }
+    var hue by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[0].coerceIn(0f, 360f)) }
+    var saturation by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[1].coerceIn(0.05f, 1f)) }
+    var brightness by remember(prefs.customThemeSeedArgb) { mutableFloatStateOf(initialHsv[2].coerceIn(0.20f, 1f)) }
 
     val customColorInt = remember(hue, saturation, brightness) {
         android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness))
@@ -3071,7 +3150,12 @@ private fun ThemePaletteAndCardLayoutSection(
     val customHexText = remember(customColorInt) {
         String.format("#%06X", 0xFFFFFF and customColorInt)
     }
-    var hexInput by remember(customHexText) { mutableStateOf(customHexText) }
+    var hexInput by remember(prefs.customThemeSeedArgb) { mutableStateOf(customHexText) }
+
+    val isLiquidGlassActive = prefs.uiDesignStyle == UiDesignStyle.LIQUID_GLASS.key ||
+        prefs.themePaletteKey == PresetThemePalette.LIQUID_GLASS.key
+    val hasCustomWallpaper = !prefs.customWallpaperPath.isNullOrBlank()
+    val showGlassControls = isLiquidGlassActive || hasCustomWallpaper
 
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -3081,18 +3165,20 @@ private fun ThemePaletteAndCardLayoutSection(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "主题与壁纸",
+                    text = "主题与视觉风格",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "深浅外观、背景图片与主题配色",
+                    text = "切换 Flutter 经典质感或透明液态毛玻璃 UI",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             val currentPaletteLabel = when {
-                !prefs.customWallpaperPath.isNullOrBlank() -> "自定义壁纸"
+                isLiquidGlassActive && hasCustomWallpaper -> "液态毛玻璃 · 桌面背景"
+                isLiquidGlassActive -> "透明液态毛玻璃"
+                hasCustomWallpaper -> "自定义壁纸"
                 prefs.useDynamicColor -> "系统取色"
                 prefs.themePaletteKey == "CUSTOM" -> customHexText
                 else -> PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "工大蓝"
@@ -3105,7 +3191,113 @@ private fun ThemePaletteAndCardLayoutSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 1. 深浅色外观模式切换
+        // 0. 产品设计语言切换（Flutter 经典质感 vs 透明液态毛玻璃）
+        val styleOptions = remember { UiDesignStyle.entries }
+        val currentStyle = if (isLiquidGlassActive) UiDesignStyle.LIQUID_GLASS else UiDesignStyle.FLUTTER_M3
+        XPeachSegmentedTabs(
+            options = styleOptions,
+            selectedOption = currentStyle,
+            labelProvider = { it.label },
+            onSelect = { chosen ->
+                if (chosen == UiDesignStyle.LIQUID_GLASS) {
+                    onSelectUiDesignStyle(UiDesignStyle.LIQUID_GLASS.key)
+                } else {
+                    onSelectUiDesignStyle(UiDesignStyle.FLUTTER_M3.key)
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 0.5 透明毛玻璃主题与桌面壁纸一键同步工作台
+        XPeachWell(
+            modifier = Modifier.fillMaxWidth(),
+            containerColor = if (isLiquidGlassActive) {
+                XPeachTheme.primaryAccentCardColor
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = if (isLiquidGlassActive) "透明液态毛玻璃已启用" else "透明毛玻璃主题",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (hasCustomWallpaper) {
+                            "已加载壁纸背景，可调节毛玻璃透光度与模糊度"
+                        } else {
+                            "支持获取系统桌面背景、桌面主题色或上传相册壁纸"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                XPeachStatusBadge(
+                    text = if (isLiquidGlassActive) "液态毛玻璃 UI" else "Flutter UI",
+                    containerColor = if (isLiquidGlassActive) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                    contentColor = if (isLiquidGlassActive) {
+                        XPeachTheme.readablePrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                XPeachFilterPill(
+                    label = "获取桌面背景",
+                    selected = hasCustomWallpaper && isLiquidGlassActive,
+                    compact = true,
+                    onClick = onSyncDesktopWallpaper
+                )
+                XPeachFilterPill(
+                    label = "提取桌面主题色",
+                    selected = false,
+                    compact = true,
+                    onClick = onExtractDesktopColors
+                )
+                XPeachFilterPill(
+                    label = if (hasCustomWallpaper) "更换相册图" else "相册背景图",
+                    selected = hasCustomWallpaper && !isLiquidGlassActive,
+                    compact = true,
+                    onClick = onPickWallpaperImage
+                )
+                if (hasCustomWallpaper) {
+                    XPeachFilterPill(
+                        label = "移除背景图",
+                        selected = false,
+                        compact = true,
+                        onClick = onClearWallpaper
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 1. 深浅色外观模式与系统动态取色
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -3132,63 +3324,39 @@ private fun ThemePaletteAndCardLayoutSection(
             }
         }
 
-        XPeachInsetDivider(verticalPadding = 10.dp)
-
-        // 1.5 自定义背景图片上传、自动取色与模糊度/透明度控制
-        Column(modifier = Modifier.fillMaxWidth()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "自定义背景图",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Android 系统动态色彩",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = if (prefs.customWallpaperPath.isNullOrBlank()) {
-                            "选择相册图片作为背景，自动匹配主题色"
-                        } else {
-                            "已启用自定义背景图"
-                        },
+                        text = "跟随系统 Material You 壁纸色板（兼容毛玻璃）",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (!prefs.customWallpaperPath.isNullOrBlank()) {
-                        XPeachFilterPill(
-                            label = "移除",
-                            selected = false,
-                            compact = true,
-                            onClick = onClearWallpaper
-                        )
-                    }
-                    XPeachFilterPill(
-                        label = if (prefs.customWallpaperPath.isNullOrBlank()) "上传背景图" else "更换图片",
-                        selected = !prefs.customWallpaperPath.isNullOrBlank(),
-                        compact = true,
-                        onClick = onPickWallpaperImage
-                    )
-                }
+                Switch(
+                    checked = prefs.useDynamicColor,
+                    onCheckedChange = onToggleDynamicColor
+                )
             }
+        }
 
-            if (!prefs.customWallpaperPath.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(10.dp))
-
+        // 1.5 壁纸提取色板与毛玻璃透明度/模糊度控制面板
+        if (prefs.extractedWallpaperColors.isNotEmpty() || showGlassControls) {
+            XPeachInsetDivider(verticalPadding = 10.dp)
+            Column(modifier = Modifier.fillMaxWidth()) {
                 if (prefs.extractedWallpaperColors.isNotEmpty()) {
                     Text(
-                        text = "壁纸提取配色",
+                        text = "桌面 / 壁纸提取主题色",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3201,7 +3369,8 @@ private fun ThemePaletteAndCardLayoutSection(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         for (swatchArgb in prefs.extractedWallpaperColors) {
-                            val isSelectedSwatch = prefs.themePaletteKey == "CUSTOM" &&
+                            val isSelectedSwatch = !prefs.useDynamicColor &&
+                                prefs.themePaletteKey == "CUSTOM" &&
                                 (prefs.customThemeSeedArgb and 0xFFFFFFL) == (swatchArgb and 0xFFFFFFL)
                             val swatchHex = String.format("#%06X", 0xFFFFFF and swatchArgb.toInt())
                             val rawSwatchColor = Color(swatchArgb)
@@ -3245,65 +3414,116 @@ private fun ThemePaletteAndCardLayoutSection(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
 
-                Text(
-                    text = "背景模糊度 (${localWallpaperBlur.toInt()} dp)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = localWallpaperBlur,
-                    onValueChange = {
-                        localWallpaperBlur = it
-                        onUpdateWallpaperParams(null, it, null)
-                    },
-                    valueRange = 0f..30f
-                )
+                if (showGlassControls) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "液态毛玻璃光学参数",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            XPeachFilterPill(
+                                label = "极清 36%",
+                                selected = abs(localCardAlpha - 0.36f) < 0.04f,
+                                compact = true,
+                                onClick = {
+                                    localCardAlpha = 0.36f
+                                    localWallpaperBlur = 14f
+                                    localWallpaperAlpha = 0.70f
+                                    onUpdateWallpaperParams(0.70f, 14f, 0.36f)
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "标准 68%",
+                                selected = abs(localCardAlpha - 0.68f) < 0.04f,
+                                compact = true,
+                                onClick = {
+                                    localCardAlpha = 0.68f
+                                    localWallpaperBlur = 10f
+                                    localWallpaperAlpha = 0.55f
+                                    onUpdateWallpaperParams(0.55f, 10f, 0.68f)
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "重置",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    localCardAlpha = 0.68f
+                                    localWallpaperBlur = 10f
+                                    localWallpaperAlpha = 0.55f
+                                    onResetWallpaperParams()
+                                }
+                            )
+                        }
+                    }
 
-                Text(
-                    text = "背景图片透明度 (${(localWallpaperAlpha * 100).toInt()}%)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = localWallpaperAlpha,
-                    onValueChange = {
-                        localWallpaperAlpha = it
-                        onUpdateWallpaperParams(it, null, null)
-                    },
-                    valueRange = 0.10f..1.0f
-                )
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                Text(
-                    text = "卡片不透明度 (${(localCardAlpha * 100).toInt()}%)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(
-                    value = localCardAlpha,
-                    onValueChange = {
-                        localCardAlpha = it
-                        onUpdateWallpaperParams(null, null, it)
-                    },
-                    valueRange = 0.50f..0.98f
-                )
+                    Text(
+                        text = "毛玻璃卡片不透明度 (${(localCardAlpha * 100).toInt()}% · 越低越通透)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = localCardAlpha.coerceIn(0.18f, 0.98f),
+                        onValueChange = {
+                            localCardAlpha = it
+                            onUpdateWallpaperParams(null, null, it)
+                        },
+                        valueRange = 0.18f..0.98f
+                    )
+
+                    Text(
+                        text = "背景毛玻璃模糊度 (${localWallpaperBlur.toInt()} dp)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = localWallpaperBlur.coerceIn(0f, 35f),
+                        onValueChange = {
+                            localWallpaperBlur = it
+                            onUpdateWallpaperParams(null, it, null)
+                        },
+                        valueRange = 0f..35f
+                    )
+
+                    Text(
+                        text = "背景显色透光度 (${(localWallpaperAlpha * 100).toInt()}%)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = localWallpaperAlpha.coerceIn(0.05f, 1.0f),
+                        onValueChange = {
+                            localWallpaperAlpha = it
+                            onUpdateWallpaperParams(it, null, null)
+                        },
+                        valueRange = 0.05f..1.0f
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        XPeachInsetDivider(verticalPadding = 10.dp)
 
-        // 2. 8款精选预设主题色卡矩阵
+        // 2. 9款精选预设主题色卡矩阵（首项为“透明毛玻璃”）
         Text(
-            text = "精选主题配色",
+            text = "精选主题配色（点击「透明毛玻璃」即刻切换液态毛玻璃 UI）",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(6.dp))
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (rowPalettes in PresetThemePalette.entries.chunked(4)) {
+            for (rowPalettes in PresetThemePalette.entries.chunked(3)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -3327,7 +3547,7 @@ private fun ThemePaletteAndCardLayoutSection(
                                     width = if (isSelected) 1.5.dp else 0.7.dp,
                                     color = if (isSelected) {
                                         readableSwatch
-                                    } else if (XPeachTheme.isDark) {
+                                    } else if (XPeachTheme.isDark || XPeachTheme.isLiquidGlass) {
                                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
                                     } else {
                                         Color.Transparent
@@ -3343,7 +3563,19 @@ private fun ThemePaletteAndCardLayoutSection(
                                 modifier = Modifier
                                     .size(22.dp)
                                     .clip(CircleShape)
-                                    .background(swatchColor)
+                                    .background(
+                                        if (palette.activatesLiquidGlass) {
+                                            Brush.linearGradient(
+                                                colors = listOf(
+                                                    Color(0xFF38BDF8),
+                                                    Color(0xFF818CF8),
+                                                    Color(0xFF2DD4BF)
+                                                )
+                                            )
+                                        } else {
+                                            Brush.linearGradient(listOf(swatchColor, swatchColor))
+                                        }
+                                    )
                                     .border(
                                         0.8.dp,
                                         if (XPeachTheme.isDark) Color.White.copy(alpha = 0.28f) else Color.Black.copy(alpha = 0.10f),
@@ -3438,8 +3670,12 @@ private fun ThemePaletteAndCardLayoutSection(
                     modifier = Modifier.padding(top = 6.dp)
                 )
                 Slider(
-                    value = hue,
-                    onValueChange = { hue = it },
+                    value = hue.coerceIn(0f, 360f),
+                    onValueChange = {
+                        hue = it
+                        val nextColor = android.graphics.Color.HSVToColor(floatArrayOf(it, saturation, brightness))
+                        hexInput = String.format("#%06X", 0xFFFFFF and nextColor)
+                    },
                     valueRange = 0f..360f
                 )
 
@@ -3449,9 +3685,13 @@ private fun ThemePaletteAndCardLayoutSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Slider(
-                    value = saturation,
-                    onValueChange = { saturation = it },
-                    valueRange = 0.20f..1f
+                    value = saturation.coerceIn(0.05f, 1f),
+                    onValueChange = {
+                        saturation = it
+                        val nextColor = android.graphics.Color.HSVToColor(floatArrayOf(hue, it, brightness))
+                        hexInput = String.format("#%06X", 0xFFFFFF and nextColor)
+                    },
+                    valueRange = 0.05f..1f
                 )
 
                 Text(
@@ -3460,9 +3700,13 @@ private fun ThemePaletteAndCardLayoutSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Slider(
-                    value = brightness,
-                    onValueChange = { brightness = it },
-                    valueRange = 0.30f..0.95f
+                    value = brightness.coerceIn(0.20f, 1f),
+                    onValueChange = {
+                        brightness = it
+                        val nextColor = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, it))
+                        hexInput = String.format("#%06X", 0xFFFFFF and nextColor)
+                    },
+                    valueRange = 0.20f..1f
                 )
 
                 Row(
@@ -3480,9 +3724,9 @@ private fun ThemePaletteAndCardLayoutSection(
                                     val argb = (0xFF000000L or rgb).toInt()
                                     val arr = FloatArray(3)
                                     android.graphics.Color.colorToHSV(argb, arr)
-                                    hue = arr[0]
-                                    saturation = arr[1].coerceIn(0.2f, 1f)
-                                    brightness = arr[2].coerceIn(0.3f, 0.95f)
+                                    hue = arr[0].coerceIn(0f, 360f)
+                                    saturation = arr[1].coerceIn(0.05f, 1f)
+                                    brightness = arr[2].coerceIn(0.20f, 1f)
                                 }
                             }
                         },

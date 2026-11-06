@@ -1,13 +1,24 @@
 package cn.edu.haut.campus.core.designsystem
 
+import android.Manifest
 import android.app.Activity
+import android.app.WallpaperManager
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -21,6 +32,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -33,16 +45,22 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +72,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,9 +84,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -84,6 +107,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,7 +118,39 @@ import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
+/**
+ * 全局产品设计语言枚举：
+ * - [FLUTTER_M3]: 经典高对比度现代扁平卡片体系（Flutter Material 3 & Cupertino 规范）
+ * - [LIQUID_GLASS]: 透明液态毛玻璃设计语言（全局半透明磨砂折射、斜向流光高光边、桌面背景/流光网格透传）
+ */
+enum class UiDesignStyle(
+    val key: String,
+    val label: String,
+    val subtitle: String
+) {
+    FLUTTER_M3(
+        key = "FLUTTER_M3",
+        label = "Flutter 经典质感",
+        subtitle = "高对比度现代扁平卡片与清晰边界"
+    ),
+    LIQUID_GLASS(
+        key = "LIQUID_GLASS",
+        label = "透明液态毛玻璃",
+        subtitle = "全局半透明磨砂折射、斜向流光边与景深透传"
+    );
+
+    companion object {
+        fun fromKey(key: String?): UiDesignStyle =
+            entries.firstOrNull { it.key.equals(key, ignoreCase = true) } ?: FLUTTER_M3
+    }
+}
+
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
+val LocalUiDesignStyle = staticCompositionLocalOf { UiDesignStyle.FLUTTER_M3 }
+val LocalHasActiveBackdrop = staticCompositionLocalOf { false }
+val LocalGlassCardAlpha = staticCompositionLocalOf { 0.82f }
+val LocalGlassBlurDp = staticCompositionLocalOf { 10f }
+val LocalBackdropAlpha = staticCompositionLocalOf { 0.48f }
 
 val XPeachBrandLight = Color(0xFF0066CC)
 val XPeachBrandHoverLight = Color(0xFF0052A3)
@@ -206,43 +264,103 @@ private val DarkColors = darkColorScheme(
 )
 
 /**
- * 深浅色自适应语义色彩与表面层级访问器：
- * 解决深色模式下卡片底色与文字颜色冲突、低对比度课程色块、内嵌组件与卡片同色等问题。
+ * 深浅色与双设计语言（Flutter M3 vs 透明液态毛玻璃）自适应语义色彩与表面层级访问器：
+ * 统一管控卡片透明度、折射流光边框、弹窗磨砂底色与课程色块对比度。
  */
 object XPeachTheme {
     val isDark: Boolean
-        @Composable get() = LocalIsDarkTheme.current
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalIsDarkTheme.current
+
+    val uiDesignStyle: UiDesignStyle
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalUiDesignStyle.current
+
+    val isLiquidGlass: Boolean
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalUiDesignStyle.current == UiDesignStyle.LIQUID_GLASS
+
+    val hasActiveBackdrop: Boolean
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalHasActiveBackdrop.current
+
+    val glassCardAlpha: Float
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalGlassCardAlpha.current
+
+    val glassBlurDp: Float
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalGlassBlurDp.current
+
+    val backdropAlpha: Float
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalBackdropAlpha.current
 
     /**
      * 主色调高亮卡片底色（如待取快递提醒卡、高亮模块卡）：
-     * 深色模式下采用克制的深蓝灰混色表面（而非高饱和刺眼色块），保证白色主标题与灰蓝副标题依然清晰协调。
+     * 在液态毛玻璃模式下自动跟随用户调节的毛玻璃透明度 `glassCardAlpha`。
      */
     val primaryAccentCardColor: Color
-        @Composable get() = if (isDark) {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.52f)
-        } else {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.65f)
+        @Composable get() {
+            val base = if (isDark) {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.52f)
+            } else {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.65f)
+            }
+            return if (hasActiveBackdrop) {
+                base.copy(alpha = (glassCardAlpha * 1.02f).coerceIn(0.18f, 0.98f))
+            } else {
+                base
+            }
         }
 
     val secondaryAccentCardColor: Color
-        @Composable get() = if (isDark) {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.52f)
-        } else {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.65f)
+        @Composable get() {
+            val base = if (isDark) {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.52f)
+            } else {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.secondaryContainer, 0.65f)
+            }
+            return if (hasActiveBackdrop) {
+                base.copy(alpha = (glassCardAlpha * 1.02f).coerceIn(0.18f, 0.98f))
+            } else {
+                base
+            }
         }
 
     val tertiaryAccentCardColor: Color
-        @Composable get() = if (isDark) {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.55f)
-        } else {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.72f)
+        @Composable get() {
+            val base = if (isDark) {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.55f)
+            } else {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.tertiaryContainer, 0.72f)
+            }
+            return if (hasActiveBackdrop) {
+                base.copy(alpha = (glassCardAlpha * 1.02f).coerceIn(0.18f, 0.98f))
+            } else {
+                base
+            }
         }
 
     val errorAccentCardColor: Color
-        @Composable get() = if (isDark) {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.58f)
-        } else {
-            lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.75f)
+        @Composable get() {
+            val base = if (isDark) {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.58f)
+            } else {
+                lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.errorContainer, 0.75f)
+            }
+            return if (hasActiveBackdrop) {
+                base.copy(alpha = (glassCardAlpha * 1.04f).coerceIn(0.22f, 0.98f))
+            } else {
+                base
+            }
         }
 
     /**
@@ -250,9 +368,21 @@ object XPeachTheme {
      */
     val elevatedWellColor: Color
         @Composable get() = if (isDark) {
-            MaterialTheme.colorScheme.surfaceVariant
+            if (hasActiveBackdrop) {
+                MaterialTheme.colorScheme.surfaceVariant.copy(
+                    alpha = (glassCardAlpha * 0.86f).coerceIn(0.16f, 0.94f)
+                )
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
         } else {
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+            if (hasActiveBackdrop) {
+                MaterialTheme.colorScheme.surface.copy(
+                    alpha = (glassCardAlpha * 0.88f).coerceIn(0.18f, 0.95f)
+                )
+            } else {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+            }
         }
 
     /**
@@ -260,9 +390,43 @@ object XPeachTheme {
      */
     val nestedItemColor: Color
         @Composable get() = if (isDark) {
-            MaterialTheme.colorScheme.surfaceContainerHighest
+            if (hasActiveBackdrop) {
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(
+                    alpha = (glassCardAlpha * 0.88f).coerceIn(0.20f, 0.95f)
+                )
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHighest
+            }
         } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f)
+            MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = if (hasActiveBackdrop) (glassCardAlpha * 0.78f).coerceIn(0.16f, 0.90f) else 0.68f
+            )
+        }
+
+    /**
+     * 悬浮地图 HUD / 室内平面图工具栏表面色：
+     * 在液态毛玻璃模式下呈现带折射质感的半透明磨砂底色，同时保留最低可读性下限防止地图线条干扰文字。
+     */
+    val hudSurfaceColor: Color
+        @Composable get() = if (isLiquidGlass || hasActiveBackdrop) {
+            MaterialTheme.colorScheme.surface.copy(
+                alpha = glassCardAlpha.coerceIn(0.38f, 0.94f)
+            )
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+        }
+
+    /**
+     * 弹窗 (`XPeachAlertDialog` / 模态面板) 表面色：
+     * 在液态毛玻璃模式下呈现晶莹磨砂质感，同时保障弹窗表单与正文的对比度。
+     */
+    val dialogSurfaceColor: Color
+        @Composable get() = if (isLiquidGlass || hasActiveBackdrop) {
+            val base = if (isDark) Color(0xFF141D2B) else Color(0xFFFAFCFF)
+            val tinted = lerp(base, MaterialTheme.colorScheme.primaryContainer, if (isDark) 0.14f else 0.10f)
+            tinted.copy(alpha = (glassCardAlpha * 1.08f).coerceIn(0.56f, 0.96f))
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
     val successContainer: Color
@@ -290,6 +454,39 @@ object XPeachTheme {
         @Composable get() = readableAccent(MaterialTheme.colorScheme.primary)
 
     /**
+     * 液态毛玻璃斜向流光折射边框画刷（左上高光反射 -> 中段主题色微光 -> 右下折射冷光）。
+     */
+    @Composable
+    fun specularRimBrush(
+        accentTint: Color? = null,
+        intensity: Float = 1f
+    ): Brush {
+        val dark = isDark
+        val primary = MaterialTheme.colorScheme.primary
+        val effectiveTint = accentTint?.takeIf { it != Color.Transparent } ?: primary
+        val safeIntensity = intensity.coerceIn(0.25f, 1.6f)
+        return remember(dark, effectiveTint, safeIntensity) {
+            Brush.linearGradient(
+                colors = if (dark) {
+                    listOf(
+                        Color.White.copy(alpha = (0.36f * safeIntensity).coerceIn(0f, 1f)),
+                        effectiveTint.copy(alpha = (0.32f * safeIntensity).coerceIn(0f, 1f)),
+                        Color.White.copy(alpha = (0.14f * safeIntensity).coerceIn(0f, 1f))
+                    )
+                } else {
+                    listOf(
+                        Color.White.copy(alpha = (0.88f * safeIntensity).coerceIn(0f, 1f)),
+                        effectiveTint.copy(alpha = (0.30f * safeIntensity).coerceIn(0f, 1f)),
+                        Color.White.copy(alpha = (0.52f * safeIntensity).coerceIn(0f, 1f))
+                    )
+                },
+                start = Offset(0f, 0f),
+                end = Offset(860f, 520f)
+            )
+        }
+    }
+
+    /**
      * 将任意颜色（如课程色、主题预设种子色、自定义色）转换为当前深/浅色背景上高对比度可读的强调色。
      */
     @Composable
@@ -311,14 +508,28 @@ object XPeachTheme {
     @Composable
     fun courseContainer(rawArgb: Long, active: Boolean = false): Color {
         val dark = isDark
+        val liquid = isLiquidGlass
+        val hasBackdrop = hasActiveBackdrop
+        val cardAlpha = glassCardAlpha
         val baseWell = MaterialTheme.colorScheme.surfaceVariant
-        return remember(rawArgb, dark, active, baseWell) {
+        return remember(rawArgb, dark, active, liquid, hasBackdrop, cardAlpha, baseWell) {
             val raw = Color(rawArgb)
             if (!dark) {
-                raw.copy(alpha = if (active) 0.14f else 0.10f)
+                if (liquid || hasBackdrop) {
+                    val frostedTint = lerp(Color.White, raw, if (active) 0.28f else 0.19f)
+                    val targetAlpha = (cardAlpha * (if (active) 0.94f else 0.84f)).coerceIn(0.20f, 0.96f)
+                    frostedTint.copy(alpha = targetAlpha)
+                } else {
+                    raw.copy(alpha = if (active) 0.14f else 0.10f)
+                }
             } else {
                 val accent = adjustColorForReadability(raw, darkTheme = true)
-                lerp(baseWell, accent, if (active) 0.25f else 0.17f)
+                val blended = lerp(baseWell.copy(alpha = 1f), accent, if (active) 0.28f else 0.19f)
+                if (liquid || hasBackdrop) {
+                    blended.copy(alpha = (cardAlpha * (if (active) 0.95f else 0.86f)).coerceIn(0.20f, 0.96f))
+                } else {
+                    blended
+                }
             }
         }
     }
@@ -326,13 +537,16 @@ object XPeachTheme {
     @Composable
     fun courseBorder(rawArgb: Long, active: Boolean = false): Color {
         val dark = isDark
-        return remember(rawArgb, dark, active) {
+        val liquid = isLiquidGlass
+        return remember(rawArgb, dark, active, liquid) {
             val accent = adjustColorForReadability(Color(rawArgb), dark)
-            accent.copy(alpha = if (dark) {
-                if (active) 0.52f else 0.32f
-            } else {
-                if (active) 0.45f else 0.24f
-            })
+            accent.copy(
+                alpha = if (dark) {
+                    if (active) 0.62f else if (liquid) 0.44f else 0.32f
+                } else {
+                    if (active) 0.55f else if (liquid) 0.38f else 0.24f
+                }
+            )
         }
     }
 
@@ -362,14 +576,17 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 /**
  * 对齐 Flutter SDK (Material 3 `_CardDefaultsM3` / `_FilterChipDefaultsM3` / `_SegmentedButtonDefaultsM3` /
- * `_FilledButtonDefaultsM3` 及 Cupertino `CupertinoSlidingSegmentedControl`) 的全局组件尺寸与圆角规范。
+ * `_FilledButtonDefaultsM3` 及 Cupertino `CupertinoSlidingSegmentedControl`) 的全局组件尺寸与圆角规范，
+ * 同时提供 Liquid Glass 液态毛玻璃圆角与折射高光扩展。
  */
 object FlutterM3Tokens {
     val PageHorizontalPadding: Dp = 20.dp
     val SectionSpacing: Dp = 12.dp
     val CardCornerRadius: Dp = 16.dp
+    val LiquidCardCornerRadius: Dp = 20.dp
     val CardPadding: Dp = 16.dp
     val WellCornerRadius: Dp = 12.dp
+    val LiquidWellCornerRadius: Dp = 14.dp
     val WellPadding: Dp = 12.dp
     val ControlCornerRadius: Dp = 12.dp
     val ButtonMinHeight: Dp = 42.dp
@@ -504,8 +721,10 @@ enum class PresetThemePalette(
     val key: String,
     val label: String,
     val subtitle: String,
-    val seedArgb: Long
+    val seedArgb: Long,
+    val activatesLiquidGlass: Boolean = false
 ) {
+    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "液态流光磨砂", 0xFF0EA5E9, activatesLiquidGlass = true),
     HAUT_BLUE("HAUT_BLUE", "工大蓝", "经典沉稳蓝", 0xFF0066CC),
     PINE_TEAL("PINE_TEAL", "松石青", "清透青碧色", 0xFF0D9488),
     JADE_GREEN("JADE_GREEN", "翡翠绿", "自然护眼绿", 0xFF16A34A),
@@ -523,19 +742,37 @@ enum class PresetThemePalette(
 data class WallpaperImportResult(
     val localFilePath: String,
     val primarySeedArgb: Long,
-    val extractedSwatches: List<Long>
+    val extractedSwatches: List<Long>,
+    val statusMessage: String = "已应用背景图并提取主题色"
 )
 
 /**
- * 自定义背景图导入、内存缓存与多簇 HSV 智能取色引擎：
- * - 将用户上传的图片安全采样压缩保存至应用私有目录，避免 URI 权限失效与大图 OOM
- * - 通过 18 色相桶加权聚类提取图片中最具代表性的 5 款主题色，自动赋色给按钮、菜单、导航栏与卡片背景模板
+ * 自定义背景图导入、系统桌面背景同步、内存缓存与多簇 HSV 智能取色引擎：
+ * - 支持一键同步 Android 系统桌面壁纸 (`WallpaperManager`) 或提取系统桌面主题色 (`WallpaperColors` + Material You)
+ * - 当系统处于动态壁纸或受 Android 13+ 沙箱限制无法直接读取像素时，基于系统桌面真实色彩自动合成高分辨率液态流光壁纸
+ * - 通过 18 色相桶加权聚类提取最具代表性的 5 款主题色，赋色给按钮、菜单、导航栏与毛玻璃卡片模板
  */
 object WallpaperThemeEngine {
 
     private val bitmapMemoryCache = ConcurrentHashMap<String, ImageBitmap>()
 
     fun getCachedBitmap(path: String): ImageBitmap? = bitmapMemoryCache[path]
+
+    fun hasSystemWallpaperPermission(context: Context): Boolean {
+        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun requiredWallpaperPermissionName(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
 
     suspend fun loadOrDecodeBitmap(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
         bitmapMemoryCache[path]?.let { return@withContext it }
@@ -574,28 +811,281 @@ object WallpaperThemeEngine {
                 BitmapFactory.decodeStream(input, null, decodeOpts)
             } ?: throw IllegalStateException("无法读取所选图片内容")
 
-            val wallpapersDir = File(context.filesDir, "wallpapers").apply { mkdirs() }
-            wallpapersDir.listFiles()?.forEach { oldFile ->
-                runCatching { oldFile.delete() }
-            }
-            val targetFile = File(wallpapersDir, "custom_theme_wallpaper_${System.currentTimeMillis()}.jpg")
-            FileOutputStream(targetFile).use { out ->
-                decodedBitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                out.flush()
-            }
-
-            bitmapMemoryCache.clear()
-            bitmapMemoryCache[targetFile.absolutePath] = decodedBitmap.asImageBitmap()
-
-            val swatches = extractPaletteSwatchesFromBitmap(decodedBitmap)
-            val primarySeed = swatches.firstOrNull() ?: 0xFF0066CCL
-
-            WallpaperImportResult(
-                localFilePath = targetFile.absolutePath,
-                primarySeedArgb = primarySeed,
-                extractedSwatches = swatches
+            saveBitmapAndBuildResult(
+                context = context,
+                bitmap = decodedBitmap,
+                extraSwatches = emptyList(),
+                statusMessage = "已应用相册壁纸并提取主题色"
             )
         }
+    }
+
+    /**
+     * 一键获取用户的系统桌面壁纸并提取桌面主题色：
+     * 1. 优先通过 `WallpaperManager` 读取系统桌面静态壁纸文件或 Drawable 位图；
+     * 2. 同时通过 `WallpaperManager.getWallpaperColors(FLAG_SYSTEM)` 与 Android 12+ 系统动态色板提取桌面真实主/辅/强调色；
+     * 3. 若用户使用动态壁纸或受系统沙箱限制无法直接拷贝原图，则使用提取到的桌面真实主题色渲染高分辨率液态流光桌面背景。
+     */
+    suspend fun syncSystemDesktopWallpaper(
+        context: Context
+    ): Result<WallpaperImportResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val wm = WallpaperManager.getInstance(context)
+            val systemColors = extractSystemDesktopSwatchesInternal(context, wm)
+            val directBitmap = tryReadSystemWallpaperBitmap(wm)
+
+            if (directBitmap != null && directBitmap.width >= 32 && directBitmap.height >= 32) {
+                val scaled = downscaleBitmapIfNeeded(directBitmap, maxEdgeLimit = 1600)
+                saveBitmapAndBuildResult(
+                    context = context,
+                    bitmap = scaled,
+                    extraSwatches = systemColors,
+                    statusMessage = "已同步系统桌面背景并提取桌面主题色"
+                )
+            } else {
+                val synthesized = renderSystemDesktopLiquidMeshBitmap(
+                    swatches = systemColors,
+                    width = 1080,
+                    height = 2160
+                )
+                saveBitmapAndBuildResult(
+                    context = context,
+                    bitmap = synthesized,
+                    extraSwatches = systemColors,
+                    statusMessage = "已提取系统桌面主题色并生成液态毛玻璃背景"
+                )
+            }
+        }
+    }
+
+    /**
+     * 仅提取系统桌面主题色（不覆盖当前自定义壁纸图片，返回最多 5 款桌面色彩）。
+     */
+    suspend fun extractSystemDesktopColorsOnly(
+        context: Context
+    ): Result<List<Long>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val wm = WallpaperManager.getInstance(context)
+            val directBitmap = tryReadSystemWallpaperBitmap(wm)
+            val osColors = extractSystemDesktopSwatchesInternal(context, wm)
+            val bitmapColors = if (directBitmap != null && directBitmap.width >= 32) {
+                extractPaletteSwatchesFromBitmap(directBitmap)
+            } else {
+                emptyList()
+            }
+            mergeDistinctSwatches(osColors + bitmapColors).ifEmpty {
+                listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF0066CCL)
+            }
+        }
+    }
+
+    private fun tryReadSystemWallpaperBitmap(wm: WallpaperManager): Bitmap? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            for (flag in intArrayOf(WallpaperManager.FLAG_SYSTEM, WallpaperManager.FLAG_LOCK)) {
+                val pfd = runCatching { wm.getWallpaperFile(flag) }.getOrNull()
+                if (pfd != null) {
+                    val decoded = runCatching {
+                        pfd.use { descriptor ->
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, bounds)
+                            var sample = 1
+                            val maxEdge = maxOf(bounds.outWidth.coerceAtLeast(1), bounds.outHeight.coerceAtLeast(1))
+                            while (maxEdge / sample > 1600) {
+                                sample *= 2
+                            }
+                            val opts = BitmapFactory.Options().apply {
+                                inSampleSize = sample
+                                inPreferredConfig = Bitmap.Config.ARGB_8888
+                            }
+                            BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, opts)
+                        }
+                    }.getOrNull()
+                    if (decoded != null) return decoded
+                }
+            }
+        }
+        val drawableCandidates = listOf(
+            runCatching { wm.peekDrawable() }.getOrNull(),
+            runCatching { wm.drawable }.getOrNull(),
+            runCatching { wm.fastDrawable }.getOrNull()
+        )
+        for (d in drawableCandidates) {
+            if (d != null) {
+                val bmp = runCatching { drawableToBitmap(d) }.getOrNull()
+                if (bmp != null && bmp.width >= 32 && bmp.height >= 32) {
+                    return bmp
+                }
+            }
+        }
+        return null
+    }
+
+    private fun drawableToBitmap(drawable: Drawable): Bitmap? {
+        if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            return drawable.bitmap
+        }
+        val w = drawable.intrinsicWidth.coerceIn(360, 1440)
+        val h = drawable.intrinsicHeight.coerceIn(640, 2560)
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return bitmap
+    }
+
+    private fun downscaleBitmapIfNeeded(source: Bitmap, maxEdgeLimit: Int): Bitmap {
+        val maxEdge = maxOf(source.width, source.height)
+        if (maxEdge <= maxEdgeLimit) return source
+        val ratio = maxEdgeLimit.toFloat() / maxEdge.toFloat()
+        val targetW = (source.width * ratio).toInt().coerceAtLeast(1)
+        val targetH = (source.height * ratio).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, targetW, targetH, true)
+    }
+
+    private fun extractSystemDesktopSwatchesInternal(
+        context: Context,
+        wm: WallpaperManager
+    ): List<Long> {
+        val rawCandidates = mutableListOf<Long>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            for (flag in intArrayOf(WallpaperManager.FLAG_SYSTEM, WallpaperManager.FLAG_LOCK)) {
+                val wc = runCatching { wm.getWallpaperColors(flag) }.getOrNull()
+                if (wc != null) {
+                    rawCandidates.add(0xFF000000L or (wc.primaryColor.toArgb().toLong() and 0xFFFFFFL))
+                    wc.secondaryColor?.let {
+                        rawCandidates.add(0xFF000000L or (it.toArgb().toLong() and 0xFFFFFFL))
+                    }
+                    wc.tertiaryColor?.let {
+                        rawCandidates.add(0xFF000000L or (it.toArgb().toLong() and 0xFFFFFFL))
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val sysResIds = intArrayOf(
+                android.R.color.system_accent1_500,
+                android.R.color.system_accent2_500,
+                android.R.color.system_accent3_500,
+                android.R.color.system_accent1_600,
+                android.R.color.system_accent3_600
+            )
+            for (resId in sysResIds) {
+                runCatching {
+                    val c = ContextCompat.getColor(context, resId)
+                    rawCandidates.add(0xFF000000L or (c.toLong() and 0xFFFFFFL))
+                }
+            }
+        }
+        return mergeDistinctSwatches(rawCandidates).ifEmpty {
+            listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF0066CCL)
+        }
+    }
+
+    private fun mergeDistinctSwatches(candidates: List<Long>): List<Long> {
+        val result = mutableListOf<Long>()
+        val hsvA = FloatArray(3)
+        val hsvB = FloatArray(3)
+        for (raw in candidates) {
+            android.graphics.Color.colorToHSV(raw.toInt(), hsvA)
+            val normSat = hsvA[1].coerceIn(0.32f, 0.88f)
+            val normVal = hsvA[2].coerceIn(0.45f, 0.88f)
+            val normalizedInt = android.graphics.Color.HSVToColor(floatArrayOf(hsvA[0], normSat, normVal))
+            val normalizedLong = 0xFF000000L or (normalizedInt.toLong() and 0xFFFFFFL)
+            val isDuplicate = result.any { existing ->
+                android.graphics.Color.colorToHSV(existing.toInt(), hsvB)
+                val hueDiff = abs(hsvA[0] - hsvB[0])
+                val circularDiff = minOf(hueDiff, 360f - hueDiff)
+                circularDiff < 20f && abs(hsvA[1] - hsvB[1]) < 0.22f
+            }
+            if (!isDuplicate) {
+                result.add(normalizedLong)
+                if (result.size >= 5) break
+            }
+        }
+        return result
+    }
+
+    private fun renderSystemDesktopLiquidMeshBitmap(
+        swatches: List<Long>,
+        width: Int,
+        height: Int
+    ): Bitmap {
+        val c0 = (swatches.getOrElse(0) { 0xFF0EA5E9L }).toInt()
+        val c1 = (swatches.getOrElse(1) { 0xFF6366F1L }).toInt()
+        val c2 = (swatches.getOrElse(2) { 0xFF14B8A6L }).toInt()
+        val c3 = (swatches.getOrElse(3) { 0xFF8B5CF6L }).toInt()
+        val c4 = (swatches.getOrElse(4) { 0xFF38BDF8L }).toInt()
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                width.toFloat(),
+                height.toFloat(),
+                intArrayOf(c0, c1, c2),
+                floatArrayOf(0f, 0.52f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), basePaint)
+
+        fun drawOrb(cx: Float, cy: Float, radius: Float, colorInt: Int, alphaInt: Int) {
+            val r = (colorInt shr 16) and 0xFF
+            val g = (colorInt shr 8) and 0xFF
+            val b = colorInt and 0xFF
+            val centerColor = (alphaInt shl 24) or (r shl 16) or (g shl 8) or b
+            val edgeColor = (0x00 shl 24) or (r shl 16) or (g shl 8) or b
+            val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = RadialGradient(
+                    cx,
+                    cy,
+                    radius,
+                    intArrayOf(centerColor, edgeColor),
+                    floatArrayOf(0f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawCircle(cx, cy, radius, orbPaint)
+        }
+
+        drawOrb(width * 0.18f, height * 0.20f, width * 0.78f, c4, 210)
+        drawOrb(width * 0.85f, height * 0.28f, width * 0.72f, c3, 195)
+        drawOrb(width * 0.25f, height * 0.74f, width * 0.82f, c2, 185)
+        drawOrb(width * 0.80f, height * 0.82f, width * 0.75f, c0, 200)
+        return bitmap
+    }
+
+    private fun saveBitmapAndBuildResult(
+        context: Context,
+        bitmap: Bitmap,
+        extraSwatches: List<Long>,
+        statusMessage: String
+    ): WallpaperImportResult {
+        val wallpapersDir = File(context.filesDir, "wallpapers").apply { mkdirs() }
+        wallpapersDir.listFiles()?.forEach { oldFile ->
+            runCatching { oldFile.delete() }
+        }
+        val targetFile = File(wallpapersDir, "custom_theme_wallpaper_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(targetFile).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            out.flush()
+        }
+
+        bitmapMemoryCache.clear()
+        bitmapMemoryCache[targetFile.absolutePath] = bitmap.asImageBitmap()
+
+        val bitmapSwatches = extractPaletteSwatchesFromBitmap(bitmap)
+        val mergedSwatches = mergeDistinctSwatches(extraSwatches + bitmapSwatches).ifEmpty { bitmapSwatches }
+        val primarySeed = mergedSwatches.firstOrNull() ?: 0xFF0EA5E9L
+
+        return WallpaperImportResult(
+            localFilePath = targetFile.absolutePath,
+            primarySeedArgb = primarySeed,
+            extractedSwatches = mergedSwatches,
+            statusMessage = statusMessage
+        )
     }
 
     /**
@@ -669,8 +1159,8 @@ object WallpaperThemeEngine {
         }
 
         if (extracted.isEmpty()) {
+            extracted.add(0xFF0EA5E9L)
             extracted.add(0xFF0066CCL)
-            extracted.add(0xFF334155L)
             extracted.add(0xFF0D9488L)
         }
         return extracted
@@ -682,24 +1172,25 @@ fun buildSeedColorScheme(
     darkTheme: Boolean,
     hasCustomWallpaper: Boolean = false,
     cardTemplateAlpha: Float = 0.82f
-): androidx.compose.material3.ColorScheme {
+): ColorScheme {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(seedArgb.toInt(), hsv)
     val hue = hsv[0]
-    val sat = hsv[1].coerceIn(0.18f, 0.92f)
-    val value = hsv[2].coerceIn(0.28f, 0.92f)
+    val sat = hsv[1].coerceIn(0.10f, 0.94f)
+    val value = hsv[2].coerceIn(0.24f, 0.94f)
 
     fun hsvColor(h: Float, s: Float, v: Float): Color {
         val normH = ((h % 360f) + 360f) % 360f
         return Color(android.graphics.Color.HSVToColor(floatArrayOf(normH, s.coerceIn(0f, 1f), v.coerceIn(0f, 1f))))
     }
 
-    val safeCardAlpha = if (hasCustomWallpaper) cardTemplateAlpha.coerceIn(0.50f, 0.98f) else 1f
-    val safeWellAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.88f).coerceIn(0.42f, 0.94f) else 1f
-    val safeContainerAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.92f).coerceIn(0.55f, 0.96f) else 1f
+    val safeCardAlpha = if (hasCustomWallpaper) cardTemplateAlpha.coerceIn(0.18f, 0.98f) else 1f
+    val safeWellAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.86f).coerceIn(0.15f, 0.94f) else 1f
+    val safeContainerAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 0.90f).coerceIn(0.20f, 0.96f) else 1f
+    val safeHighContainerAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 1.05f).coerceIn(0.32f, 0.96f) else 1f
 
     return if (!darkTheme) {
-        val primary = hsvColor(hue, sat, value.coerceIn(0.42f, 0.82f))
+        val primary = hsvColor(hue, sat.coerceAtLeast(0.22f), value.coerceIn(0.42f, 0.82f))
         val primaryContainer = hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.26f), 0.97f)
             .copy(alpha = safeContainerAlpha)
         val onPrimaryContainer = hsvColor(hue, (sat * 0.95f).coerceIn(0.45f, 0.95f), 0.40f)
@@ -708,16 +1199,15 @@ fun buildSeedColorScheme(
             .copy(alpha = safeContainerAlpha)
         val onSecondaryContainer = hsvColor(hue + 18f, (sat * 0.85f).coerceIn(0.4f, 0.85f), 0.38f)
 
-        // 当启用自定义背景图时，卡片与菜单表面自动染上微弱主题色并应用毛玻璃透明度
         val surfaceTint = if (hasCustomWallpaper) {
-            hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.99f).copy(alpha = safeCardAlpha)
+            hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.09f), 0.995f).copy(alpha = safeCardAlpha)
         } else {
             XPeachCardLight
         }
         val wellTint = hsvColor(
             hue,
-            if (hasCustomWallpaper) (sat * 0.14f).coerceIn(0.04f, 0.13f) else (sat * 0.08f).coerceIn(0.02f, 0.07f),
-            0.955f
+            if (hasCustomWallpaper) (sat * 0.14f).coerceIn(0.04f, 0.14f) else (sat * 0.08f).coerceIn(0.02f, 0.07f),
+            0.96f
         ).copy(alpha = safeWellAlpha)
         val bgTint = if (hasCustomWallpaper) {
             Color.Transparent
@@ -742,7 +1232,7 @@ fun buildSeedColorScheme(
             onTertiaryContainer = Color(0xFF15803D),
             error = XPeachDanger,
             onError = Color.White,
-            errorContainer = XPeachDangerSoft,
+            errorContainer = XPeachDangerSoft.copy(alpha = safeContainerAlpha),
             onErrorContainer = Color(0xFFB91C1C),
             background = bgTint,
             onBackground = XPeachTextLight,
@@ -750,10 +1240,12 @@ fun buildSeedColorScheme(
             onSurface = XPeachTextLight,
             surfaceVariant = wellTint,
             onSurfaceVariant = XPeachMutedLight,
-            surfaceContainerLow = XPeachSidebarLight,
+            surfaceContainerLow = XPeachSidebarLight.copy(alpha = safeCardAlpha),
             surfaceContainer = surfaceTint,
-            surfaceContainerHigh = hsvColor(hue, (sat * 0.06f).coerceIn(0.01f, 0.06f), 0.98f),
-            surfaceContainerHighest = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.96f),
+            surfaceContainerHigh = hsvColor(hue, (sat * 0.06f).coerceIn(0.01f, 0.06f), 0.985f)
+                .copy(alpha = safeHighContainerAlpha),
+            surfaceContainerHighest = hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.08f), 0.965f)
+                .copy(alpha = safeHighContainerAlpha),
             outline = borderStrong,
             outlineVariant = borderTint
         )
@@ -770,12 +1262,12 @@ fun buildSeedColorScheme(
         val onSecondaryContainerDark = hsvColor(hue + 18f, (sat * 0.22f).coerceIn(0.08f, 0.25f), 0.95f)
 
         val surfaceDarkTint = if (hasCustomWallpaper) {
-            hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.24f), 0.14f).copy(alpha = safeCardAlpha)
+            hsvColor(hue, (sat * 0.26f).coerceIn(0.08f, 0.26f), 0.145f).copy(alpha = safeCardAlpha)
         } else {
             XPeachCardDark
         }
         val wellDarkTint = if (hasCustomWallpaper) {
-            hsvColor(hue, (sat * 0.28f).coerceIn(0.10f, 0.28f), 0.20f).copy(alpha = safeWellAlpha)
+            hsvColor(hue, (sat * 0.28f).coerceIn(0.10f, 0.28f), 0.205f).copy(alpha = safeWellAlpha)
         } else {
             XPeachWellDark
         }
@@ -796,7 +1288,7 @@ fun buildSeedColorScheme(
             onTertiaryContainer = Color(0xFFD1FAE5),
             error = Color(0xFFF87171),
             onError = Color(0xFF450A0A),
-            errorContainer = Color(0xFF3B1A1F),
+            errorContainer = Color(0xFF3B1A1F).copy(alpha = safeContainerAlpha),
             onErrorContainer = Color(0xFFFEE2E2),
             background = bgDarkTint,
             onBackground = XPeachTextDark,
@@ -804,20 +1296,46 @@ fun buildSeedColorScheme(
             onSurface = XPeachTextDark,
             surfaceVariant = wellDarkTint,
             onSurfaceVariant = XPeachMutedDark,
-            surfaceContainerLow = XPeachSidebarDark,
+            surfaceContainerLow = XPeachSidebarDark.copy(alpha = safeCardAlpha),
             surfaceContainer = surfaceDarkTint,
-            surfaceContainerHigh = Color(0xFF212834),
-            surfaceContainerHighest = XPeachElevatedPillDark,
+            surfaceContainerHigh = Color(0xFF212834).copy(alpha = safeHighContainerAlpha),
+            surfaceContainerHighest = XPeachElevatedPillDark.copy(alpha = safeHighContainerAlpha),
             outline = XPeachBorderStrongDark,
             outlineVariant = XPeachBorderDark
         )
     }
 }
 
+private fun applyGlassBackdropToScheme(
+    scheme: ColorScheme,
+    hasActiveBackdrop: Boolean,
+    cardTemplateAlpha: Float
+): ColorScheme {
+    if (!hasActiveBackdrop) return scheme
+    val safeCardAlpha = cardTemplateAlpha.coerceIn(0.18f, 0.98f)
+    val safeWellAlpha = (cardTemplateAlpha * 0.86f).coerceIn(0.15f, 0.94f)
+    val safeContainerAlpha = (cardTemplateAlpha * 0.90f).coerceIn(0.20f, 0.96f)
+    val safeHighContainerAlpha = (cardTemplateAlpha * 1.05f).coerceIn(0.32f, 0.96f)
+    return scheme.copy(
+        background = Color.Transparent,
+        surface = scheme.surface.copy(alpha = safeCardAlpha),
+        surfaceVariant = scheme.surfaceVariant.copy(alpha = safeWellAlpha),
+        surfaceContainerLow = scheme.surfaceContainerLow.copy(alpha = safeCardAlpha),
+        surfaceContainer = scheme.surfaceContainer.copy(alpha = safeCardAlpha),
+        surfaceContainerHigh = scheme.surfaceContainerHigh.copy(alpha = safeHighContainerAlpha),
+        surfaceContainerHighest = scheme.surfaceContainerHighest.copy(alpha = safeHighContainerAlpha),
+        primaryContainer = scheme.primaryContainer.copy(alpha = safeContainerAlpha),
+        secondaryContainer = scheme.secondaryContainer.copy(alpha = safeContainerAlpha),
+        tertiaryContainer = scheme.tertiaryContainer.copy(alpha = safeContainerAlpha),
+        errorContainer = scheme.errorContainer.copy(alpha = safeContainerAlpha)
+    )
+}
+
 @Composable
 fun HautCampusTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     themeMode: String = "SYSTEM",
+    uiDesignStyleKey: String = "FLUTTER_M3",
     dynamicColor: Boolean = false,
     themePaletteKey: String = "HAUT_BLUE",
     customSeedArgb: Long = 0xFF0066CC,
@@ -832,6 +1350,13 @@ fun HautCampusTheme(
         "DARK" -> true
         else -> darkTheme
     }
+    val effectiveDesignStyle = if (themePaletteKey == PresetThemePalette.LIQUID_GLASS.key) {
+        UiDesignStyle.LIQUID_GLASS
+    } else {
+        UiDesignStyle.fromKey(uiDesignStyleKey)
+    }
+    val isLiquidGlass = effectiveDesignStyle == UiDesignStyle.LIQUID_GLASS
+
     val resolvedSeedArgb = when (themePaletteKey) {
         "CUSTOM" -> customSeedArgb
         else -> PresetThemePalette.fromKey(themePaletteKey)?.seedArgb ?: 0xFF0066CC
@@ -849,33 +1374,50 @@ fun HautCampusTheme(
     }
 
     val hasActiveWallpaper = wallpaperBitmap != null
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasActiveWallpaper -> {
+    val hasActiveBackdrop = isLiquidGlass || hasActiveWallpaper
+    val safeCardAlpha = wallpaperCardAlpha.coerceIn(0.18f, 0.98f)
+    val safeWallpaperAlpha = wallpaperAlpha.coerceIn(0.05f, 1.0f)
+    val safeBlurDp = wallpaperBlurDp.coerceIn(0f, 35f)
+
+    val rawScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (effectiveDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        themePaletteKey == "HAUT_BLUE" && !hasActiveWallpaper -> {
+        themePaletteKey == "HAUT_BLUE" && !hasActiveBackdrop -> {
             if (effectiveDark) DarkColors else LightColors
         }
         else -> buildSeedColorScheme(
             seedArgb = resolvedSeedArgb,
             darkTheme = effectiveDark,
-            hasCustomWallpaper = hasActiveWallpaper,
-            cardTemplateAlpha = wallpaperCardAlpha
+            hasCustomWallpaper = hasActiveBackdrop,
+            cardTemplateAlpha = safeCardAlpha
         )
     }
+    val colorScheme = applyGlassBackdropToScheme(
+        scheme = rawScheme,
+        hasActiveBackdrop = hasActiveBackdrop,
+        cardTemplateAlpha = safeCardAlpha
+    )
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            val window = view.context.findActivity()?.window ?: return@SideEffect
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.isAppearanceLightStatusBars = !effectiveDark
             insetsController.isAppearanceLightNavigationBars = !effectiveDark
         }
     }
 
-    CompositionLocalProvider(LocalIsDarkTheme provides effectiveDark) {
+    CompositionLocalProvider(
+        LocalIsDarkTheme provides effectiveDark,
+        LocalUiDesignStyle provides effectiveDesignStyle,
+        LocalHasActiveBackdrop provides hasActiveBackdrop,
+        LocalGlassCardAlpha provides safeCardAlpha,
+        LocalGlassBlurDp provides safeBlurDp,
+        LocalBackdropAlpha provides safeWallpaperAlpha
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = HautTypography,
@@ -883,7 +1425,7 @@ fun HautCampusTheme(
         ) {
             val activeBmp = wallpaperBitmap
             if (activeBmp != null) {
-                val baseBackdrop = if (effectiveDark) XPeachBgDark else XPeachBgLight
+                val baseBackdrop = if (effectiveDark) Color(0xFF080D16) else Color(0xFFF0F5FB)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -893,13 +1435,13 @@ fun HautCampusTheme(
                         bitmap = activeBmp,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        alpha = wallpaperAlpha.coerceIn(0.10f, 1.0f),
+                        alpha = safeWallpaperAlpha,
                         modifier = Modifier
                             .fillMaxSize()
                             .then(
-                                if (wallpaperBlurDp > 0.2f) {
+                                if (safeBlurDp > 0.2f) {
                                     Modifier.blur(
-                                        radius = wallpaperBlurDp.dp,
+                                        radius = safeBlurDp.dp,
                                         edgeTreatment = BlurredEdgeTreatment.Unbounded
                                     )
                                 } else {
@@ -907,15 +1449,36 @@ fun HautCampusTheme(
                                 }
                             )
                     )
-                    // 自适应护眼柔光层，保证高饱和度壁纸下文字依然清晰易读
+                    // 自适应护眼柔光与液态折射层
+                    val veilAlpha = if (isLiquidGlass) {
+                        ((1f - safeWallpaperAlpha) * 0.28f).coerceIn(0.04f, 0.42f)
+                    } else {
+                        ((1f - safeWallpaperAlpha) * 0.42f).coerceIn(0.06f, 0.50f)
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(
-                                baseBackdrop.copy(
-                                    alpha = (1f - wallpaperAlpha.coerceIn(0.10f, 1.0f)) * 0.45f
-                                )
-                            )
+                            .background(baseBackdrop.copy(alpha = veilAlpha))
+                    )
+                    if (isLiquidGlass) {
+                        LiquidGlassRefractiveVeil(
+                            isDark = effectiveDark,
+                            primaryColor = colorScheme.primary,
+                            secondaryColor = colorScheme.secondary,
+                            intensity = safeWallpaperAlpha
+                        )
+                    }
+                    content()
+                }
+            } else if (isLiquidGlass) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LiquidGlassAmbientBackdrop(
+                        isDark = effectiveDark,
+                        primaryColor = colorScheme.primary,
+                        secondaryColor = colorScheme.secondary,
+                        tertiaryColor = colorScheme.tertiary,
+                        backdropAlpha = safeWallpaperAlpha,
+                        blurDp = safeBlurDp
                     )
                     content()
                 }
@@ -924,6 +1487,108 @@ fun HautCampusTheme(
             }
         }
     }
+}
+
+/**
+ * 当用户启用“透明液态毛玻璃”主题但尚未导入图片壁纸时，
+ * 自动渲染多层流光折射环境背景（支持随主题色、深浅色模式、背景透光度与模糊度实时联动）。
+ */
+@Composable
+private fun LiquidGlassAmbientBackdrop(
+    isDark: Boolean,
+    primaryColor: Color,
+    secondaryColor: Color,
+    tertiaryColor: Color,
+    backdropAlpha: Float,
+    blurDp: Float
+) {
+    val baseColor = if (isDark) Color(0xFF070C14) else Color(0xFFEEF4FB)
+    val glowAlpha = backdropAlpha.coerceIn(0.12f, 1.0f)
+    val blurModifier = if (blurDp > 0.5f) {
+        Modifier.blur(radius = (blurDp * 0.6f).dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+    } else {
+        Modifier
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(baseColor)
+            .then(blurModifier)
+            .drawWithCache {
+                val w = size.width.coerceAtLeast(1f)
+                val h = size.height.coerceAtLeast(1f)
+                val orb1Color = primaryColor.copy(alpha = (if (isDark) 0.42f else 0.34f) * glowAlpha)
+                val orb2Color = secondaryColor.copy(alpha = (if (isDark) 0.36f else 0.30f) * glowAlpha)
+                val orb3Color = Color(0xFF6366F1).copy(alpha = (if (isDark) 0.30f else 0.22f) * glowAlpha)
+                val orb4Color = tertiaryColor.copy(alpha = (if (isDark) 0.26f else 0.20f) * glowAlpha)
+
+                val brush1 = Brush.radialGradient(
+                    colors = listOf(orb1Color, Color.Transparent),
+                    center = Offset(w * 0.16f, h * 0.14f),
+                    radius = w * 0.85f
+                )
+                val brush2 = Brush.radialGradient(
+                    colors = listOf(orb2Color, Color.Transparent),
+                    center = Offset(w * 0.88f, h * 0.26f),
+                    radius = w * 0.78f
+                )
+                val brush3 = Brush.radialGradient(
+                    colors = listOf(orb3Color, Color.Transparent),
+                    center = Offset(w * 0.24f, h * 0.68f),
+                    radius = w * 0.82f
+                )
+                val brush4 = Brush.radialGradient(
+                    colors = listOf(orb4Color, Color.Transparent),
+                    center = Offset(w * 0.82f, h * 0.84f),
+                    radius = w * 0.76f
+                )
+                onDrawBehind {
+                    drawRect(brush = brush1)
+                    drawRect(brush = brush2)
+                    drawRect(brush = brush3)
+                    drawRect(brush = brush4)
+                }
+            }
+    )
+}
+
+@Composable
+private fun LiquidGlassRefractiveVeil(
+    isDark: Boolean,
+    primaryColor: Color,
+    secondaryColor: Color,
+    intensity: Float
+) {
+    val alphaScale = (intensity * 0.22f).coerceIn(0.04f, 0.24f)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawWithCache {
+                val w = size.width.coerceAtLeast(1f)
+                val h = size.height.coerceAtLeast(1f)
+                val topGlow = Brush.radialGradient(
+                    colors = listOf(
+                        primaryColor.copy(alpha = if (isDark) alphaScale else alphaScale * 0.85f),
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.15f, h * 0.08f),
+                    radius = w * 0.9f
+                )
+                val bottomGlow = Brush.radialGradient(
+                    colors = listOf(
+                        secondaryColor.copy(alpha = if (isDark) alphaScale * 0.85f else alphaScale * 0.70f),
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.85f, h * 0.90f),
+                    radius = w * 0.85f
+                )
+                onDrawBehind {
+                    drawRect(brush = topGlow)
+                    drawRect(brush = bottomGlow)
+                }
+            }
+    )
 }
 
 @Composable
@@ -938,29 +1603,69 @@ fun XPeachCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val isDark = XPeachTheme.isDark
-    val resolvedContainerColor = when (containerColor) {
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val baseContainerColor = when (containerColor) {
         scheme.primaryContainer -> XPeachTheme.primaryAccentCardColor
         scheme.secondaryContainer -> XPeachTheme.secondaryAccentCardColor
         scheme.tertiaryContainer -> XPeachTheme.tertiaryAccentCardColor
         scheme.errorContainer -> XPeachTheme.errorAccentCardColor
         else -> containerColor
     }
-    val defaultBorder = scheme.outlineVariant.copy(alpha = 0.65f)
-    val resolvedBorderColor = if (borderColor == defaultBorder) {
-        if (isDark) {
-            when (containerColor) {
-                scheme.primaryContainer -> scheme.primary.copy(alpha = 0.30f)
-                scheme.secondaryContainer -> scheme.secondary.copy(alpha = 0.30f)
-                scheme.tertiaryContainer -> scheme.tertiary.copy(alpha = 0.30f)
-                scheme.errorContainer -> scheme.error.copy(alpha = 0.32f)
-                else -> scheme.outlineVariant.copy(alpha = 0.36f)
-            }
-        } else {
-            scheme.outlineVariant.copy(alpha = 0.30f)
-        }
+    // 在液态毛玻璃或全局壁纸模式下，即便外部传入了高不透明度的 surface（如 0.96f/0.97f），也自动随毛玻璃透明度滑块联动
+    val resolvedContainerColor = if ((isLiquid || hasBackdrop) && baseContainerColor.alpha > 0.90f) {
+        baseContainerColor.copy(alpha = glassAlpha.coerceIn(0.18f, 0.98f))
     } else {
-        borderColor
+        baseContainerColor
     }
+
+    val defaultBorder = scheme.outlineVariant.copy(alpha = 0.65f)
+    val customAccentBorder = if (borderColor != defaultBorder && borderColor != Color.Transparent) {
+        borderColor
+    } else {
+        when (containerColor) {
+            scheme.primaryContainer -> scheme.primary
+            scheme.secondaryContainer -> scheme.secondary
+            scheme.tertiaryContainer -> scheme.tertiary
+            scheme.errorContainer -> scheme.error
+            else -> null
+        }
+    }
+
+    val resolvedBorderStroke: BorderStroke? = when {
+        isLiquid -> {
+            BorderStroke(
+                width = 0.95.dp,
+                brush = XPeachTheme.specularRimBrush(
+                    accentTint = customAccentBorder,
+                    intensity = if (customAccentBorder != null) 1.18f else 1.0f
+                )
+            )
+        }
+        borderColor == Color.Transparent -> null
+        borderColor == defaultBorder -> {
+            val m3Border = if (isDark) {
+                customAccentBorder?.copy(alpha = 0.30f) ?: scheme.outlineVariant.copy(alpha = 0.36f)
+            } else {
+                scheme.outlineVariant.copy(alpha = 0.30f)
+            }
+            BorderStroke(0.5.dp, m3Border)
+        }
+        else -> BorderStroke(0.6.dp, borderColor)
+    }
+
+    val targetCornerRadius by animateDpAsState(
+        targetValue = if (isLiquid && cornerRadius == FlutterM3Tokens.CardCornerRadius) {
+            FlutterM3Tokens.LiquidCardCornerRadius
+        } else {
+            cornerRadius
+        },
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 420f),
+        label = "cardCornerRadius"
+    )
+
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -968,7 +1673,7 @@ fun XPeachCard(
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
         label = "cardPressScale"
     )
-    val shape = RoundedCornerShape(cornerRadius)
+    val shape = RoundedCornerShape(targetCornerRadius)
     Surface(
         modifier = modifier
             .graphicsLayer {
@@ -992,16 +1697,30 @@ fun XPeachCard(
         contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = if (resolvedBorderColor != Color.Transparent) {
-            BorderStroke(0.5.dp, resolvedBorderColor)
-        } else {
-            null
-        }
+        border = resolvedBorderStroke
     ) {
-        Column(
-            modifier = Modifier.padding(contentPadding),
-            content = content
-        )
+        Box(
+            modifier = if (isLiquid) {
+                Modifier.drawWithCache {
+                    val sheenColor = Color.White.copy(alpha = if (isDark) 0.07f else 0.36f)
+                    val sheenBrush = Brush.verticalGradient(
+                        colors = listOf(sheenColor, Color.Transparent),
+                        startY = 0f,
+                        endY = 26.dp.toPx()
+                    )
+                    onDrawBehind {
+                        drawRect(brush = sheenBrush)
+                    }
+                }
+            } else {
+                Modifier
+            }
+        ) {
+            Column(
+                modifier = Modifier.padding(contentPadding),
+                content = content
+            )
+        }
     }
 }
 
@@ -1015,18 +1734,226 @@ fun XPeachWell(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val resolvedWellColor = if ((isLiquid || hasBackdrop) && containerColor.alpha > 0.90f) {
+        containerColor.copy(alpha = (glassAlpha * 0.85f).coerceIn(0.15f, 0.94f))
+    } else {
+        containerColor
+    }
+    val effectiveRadius = if (isLiquid && cornerRadius == FlutterM3Tokens.WellCornerRadius) {
+        FlutterM3Tokens.LiquidWellCornerRadius
+    } else {
+        cornerRadius
+    }
+    val resolvedBorder: BorderStroke? = when {
+        isLiquid -> BorderStroke(
+            width = 0.7.dp,
+            brush = XPeachTheme.specularRimBrush(
+                accentTint = borderColor.takeIf { it != Color.Transparent },
+                intensity = 0.75f
+            )
+        )
+        borderColor != Color.Transparent -> BorderStroke(0.5.dp, borderColor)
+        else -> null
+    }
+
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(cornerRadius),
-        color = containerColor,
+        shape = RoundedCornerShape(effectiveRadius),
+        color = resolvedWellColor,
         contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        border = if (borderColor != Color.Transparent) BorderStroke(0.5.dp, borderColor) else null
+        border = resolvedBorder
     ) {
         Column(
             modifier = Modifier.padding(contentPadding),
             content = content
+        )
+    }
+}
+
+/**
+ * 统一的双设计语言悬浮表面组件 (`XPeachGlassSurface`)：
+ * 适用于地图悬浮 HUD、室内导航栏、底部悬浮胶囊及全屏模态容器，
+ * 在 `FLUTTER_M3` 下呈现高对比度实体面板，在 `LIQUID_GLASS` 下呈现带斜向折射高光边的半透明液态毛玻璃。
+ */
+@Composable
+fun XPeachGlassSurface(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(16.dp),
+    containerColor: Color = XPeachTheme.hudSurfaceColor,
+    accentTint: Color? = null,
+    shadowElevation: Dp = 2.dp,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+    val resolvedColor = if ((isLiquid || hasBackdrop) && containerColor.alpha > 0.92f) {
+        containerColor.copy(alpha = glassAlpha.coerceIn(0.35f, 0.94f))
+    } else {
+        containerColor
+    }
+    val borderStroke = if (isLiquid) {
+        BorderStroke(0.95.dp, XPeachTheme.specularRimBrush(accentTint = accentTint, intensity = 1.05f))
+    } else {
+        BorderStroke(
+            0.6.dp,
+            accentTint ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (XPeachTheme.isDark) 0.45f else 0.55f)
+        )
+    }
+    Surface(
+        modifier = modifier,
+        shape = shape,
+        color = resolvedColor,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
+        shadowElevation = if (isLiquid) (shadowElevation * 1.2f) else shadowElevation,
+        border = borderStroke
+    ) {
+        Box(content = content)
+    }
+}
+
+/**
+ * 统一的双设计语言模态弹窗组件 (`XPeachAlertDialog`)：
+ * 与 Material 3 `AlertDialog` 保持完全一致的参数签名，可零成本平替全应用所有弹窗。
+ * - `FLUTTER_M3` 模式：使用高对比度 M3 弹窗表面与细腻边框；
+ * - `LIQUID_GLASS` 模式：使用半透明磨砂玻璃底色 (`dialogSurfaceColor`)、24dp 液态圆角、1.2dp 斜向流光折射边框与顶部内高光。
+ */
+@Composable
+fun XPeachAlertDialog(
+    onDismissRequest: () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    dismissButton: (@Composable () -> Unit)? = null,
+    icon: (@Composable () -> Unit)? = null,
+    title: (@Composable () -> Unit)? = null,
+    text: (@Composable () -> Unit)? = null,
+    shape: Shape? = null,
+    containerColor: Color = Color.Unspecified,
+    iconContentColor: Color = MaterialTheme.colorScheme.secondary,
+    titleContentColor: Color = MaterialTheme.colorScheme.onSurface,
+    textContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    tonalElevation: Dp = 0.dp,
+    properties: DialogProperties = DialogProperties()
+) {
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val isDark = XPeachTheme.isDark
+    val effectiveShape = shape ?: RoundedCornerShape(if (isLiquid) 24.dp else 20.dp)
+    val effectiveContainerColor = if (containerColor != Color.Unspecified) {
+        containerColor
+    } else {
+        XPeachTheme.dialogSurfaceColor
+    }
+
+    if (isLiquid || hasBackdrop) {
+        Dialog(
+            onDismissRequest = onDismissRequest,
+            properties = properties
+        ) {
+            Surface(
+                modifier = modifier
+                    .widthIn(min = 280.dp, max = 560.dp)
+                    .fillMaxWidth(),
+                shape = effectiveShape,
+                color = effectiveContainerColor,
+                contentColor = titleContentColor,
+                tonalElevation = 0.dp,
+                shadowElevation = if (isDark) 22.dp else 16.dp,
+                border = BorderStroke(
+                    width = 1.15.dp,
+                    brush = XPeachTheme.specularRimBrush(intensity = 1.15f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .drawWithCache {
+                            val sheen = Color.White.copy(alpha = if (isDark) 0.08f else 0.42f)
+                            val brush = Brush.verticalGradient(
+                                colors = listOf(sheen, Color.Transparent),
+                                startY = 0f,
+                                endY = 32.dp.toPx()
+                            )
+                            onDrawBehind {
+                                drawRect(brush = brush)
+                            }
+                        }
+                        .padding(start = 22.dp, top = 22.dp, end = 22.dp, bottom = 18.dp)
+                ) {
+                    if (icon != null) {
+                        CompositionLocalProvider(LocalContentColor provides iconContentColor) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(bottom = 12.dp)
+                                    .align(Alignment.CenterHorizontally)
+                            ) {
+                                icon()
+                            }
+                        }
+                    }
+                    if (title != null) {
+                        CompositionLocalProvider(LocalContentColor provides titleContentColor) {
+                            ProvideTextStyle(MaterialTheme.typography.titleLarge) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(bottom = if (text != null) 12.dp else 16.dp)
+                                        .align(if (icon == null) Alignment.Start else Alignment.CenterHorizontally)
+                                ) {
+                                    title()
+                                }
+                            }
+                        }
+                    }
+                    if (text != null) {
+                        CompositionLocalProvider(LocalContentColor provides textContentColor) {
+                            ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(weight = 1f, fill = false)
+                                        .padding(bottom = 18.dp)
+                                        .align(Alignment.Start)
+                                ) {
+                                    text()
+                                }
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (dismissButton != null) {
+                            dismissButton()
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        confirmButton()
+                    }
+                }
+            }
+        }
+    } else {
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            confirmButton = confirmButton,
+            modifier = modifier,
+            dismissButton = dismissButton,
+            icon = icon,
+            title = title,
+            text = text,
+            shape = effectiveShape,
+            containerColor = effectiveContainerColor,
+            iconContentColor = iconContentColor,
+            titleContentColor = titleContentColor,
+            textContentColor = textContentColor,
+            tonalElevation = tonalElevation,
+            properties = properties
         )
     }
 }
@@ -1038,10 +1965,16 @@ fun XPeachInsetDivider(
     verticalPadding: Dp = 8.dp
 ) {
     val isDark = XPeachTheme.isDark
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val divColor = if (isLiquid) {
+        if (isDark) Color.White.copy(alpha = 0.14f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.34f else 0.42f)
+    }
     HorizontalDivider(
         modifier = modifier.padding(start = startIndent, top = verticalPadding, bottom = verticalPadding),
         thickness = 0.5.dp,
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.34f else 0.42f)
+        color = divColor
     )
 }
 
@@ -1122,10 +2055,12 @@ fun XPeachTopBar(
     navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val topBarBg = if (hasBackdrop) Color.Transparent else MaterialTheme.colorScheme.background
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(topBarBg)
             .statusBarsPadding()
     ) {
         Row(
@@ -1209,10 +2144,18 @@ fun XPeachIconButton(
     modifier: Modifier = Modifier
 ) {
     val isDark = XPeachTheme.isDark
-    val bgColor = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
-    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val baseBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+    val bgColor = if (isLiquid || hasBackdrop) {
+        baseBg.copy(alpha = (glassAlpha * 0.85f).coerceIn(0.22f, 0.94f))
+    } else {
+        baseBg
+    }
     val iconTint = if (isDark) {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.90f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1223,7 +2166,14 @@ fun XPeachIconButton(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 560f),
         label = "iconBtnScale"
     )
-    val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
+    val shape = RoundedCornerShape(if (isLiquid) 14.dp else FlutterM3Tokens.IconButtonCornerRadius)
+    val borderMod = if (isLiquid) {
+        Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(intensity = 0.9f), shape)
+    } else {
+        val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+        Modifier.border(0.5.dp, borderColor, shape)
+    }
+
     Box(
         modifier = modifier
             .size(FlutterM3Tokens.IconButtonSize)
@@ -1233,7 +2183,7 @@ fun XPeachIconButton(
             }
             .clip(shape)
             .background(bgColor)
-            .border(0.5.dp, borderColor, shape)
+            .then(borderMod)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -1257,8 +2207,16 @@ fun XPeachIconButton(
     content: @Composable () -> Unit
 ) {
     val isDark = XPeachTheme.isDark
-    val bgColor = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
-    val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val baseBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+    val bgColor = if (isLiquid || hasBackdrop) {
+        baseBg.copy(alpha = (glassAlpha * 0.85f).coerceIn(0.22f, 0.94f))
+    } else {
+        baseBg
+    }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -1266,7 +2224,14 @@ fun XPeachIconButton(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 560f),
         label = "iconBtnCustomScale"
     )
-    val shape = RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
+    val shape = RoundedCornerShape(if (isLiquid) 14.dp else FlutterM3Tokens.IconButtonCornerRadius)
+    val borderMod = if (isLiquid) {
+        Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(intensity = 0.9f), shape)
+    } else {
+        val borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.42f else 0.35f)
+        Modifier.border(0.5.dp, borderColor, shape)
+    }
+
     Box(
         modifier = modifier
             .size(FlutterM3Tokens.IconButtonSize)
@@ -1276,7 +2241,7 @@ fun XPeachIconButton(
             }
             .clip(shape)
             .background(bgColor)
-            .border(0.5.dp, borderColor, shape)
+            .then(borderMod)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -1298,19 +2263,28 @@ fun XPeachFilterPill(
     compact: Boolean = false
 ) {
     val isDark = XPeachTheme.isDark
-    val unselectedBg = if (isDark) {
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val unselectedBg = if (isLiquid || hasBackdrop) {
+        val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+        base.copy(alpha = (glassAlpha * 0.76f).coerceIn(0.20f, 0.88f))
+    } else if (isDark) {
         MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
     }
     val selectedBg = if (isDark) {
-        XPeachTheme.readablePrimary.copy(alpha = 0.20f)
+        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.26f else 0.20f)
+    } else if (isLiquid || hasBackdrop) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = (glassAlpha * 0.92f).coerceIn(0.32f, 0.95f))
     } else {
         MaterialTheme.colorScheme.primaryContainer
     }
     val selectedFg = XPeachTheme.readablePrimary
     val unselectedFg = if (isDark) {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f)
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1320,10 +2294,10 @@ fun XPeachFilterPill(
         label = "pillBg"
     )
     val border by animateColorAsState(
-        targetValue = if (selected) {
-            XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.32f)
-        } else {
-            Color.Transparent
+        targetValue = when {
+            selected -> XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.55f else 0.42f)
+            isLiquid -> if (isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.68f)
+            else -> Color.Transparent
         },
         animationSpec = tween(180),
         label = "pillBorder"
@@ -1355,7 +2329,7 @@ fun XPeachFilterPill(
             .background(bg)
             .then(
                 if (border != Color.Transparent) {
-                    Modifier.border(0.75.dp, border, pillShape)
+                    Modifier.border(if (isLiquid) 0.85.dp else 0.75.dp, border, pillShape)
                 } else {
                     Modifier
                 }
@@ -1403,19 +2377,28 @@ fun XPeachFilterPill(
     leadingIcon: @Composable () -> Unit
 ) {
     val isDark = XPeachTheme.isDark
-    val unselectedBg = if (isDark) {
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val unselectedBg = if (isLiquid || hasBackdrop) {
+        val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface
+        base.copy(alpha = (glassAlpha * 0.76f).coerceIn(0.20f, 0.88f))
+    } else if (isDark) {
         MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)
     }
     val selectedBg = if (isDark) {
-        XPeachTheme.readablePrimary.copy(alpha = 0.20f)
+        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.26f else 0.20f)
+    } else if (isLiquid || hasBackdrop) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = (glassAlpha * 0.92f).coerceIn(0.32f, 0.95f))
     } else {
         MaterialTheme.colorScheme.primaryContainer
     }
     val selectedFg = XPeachTheme.readablePrimary
     val unselectedFg = if (isDark) {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.80f)
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1425,10 +2408,10 @@ fun XPeachFilterPill(
         label = "pillBgCustom"
     )
     val border by animateColorAsState(
-        targetValue = if (selected) {
-            XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.32f)
-        } else {
-            Color.Transparent
+        targetValue = when {
+            selected -> XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.55f else 0.42f)
+            isLiquid -> if (isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.68f)
+            else -> Color.Transparent
         },
         animationSpec = tween(180),
         label = "pillBorderCustom"
@@ -1460,7 +2443,7 @@ fun XPeachFilterPill(
             .background(bg)
             .then(
                 if (border != Color.Transparent) {
-                    Modifier.border(0.75.dp, border, pillShape)
+                    Modifier.border(if (isLiquid) 0.85.dp else 0.75.dp, border, pillShape)
                 } else {
                     Modifier
                 }
@@ -1500,19 +2483,28 @@ fun <T> XPeachSegmentedTabs(
     modifier: Modifier = Modifier
 ) {
     val isDark = XPeachTheme.isDark
-    val trackBg = if (isDark) Color(0xFF10151D) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
-    val selectedThumbBg = if (isDark) {
-        MaterialTheme.colorScheme.surfaceContainerHighest
-    } else {
-        MaterialTheme.colorScheme.surface
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
+
+    val trackBg = when {
+        isLiquid || hasBackdrop -> {
+            val base = if (isDark) Color(0xFF0E1520) else MaterialTheme.colorScheme.surfaceVariant
+            base.copy(alpha = (glassAlpha * 0.72f).coerceIn(0.18f, 0.86f))
+        }
+        isDark -> Color(0xFF10151D)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
     }
-    val selectedThumbBorder = if (isDark) {
-        XPeachTheme.readablePrimary.copy(alpha = 0.30f)
-    } else {
-        Color.Black.copy(alpha = 0.04f)
+    val selectedThumbBg = when {
+        isLiquid || hasBackdrop -> {
+            val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
+            base.copy(alpha = (glassAlpha * 0.96f).coerceIn(0.32f, 0.96f))
+        }
+        isDark -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> MaterialTheme.colorScheme.surface
     }
-    val containerShape = RoundedCornerShape(FlutterM3Tokens.SegmentedContainerRadius)
-    val thumbShape = RoundedCornerShape(FlutterM3Tokens.SegmentedThumbRadius)
+    val containerShape = RoundedCornerShape(if (isLiquid) 14.dp else FlutterM3Tokens.SegmentedContainerRadius)
+    val thumbShape = RoundedCornerShape(if (isLiquid) 11.dp else FlutterM3Tokens.SegmentedThumbRadius)
     val count = options.size.coerceAtLeast(1)
     val selectedIdx = options.indexOf(selectedOption).coerceIn(0, count - 1)
     val animatedIndex by animateFloatAsState(
@@ -1527,12 +2519,30 @@ fun <T> XPeachSegmentedTabs(
             .height(FlutterM3Tokens.SegmentedControlMinHeight)
             .clip(containerShape)
             .background(trackBg)
+            .then(
+                if (isLiquid) {
+                    Modifier.border(0.75.dp, XPeachTheme.specularRimBrush(intensity = 0.7f), containerShape)
+                } else {
+                    Modifier
+                }
+            )
             .padding(3.dp)
     ) {
         val slotWidth = maxWidth / count
         val thumbOffsetX = slotWidth * animatedIndex
 
-        // 1. 物理弹簧滑动胶囊滑块（CupertinoSlidingSegmentedControl 同款滑动阻尼）
+        // 1. 物理弹簧滑动胶囊滑块（支持 Liquid Glass 高光折射边）
+        val thumbBorderMod = if (isLiquid) {
+            Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(intensity = 1.05f), thumbShape)
+        } else {
+            val selectedThumbBorder = if (isDark) {
+                XPeachTheme.readablePrimary.copy(alpha = 0.30f)
+            } else {
+                Color.Black.copy(alpha = 0.04f)
+            }
+            Modifier.border(0.5.dp, selectedThumbBorder, thumbShape)
+        }
+
         Box(
             modifier = Modifier
                 .offset(x = thumbOffsetX)
@@ -1552,10 +2562,10 @@ fun <T> XPeachSegmentedTabs(
                 )
                 .clip(thumbShape)
                 .background(selectedThumbBg)
-                .border(0.5.dp, selectedThumbBorder, thumbShape)
+                .then(thumbBorderMod)
         )
 
-        // 2. 前景标签行与细微分隔线
+        // 2. 前景标签行
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
@@ -1571,7 +2581,7 @@ fun <T> XPeachSegmentedTabs(
                 )
                 val tabFg by animateColorAsState(
                     targetValue = if (isSelected) {
-                        MaterialTheme.colorScheme.onSurface
+                        if (isLiquid) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isPressed) 0.65f else 0.92f)
                     },
@@ -1640,6 +2650,7 @@ fun XPeachStatusBadge(
 ) {
     val scheme = MaterialTheme.colorScheme
     val isDark = XPeachTheme.isDark
+    val isLiquid = XPeachTheme.isLiquidGlass
     val resolvedContentColor = when (contentColor) {
         scheme.onPrimary,
         scheme.onSecondary,
@@ -1655,10 +2666,15 @@ fun XPeachStatusBadge(
         else -> XPeachTheme.readableAccent(contentColor)
     }
     val resolvedContainerColor = when {
-        isDark && containerColor == scheme.primaryContainer -> XPeachTheme.readablePrimary.copy(alpha = 0.16f)
-        isDark && containerColor == scheme.secondaryContainer -> XPeachTheme.readableAccent(scheme.secondary).copy(alpha = 0.16f)
-        isDark && containerColor == scheme.tertiaryContainer -> XPeachTheme.readableAccent(scheme.tertiary).copy(alpha = 0.16f)
+        isDark && containerColor == scheme.primaryContainer -> XPeachTheme.readablePrimary.copy(alpha = 0.18f)
+        isDark && containerColor == scheme.secondaryContainer -> XPeachTheme.readableAccent(scheme.secondary).copy(alpha = 0.18f)
+        isDark && containerColor == scheme.tertiaryContainer -> XPeachTheme.readableAccent(scheme.tertiary).copy(alpha = 0.18f)
         else -> containerColor
+    }
+    val effectiveBorderColor = when {
+        borderColor != Color.Transparent -> borderColor
+        isLiquid -> resolvedContentColor.copy(alpha = if (isDark) 0.34f else 0.26f)
+        else -> Color.Transparent
     }
     val badgeShape = RoundedCornerShape(999.dp)
     Box(
@@ -1667,8 +2683,8 @@ fun XPeachStatusBadge(
             .clip(badgeShape)
             .background(resolvedContainerColor)
             .then(
-                if (borderColor != Color.Transparent) {
-                    Modifier.border(0.5.dp, borderColor, badgeShape)
+                if (effectiveBorderColor != Color.Transparent) {
+                    Modifier.border(0.6.dp, effectiveBorderColor, badgeShape)
                 } else Modifier
             )
             .padding(horizontal = 9.dp, vertical = 3.dp),

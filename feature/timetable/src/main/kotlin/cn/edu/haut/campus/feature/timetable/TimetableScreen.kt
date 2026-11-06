@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -230,6 +231,13 @@ fun TimetableScreen(
                     .padding(horizontal = 20.dp, vertical = 4.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(XPeachTheme.secondaryAccentCardColor)
+                    .then(
+                        if (XPeachTheme.isLiquidGlass) {
+                            Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(), RoundedCornerShape(12.dp))
+                        } else {
+                            Modifier
+                        }
+                    )
                     .clickable { showUnscheduled = true }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -250,7 +258,7 @@ fun TimetableScreen(
             }
         }
         if (showUnscheduled) {
-            AlertDialog(
+            XPeachAlertDialog(
                 onDismissRequest = { showUnscheduled = false },
                 title = {
                     Text(
@@ -318,6 +326,13 @@ fun TimetableScreen(
                         .padding(horizontal = 20.dp, vertical = 4.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(XPeachTheme.primaryAccentCardColor)
+                        .then(
+                            if (XPeachTheme.isLiquidGlass) {
+                                Modifier.border(0.85.dp, XPeachTheme.specularRimBrush(), RoundedCornerShape(12.dp))
+                            } else {
+                                Modifier
+                            }
+                        )
                         .clickable {
                             if (otherTermsWithCourses.size == 1) {
                                 scope.launch {
@@ -432,13 +447,28 @@ fun TimetableScreen(
                         if (showSevenDays) activeWeekDates else activeWeekDates.take(5)
                     }
 
-                    // 宽阔课表卡片容器（自适应 5日/7日 + 课程名与底部教室胶囊分层解耦）
+                    // 宽阔课表卡片容器（自适应 5日/7日 + 课程名与底部教室胶囊分层解耦 + Liquid Glass 磨砂折射支持）
+                    val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+                    val sheetBgColor = if (XPeachTheme.isLiquidGlass || XPeachTheme.hasActiveBackdrop) {
+                        MaterialTheme.colorScheme.surface.copy(
+                            alpha = (XPeachTheme.glassCardAlpha * 0.76f).coerceIn(0.18f, 0.90f)
+                        )
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                            .background(MaterialTheme.colorScheme.surface)
+                            .clip(sheetShape)
+                            .background(sheetBgColor)
+                            .then(
+                                if (XPeachTheme.isLiquidGlass) {
+                                    Modifier.border(0.95.dp, XPeachTheme.specularRimBrush(intensity = 1.0f), sheetShape)
+                                } else {
+                                    Modifier
+                                }
+                            )
                     ) {
                         // 顶部星期栏（左上角一键切换 5日/7日，无周末课时自动展开 5 列大宽格）
                         Row(
@@ -510,10 +540,7 @@ fun TimetableScreen(
                                 }
                             }
                         }
-                        HorizontalDivider(
-                            thickness = 0.6.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-                        )
+                        XPeachInsetDivider(verticalPadding = 0.dp)
 
                         // 1-10 节高透气网格（含午休/晚间视觉分段线 + 顶底分离式课程卡片）
                         val slotHeightDp = 68.dp
@@ -725,7 +752,7 @@ fun TimetableScreen(
             0xFF4F46E5, 0xFF7C3AED, 0xFFD97706, 0xFFE11D48
         )
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingOccurrence = null },
             title = { Text("课程编辑") },
             text = {
@@ -846,7 +873,7 @@ fun TimetableScreen(
         var newEndPeriod by remember { mutableStateOf("2") }
         var newWeeks by remember { mutableStateOf("1-16周") }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showAddCourseDialog = false },
             title = { Text("添加自定义课程") },
             text = {
@@ -860,6 +887,7 @@ fun TimetableScreen(
                         label = { Text("课程名称") },
                         placeholder = { Text("例如：高等数学 / 英语口语") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -868,6 +896,7 @@ fun TimetableScreen(
                         label = { Text("上课教室") },
                         placeholder = { Text("例如：5号教学楼5204") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
@@ -875,6 +904,7 @@ fun TimetableScreen(
                         onValueChange = { newTeacher = it },
                         label = { Text("任课教师（选填）") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
@@ -998,7 +1028,7 @@ fun TimetableScreen(
         }
         var dateError by remember { mutableStateOf<String?>(null) }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showTermSwitcherDialog = false },
             title = { Text("切换学期与校历设置") },
             text = {

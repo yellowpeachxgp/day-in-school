@@ -127,6 +127,7 @@ import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
@@ -213,6 +214,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         HautCampusTheme(
                             themeMode = readyPrefs.themeMode,
+                            uiDesignStyleKey = readyPrefs.uiDesignStyle,
                             dynamicColor = readyPrefs.useDynamicColor,
                             themePaletteKey = readyPrefs.themePaletteKey,
                             customSeedArgb = readyPrefs.customThemeSeedArgb,
@@ -765,7 +767,7 @@ fun HautCampusRootApp(
 
     val releaseToPrompt = detectedUpdateRelease
     if (releaseToPrompt != null) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = {
                 if (!isDownloadingStartupApk) {
                     detectedUpdateRelease = null
@@ -1287,35 +1289,32 @@ private fun XPeachBottomDock(
     )
 
     val isDark = XPeachTheme.isDark
+    val isLiquid = XPeachTheme.isLiquidGlass
+    val hasBackdrop = XPeachTheme.hasActiveBackdrop
+    val glassAlpha = XPeachTheme.glassCardAlpha
     val bgColor = MaterialTheme.colorScheme.background
-    val dockSurfaceColor = if (isDark) {
+    val dockSurfaceColor = if (isLiquid || hasBackdrop) {
+        val base = if (isDark) Color(0xFF121A28) else Color(0xFFFDFEFF)
+        base.copy(alpha = (glassAlpha * 0.92f).coerceIn(0.24f, 0.94f))
+    } else if (isDark) {
         MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f)
     } else {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
     }
-    val specularRimBrush = Brush.linearGradient(
-        colors = if (isDark) {
-            listOf(
-                Color.White.copy(alpha = 0.16f),
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f),
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-            )
-        } else {
-            listOf(
-                Color.White.copy(alpha = 0.75f),
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-            )
-        },
-        start = Offset(0f, 0f),
-        end = Offset(800f, 220f)
-    )
+    val dockBorderStroke = if (isLiquid || hasBackdrop) {
+        BorderStroke(width = 1.05.dp, brush = XPeachTheme.specularRimBrush(intensity = 1.15f))
+    } else {
+        BorderStroke(
+            width = 0.7.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.45f)
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .then(
-                if (bgColor.alpha >= 0.05f) {
+                if (!hasBackdrop && bgColor.alpha >= 0.05f) {
                     Modifier.background(
                         Brush.verticalGradient(
                             colors = listOf(
@@ -1341,8 +1340,8 @@ private fun XPeachBottomDock(
             shape = CircleShape,
             color = dockSurfaceColor,
             tonalElevation = 0.dp,
-            shadowElevation = if (isDark) 20.dp else 16.dp,
-            border = BorderStroke(width = 1.dp, brush = specularRimBrush)
+            shadowElevation = if (isLiquid) 22.dp else if (isDark) 14.dp else 10.dp,
+            border = dockBorderStroke
         ) {
             BoxWithConstraints(
                 modifier = Modifier
@@ -1424,8 +1423,15 @@ private fun XPeachBottomDock(
                             Brush.verticalGradient(
                                 colors = if (isDark) {
                                     listOf(
-                                        XPeachTheme.readablePrimary.copy(alpha = 0.22f),
-                                        XPeachTheme.readablePrimary.copy(alpha = 0.14f)
+                                        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.28f else 0.22f),
+                                        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.18f else 0.14f)
+                                    )
+                                } else if (isLiquid || hasBackdrop) {
+                                    val pillTopAlpha = (glassAlpha * 0.90f).coerceIn(0.32f, 0.92f)
+                                    val pillBotAlpha = (glassAlpha * 0.76f).coerceIn(0.24f, 0.80f)
+                                    listOf(
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = pillTopAlpha),
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = pillBotAlpha)
                                     )
                                 } else {
                                     listOf(

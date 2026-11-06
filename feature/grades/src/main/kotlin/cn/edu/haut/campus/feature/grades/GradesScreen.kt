@@ -332,7 +332,7 @@ fun GradesScreen(
                     XPeachCard(
                         modifier = Modifier.weight(1f),
                         containerColor = if (runningFocus != null) XPeachTheme.primaryAccentCardColor else MaterialTheme.colorScheme.surface,
-                        borderColor = if (runningFocus != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.42f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f),
+                        borderColor = if (runningFocus != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.42f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                         onClick = onNavigateToFocus
                     ) {

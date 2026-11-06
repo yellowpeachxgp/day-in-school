@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -299,87 +300,92 @@ fun LibraryCatalogScreen(
         )
 
         // 顶部常驻搜索栏与字段切换胶囊
-        Column(
+        XPeachCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = keywordInput,
-                    onValueChange = { keywordInput = it },
-                    placeholder = {
-                        Text(
-                            text = selectedField.placeholder,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(
-                        onSearch = {
-                            if (keywordInput.isNotBlank()) {
-                                executeSearch(keywordInput, selectedField, page = 1)
-                            }
-                        }
-                    ),
-                    trailingIcon = {
-                        if (keywordInput.isNotEmpty()) {
-                            IconButton(
-                                onClick = {
-                                    keywordInput = ""
-                                    if (selectedBook == null) {
-                                        hasSearched = false
-                                        searchError = null
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "清空关键词"
-                                )
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
-                )
-                Button(
-                    enabled = keywordInput.isNotBlank() && !isSearching,
-                    onClick = { executeSearch(keywordInput, selectedField, page = 1) },
-                    shape = RoundedCornerShape(12.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("检索", maxLines = 1, softWrap = false)
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                for (field in LibrarySearchField.entries) {
-                    XPeachFilterPill(
-                        label = field.label,
-                        selected = selectedField == field,
-                        compact = true,
-                        onClick = {
-                            selectedField = field
-                            if (keywordInput.isNotBlank() && hasSearched) {
-                                executeSearch(keywordInput, field, page = 1)
+                    OutlinedTextField(
+                        value = keywordInput,
+                        onValueChange = { keywordInput = it },
+                        placeholder = {
+                            Text(
+                                text = selectedField.placeholder,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                if (keywordInput.isNotBlank()) {
+                                    executeSearch(keywordInput, selectedField, page = 1)
+                                }
                             }
-                        }
+                        ),
+                        trailingIcon = {
+                            if (keywordInput.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        keywordInput = ""
+                                        if (selectedBook == null) {
+                                            hasSearched = false
+                                            searchError = null
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Clear,
+                                        contentDescription = "清空关键词"
+                                    )
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
                     )
+                    Button(
+                        enabled = keywordInput.isNotBlank() && !isSearching,
+                        onClick = { executeSearch(keywordInput, selectedField, page = 1) },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("检索", maxLines = 1, softWrap = false)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (field in LibrarySearchField.entries) {
+                        XPeachFilterPill(
+                            label = field.label,
+                            selected = selectedField == field,
+                            compact = true,
+                            onClick = {
+                                selectedField = field
+                                if (keywordInput.isNotBlank() && hasSearched) {
+                                    executeSearch(keywordInput, field, page = 1)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }

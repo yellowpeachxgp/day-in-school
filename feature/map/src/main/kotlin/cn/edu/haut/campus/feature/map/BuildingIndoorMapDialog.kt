@@ -77,6 +77,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
@@ -235,13 +236,8 @@ internal fun BuildingIndoorMapDialog(
             )
 
             if (isLoadingFloorPlan) {
-                Surface(
+                XPeachGlassSurface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 4.dp,
                     modifier = Modifier.align(Alignment.Center)
                 ) {
@@ -272,13 +268,8 @@ internal fun BuildingIndoorMapDialog(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Surface(
+                XPeachGlassSurface(
                     shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -469,13 +460,8 @@ internal fun BuildingIndoorMapDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Surface(
+                XPeachGlassSurface(
                     shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    border = androidx.compose.foundation.BorderStroke(
-                        0.6.dp,
-                        MaterialTheme.colorScheme.outlineVariant
-                    ),
                     shadowElevation = 3.dp
                 ) {
                     Column(

@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
@@ -717,7 +718,7 @@ fun CampusCommunityScreen(
             )
         }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingChannelItem = null },
             title = { Text("修改「${channelToEdit.title}」链接") },
             text = {
@@ -768,7 +769,7 @@ fun CampusCommunityScreen(
             )
         }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { editingClubItem = null },
             title = { Text("修改「${clubToEdit.name}」群号") },
             text = {

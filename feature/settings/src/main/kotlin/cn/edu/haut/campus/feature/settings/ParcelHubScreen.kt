@@ -67,7 +67,9 @@ import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import cn.edu.haut.campus.core.campusservices.optCleanString
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ParcelItemEntity
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
@@ -689,7 +691,7 @@ fun ParcelHubScreen(
             ParcelHubEngine.resolvePickupCodeFromText(smsInput)
         }
 
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showAddDialog = false },
             title = { Text("添加快递 / 粘贴取件短信") },
             text = {
@@ -963,12 +965,12 @@ private fun XiaomiLoginWebViewDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Surface(
+        XPeachGlassSurface(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(12.dp),
             shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface
+            containerColor = XPeachTheme.dialogSurfaceColor
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
@@ -1002,7 +1004,7 @@ private fun XiaomiLoginWebViewDialog(
                         }
                     }
                 }
-                HorizontalDivider()
+                XPeachInsetDivider(verticalPadding = 0.dp)
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     val targetUrl = loginUrl
                     if (targetUrl == null) {
@@ -1141,7 +1143,7 @@ private fun XiaomiPhoneBindDialog(
     var working by remember { mutableStateOf(false) }
     var dialogHint by remember { mutableStateOf<String?>(null) }
 
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("手机号管理 · ${account.label}") },
         text = {
@@ -1202,7 +1204,7 @@ private fun XiaomiPhoneBindDialog(
                     }
                 }
 
-                HorizontalDivider()
+                XPeachInsetDivider(verticalPadding = 2.dp)
 
                 Text(
                     text = "新增收件手机号",
@@ -1337,7 +1339,7 @@ private fun ParcelTimelineDialog(
     val cleanPickup = parcel.pickupCode.cleanNullableLiteral()
     val cleanStation = parcel.stationName.cleanNullableLiteral() ?: "校园驿站"
     val cleanCarrier = parcel.carrierName.cleanNullLiteral("校园快递")
-    AlertDialog(
+    XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("$cleanCarrier · ${parcel.trackingNumber}") },
         text = {

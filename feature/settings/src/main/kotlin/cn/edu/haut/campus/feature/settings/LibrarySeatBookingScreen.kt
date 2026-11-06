@@ -115,8 +115,10 @@ import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
@@ -604,12 +606,9 @@ fun LibrarySeatBookingScreen(
             val longMin = seatOverview?.longLeaveMinutes ?: 120
             val historyCount = (seatOverview?.inProgressBookings?.size ?: 0) + (seatOverview?.recentHistory?.size ?: 0)
 
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+            XPeachGlassSurface(
+                shape = RoundedCornerShape(0.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 if (activeBooking != null) {
                     Column(
@@ -1233,7 +1232,7 @@ fun LibrarySeatBookingScreen(
             }
             else -> req.action.confirmMessage
         }
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { if (!isExecutingSeatAction) pendingActionRequest = null },
             title = { Text(req.action.title) },
             text = {
@@ -1281,7 +1280,7 @@ fun LibrarySeatBookingScreen(
         val historyItems = remember(seatOverview) {
             seatOverview?.recentHistory.orEmpty()
         }
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showRecordsDialog = false },
             title = { Text("我的座位预约与管理") },
             text = {
@@ -1453,7 +1452,7 @@ fun LibrarySeatBookingScreen(
 
                             if (historyItems.isNotEmpty()) {
                                 item {
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                                    XPeachInsetDivider(verticalPadding = 2.dp)
                                     Text(
                                         text = "最近预约记录（点击可再次预约同区域）",
                                         style = MaterialTheme.typography.labelLarge,
@@ -1537,7 +1536,7 @@ fun LibrarySeatBookingScreen(
     }
 
     if (showBindCredentialDialog && repository != null) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { if (!isSavingCredentials) showBindCredentialDialog = false },
             title = { Text("登录图书馆选座账号") },
             text = {
@@ -1635,7 +1634,7 @@ fun LibrarySeatBookingScreen(
     }
 
     if (showClearSessionDialog) {
-        AlertDialog(
+        XPeachAlertDialog(
             onDismissRequest = { showClearSessionDialog = false },
             title = { Text("重新同步登录状态") },
             text = {
@@ -2717,7 +2716,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
 
             if (showPermissionActivationDialog) {
-                AlertDialog(
+                XPeachAlertDialog(
                     onDismissRequest = { showPermissionActivationDialog = false },
                     title = { Text("开启本机定时抢座权限") },
                     text = {

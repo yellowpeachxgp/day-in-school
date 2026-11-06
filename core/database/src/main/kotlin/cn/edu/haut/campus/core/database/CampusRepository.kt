@@ -125,6 +125,7 @@ data class AppPreferencesState(
     val gpaPrivacyShieldEnabled: Boolean = false,
     val useDynamicColor: Boolean = false,
     val themeMode: String = "SYSTEM",
+    val uiDesignStyle: String = "FLUTTER_M3",
     val themePaletteKey: String = "HAUT_BLUE",
     val customThemeSeedArgb: Long = 0xFF0066CC,
     val customWallpaperPath: String? = null,
@@ -292,6 +293,7 @@ class CampusRepository internal constructor(
         val LAST_UTILITY_SAMPLE_MS = longPreferencesKey("last_utility_sample_epoch_ms_v1")
         val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
         val THEME_MODE = stringPreferencesKey("theme_mode_v1")
+        val UI_DESIGN_STYLE = stringPreferencesKey("ui_design_style_v1")
         val THEME_PALETTE_KEY = stringPreferencesKey("theme_palette_key_v1")
         val CUSTOM_THEME_SEED_ARGB = longPreferencesKey("custom_theme_seed_argb_v1")
         val CUSTOM_WALLPAPER_PATH = stringPreferencesKey("custom_wallpaper_path_v1")
@@ -427,12 +429,14 @@ class CampusRepository internal constructor(
             gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
             useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
             themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
+            uiDesignStyle = prefs[PrefKeys.UI_DESIGN_STYLE]
+                ?: if (prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FLUTTER_M3",
             themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
             customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC,
             customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
-            wallpaperAlpha = (prefs[PrefKeys.WALLPAPER_ALPHA] ?: 0.48f).coerceIn(0.10f, 1.0f),
-            wallpaperBlurDp = (prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: 10f).coerceIn(0f, 30f),
-            wallpaperCardAlpha = (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: 0.82f).coerceIn(0.50f, 0.98f),
+            wallpaperAlpha = (prefs[PrefKeys.WALLPAPER_ALPHA] ?: 0.55f).coerceIn(0.05f, 1.0f),
+            wallpaperBlurDp = (prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: 10f).coerceIn(0f, 35f),
+            wallpaperCardAlpha = (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: 0.72f).coerceIn(0.18f, 0.98f),
             extractedWallpaperColors = prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS]
                 ?.split(",")
                 ?.mapNotNull { it.trim().toLongOrNull() }
@@ -1593,10 +1597,31 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
+    suspend fun setUiDesignStyle(styleKey: String) {
+        val normalized = if (styleKey.equals("LIQUID_GLASS", ignoreCase = true)) "LIQUID_GLASS" else "FLUTTER_M3"
+        preferences.edit { prefs ->
+            prefs[PrefKeys.UI_DESIGN_STYLE] = normalized
+            if (normalized == "FLUTTER_M3" && prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") {
+                prefs[PrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
+            }
+            if (normalized == "LIQUID_GLASS" && prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+                prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+            }
+        }
+        notifyScheduleOrPolicyChanged("THEME_UPDATED")
+    }
+
     suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) {
         preferences.edit { prefs ->
             prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
             prefs[PrefKeys.DYNAMIC_COLOR] = false
+            if (paletteKey == "LIQUID_GLASS") {
+                prefs[PrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
+                val curCardAlpha = prefs[PrefKeys.WALLPAPER_CARD_ALPHA]
+                if (curCardAlpha == null || curCardAlpha > 0.80f) {
+                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+                }
+            }
             if (customSeedArgb != null) {
                 prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
             }
@@ -1607,10 +1632,27 @@ class CampusRepository internal constructor(
     suspend fun saveCustomWallpaperTheme(
         localPath: String,
         primarySeedArgb: Long,
-        extractedSwatches: List<Long>
+        extractedSwatches: List<Long>,
+        enableLiquidGlass: Boolean = false
     ) {
         preferences.edit { prefs ->
             prefs[PrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
+            prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
+            prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
+            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
+            if (enableLiquidGlass) {
+                prefs[PrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
+            }
+        }
+        notifyScheduleOrPolicyChanged("THEME_UPDATED")
+    }
+
+    suspend fun saveExtractedDesktopSwatches(
+        primarySeedArgb: Long,
+        extractedSwatches: List<Long>
+    ) {
+        preferences.edit { prefs ->
             prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
             prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
             prefs[PrefKeys.DYNAMIC_COLOR] = false
@@ -1625,10 +1667,19 @@ class CampusRepository internal constructor(
         cardAlpha: Float? = null
     ) {
         preferences.edit { prefs ->
-            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = it.coerceIn(0.10f, 1.0f) }
-            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = it.coerceIn(0f, 30f) }
-            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = it.coerceIn(0.50f, 0.98f) }
+            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = it.coerceIn(0.05f, 1.0f) }
+            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = it.coerceIn(0f, 35f) }
+            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = it.coerceIn(0.18f, 0.98f) }
         }
+    }
+
+    suspend fun resetWallpaperVisualParams() {
+        preferences.edit { prefs ->
+            prefs[PrefKeys.WALLPAPER_ALPHA] = 0.55f
+            prefs[PrefKeys.WALLPAPER_BLUR_DP] = 10f
+            prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+        }
+        notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
     suspend fun clearCustomWallpaperTheme() {
@@ -1639,7 +1690,12 @@ class CampusRepository internal constructor(
             }
             prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
             prefs.remove(PrefKeys.EXTRACTED_WALLPAPER_COLORS)
+            if (prefs[PrefKeys.THEME_PALETTE_KEY] == "CUSTOM") {
+                prefs[PrefKeys.THEME_PALETTE_KEY] =
+                    if (prefs[PrefKeys.UI_DESIGN_STYLE] == "LIQUID_GLASS") "LIQUID_GLASS" else "HAUT_BLUE"
+            }
         }
+        notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
     suspend fun updateHomeCardLayout(
@@ -1668,6 +1724,7 @@ class CampusRepository internal constructor(
         val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
         val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC
         val seedLong = when (key) {
+            "LIQUID_GLASS" -> 0xFF0EA5E9
             "HAUT_BLUE" -> 0xFF0066CC
             "PINE_TEAL" -> 0xFF0D9488
             "JADE_GREEN" -> 0xFF16A34A
