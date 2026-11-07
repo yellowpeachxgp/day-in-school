@@ -158,16 +158,17 @@ class JinzhiGateway(
         val teacherColumn = table.column("任课教师", "教师", "老师", "主讲教师")
         val codeColumn = table.column("课程代码", "课程号", "课程编号")
         val creditColumn = table.column("学分")
+        if (timeColumn == null) throw TransportFailure(AcademicError.PAGE_CHANGED, "课表缺少时间列")
         val drafts = LinkedHashMap<String, CourseDraft>()
         for (row in table.rows) {
-            val name = table.value(row, nameColumn) ?: continue
+            val name = table.value(row, nameColumn) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val teacher = table.value(row, teacherColumn)
             val code = table.value(row, codeColumn)
             val key = if (code.isNullOrEmpty()) "jinzhi:" + name + "|" + teacher.orEmpty() else "jinzhi:" + code
             val draft = drafts.getOrPut(key) {
                 CourseDraft(key, name, teacher, code, credit(creditColumn?.let { table.value(row, it) }))
             }
-            val meeting = JinzhiSchedule.parse(table.value(row, timeColumn)) ?: continue
+            val meeting = JinzhiSchedule.parse(table.value(row, timeColumn)) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             draft.meetings += RemoteMeeting(
                 weekday = meeting.weekday,
                 startSection = meeting.startSection,
@@ -187,6 +188,8 @@ class JinzhiGateway(
                 meetings = draft.meetings.toList()
             )
         }
+        if (courses.any { it.meetings.isEmpty() || it.meetings.any { meeting -> meeting.weeks.isEmpty() } })
+            throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表含无法确认的时段或周次")
         if (courses.isEmpty()) {
             return@guarded AcademicResult.Empty(reason = "当前学期没有课程", authoritative = true)
         }

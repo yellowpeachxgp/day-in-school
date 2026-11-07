@@ -71,6 +71,7 @@ data class MomentsPostItem(
     val createdAt: String = "",
     val updatedAt: String = ""
 ) {
+    val isDemo: Boolean get() = id in setOf("mp_found_card_01", "mp_lost_airpods_02", "mp_found_keys_03", "mp_lost_cup_04")
     val isResolved: Boolean
         get() = status.equals("RESOLVED", ignoreCase = true)
 }
@@ -93,6 +94,7 @@ data class MomentsTextbookListing(
     val likesCount: Int = 0,
     val createdAt: String = ""
 ) {
+    val isDemo: Boolean get() = id in setOf("mb_math_01", "mb_ds_02", "mb_circuit_03", "mb_food_04")
     val isSold: Boolean
         get() = status.equals("SOLD", ignoreCase = true)
 }
@@ -129,69 +131,41 @@ data class AntiLostTagItem(
     val createdAt: String = "",
     val updatedAt: String = ""
 ) {
+    val isDemo: Boolean get() = id == "tag_default_01" || tagCode == "HAUT-TAG-7E2A9B"
     val isLostOrReported: Boolean
         get() = status.equals("LOST", ignoreCase = true) || status.equals("FOUND_REPORTED", ignoreCase = true)
 
     fun claimWebUrl(cloudBaseUrl: String = NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL): String {
         val base = NetworkProxyConfig.normalizeCloudApiBaseUrl(cloudBaseUrl).trimEnd('/')
-        return "$base/claim/${tagCode.trim().uppercase()}"
+        val uri = java.net.URI(base)
+        require(uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null &&
+            uri.query == null && uri.fragment == null) { "认领页需使用有效 HTTPS 云服务地址" }
+        val code = tagCode.trim().uppercase(java.util.Locale.ROOT)
+        require(code.matches(Regex("[A-Z0-9-]{4,80}"))) { "防丢码编号格式无效" }
+        return "$base/claim/$code"
     }
 
-    /**
-     * 生成 21x21 标准定位图案 + 数据散列矩阵，供客户端原生绘制防丢码标签卡片。
-     */
-    fun generateVisualMatrix(gridSize: Int = 21): Array<BooleanArray> {
-        val n = gridSize.coerceIn(15, 29)
-        val matrix = Array(n) { BooleanArray(n) }
-
-        fun drawFinderPattern(topR: Int, leftC: Int) {
-            for (dr in 0..6) {
-                for (dc in 0..6) {
-                    val r = topR + dr
-                    val c = leftC + dc
-                    if (r !in 0 until n || c !in 0 until n) continue
-                    val onOuterRing = dr == 0 || dr == 6 || dc == 0 || dc == 6
-                    val onInnerCore = dr in 2..4 && dc in 2..4
-                    matrix[r][c] = onOuterRing || onInnerCore
-                }
-            }
-        }
-
-        drawFinderPattern(0, 0)
-        drawFinderPattern(0, n - 7)
-        drawFinderPattern(n - 7, 0)
-
-        for (i in 8 until n - 8) {
-            matrix[6][i] = (i % 2 == 0)
-            matrix[i][6] = (i % 2 == 0)
-        }
-
-        val seedText = "${tagCode.uppercase()}|$itemName|$ownerContact"
-        var hashAcc = 2166136261L
-        for (ch in seedText) {
-            hashAcc = (hashAcc xor ch.code.toLong()) * 16777619L
-        }
-
-        for (r in 0 until n) {
-            for (c in 0 until n) {
-                val inTopLeft = r <= 7 && c <= 7
-                val inTopRight = r <= 7 && c >= n - 8
-                val inBottomLeft = r >= n - 8 && c <= 7
-                val onTiming = r == 6 || c == 6
-                if (inTopLeft || inTopRight || inBottomLeft || onTiming) continue
-                val cellSeed = hashAcc xor ((r * 31L + c * 131L + seedText[(r + c) % seedText.length].code) * 0x9E3779B97F4A7C15UL.toLong())
-                matrix[r][c] = ((cellSeed ushr ((r + c) and 15)) and 1L) == 1L
-            }
-        }
-        return matrix
+    /** Real QR encoding of the configured claim URL, including the standard quiet zone. */
+    fun generateVisualMatrix(
+        gridSize: Int = 21,
+        cloudBaseUrl: String = NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
+    ): Array<BooleanArray> {
+        val bits = com.google.zxing.qrcode.QRCodeWriter().encode(
+            claimWebUrl(cloudBaseUrl), com.google.zxing.BarcodeFormat.QR_CODE,
+            gridSize.coerceIn(0, 512), gridSize.coerceIn(0, 512),
+            mapOf(com.google.zxing.EncodeHintType.MARGIN to 4,
+                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M)
+        )
+        return Array(bits.height) { row -> BooleanArray(bits.width) { col -> bits[col, row] } }
     }
+
 }
 
 data class CampusMomentsSnapshot(
     val updatedAt: String = "",
-    val posts: List<MomentsPostItem> = PresetCampusMomentsCatalog.defaultPosts,
-    val bookListings: List<MomentsTextbookListing> = PresetCampusMomentsCatalog.defaultBookListings,
-    val antiLostTags: List<AntiLostTagItem> = PresetCampusMomentsCatalog.defaultAntiLostTags,
+    val posts: List<MomentsPostItem> = emptyList(),
+    val bookListings: List<MomentsTextbookListing> = emptyList(),
+    val antiLostTags: List<AntiLostTagItem> = emptyList(),
     val isbnCatalog: List<MomentsIsbnCatalogEntry> = PresetCampusMomentsCatalog.defaultIsbnCatalog,
     val favoritePostIds: Set<String> = emptySet(),
     val favoriteBookIds: Set<String> = emptySet(),
@@ -443,7 +417,8 @@ object PresetCampusMomentsCatalog {
      * 为寻物/招领帖计算同校区、同类别或关键词重合的疑似匹配线索。
      */
     fun computeLocalMatches(target: MomentsPostItem, allPosts: List<MomentsPostItem>): List<MomentsMatchedClue> {
-        if (target.matchedClues.isNotEmpty()) return target.matchedClues
+        if (target.isDemo) return emptyList()
+        if (target.matchedClues.isNotEmpty()) return target.matchedClues.filterNot { clue -> defaultPosts.any { it.id == clue.id } }
         val opposite = if (target.type == MomentsPostType.LOST) MomentsPostType.FOUND else MomentsPostType.LOST
         val tokens = "${target.title} ${target.description} ${target.location}"
             .lowercase()
@@ -451,7 +426,7 @@ object PresetCampusMomentsCatalog {
             .filter { it.length >= 2 }
 
         return allPosts
-            .filter { it.id != target.id && it.type == opposite && !it.isResolved }
+            .filter { it.id != target.id && it.type == opposite && !it.isResolved && !it.isDemo }
             .mapNotNull { candidate ->
                 var score = 0
                 if (candidate.category == target.category) score += 45

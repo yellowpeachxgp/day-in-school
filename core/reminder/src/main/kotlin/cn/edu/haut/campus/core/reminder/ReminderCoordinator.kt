@@ -54,6 +54,7 @@ class ReminderCoordinator internal constructor(
     }
     private val coordinatorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val reconcileMutex = Mutex()
+    private var lastMealLockscreenPrivate: Boolean? = null
     private val timeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
 
     fun initialize() {
@@ -325,7 +326,12 @@ class ReminderCoordinator internal constructor(
         }
 
         val permSnapshot = ReminderPermissions.inspect(appContext)
-        if (!permSnapshot.canPostNotifications) {
+        val eventChannelEnabled = if (currentEvent.type == cn.edu.haut.campus.core.model.ReminderEventType.EXAM) {
+            permSnapshot.examChannelEnabled
+        } else {
+            permSnapshot.classChannelEnabled
+        }
+        if (!permSnapshot.canPostNotifications || !eventChannelEnabled) {
             reminderDao.markTerminal(
                 taskId = taskId,
                 terminalStatus = ReminderTaskStatus.SUPPRESSED.name,
@@ -787,8 +793,15 @@ class ReminderCoordinator internal constructor(
         buildings: List<cn.edu.haut.campus.core.model.Building>,
         globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig
     ) {
+        // Clear an already-posted notification on privacy changes (or after process restart),
+        // otherwise lastNotifiedKey can suppress rebuilding the old public version.
+        if (lastMealLockscreenPrivate != globalConfig.lockscreenPrivate) {
+            ReminderNotificationFactory.cancelMealRecommendationNotification(appContext)
+            lastMealLockscreenPrivate = globalConfig.lockscreenPrivate
+        }
         val mealEnabled = repository.isMealRecommendEnabledSnapshot()
         if (!mealEnabled) {
+            ReminderNotificationFactory.cancelMealRecommendationNotification(appContext)
             alarmScheduler.cancel(MEAL_RECOMMEND_BOUNDARY_TASK_ID, 1)
             return
         }
@@ -818,7 +831,8 @@ class ReminderCoordinator internal constructor(
                 title = rec.notificationTitle,
                 body = rec.notificationBody,
                 canteenBuildingId = rec.primaryCandidate.profile.buildingId,
-                canteenName = rec.primaryCandidate.profile.name
+                canteenName = rec.primaryCandidate.profile.name,
+                lockscreenPrivate = globalConfig.lockscreenPrivate
             )
             if (posted) {
                 repository.markMealRecommendNotified(dueBlock.blockKey)
@@ -855,6 +869,8 @@ class ReminderCoordinator internal constructor(
     }
 
     suspend fun triggerTestMealRecommendation(shuffleOffset: Int = 0): Boolean {
+        requireActive()
+        check(repository.supportsHautServices) { "当前学校尚未提供已核验的食堂目录" }
         val now = Instant.now()
         val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
         val exams = repository.getExamSchedulesSnapshot()
@@ -889,7 +905,8 @@ class ReminderCoordinator internal constructor(
             title = rec.notificationTitle,
             body = rec.notificationBody,
             canteenBuildingId = rec.primaryCandidate.profile.buildingId,
-            canteenName = rec.primaryCandidate.profile.name
+            canteenName = rec.primaryCandidate.profile.name,
+            lockscreenPrivate = repository.getReminderConfigSnapshot().lockscreenPrivate
         )
     }
 

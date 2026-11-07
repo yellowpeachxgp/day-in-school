@@ -122,6 +122,7 @@ class AccountSessionCoordinator private constructor(context: Context) {
             var candidate: CampusRepository? = null
             try {
                 for (hook in hooks.toSortedMap().values) hook.before(old)
+                old.repository.awaitSessionOperations()
                 SchoolWebSessionManager.clearForProfileSwitch()
                 val persisted = checkNotNull(dao.active()) { "缺少账号状态" }
                 val generation = Math.addExact(persisted.generation, 1)

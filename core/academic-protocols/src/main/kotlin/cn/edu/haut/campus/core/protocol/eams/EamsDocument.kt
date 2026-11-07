@@ -74,7 +74,7 @@ internal object EamsDocument {
     }
 
     fun looksLikeLoginPage(html: String): Boolean =
-        html.contains("type=\"password\"", ignoreCase = true)
+        scanTags(html).any { !it.closing && it.name == "input" && attr(it.raw, "type").equals("password", ignoreCase = true) }
 
     private fun parseTable(id: String?, inner: String): Table {
         val rows = ArrayList<List<String>>()

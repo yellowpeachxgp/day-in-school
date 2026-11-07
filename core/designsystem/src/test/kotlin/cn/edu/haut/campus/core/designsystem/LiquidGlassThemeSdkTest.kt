@@ -7,6 +7,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiquidGlassThemeSdkTest {
+    @Test
+    fun backdropCacheSeparatesLoadingReadyReplacementAndMutatedBitmap() {
+        fun key(identity: Int?, generation: Int?) = LiquidGlassOptics.frostedBackdropCacheKey(
+            "same/path", identity, generation, false, 1, 2, 10, 20)
+        val loading = key(null, null)
+        val ready = key(100, 1)
+        org.junit.Assert.assertNotEquals(loading, ready)
+        org.junit.Assert.assertNotEquals(ready, key(200, 2))
+        org.junit.Assert.assertNotEquals(ready, key(100, 3))
+        assertEquals(ready, key(100, 1))
+    }
+
 
     @Test
     fun uiDesignStyleResolvesFromKeyWithSafeFallback() {

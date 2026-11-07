@@ -22,7 +22,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -134,6 +134,12 @@ object LiquidGlassOptics {
     const val LISSE_CORNER_SMOOTHING = 0.8125f
 
     private val frostedBackdropCache = ConcurrentHashMap<String, ImageBitmap>()
+
+    internal fun frostedBackdropCacheKey(
+        wallpaperKey: String?, bitmapIdentity: Int?, bitmapGeneration: Int?, isDark: Boolean,
+        primaryArgb: Int, secondaryArgb: Int, quantAlpha: Int, quantBlur: Int
+    ): String = "${wallpaperKey ?: "ambient"}|$bitmapIdentity|$bitmapGeneration|$isDark|$primaryArgb|$secondaryArgb|$quantAlpha|$quantBlur"
+
 
     /**
      * Exact port of `optics.ts` `edgeDisplacement(distance, amount, inverseHeight)`:
@@ -302,7 +308,10 @@ object LiquidGlassOptics {
     ): ImageBitmap {
         val quantAlpha = (backdropAlpha * 20f).roundToInt()
         val quantBlur = (blurDp * 2f).roundToInt()
-        val cacheKey = "${wallpaperKey ?: "ambient"}|$isDark|${primaryColor.toArgb()}|${secondaryColor.toArgb()}|$quantAlpha|$quantBlur"
+        val sourceBitmap = rawWallpaper?.asAndroidBitmap()
+        val cacheKey = frostedBackdropCacheKey(wallpaperKey,
+            sourceBitmap?.let(System::identityHashCode), sourceBitmap?.generationId,
+            isDark, primaryColor.toArgb(), secondaryColor.toArgb(), quantAlpha, quantBlur)
         frostedBackdropCache[cacheKey]?.let { return it }
 
         val w = 240
@@ -830,7 +839,7 @@ fun Modifier.liquidGlassEffect(
 @Composable
 fun LiquidGlassSwitch(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
@@ -867,13 +876,14 @@ fun LiquidGlassSwitch(
             .height(24.dp)
             .clip(CircleShape)
             .background(trackColor)
-            .clickable(
+            .then(if (onCheckedChange != null) Modifier.toggleable(
+                value = checked,
                 interactionSource = interactionSource,
                 indication = null,
                 enabled = enabled,
                 role = Role.Switch,
-                onClick = { onCheckedChange(!checked) }
-            )
+                onValueChange = onCheckedChange
+            ) else Modifier)
             .padding(2.dp),
         contentAlignment = Alignment.CenterStart
     ) {

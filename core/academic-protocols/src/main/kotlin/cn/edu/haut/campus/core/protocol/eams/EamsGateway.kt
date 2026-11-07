@@ -131,9 +131,11 @@ class EamsGateway(
         val url = url(session, config.timetablePath, "termId" to term.sourceId)
         val tables = EamsDocument.tables(fetchPage(session, url).body)
         val table = tables.firstOrNull { it.id == config.timetableTableId }
-            ?: tables.firstOrNull { it.header.isNotEmpty() }
             ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "EAMS 课表页没有可识别的表格")
+        if (!table.header.containsAll(listOf("课程名", "星期", "节次", "周次"))) throw TransportFailure(AcademicError.PAGE_CHANGED, "EAMS 缺少必需课表表头")
         val courses = groupCourses(table)
+        if (courses.any { it.meetings.isEmpty() || it.meetings.any { meeting -> meeting.weeks.isEmpty() } })
+            throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表含无法确认的时段或周次")
         if (courses.isEmpty()) {
             return@guarded AcademicResult.Empty("EAMS 在该学期没有返回课程", authoritative = true)
         }
@@ -157,7 +159,7 @@ class EamsGateway(
                 ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "EAMS 成绩 JSON 缺少 data 字段")
             val total = data.obj("total")?.intOrNull()
             PagedJsonReader.Page(
-                items = data.arr("records").orEmpty(),
+                items = data.arr("records") ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "EAMS 成绩缺少 records 列表"),
                 total = total,
                 // 没有总条数时按单页处理，避免拿着不存在的下一页无限翻页。
                 totalPages = if (total == null) 1 else null,
@@ -166,7 +168,7 @@ class EamsGateway(
             )
         }
         val grades = paged.items.mapNotNull { item ->
-            val name = item.str("courseName")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.str("courseName")?.takeIf { it.isNotBlank() } ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             RemoteGrade(
                 sourceId = item.str("id")?.takeIf { it.isNotBlank() }
                     ?: listOfNotNull(term?.sourceId, item.str("courseCode")).joinToString("#").ifBlank { name },
@@ -193,9 +195,9 @@ class EamsGateway(
         } else {
             url(session, config.examJsonPath, "termId" to term.sourceId)
         }
-        val items = parseJson(fetchPage(session, url).body).obj("data")?.arr("items").orEmpty()
+        val items = parseJson(fetchPage(session, url).body).obj("data")?.arr("items") ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "EAMS 考试缺少 items 列表")
         val exams = items.mapNotNull { item ->
-            val name = item.str("courseName")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.str("courseName")?.takeIf { it.isNotBlank() } ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             RemoteExam(
                 sourceId = item.str("id")?.takeIf { it.isNotBlank() } ?: name,
                 courseName = name,
@@ -273,10 +275,10 @@ class EamsGateway(
         val credits = HashMap<String, java.math.BigDecimal>()
         val teachers = HashMap<String, String>()
         for (row in table.rows) {
-            val name = table.cell(row, "课程名") ?: continue
+            val name = table.cell(row, "课程名") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = table.cell(row, "课程号") ?: name
-            val weekday = EamsParsers.weekday(table.cell(row, "星期")) ?: continue
-            val sections = EamsParsers.sections(table.cell(row, "节次")) ?: continue
+            val weekday = EamsParsers.weekday(table.cell(row, "星期")) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
+            val sections = EamsParsers.sections(table.cell(row, "节次")) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             names[code] = name
             EamsParsers.decimal(table.cell(row, "学分"))?.let { credits[code] = it }
             table.cell(row, "教师")?.let { teachers[code] = it }

@@ -97,7 +97,7 @@ internal object ChengfangHtml {
 
     /** 会话失效的页面证据：仍然出现密码输入框，说明被踢回了登录页。 */
     fun looksLikeLoginPage(html: String): Boolean =
-        html.contains("type=\"password\"", ignoreCase = true)
+        scanTags(html).any { !it.closing && it.name == "input" && attr(it.raw, "type").equals("password", ignoreCase = true) }
 
     /** 把一行表格转换成 JSON 对象，键取表头名，便于复用分页去重与规范化。 */
     fun row(header: List<String>, cells: List<String>): JsonValue.Obj {

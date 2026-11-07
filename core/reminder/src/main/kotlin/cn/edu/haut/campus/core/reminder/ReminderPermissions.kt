@@ -20,7 +20,7 @@ data class ReminderPermissionSnapshot(
     val examChannelEnabled: Boolean
 ) {
     val canPostNotifications: Boolean
-        get() = notificationPermissionGranted && systemNotificationsEnabled && classChannelEnabled
+        get() = notificationPermissionGranted && systemNotificationsEnabled
 }
 
 object ReminderPermissions {

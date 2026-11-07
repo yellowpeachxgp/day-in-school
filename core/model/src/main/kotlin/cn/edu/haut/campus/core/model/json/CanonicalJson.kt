@@ -96,6 +96,14 @@ object Json {
     private fun normalizeNumber(literal: String): String {
         if (literal.length > MAX_NUMBER_LENGTH) throw JsonParseException("数字超出允许长度")
         val value = BigDecimal(literal).stripTrailingZeros()
+        // Bound expansion before toPlainString / toBigInteger allocate it.
+        val signLength = if (value.signum() < 0) 1L else 0L
+        val estimatedLength = signLength + if (value.scale() <= 0) {
+            value.precision().toLong() - value.scale().toLong()
+        } else {
+            maxOf(value.precision().toLong(), value.scale().toLong() + 1L) + 1L
+        }
+        if (estimatedLength > MAX_NUMBER_LENGTH) throw JsonParseException("数字归一化后超出允许长度")
         if (value.scale() <= 0) {
             val plain = value.toBigInteger().toString()
             if (plain.length > MAX_NUMBER_LENGTH) throw JsonParseException("数字归一化后超出允许长度")

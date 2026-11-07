@@ -373,8 +373,10 @@ fun XPeachCloudAccountScreen(
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
-                                        repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢（测试版）任务"
+                                        runCatching { repository.unlinkXpeachCloudAccountAndRevokeCloudPlans() }.fold(
+                                            onSuccess = { feedbackBanner = "已撤回云端凭据授权并退出账号；执行中或结果不确定的预约请到学校核对" },
+                                            onFailure = { feedbackBanner = "未能确认撤回全部云端授权，已保留登录以便重试：${it.message.orEmpty()}" }
+                                        )
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
@@ -407,15 +409,16 @@ fun XPeachCloudAccountScreen(
                                 "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
                                 "PRECHECK_OK" -> "已完成登录保活，等待开抢"
                                 "ARMED" -> "定时任务待命（未命中不消耗配额）"
-                                "CANCELLED" -> "已取消（未消耗配额）"
+                                "CANCELLED" -> "已取消，费用以订单为准"
                                 else -> plan.lastDiagnosticMessage ?: "处理中"
                             }
                             val payLabel = when (plan.paymentState) {
-                                "PAID" -> "已消耗配额 (${plan.priceMicropeach / 10_000.0} 🍑)"
+                                "PAID" -> if (plan.priceMicropeach >= 0) "已消耗配额 (${plan.priceMicropeach / 10_000.0} 🍑)" else "已付款，金额待核实"
                                 "REFUNDED" -> "已退回配额 🍑"
-                                "DEBIT_PENDING" -> "命中后消耗 1 🍑 测试配额"
+                                "DEBIT_PENDING" -> if (plan.priceMicropeach >= 0) "待扣 ${plan.priceMicropeach / 10_000.0} 🍑" else "费用待核实"
                                 "PAYMENT_DUE" -> "内测配额不足"
-                                else -> "不消耗配额"
+                                "NOT_REQUIRED" -> "无需付费"
+                                else -> "付款状态待核实"
                             }
                             val areaText = plan.preferredAreaName.trim().takeIf {
                                 it.isNotEmpty() && !it.equals("null", ignoreCase = true)

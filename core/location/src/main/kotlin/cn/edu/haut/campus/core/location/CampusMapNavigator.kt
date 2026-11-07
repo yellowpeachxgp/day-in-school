@@ -452,6 +452,7 @@ object CampusMapNavigator {
 
         @Synchronized
         fun dispatchLocation(incoming: Location, forceEmit: Boolean = false) {
+            if (System.currentTimeMillis() - incoming.time !in 0..60_000L) return
             val prev = latestFix
             if (prev != null && !forceEmit) {
                 // 避免旧的缓存坐标覆盖更新的实时坐标
@@ -500,6 +501,7 @@ object CampusMapNavigator {
             .mapNotNull { provider ->
                 runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
             }
+            .filter { System.currentTimeMillis() - it.time in 0..60_000L }
             .maxByOrNull { it.time }
             ?.let { dispatchLocation(it, forceEmit = true) }
 
@@ -587,7 +589,8 @@ object CampusMapNavigator {
                     .mapNotNull { provider ->
                         runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
                     }
-                    .maxByOrNull { it.time }
+                    .filter { System.currentTimeMillis() - it.time in 0..60_000L }
+            .maxByOrNull { it.time }
                     ?.let { dispatchLocation(it) }
 
                 delay(2_000L)
@@ -624,7 +627,7 @@ object CampusMapNavigator {
             accuracyMeters = if (hasAccuracy()) accuracy else 15f,
             bearingDegrees = if (hasBearing()) bearing else fallbackBearing,
             provider = provider ?: "fused",
-            timestampMillis = maxOf(time, emittedAtMs),
+            timestampMillis = time,
             isInsideLianhuajieCampus = distToCampus <= CAMPUS_GEOFENCE_RADIUS_METERS,
             distanceToCampusCenterMeters = distToCampus,
             isInsideSongshanluCampus = distToSongshanlu <= SONGSHANLU_GEOFENCE_RADIUS_METERS,
@@ -645,7 +648,8 @@ object CampusMapNavigator {
         val isSongshanluTarget = destinationBuilding.campusId.contains("songshan", ignoreCase = true)
         val isLianhuajieTarget = destinationBuilding.campusId.isBlank() ||
             destinationBuilding.campusId.contains("lianhuajie", ignoreCase = true)
-        val useLiveGps = userLocation != null && when {
+        val useLiveGps = userLocation != null &&
+            System.currentTimeMillis() - userLocation.timestampMillis in 0..60_000L && when {
             isSongshanluTarget -> userLocation.isInsideSongshanluCampus
             isLianhuajieTarget -> userLocation.isInsideLianhuajieCampus
             else -> calculateDistanceMeters(

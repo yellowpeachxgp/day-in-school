@@ -548,7 +548,7 @@ fun GradesScreen(
 
                 // 目标绩点与新修学分测算
                 AnimatedVisibility(
-                    visible = showSimulatorSection,
+                    visible = showSimulatorSection && !privacyMasked,
                     enter = expandVertically(tween(220)) + fadeIn(tween(180)),
                     exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
                 ) {
@@ -569,7 +569,7 @@ fun GradesScreen(
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                text = String.format(java.util.Locale.US, "%.2f", projectedGpa),
+                                text = if (privacyMasked) "∗∗" else String.format(java.util.Locale.US, "%.2f", projectedGpa),
                                 style = MaterialTheme.typography.titleLarge,
                                 color = XPeachTheme.readablePrimary,
                                 fontWeight = FontWeight.Bold
@@ -975,7 +975,7 @@ private fun TermTrendChart(
                 .height(88.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            if (values.isEmpty()) return@Canvas
+            if (privacyMasked || values.isEmpty()) return@Canvas
             val stepX = if (values.size > 1) size.width / (values.size - 1) else size.width / 2f
             val path = Path()
 

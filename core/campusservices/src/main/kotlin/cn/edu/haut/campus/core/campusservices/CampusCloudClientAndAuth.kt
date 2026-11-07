@@ -1,5 +1,7 @@
 package cn.edu.haut.campus.core.campusservices
 
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
+
 import android.net.Uri
 import cn.edu.haut.campus.core.model.AntiLostTagItem
 import cn.edu.haut.campus.core.model.AntiLostTagReport
@@ -68,7 +70,8 @@ data class XpeachCloudAccountProfile(
     val accessToken: String = "",
     val refreshToken: String = "",
     val group: String = "默认分组",
-    val affCode: String = ""
+    val affCode: String = "",
+    val cloudApiBaseUrl: String = NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
 ) {
     val peachBalance: Double
         get() = peachBalanceMicropeach.toDouble() / 10_000.0
@@ -162,6 +165,14 @@ data class MobileAuthTransactionStart(
     val pkce: PkcePair,
     val expiresAtEpochMillis: Long
 )
+
+data class CloudBookingPriceQuote(val version: String, val micropeach: Long) {
+    init {
+        require(version.isNotBlank()) { "云端价格版本缺失" }
+        require(micropeach >= 0) { "云端价格无效" }
+    }
+    val displayPeach: String get() = java.math.BigDecimal.valueOf(micropeach, 4).stripTrailingZeros().toPlainString()
+}
 
 object CampusCloudOidcHelper {
     const val DEFAULT_CLOUD_BASE_URL = "https://campus.yellowpeachxgp.com"
@@ -334,6 +345,7 @@ object CampusCloudOidcHelper {
 
         return NativeOidcLoginResult.Success(
             XpeachCloudAccountProfile(
+                cloudApiBaseUrl = cleanBase,
                 cloudUserId = cloudUserId,
                 ssoIssuer = ssoIssuer,
                 ssoSubject = ssoSubject,
@@ -433,6 +445,7 @@ object CampusCloudOidcHelper {
         val storedBalanceUnits = kotlin.math.round(peachBalance * 10_000.0).toLong()
 
         return XpeachCloudAccountProfile(
+            cloudApiBaseUrl = cleanBase,
             cloudUserId = cloudUserId,
             ssoIssuer = ssoIssuer,
             ssoSubject = ssoSubject,
@@ -534,6 +547,29 @@ object CampusCloudOidcHelper {
     /**
      * 将云端托管预约计划同步提交至 https://campus.yellowpeachxgp.com/api/v1/reservation-plans
      */
+    /** Revoke delegated school bindings before the device discards its retry credentials. */
+    fun revokeCloudSchoolBindings(accessToken: String, cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL) {
+        check(accessToken.isNotBlank()) { "请重新登录后撤回云端授权" }
+        val base = cloudBaseUrl.trimEnd('/')
+        val response = JSONObject(httpJsonRequest("GET", "$base/api/v1/school-bindings", null, accessToken, failOnError = true))
+        val bindings = response.getJSONObject("data").getJSONArray("bindings")
+        for (index in 0 until bindings.length()) {
+            val id = bindings.getJSONObject(index).getString("id")
+            check(id.matches(Regex("[A-Za-z0-9_-]+"))) { "云端绑定标识无效" }
+            val result = JSONObject(httpJsonRequest("DELETE", "$base/api/v1/school-bindings/$id", null, accessToken, failOnError = true))
+            check(result.optString("code") == "SCHOOL_BINDING_REVOKED") { "云端尚未确认撤回授权，请重试" }
+        }
+    }
+
+    fun fetchCloudBookingPrice(cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL): CloudBookingPriceQuote {
+        val response = JSONObject(httpJsonRequest("GET", "${cloudBaseUrl.trimEnd('/')}/api/v1/pricing/library-booking", null, null, failOnError = true))
+        val data = response.optJSONObject("data") ?: error("无法获取云端价格，请稍后重试")
+        check(data.optString("charge_policy") == "POST_CONFIRMATION_ONLY") { "云端计费规则已变更，暂不支持创建任务" }
+        val amount = data.get("cloud_hosted_mode_micropeach").toString().toLongOrNull()
+            ?: error("云端价格格式无效")
+        return CloudBookingPriceQuote(data.getString("price_version"), amount)
+    }
+
     fun syncCloudHostedReservationPlan(
         accessToken: String,
         studentNo: String,
@@ -544,10 +580,12 @@ object CampusCloudOidcHelper {
         preferredSeatLabel: String,
         planIdempotencyKey: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
-        repeatDays: Int = 1
-    ): String? {
-        if (accessToken.isBlank()) return null
-        return runCatching {
+        repeatDays: Int = 1,
+        acceptedPrice: CloudBookingPriceQuote,
+        allowAlternativeSeat: Boolean = false
+    ): String {
+        check(accessToken.isNotBlank()) { "云端会话已过期，请重新登录" }
+        return run {
             val cleanBase = cloudBaseUrl.trimEnd('/')
             val bindInitRaw = httpJsonRequest(
                 method = "POST",
@@ -556,9 +594,11 @@ object CampusCloudOidcHelper {
                     .put("school_id", "haut")
                     .put("student_no", studentNo.trim())
                     .toString(),
-                bearerToken = accessToken
+                bearerToken = accessToken,
+                failOnError = true
             )
             val bindId = JSONObject(bindInitRaw).optJSONObject("data")?.optString("id").orEmpty()
+            check(bindId.isNotBlank()) { "绑定学校账号失败，未创建云端任务" }
             if (bindId.isNotEmpty()) {
                 httpJsonRequest(
                     method = "POST",
@@ -567,16 +607,19 @@ object CampusCloudOidcHelper {
                         .put("credential_kind", "DELEGATED_SESSION_BUNDLE")
                         .put("delegated_secret", delegatedSecret.ifBlank { "delegated_android_session" })
                         .toString(),
-                    bearerToken = accessToken
+                    bearerToken = accessToken,
+                failOnError = true
                 )
             }
             val consentRaw = httpJsonRequest(
                 method = "POST",
                 url = "$cleanBase/api/v1/me/consents",
                 bodyJson = JSONObject().put("school_id", "haut").toString(),
-                bearerToken = accessToken
+                bearerToken = accessToken,
+                failOnError = true
             )
             val consentId = JSONObject(consentRaw).optJSONObject("data")?.optString("id").orEmpty()
+            check(consentId.isNotBlank()) { "云端授权失败，未创建任务" }
             val localTime = targetExecuteAtIso.trim().let { raw ->
                 when {
                     raw.matches(Regex("^\\d{2}:\\d{2}:\\d{2}$")) -> raw
@@ -602,6 +645,9 @@ object CampusCloudOidcHelper {
 
             val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
             val planBody = JSONObject()
+                .put("allow_alternative_seat", allowAlternativeSeat)
+                .put("accepted_price_version", acceptedPrice.version)
+                .put("accepted_price_micropeach", acceptedPrice.micropeach)
                 .put("school_binding_id", bindId)
                 .put("consent_id", consentId)
                 .put("area_code", preferredAreaName)
@@ -620,12 +666,13 @@ object CampusCloudOidcHelper {
                 url = "$cleanBase/api/v1/reservation-plans",
                 bodyJson = planBody,
                 bearerToken = accessToken,
-                extraHeaders = mapOf("Idempotency-Key" to planIdempotencyKey)
+                extraHeaders = mapOf("Idempotency-Key" to planIdempotencyKey),
+                failOnError = true
             )
             val planData = JSONObject(planRaw).optJSONObject("data")
             planData?.optString("job_id")?.takeIf { it.isNotBlank() }
-                ?: planData?.optString("plan_id")
-        }.getOrNull()
+                ?: error("云端未确认任务创建（可能价格已变更或授权失效），请同步任务列表核对后重试")
+        }
     }
 
     /**
@@ -861,8 +908,8 @@ object CampusCloudOidcHelper {
                         CloudSyncedOrderDto(
                             orderId = o.optCleanString("id"),
                             jobId = o.optCleanString("job_id"),
-                            pricePeach = o.optDouble("price_peach", 0.1),
-                            paymentState = o.optCleanString("payment_state", "PAID"),
+                            pricePeach = o.optDouble("price_peach", Double.NaN),
+                            paymentState = o.optCleanString("payment_state", "UNKNOWN"),
                             paidAtIso = o.optNullableCleanString("paid_at"),
                             createdAtIso = o.optCleanString("created_at")
                         )
@@ -1170,7 +1217,8 @@ object CampusCloudOidcHelper {
         url: String,
         bodyJson: String?,
         bearerToken: String?,
-        extraHeaders: Map<String, String> = emptyMap()
+        extraHeaders: Map<String, String> = emptyMap(),
+        failOnError: Boolean = false
     ): String {
         val validatedUrl = validateAllowedCloudUrl(url)
         val conn = (validatedUrl.openConnection() as HttpURLConnection).apply {
@@ -1214,6 +1262,10 @@ object CampusCloudOidcHelper {
                 }
                 out.toString(StandardCharsets.UTF_8.name())
             }.orEmpty()
+            if (failOnError && code !in 200..299) {
+                // Do not echo upstream bodies: they can contain account or credential details.
+                throw IllegalStateException(if (code == 409) "云端价格或任务状态已变更，请同步核对并重新确认" else "云端请求失败 (HTTP $code)，请同步任务列表核对；未确认创建成功")
+            }
             return text
         } finally {
             conn.disconnect()
@@ -1235,7 +1287,8 @@ object CampusCloudOidcHelper {
             method = "GET",
             url = "$cleanBase/api/v1/moments/snapshot",
             bodyJson = null,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1266,7 +1319,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1290,7 +1344,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/comments",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1307,7 +1362,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/action",
             bodyJson = JSONObject().put("action", action).toString(),
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         JSONObject(raw).optBoolean("ok", false)
     }.getOrDefault(false)
@@ -1336,7 +1392,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/books",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1353,7 +1410,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/books/${Uri.encode(bookId)}/action",
             bodyJson = JSONObject().put("action", action).toString(),
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         JSONObject(raw).optBoolean("ok", false)
     }.getOrDefault(false)
@@ -1377,7 +1435,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/anti-lost-tags",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1403,7 +1462,8 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/anti-lost-tags/${Uri.encode(tagCode.trim().uppercase())}/report-found",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = null,
+            failOnError = true
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -1605,7 +1665,7 @@ object CampusCloudOidcHelper {
     private fun parseAntiLostTagJson(obj: JSONObject): AntiLostTagItem? {
         val tagCode = obj.optCleanString("tag_code").uppercase()
         val itemName = obj.optCleanString("item_name")
-        if (tagCode.isEmpty() || itemName.isEmpty()) return null
+        if (!tagCode.matches(Regex("[A-Z0-9-]{4,80}")) || itemName.isEmpty()) return null
         val repArr = obj.optJSONArray("reports")
         val reports = buildList {
             if (repArr != null) {
@@ -1644,30 +1704,30 @@ object CampusCloudOidcHelper {
 
     private fun parseMomentsSnapshotJson(data: JSONObject): CampusMomentsSnapshot? {
         return runCatching {
-            val postsArr = data.optJSONArray("posts")
+            val postsArr = requireNotNull(data.optJSONArray("posts")) { "Missing moments posts" }
             val parsedPosts = buildList {
                 if (postsArr != null) {
                     for (i in 0 until postsArr.length()) {
-                        val pObj = postsArr.optJSONObject(i) ?: continue
-                        parseMomentsPostJson(pObj)?.let { add(it) }
+                        val pObj = requireNotNull(postsArr.optJSONObject(i))
+                        add(requireNotNull(parseMomentsPostJson(pObj)))
                     }
                 }
             }
-            val booksArr = data.optJSONArray("book_listings")
+            val booksArr = requireNotNull(data.optJSONArray("book_listings")) { "Missing moments book listings" }
             val parsedBooks = buildList {
                 if (booksArr != null) {
                     for (i in 0 until booksArr.length()) {
-                        val bObj = booksArr.optJSONObject(i) ?: continue
-                        parseMomentsBookJson(bObj)?.let { add(it) }
+                        val bObj = requireNotNull(booksArr.optJSONObject(i))
+                        add(requireNotNull(parseMomentsBookJson(bObj)))
                     }
                 }
             }
-            val tagsArr = data.optJSONArray("anti_lost_tags")
+            val tagsArr = requireNotNull(data.optJSONArray("anti_lost_tags")) { "Missing moments tags" }
             val parsedTags = buildList {
                 if (tagsArr != null) {
                     for (i in 0 until tagsArr.length()) {
-                        val tObj = tagsArr.optJSONObject(i) ?: continue
-                        parseAntiLostTagJson(tObj)?.let { add(it) }
+                        val tObj = requireNotNull(tagsArr.optJSONObject(i))
+                        add(requireNotNull(parseAntiLostTagJson(tObj)))
                     }
                 }
             }
@@ -1695,9 +1755,9 @@ object CampusCloudOidcHelper {
             }
             CampusMomentsSnapshot(
                 updatedAt = data.optCleanString("updated_at"),
-                posts = parsedPosts.ifEmpty { PresetCampusMomentsCatalog.defaultPosts },
-                bookListings = parsedBooks.ifEmpty { PresetCampusMomentsCatalog.defaultBookListings },
-                antiLostTags = parsedTags.ifEmpty { PresetCampusMomentsCatalog.defaultAntiLostTags },
+                posts = parsedPosts,
+                bookListings = parsedBooks,
+                antiLostTags = parsedTags,
                 isbnCatalog = parsedIsbn.ifEmpty { PresetCampusMomentsCatalog.defaultIsbnCatalog }
             )
         }.getOrNull()

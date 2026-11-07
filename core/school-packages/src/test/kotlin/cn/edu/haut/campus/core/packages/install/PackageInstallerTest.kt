@@ -249,6 +249,9 @@ class PackageInstallerTest {
         val withoutConsent = installer.install(request(signed))
         assertInstallRejected(PackageError.PERMISSION_REAUTHORIZATION_REQUIRED, withoutConsent)
 
+        val emptyConsent = installer.install(request(signed, consent = PermissionSet.EMPTY))
+        assertInstallRejected(PackageError.PERMISSION_REAUTHORIZATION_REQUIRED, emptyConsent)
+
         val reauthorized = installer.install(request(signed, consent = consentOf(signed)))
         assertTrue("UNVERIFIED：重新授权后必须可安装", reauthorized is InstallOutcome.Installed)
         assertTrue(

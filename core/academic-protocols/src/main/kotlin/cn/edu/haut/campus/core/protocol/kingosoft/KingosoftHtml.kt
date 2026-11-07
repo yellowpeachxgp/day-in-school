@@ -97,7 +97,7 @@ internal object KingosoftHtml {
     }
 
     fun looksLikeLoginPage(html: String): Boolean =
-        html.contains("type=\"password\"", ignoreCase = true)
+        scanTags(html).any { !it.closing && it.name == "input" && attr(it.raw, "type").equals("password", ignoreCase = true) }
 
     fun row(header: List<String>, cells: List<String>): JsonValue.Obj {
         val fields = LinkedHashMap<String, JsonValue>()

@@ -143,8 +143,8 @@ fun EmptyClassroomScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "空教室查询",
-            subtitle = "莲花街校区 · 第 $currentTeachingWeek 周 · 点击教室可直接导航",
+            title = "教室参考",
+            subtitle = "仅基于个人课表，非全校占用数据；教室是否空闲待核实",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -242,7 +242,7 @@ fun EmptyClassroomScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusDotText(
-                            text = "${freeRooms.size}/${candidateRooms.size} 空闲",
+                            text = "${freeRooms.size}/${candidateRooms.size} 个人课表未占用",
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }
@@ -277,7 +277,7 @@ fun EmptyClassroomScreen(
                                 )
                                 Icon(
                                     imageVector = Icons.Default.Navigation,
-                                    contentDescription = "导航去自习",
+                                    contentDescription = "导航并现场核实",
                                     tint = XPeachTheme.readablePrimary,
                                     modifier = Modifier.size(13.dp)
                                 )

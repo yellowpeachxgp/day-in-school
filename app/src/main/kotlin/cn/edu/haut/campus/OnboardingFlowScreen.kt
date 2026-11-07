@@ -1508,14 +1508,17 @@ private fun OnboardingAcademicDataSetupStep(
                     focusManager.clearFocus()
                     scope.launch {
                         val plainPwd = passwordInput
+                        val loginStudentId = studentIdInput.trim()
+                        val loginXnm = selectedXnm
+                        val loginXqm = selectedXqm
                         isSyncing = true
                         isErrorStatus = false
                         syncStatusMessage = "正在同步课表、考试与成绩..."
                         val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                            studentId = studentIdInput.trim(),
+                            studentId = loginStudentId,
                             passwordPlain = plainPwd,
-                            xnm = selectedXnm,
-                            xqm = selectedXqm,
+                            xnm = loginXnm,
+                            xqm = loginXqm,
                         )
                         passwordInput = ""
                         isSyncing = false
@@ -1531,10 +1534,10 @@ private fun OnboardingAcademicDataSetupStep(
                             }
                             val saved = runCatching {
                                 repository.saveAuthorizedSyncCredentials(
-                                    studentIdInput.trim(),
+                                    loginStudentId,
                                     plainPwd,
-                                    selectedXnm,
-                                    selectedXqm,
+                                    loginXnm,
+                                    loginXqm,
                                 )
                             }
                             repository.setAutoSyncEnabled(saved.isSuccess)

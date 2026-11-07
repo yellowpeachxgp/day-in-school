@@ -83,7 +83,8 @@ data class AggregatedDishRating(
     val totalReviewCount: Int,
     val myReview: CanteenDishReview?,
     val tags: List<String>,
-    val displayComment: String
+    val displayComment: String,
+    val hasPresetRating: Boolean = false
 ) {
     val isAvoidedByUser: Boolean
         get() = (myReview?.stars ?: 5) <= 2
@@ -556,10 +557,11 @@ object CampusDiningRecommender {
                 dishName = item.dishName,
                 priceYuan = price,
                 averageStars = (avg * 10f).roundToInt() / 10f,
-                totalReviewCount = item.baseReviewCount + matchingReviews.size,
+                totalReviewCount = matchingReviews.size,
                 myReview = latestMine,
                 tags = mergedTags,
-                displayComment = comment
+                displayComment = if (latestMine?.comment.isNullOrBlank()) "预设示例：$comment" else comment,
+                hasPresetRating = true
             )
         }
 
@@ -762,7 +764,7 @@ object CampusDiningRecommender {
                 userReviews = userReviews
             )
             val primary = candidates.first()
-            val dishesText = primary.recommendedDishes.take(2).joinToString(" / ")
+            val dishesText = primary.recommendedDishes.take(2).joinToString(" / ").ifBlank { "当前无符合偏好的菜品，请自行选择" }
             ClassEndMealRecommendation(
                 block = null,
                 mealSlot = slot,
@@ -770,7 +772,7 @@ object CampusDiningRecommender {
                 isWithinOneHourBeforeEnd = false,
                 primaryCandidate = primary,
                 allCandidates = candidates,
-                notificationTitle = "${slot.label}推荐 · ${primary.profile.name} ★${primary.averageStars}",
+                notificationTitle = "${slot.label}推荐 · ${primary.profile.name} 参考★${primary.averageStars}",
                 notificationBody = "${primary.profile.areaLabel} · 推荐：$dishesText"
             )
         }
@@ -801,13 +803,13 @@ object CampusDiningRecommender {
         val primary = candidates.first()
         val secondary = candidates.getOrNull(1)
         val walkText = primary.walkMinutes?.let { "步行约 ${it} 分钟" } ?: primary.profile.areaLabel
-        val dishesText = primary.recommendedDishes.take(2).joinToString(" / ")
+        val dishesText = primary.recommendedDishes.take(2).joinToString(" / ").ifBlank { "当前无符合偏好的菜品，请自行选择" }
         val backupText = secondary?.let { "（备选：${it.profile.shortName}）" }.orEmpty()
 
         val title = if (minsLeft in 1..75) {
-            "距下课还有 ${minsLeft} 分钟 · 推荐去${primary.profile.shortName} ★${primary.averageStars}"
+            "距下课还有 ${minsLeft} 分钟 · 推荐去${primary.profile.shortName} 参考★${primary.averageStars}"
         } else {
-            "下课就餐推荐 · ${primary.profile.shortName} ★${primary.averageStars}"
+            "下课就餐推荐 · ${primary.profile.shortName} 参考★${primary.averageStars}"
         }
         val roomLabel = building?.shortName ?: block.classroomText.ifBlank { "当前教室" }
         val body = "当前在 $roomLabel，$walkText · 推荐：$dishesText$backupText"
@@ -884,7 +886,14 @@ object CampusDiningRecommender {
             val fastTurnaroundBonus = if (hasNextClassSoon && profile.buildingId == "b_canteen_small") 25 else 0
             val rotationBonus = abs((daySeed + idx * 17) % 18)
 
-            val hasUserFavorite = canteenDishes.any { it.isFavoritedByUser }
+            fun availableForMeal(rating: AggregatedDishRating): Boolean {
+                val catalog = DEFAULT_DISH_CATALOG.firstOrNull {
+                    it.canteenBuildingId == rating.canteenBuildingId && it.dishName == rating.dishName
+                }
+                // Custom personal dishes have no catalog availability restriction.
+                return catalog == null || mealSlot in catalog.mealSlots
+            }
+            val hasUserFavorite = canteenDishes.any { it.isFavoritedByUser && availableForMeal(it) }
             val reasonTag = when {
                 hasUserFavorite && walkMinutes != null -> "含你打高分的常吃菜 · 步行约 ${walkMinutes} 分钟"
                 isNearbyTeaching && walkMinutes != null -> "距上课教学楼最近 · 步行约 ${walkMinutes} 分钟"
@@ -901,11 +910,13 @@ object CampusDiningRecommender {
             }
             val avoidedNames = canteenDishes.filter { it.isAvoidedByUser }.map { it.dishName }.toSet()
             val favoriteDishes = canteenDishes
-                .filter { it.isFavoritedByUser && it.dishName !in avoidedNames }
+                .filter { rating ->
+                    rating.isFavoritedByUser && rating.dishName !in avoidedNames && availableForMeal(rating)
+                }
                 .sortedByDescending { it.myReview?.stars ?: 0 }
                 .map { "${it.dishName} ★${it.averageStars}" }
 
-            val filteredRaw = rawDishes.filter { it !in avoidedNames }.ifEmpty { rawDishes }
+            val filteredRaw = rawDishes.filter { it !in avoidedNames }
             val dishShift = abs(daySeed + shuffleOffset + idx) % filteredRaw.size.coerceAtLeast(1)
             val rotatedRaw = (filteredRaw.drop(dishShift) + filteredRaw.take(dishShift))
                 .map { dName ->

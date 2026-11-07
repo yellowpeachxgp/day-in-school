@@ -209,19 +209,8 @@ object HautLiveAcademicClient {
 
             if (!nextLocation.isNullOrBlank()) throw AcademicReadException("UNTRUSTED_REDIRECT", "学校认证跳转次数过多，请重新登录")
 
-            // 4.1 同步统一身份认证 CASTGC Cookie 到系统 WebView CookieManager，使图书馆预约等校内服务共享持久 SSO
-            runCatching {
-                val castgc = casCookies.cookieValue("CASTGC")
-                if (!castgc.isNullOrBlank()) {
-                    val cm = CookieManager.getInstance()
-                    cm.setAcceptCookie(true)
-                    cm.setCookie(
-                        "https://mapp.haut.edu.cn/cas/",
-                        "CASTGC=$castgc; Path=/cas/; Secure; HttpOnly"
-                    )
-                    cm.flush()
-                }
-            }
+            // This import can outlive its screen/profile. Keep its CAS jar local:
+            // only the repository's lifecycle-locked library login may export WebView cookies.
 
             // 5. 拉取当前选定学期个人课表 JSON 与官方周次校历
             val primaryBody = fetchTermTimetableJsonText(xnm = xnm, xqm = xqm, cookieJar = jwCookies)
@@ -806,6 +795,7 @@ object HautZfsoftParser {
                 val weekday = DayOfWeek.of((cols[2].toIntOrNull() ?: 1).coerceIn(1, 7))
                 val startPeriod = cols[3].toIntOrNull() ?: 1
                 val endPeriod = cols[4].toIntOrNull() ?: startPeriod
+                require(startPeriod in 1..24 && endPeriod in startPeriod..24) { "课程节次超出 1–24 范围" }
                 val weeks = WeeksSetParser.parse(cols[5]).ifEmpty { (1..16).toSet() }
                 val room = cols[6].ifBlank { "待定教室" }
                 val credit = cols.getOrNull(7)?.toBigDecimalOrNull()

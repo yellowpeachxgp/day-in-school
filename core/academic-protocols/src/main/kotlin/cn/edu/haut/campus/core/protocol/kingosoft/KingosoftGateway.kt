@@ -155,6 +155,8 @@ class KingosoftGateway(
         )
         val table = findTable(fetchPage(session, url).body, config.timetableTableId)
         val courses = parseGrid(table)
+        if (courses.any { it.meetings.isEmpty() || it.meetings.any { meeting -> meeting.weeks.isEmpty() } })
+            throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表含无法确认的时段或周次")
         if (courses.isEmpty()) {
             return@guarded AcademicResult.Empty("青果教务在该学期没有返回课程", authoritative = true)
         }
@@ -168,8 +170,9 @@ class KingosoftGateway(
         session: GatewaySession,
         term: RemoteTerm?
     ): AcademicResult<GradeSnapshot> = guarded {
+        val termQuery = termQuery(term)
         val paged = PagedJsonReader.readAll { page ->
-            val url = menuUrl(session, config.gradePath, config.gradeMenu, "page" to page.toString())
+            val url = menuUrl(session, config.gradePath, config.gradeMenu, "page" to page.toString(), *termQuery)
             val body = fetchPage(session, url).body
             val table = findTable(body, config.gradeTableId)
             val pager = parsePager(body)
@@ -183,7 +186,7 @@ class KingosoftGateway(
             )
         }
         val grades = paged.items.mapNotNull { item ->
-            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = item.str("课程代码")
             val serial = item.str("序号")
             RemoteGrade(
@@ -211,11 +214,11 @@ class KingosoftGateway(
         term: RemoteTerm?
     ): AcademicResult<ExamSnapshot> = guarded {
         val table = findTable(
-            fetchPage(session, menuUrl(session, config.examPath, config.examMenu)).body,
+            fetchPage(session, menuUrl(session, config.examPath, config.examMenu, *termQuery(term))).body,
             config.examTableId
         )
         val exams = table.rows.mapNotNull { row ->
-            val name = table.cell(row, "课程名称") ?: return@mapNotNull null
+            val name = table.cell(row, "课程名称") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val text = table.cell(row, "考试时间")
             val date = KingosoftParsers.date(text)
             RemoteExam(
@@ -238,6 +241,13 @@ class KingosoftGateway(
             value = ExamSnapshot(term?.sourceId, exams, SnapshotCompleteness.COMPLETE),
             source = provenance(session)
         )
+    }
+
+    private fun termQuery(term: RemoteTerm?): Array<Pair<String, String>> {
+        if (term == null) return emptyArray()
+        val (year, ordinal) = KingosoftParsers.splitTermId(term.sourceId)
+            ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "青果学期来源 ID 无效")
+        return arrayOf("xn" to year, "xq" to ordinal)
     }
 
     private fun parseTerms(html: String): List<RemoteTerm> {
@@ -273,21 +283,21 @@ class KingosoftGateway(
     }
 
     private fun parseGrid(table: KingosoftHtml.Table): List<RemoteCourse> {
-        if (table.header.isEmpty()) return emptyList()
+        if (table.header.isEmpty()) throw TransportFailure(AcademicError.PAGE_CHANGED, "缺少课表表头")
         val weekdayByColumn = LinkedHashMap<Int, Int>()
         table.header.forEachIndexed { index, cell ->
             if (index == 0) return@forEachIndexed
             KingosoftParsers.weekday(cell)?.let { weekdayByColumn[index] = it }
         }
-        if (weekdayByColumn.isEmpty()) return emptyList()
+        if (weekdayByColumn.isEmpty()) throw TransportFailure(AcademicError.PAGE_CHANGED, "缺少星期表头")
         val grouped = LinkedHashMap<String, MutableList<RemoteMeeting>>()
         val teachers = HashMap<String, String>()
         for (row in table.rows) {
-            val sections = KingosoftParsers.sections(row.getOrNull(0)) ?: continue
+            val sections = KingosoftParsers.sections(row.getOrNull(0)) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             for (entry in weekdayByColumn.entries) {
                 val cell = row.getOrNull(entry.key)?.takeIf { it.isNotBlank() } ?: continue
                 val lines = cell.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                val name = lines.firstOrNull() ?: continue
+                val name = lines.firstOrNull() ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
                 grouped.getOrPut(name) { ArrayList() } += RemoteMeeting(
                     weekday = entry.value,
                     startSection = sections.first,
@@ -343,9 +353,11 @@ class KingosoftGateway(
 
     private fun findTable(html: String, id: String): KingosoftHtml.Table {
         val tables = KingosoftHtml.tables(html)
-        return tables.firstOrNull { it.id == id }
-            ?: tables.firstOrNull { it.header.isNotEmpty() }
+        val table = tables.firstOrNull { it.id == id }
             ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "青果页面结构变化：未找到表格 " + id)
+        val required = if (id == config.timetableTableId) emptyList() else listOf("课程名称")
+        if (!table.header.containsAll(required)) throw TransportFailure(AcademicError.PAGE_CHANGED, "缺少必需表头")
+        return table
     }
 
     private fun KingosoftHtml.Table.cell(row: List<String>, name: String): String? {

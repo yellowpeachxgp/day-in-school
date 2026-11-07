@@ -148,9 +148,11 @@ class ChaoxingGateway(
         val url = url(session, config.timetablePath, "termId" to term.sourceId)
         val tables = ChaoxingHtml.tables(fetchPage(session, url).body)
         val table = tables.firstOrNull { it.id == config.timetableTableId }
-            ?: tables.firstOrNull { it.header.isNotEmpty() }
             ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "超星课表页没有可识别的表格")
+        if (!table.header.containsAll(listOf("课程名称", "上课时间"))) throw TransportFailure(AcademicError.PAGE_CHANGED, "课表缺少必需表头")
         val courses = groupCourses(table)
+        if (courses.any { it.meetings.isEmpty() || it.meetings.any { meeting -> meeting.weeks.isEmpty() } })
+            throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表含无法确认的时段或周次")
         if (courses.isEmpty()) {
             return@guarded AcademicResult.Empty("超星教务在该学期没有返回课程", authoritative = true)
         }
@@ -184,7 +186,7 @@ class ChaoxingGateway(
             )
         }
         val grades = paged.items.mapNotNull { item ->
-            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = item.str("课程编号")
             val serial = item.str("序号")
             RemoteGrade(
@@ -215,7 +217,7 @@ class ChaoxingGateway(
         }
         val table = findTable(fetchPage(session, url).body, config.examTableId)
         val exams = table.rows.mapNotNull { row ->
-            val name = table.cell(row, "课程名称") ?: return@mapNotNull null
+            val name = table.cell(row, "课程名称") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val date = ChaoxingTimeParser.date(table.cell(row, "考试日期"))
             RemoteExam(
                 sourceId = listOfNotNull(table.cell(row, "课程编号"), table.cell(row, "序号"), date?.toString())
@@ -244,12 +246,14 @@ class ChaoxingGateway(
         val names = HashMap<String, String>()
         val teachers = HashMap<String, String>()
         for (row in table.rows) {
-            val name = table.cell(row, "课程名称") ?: continue
+            val name = table.cell(row, "课程名称") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = table.cell(row, "课程编号") ?: name
             names[code] = name
             table.cell(row, "教师")?.let { teachers[code] = it }
             val meetings = grouped.getOrPut(code) { ArrayList() }
-            for (slot in ChaoxingTimeParser.slots(table.cell(row, "上课时间"))) {
+            val slots = ChaoxingTimeParser.slots(table.cell(row, "上课时间"))
+            if (slots.isEmpty()) throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表时段无法解析")
+            for (slot in slots) {
                 meetings += RemoteMeeting(
                     weekday = slot.weekday,
                     startSection = slot.startSection,
@@ -308,9 +312,11 @@ class ChaoxingGateway(
 
     private fun findTable(html: String, id: String): ChaoxingHtml.Table {
         val tables = ChaoxingHtml.tables(html)
-        return tables.firstOrNull { it.id == id }
-            ?: tables.firstOrNull { it.header.isNotEmpty() }
+        val table = tables.firstOrNull { it.id == id }
             ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "超星页面结构变化：未找到表格 " + id)
+        val required = listOf("课程名称")
+        if (!table.header.containsAll(required)) throw TransportFailure(AcademicError.PAGE_CHANGED, "缺少必需表头")
+        return table
     }
 
     private fun url(session: GatewaySession, path: String, vararg query: Pair<String, String>): String {

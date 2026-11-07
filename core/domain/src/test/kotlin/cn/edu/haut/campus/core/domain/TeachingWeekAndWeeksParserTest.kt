@@ -11,6 +11,12 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 
 class TeachingWeekAndWeeksParserTest {
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsHugeRangeBeforeAllocation() { WeeksSetParser.parse("1-2147483647") }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsOutOfBoundSingleWeek() { WeeksSetParser.parse("2147483647") }
+
 
     private val sampleTerm = Term(
         id = "2026-2027-1",

@@ -99,6 +99,8 @@ import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportDiffPreview
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -135,10 +137,20 @@ fun ImporterScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             runCatching {
-                val rawText = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.bufferedReader(Charsets.UTF_8).readText()
-                }.orEmpty()
-                val parsed = TimetableInterchangeAdapter.parse(rawText)
+                val parsed = withContext(Dispatchers.IO) {
+                    val rawText = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = stream.read(buffer)
+                            if (count < 0) break
+                            require(output.size() + count <= 2 * 1024 * 1024) { "课表文件超过 2 MiB，请缩小后重试" }
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray().toString(Charsets.UTF_8)
+                    }.orEmpty()
+                    TimetableInterchangeAdapter.parse(rawText)
+                }
                 val termId = currentTerm?.id ?: AcademicTermResolver.defaultTermId()
                 pendingInterchangeMeta = parsed
                 diffPreview = repository.previewCourseImportDiff(
@@ -323,13 +335,16 @@ fun ImporterScreen(
                                 } else if (!isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank()) {
                                     scope.launch {
                                         val plainPwd = passwordInput
+                                        val loginStudentId = studentIdInput.trim()
+                                        val loginXnm = selectedXnm
+                                        val loginXqm = selectedXqm
                                         isSyncing = true
                                         statusBanner = "正在同步 $selectedTermId…"
                                         val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                                            studentId = studentIdInput,
+                                            studentId = loginStudentId,
                                             passwordPlain = plainPwd,
-                                            xnm = selectedXnm,
-                                            xqm = selectedXqm
+                                            xnm = loginXnm,
+                                            xqm = loginXqm
                                         )
                                         passwordInput = ""
                                         isSyncing = false
@@ -345,7 +360,7 @@ fun ImporterScreen(
                                             val credentialFailure = if (rememberForAutoSync) {
                                                 val saved = runCatching {
                                                     repository.saveAuthorizedSyncCredentials(
-                                                        studentIdInput, plainPwd, selectedXnm, selectedXqm
+                                                        loginStudentId, plainPwd, loginXnm, loginXqm
                                                     )
                                                 }
                                                 repository.setAutoSyncEnabled(saved.isSuccess)
@@ -645,6 +660,8 @@ fun ImporterScreen(
                                     }
                                     Button(
                                         onClick = {
+                                            val webXnm = selectedXnm
+                                            val webXqm = selectedXqm
                                             val js = """
                                                 (function() {
                                                     if (location.hostname !== 'jwglxt.haut.edu.cn') {
@@ -656,13 +673,13 @@ fun ImporterScreen(
                                                             xhr.open('POST', path, false);
                                                             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
                                                             xhr.send(body);
-                                                            return xhr.responseText || '';
+                                                            return xhr.status >= 200 && xhr.status < 300 ? (xhr.responseText || '') : '';
                                                         } catch (e) {
                                                             return '';
                                                         }
                                                     }
-                                                    var kb = postSync('${HautAcademicEndpoints.TIMETABLE_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm&kzlx=ck&xsdm=');
-                                                    var zc = postSync('${HautAcademicEndpoints.TERM_WEEKS_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm');
+                                                    var kb = postSync('${HautAcademicEndpoints.TIMETABLE_API_PATH}', 'xnm=$webXnm&xqm=$webXqm&kzlx=ck&xsdm=');
+                                                    var zc = postSync('${HautAcademicEndpoints.TERM_WEEKS_API_PATH}', 'xnm=$webXnm&xqm=$webXqm');
                                                     var cj = postSync('${HautAcademicEndpoints.GRADES_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=500&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
                                                     var ks = postSync('${HautAcademicEndpoints.EXAMS_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=200&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
                                                     return JSON.stringify({
@@ -690,7 +707,11 @@ fun ImporterScreen(
                                                     val breakdown = runCatching {
                                                         HautZfsoftParser.parseTimetableWithBreakdown(kbJson)
                                                     }.getOrNull()
-                                                    val parsed = breakdown?.allCandidates.orEmpty()
+                                                    if (breakdown == null) {
+                                                        statusBanner = "课表读取失败，已保留原有数据，请重新登录后重试"
+                                                        return@launch
+                                                    }
+                                                    val parsed = breakdown.allCandidates
                                                     val unscheduled = breakdown?.unscheduledCourses.orEmpty()
                                                     val termCal = runCatching {
                                                         HautZfsoftParser.parseTermCalendarJson(zcJson)
@@ -706,7 +727,7 @@ fun ImporterScreen(
 
                                                     if (parsed.isNotEmpty() || unscheduled.isNotEmpty() || gradesList.isNotEmpty()) {
                                                         val profile = HautZfsoftParser.parseStudentProfileFromTimetableJson(kbJson)
-                                                        val termId = HautAcademicEndpoints.toTermId(selectedXnm, selectedXqm)
+                                                        val termId = HautAcademicEndpoints.toTermId(webXnm, webXqm)
                                                         val syncData = HautLiveSyncResult(
                                                             termId = termId,
                                                             studentProfile = profile,

@@ -103,6 +103,11 @@ fun CampusMomentsScreen(
     initialTab: Int = 0,
     onBack: () -> Unit
 ) {
+    if (!repository.supportsHautServices) {
+        XPeachEmptyState(title = "当前学校暂未接入校园互助云服务",
+            subtitle = "不会将其他学校身份发布到河工大广场", actionLabel = "返回", onAction = onBack)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
@@ -113,6 +118,26 @@ fun CampusMomentsScreen(
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 3)) }
     var isRefreshing by remember { mutableStateOf(false) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    fun mutate(block: suspend () -> Unit) {
+        scope.launch {
+            try { block() } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                feedbackMessage = error.message ?: "操作未完成，请刷新核实"
+            }
+        }
+    }
+
+    fun submit(block: suspend () -> Unit) {
+        if (isSubmitting) return
+        isSubmitting = true
+        scope.launch {
+            try { block() } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                feedbackMessage = error.message ?: "操作未完成，请刷新核实"
+            } finally { isSubmitting = false }
+        }
+    }
 
     // Tab 0: 失物招领筛选状态
     var selectedPostType by rememberSaveable { mutableStateOf<MomentsPostType?>(null) }
@@ -388,8 +413,8 @@ fun CampusMomentsScreen(
                                 isFavorited = post.id in snapshot.favoritePostIds,
                                 isMine = post.id in snapshot.myPostIds,
                                 onOpenDetail = { activePostDetailId = post.id },
-                                onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
-                                onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
+                                onLike = { mutate { repository.toggleMomentsPostLike(post.id) } },
+                                onToggleFavorite = { mutate { repository.toggleMomentsPostFavorite(post.id) } },
                                 onCopyContact = {
                                     copyTextToClipboard(context, "失物招领联系方式", post.contact)
                                     feedbackMessage = "已复制联系方式：${post.contact}"
@@ -546,9 +571,9 @@ fun CampusMomentsScreen(
                                 book = book,
                                 isFavorited = book.id in snapshot.favoriteBookIds,
                                 isMine = book.id in snapshot.myBookIds,
-                                onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                onToggleFavorite = { mutate { repository.toggleMomentsBookFavorite(book.id) } },
+                                onToggleSold = { mutate { repository.toggleMomentsBookSold(book.id) } },
+                                onDelete = { mutate { repository.deleteMomentsBookListing(book.id) } },
                                 onCopyContact = {
                                     copyTextToClipboard(context, "卖家联系方式", book.contact)
                                     feedbackMessage = "已复制卖家联系方式：${book.contact}"
@@ -567,7 +592,7 @@ fun CampusMomentsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "为保温杯、雨伞、校园卡套、耳机仓生成专属防丢码与认领网页（campus.yellowpeachxgp.com/claim/…）。拾得者扫码免安装即可上报位置并通知失主。",
+                            text = "防丢码指向当前配置云服务的认领页。只有云端保存成功后认领页才可使用；云端状态未确认时不提供可用认领码。填写的联系方式可能在认领页公开，请勿填写证件号等敏感信息。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -598,11 +623,12 @@ fun CampusMomentsScreen(
 
                     for (tag in snapshot.antiLostTags) {
                         val claimUrl = remember(tag.tagCode, prefs.networkProxyConfig.customCloudApiBaseUrl) {
-                            tag.claimWebUrl(prefs.networkProxyConfig.customCloudApiBaseUrl)
+                            runCatching { tag.claimWebUrl(prefs.networkProxyConfig.customCloudApiBaseUrl) }.getOrDefault("")
                         }
                         AntiLostTagCard(
                             tag = tag,
                             claimUrl = claimUrl,
+                            isMine = tag.tagCode in snapshot.myTagCodes,
                             onCopyLink = {
                                 copyTextToClipboard(context, "防丢码认领链接", claimUrl)
                                 feedbackMessage = "已复制防丢码认领链接：$claimUrl"
@@ -617,7 +643,7 @@ fun CampusMomentsScreen(
                                 }
                             },
                             onToggleLostStatus = {
-                                scope.launch {
+                                mutate {
                                     val nextStatus = if (tag.status == "LOST") "NORMAL" else "LOST"
                                     repository.upsertAntiLostTag(
                                         tagCode = tag.tagCode,
@@ -627,7 +653,7 @@ fun CampusMomentsScreen(
                                         ownerContact = tag.ownerContact,
                                         returnNote = tag.returnNote,
                                         status = nextStatus
-                                    )
+                                    ).getOrThrow()
                                     feedbackMessage = if (nextStatus == "LOST") {
                                         "已将「${tag.itemName}」标记为挂失寻找中"
                                     } else {
@@ -677,8 +703,8 @@ fun CampusMomentsScreen(
                                     isFavorited = post.id in snapshot.favoritePostIds,
                                     isMine = true,
                                     onOpenDetail = { activePostDetailId = post.id },
-                                    onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
-                                    onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
+                                    onLike = { mutate { repository.toggleMomentsPostLike(post.id) } },
+                                    onToggleFavorite = { mutate { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", post.contact)
                                         feedbackMessage = "已复制：${post.contact}"
@@ -690,9 +716,9 @@ fun CampusMomentsScreen(
                                     book = book,
                                     isFavorited = book.id in snapshot.favoriteBookIds,
                                     isMine = true,
-                                    onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                    onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                    onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                    onToggleFavorite = { mutate { repository.toggleMomentsBookFavorite(book.id) } },
+                                    onToggleSold = { mutate { repository.toggleMomentsBookSold(book.id) } },
+                                    onDelete = { mutate { repository.deleteMomentsBookListing(book.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
                                         feedbackMessage = "已复制：${book.contact}"
@@ -718,8 +744,8 @@ fun CampusMomentsScreen(
                                     isFavorited = true,
                                     isMine = post.id in snapshot.myPostIds,
                                     onOpenDetail = { activePostDetailId = post.id },
-                                    onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
-                                    onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
+                                    onLike = { mutate { repository.toggleMomentsPostLike(post.id) } },
+                                    onToggleFavorite = { mutate { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", post.contact)
                                         feedbackMessage = "已复制：${post.contact}"
@@ -731,9 +757,9 @@ fun CampusMomentsScreen(
                                     book = book,
                                     isFavorited = true,
                                     isMine = book.id in snapshot.myBookIds,
-                                    onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                    onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                    onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                    onToggleFavorite = { mutate { repository.toggleMomentsBookFavorite(book.id) } },
+                                    onToggleSold = { mutate { repository.toggleMomentsBookSold(book.id) } },
+                                    onDelete = { mutate { repository.deleteMomentsBookListing(book.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
                                         feedbackMessage = "已复制：${book.contact}"
@@ -743,10 +769,10 @@ fun CampusMomentsScreen(
                         }
 
                         2 -> {
-                            val allTagReports = snapshot.antiLostTags.flatMap { tag ->
+                            val allTagReports = snapshot.antiLostTags.filter { it.tagCode in snapshot.myTagCodes }.flatMap { tag ->
                                 tag.reports.map { tag to it }
                             }
-                            val postsWithComments = snapshot.posts.filter { it.comments.isNotEmpty() }
+                            val postsWithComments = snapshot.posts.filter { it.id in snapshot.myPostIds && it.comments.isNotEmpty() }
                             if (allTagReports.isEmpty() && postsWithComments.isEmpty()) {
                                 XPeachEmptyState(
                                     title = "暂无新线索或拾得通知",
@@ -848,24 +874,24 @@ fun CampusMomentsScreen(
                 activePostDetailId = clueId
             },
             onSubmitComment = { content, contactHint ->
-                scope.launch {
+                submit {
                     repository.addMomentsComment(
                         postId = activeDetailPost.id,
                         content = content,
                         contactHint = contactHint
                     ).onSuccess {
                         feedbackMessage = "已提交线索留言"
-                    }
+                    }.onFailure { feedbackMessage = it.message ?: "留言未送达，请重试" }
                 }
             },
             onToggleResolved = {
-                scope.launch {
+                mutate {
                     repository.toggleMomentsPostResolved(activeDetailPost.id)
                     feedbackMessage = if (activeDetailPost.isResolved) "已重新开启该帖" else "已标记为找回/认领完成"
                 }
             },
             onDelete = {
-                scope.launch {
+                mutate {
                     val delId = activeDetailPost.id
                     activePostDetailId = null
                     repository.deleteMomentsPost(delId)
@@ -879,7 +905,7 @@ fun CampusMomentsScreen(
         PublishMomentsPostDialog(
             onDismiss = { showPublishPostDialog = false },
             onSubmit = { type, title, category, campus, location, desc, contact, reward ->
-                scope.launch {
+                submit {
                     repository.publishMomentsPost(
                         type = type,
                         title = title,
@@ -891,7 +917,7 @@ fun CampusMomentsScreen(
                         rewardNote = reward
                     ).onSuccess { created ->
                         showPublishPostDialog = false
-                        feedbackMessage = "已发布${created.type.label}：${created.title}"
+                        feedbackMessage = if (created.status == "LOCAL_DRAFT") "已在本机留存，云端发布未确认：${created.title}" else "已发布${created.type.label}：${created.title}"
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "发布失败，请检查填写内容"
                     }
@@ -910,7 +936,7 @@ fun CampusMomentsScreen(
             defaultTrack = inferredTrack ?: CampusMajorTrack.ALL_MAJORS,
             onDismiss = { showPublishBookDialog = false },
             onSubmit = { title, isbn, publisher, courseName, track, campus, condition, price, origPrice, delivery, contact ->
-                scope.launch {
+                submit {
                     repository.publishMomentsBookListing(
                         title = title,
                         isbn = isbn,
@@ -925,7 +951,7 @@ fun CampusMomentsScreen(
                         contact = contact
                     ).onSuccess { created ->
                         showPublishBookDialog = false
-                        feedbackMessage = "已挂单二手教材：《${created.title}》（¥${created.priceYuan}）"
+                        feedbackMessage = if (created.status == "LOCAL_DRAFT") "已在本机留存，云端上架未确认：${created.title}" else "已挂单二手教材：《${created.title}》（¥${created.priceYuan}）"
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "发布失败，请检查填写内容"
                     }
@@ -938,7 +964,7 @@ fun CampusMomentsScreen(
         CreateAntiLostTagDialog(
             onDismiss = { showCreateTagDialog = false },
             onSubmit = { itemName, category, campus, contact, note ->
-                scope.launch {
+                submit {
                     repository.upsertAntiLostTag(
                         itemName = itemName,
                         category = category,
@@ -947,7 +973,7 @@ fun CampusMomentsScreen(
                         returnNote = note
                     ).onSuccess { tag ->
                         showCreateTagDialog = false
-                        feedbackMessage = "已生成防丢码：${tag.tagCode}（${tag.itemName}）"
+                        feedbackMessage = if (tag.status == "LOCAL_DRAFT") "已在本机留存，认领页状态未确认：${tag.tagCode}" else "已生成防丢码：${tag.tagCode}（${tag.itemName}）"
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "生成失败，请检查填写内容"
                     }
@@ -961,7 +987,7 @@ fun CampusMomentsScreen(
             initialTagCode = reportTargetTagCode,
             onDismiss = { showReportFoundDialog = false },
             onSubmit = { code, finderName, location, contact, message ->
-                scope.launch {
+                submit {
                     repository.reportAntiLostTagFound(
                         tagCode = code,
                         finderName = finderName,
@@ -1007,7 +1033,7 @@ private fun MomentsPostCard(
                 modifier = Modifier.weight(1f)
             ) {
                 XPeachStatusBadge(
-                    text = if (post.isResolved) "已找回" else post.type.badgeLabel,
+                    text = if (post.isDemo) "预设示例·非真实发布" else if (post.status == "LOCAL_DRAFT") "本机留存·发布未确认" else if (post.isResolved) "已找回" else post.type.badgeLabel,
                     containerColor = when {
                         post.isResolved -> MaterialTheme.colorScheme.surfaceVariant
                         post.type == MomentsPostType.FOUND -> XPeachTheme.successContainer
@@ -1091,6 +1117,7 @@ private fun MomentsPostCard(
             ) {
                 TextButton(
                     onClick = onLike,
+                    enabled = !post.isDemo && post.status != "LOCAL_DRAFT",
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -1114,7 +1141,7 @@ private fun MomentsPostCard(
                         modifier = Modifier.size(15.dp)
                     )
                 }
-                if (post.contact.isNotBlank()) {
+                if (post.contact.isNotBlank() && !post.isDemo) {
                     FilledTonalButton(
                         onClick = onCopyContact,
                         shape = RoundedCornerShape(8.dp),
@@ -1151,7 +1178,7 @@ private fun MomentsTextbookCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     XPeachStatusBadge(
-                        text = if (book.isSold) "已出" else book.conditionLabel,
+                        text = if (book.isDemo) "预设示例·非真实挂单" else if (book.status == "LOCAL_DRAFT") "本机留存·上架未确认" else if (book.isSold) "已出" else book.conditionLabel,
                         containerColor = if (book.isSold) {
                             MaterialTheme.colorScheme.surfaceVariant
                         } else {
@@ -1242,6 +1269,7 @@ private fun MomentsTextbookCard(
                 if (isMine) {
                     TextButton(
                         onClick = onToggleSold,
+                        enabled = !book.isDemo && book.status != "LOCAL_DRAFT",
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
@@ -1257,7 +1285,7 @@ private fun MomentsTextbookCard(
                 }
             }
 
-            if (book.contact.isNotBlank() && !book.isSold) {
+            if (book.contact.isNotBlank() && !book.isSold && !book.isDemo) {
                 FilledTonalButton(
                     onClick = onCopyContact,
                     shape = RoundedCornerShape(8.dp),
@@ -1281,12 +1309,16 @@ private fun MomentsTextbookCard(
 private fun AntiLostTagCard(
     tag: AntiLostTagItem,
     claimUrl: String,
+    isMine: Boolean,
     onCopyLink: () -> Unit,
     onOpenWebPage: () -> Unit,
     onToggleLostStatus: () -> Unit,
     onReportFound: () -> Unit
 ) {
-    val matrix = remember(tag.tagCode, tag.itemName) { tag.generateVisualMatrix(21) }
+    val matrix = remember(tag.tagCode, tag.status, claimUrl) {
+        if (tag.status == "LOCAL_DRAFT" || tag.isDemo || claimUrl.isBlank()) emptyArray<BooleanArray>()
+        else tag.generateVisualMatrix(cloudBaseUrl = claimUrl.substringBeforeLast("/claim/"))
+    }
     val primaryColor = XPeachTheme.readablePrimary
 
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
@@ -1304,7 +1336,8 @@ private fun AntiLostTagCard(
                     .padding(6.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
+                if (matrix.isEmpty()) Text("未启用", style = MaterialTheme.typography.labelSmall)
+                else Canvas(modifier = Modifier.fillMaxSize()) {
                     val gridCount = matrix.size
                     val cellW = size.width / gridCount
                     val cellH = size.height / gridCount
@@ -1331,7 +1364,8 @@ private fun AntiLostTagCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     XPeachStatusBadge(
-                        text = when (tag.status) {
+                        text = if (tag.isDemo) "预设示例·非真实物品" else when (tag.status) {
+                            "LOCAL_DRAFT" -> "本机留存·云端未确认"
                             "FOUND_REPORTED" -> "有人上报拾得 (${tag.reports.size})"
                             "LOST" -> "挂失寻找中"
                             else -> "正常随身"
@@ -1393,7 +1427,7 @@ private fun AntiLostTagCard(
             )
         }
 
-        if (tag.reports.isNotEmpty()) {
+        if (isMine && tag.reports.isNotEmpty()) {
             Spacer(modifier = Modifier.height(6.dp))
             for (rep in tag.reports.take(2)) {
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
@@ -1429,6 +1463,7 @@ private fun AntiLostTagCard(
         ) {
             FilledTonalButton(
                 onClick = onCopyLink,
+                enabled = tag.status != "LOCAL_DRAFT" && !tag.isDemo && claimUrl.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
@@ -1437,6 +1472,7 @@ private fun AntiLostTagCard(
             }
             OutlinedButton(
                 onClick = onOpenWebPage,
+                enabled = tag.status != "LOCAL_DRAFT" && !tag.isDemo && claimUrl.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
@@ -1445,6 +1481,7 @@ private fun AntiLostTagCard(
             }
             OutlinedButton(
                 onClick = onToggleLostStatus,
+                enabled = isMine && tag.status != "LOCAL_DRAFT" && !tag.isDemo,
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
@@ -1456,10 +1493,11 @@ private fun AntiLostTagCard(
             }
             TextButton(
                 onClick = onReportFound,
+                enabled = !tag.isDemo && tag.status != "LOCAL_DRAFT",
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
             ) {
-                Text("模拟拾得上报", style = MaterialTheme.typography.labelSmall)
+                Text("上报拾得", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -1520,7 +1558,7 @@ private fun MomentsPostDetailDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (post.contact.isNotBlank()) {
+                if (post.contact.isNotBlank() && !post.isDemo) {
                     XPeachWell(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1651,6 +1689,7 @@ private fun MomentsPostDetailDialog(
                 ) {
                     OutlinedButton(
                         onClick = onToggleResolved,
+                        enabled = isMine && !post.isDemo && post.status != "LOCAL_DRAFT",
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -1670,11 +1709,9 @@ private fun MomentsPostDetailDialog(
         },
         confirmButton = {
             Button(
-                enabled = commentInput.trim().isNotEmpty(),
+                enabled = commentInput.trim().isNotEmpty() && !post.isDemo && post.status != "LOCAL_DRAFT",
                 onClick = {
                     onSubmitComment(commentInput.trim(), contactHintInput.trim())
-                    commentInput = ""
-                    contactHintInput = ""
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -2044,10 +2081,12 @@ private fun PublishMomentsBookDialog(
         },
         confirmButton = {
             Button(
-                enabled = title.trim().isNotEmpty() && contact.trim().isNotEmpty(),
+                enabled = title.trim().isNotEmpty() && contact.trim().isNotEmpty() &&
+                    priceText.toIntOrNull()?.let { it in 1..500 } == true &&
+                    origPriceText.toIntOrNull()?.let { it in (priceText.toIntOrNull() ?: 501)..999 } == true,
                 onClick = {
-                    val p = priceText.toIntOrNull() ?: 15
-                    val op = origPriceText.toIntOrNull() ?: (p + 30)
+                    val p = requireNotNull(priceText.toIntOrNull())
+                    val op = requireNotNull(origPriceText.toIntOrNull())
                     onSubmit(
                         title,
                         isbn,
@@ -2177,7 +2216,7 @@ private fun ReportAntiLostFoundDialog(
         message: String
     ) -> Unit
 ) {
-    var tagCode by remember(initialTagCode) { mutableStateOf(initialTagCode.ifBlank { "HAUT-TAG-7E2A9B" }) }
+    var tagCode by remember(initialTagCode) { mutableStateOf(initialTagCode) }
     var finderName by remember { mutableStateOf("") }
     var foundLocation by remember { mutableStateOf("") }
     var finderContact by remember { mutableStateOf("") }

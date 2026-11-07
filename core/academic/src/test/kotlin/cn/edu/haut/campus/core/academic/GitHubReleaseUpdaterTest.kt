@@ -162,22 +162,21 @@ class GitHubReleaseUpdaterTest {
     }
 
     @Test
-    fun `campus moments catalog computes matched clues and anti-lost qr matrix`() {
+    fun `campus moments starts empty and QR includes a quiet zone`() {
         val snapshot = cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
-        assertTrue(snapshot.posts.isNotEmpty())
-        assertTrue(snapshot.bookListings.isNotEmpty())
-        assertTrue(snapshot.antiLostTags.isNotEmpty())
+        assertTrue(snapshot.posts.isEmpty())
+        assertTrue(snapshot.bookListings.isEmpty())
+        assertTrue(snapshot.antiLostTags.isEmpty())
+        val tag = cn.edu.haut.campus.core.model.PresetCampusMomentsCatalog.defaultAntiLostTags.first()
+        assertEquals("https://campus.yellowpeachxgp.com/claim/HAUT-TAG-7E2A9B", tag.claimWebUrl())
+        val matrix = tag.generateVisualMatrix()
+        assertTrue(matrix.size > 21)
+        assertEquals(matrix.size, matrix[0].size)
+        assertFalse(matrix[0][0])
+    }
 
-        val tag = snapshot.antiLostTags.first()
-        assertEquals(
-            "https://campus.yellowpeachxgp.com/claim/HAUT-TAG-7E2A9B",
-            tag.claimWebUrl("https://campus.yellowpeachxgp.com")
-        )
-        val matrix = tag.generateVisualMatrix(21)
-        assertEquals(21, matrix.size)
-        assertEquals(21, matrix[0].size)
-        // Finder pattern top-left corner and center are true
-        assertTrue(matrix[0][0])
-        assertTrue(matrix[3][3])
+    @Test(expected = IllegalArgumentException::class)
+    fun `release notes rejects oversized body before full allocation`() {
+        GitHubReleaseUpdater.readBoundedReleaseNotes(java.io.ByteArrayInputStream(ByteArray(65537)))
     }
 }

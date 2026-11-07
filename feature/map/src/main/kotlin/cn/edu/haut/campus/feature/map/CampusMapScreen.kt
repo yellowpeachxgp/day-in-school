@@ -201,7 +201,7 @@ private object CampusTileCache {
 
         try {
             val bitmap = withContext(Dispatchers.IO) {
-                val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
+                val dir = File(cacheDir, "haut_map_tiles_gcj_v4").apply { mkdirs() }
                 val diskFile = File(dir, "$key.png")
                 if (diskFile.exists() && diskFile.length() > 256L) {
                     runCatching {
@@ -215,7 +215,7 @@ private object CampusTileCache {
                         add("https://gis.haut.edu.cn/cmgis-server/upload/raster/3/$z/$x/$y.png")
                     }
                     add("https://webrd0$subdomain.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=$x&y=$y&z=$z")
-                    add("https://tile.openstreetmap.org/$z/$x/$y.png")
+                    // This canvas uses GCJ-02: never mix WGS84 OSM tiles into this cache.
                 }
                 for (urlStr in urls) {
                     val downloaded = runCatching {
@@ -320,9 +320,9 @@ fun CampusMapScreen(
     var gisStyleMode by remember { mutableStateOf(GisMapStyleMode.OFFICIAL_VECTOR_HYBRID) }
     var gisDataset by remember { mutableStateOf<GisCampusVectorDataset?>(null) }
     var selectedIndoorFloorIndex by remember { mutableIntStateOf(0) }
-    var activeIndoorFloorPlan by remember { mutableStateOf<GisIndoorFloorPlan?>(null) }
+    var loadedIndoorFloorPlan by remember { mutableStateOf<GisIndoorFloorPlan?>(null) }
     var isLoadingIndoorFloorPlan by remember { mutableStateOf(false) }
-    var selectedIndoorRoom by remember { mutableStateOf<GisIndoorRoom?>(null) }
+    var selectedIndoorRoomState by remember { mutableStateOf<GisIndoorRoom?>(null) }
     var showIndoorSecondaryMap by remember { mutableStateOf(false) }
     var officialSearchResults by remember { mutableStateOf<List<GisSearchResultItem>>(emptyList()) }
     var isOfficialRouteActive by remember { mutableStateOf(false) }
@@ -461,7 +461,7 @@ fun CampusMapScreen(
         mapCenterLonGcj = glon
         selectedBuilding = campusBuildings.firstOrNull()
         manualOriginBuilding = null
-        selectedIndoorRoom = null
+        selectedIndoorRoomState = null
     }
 
     // 当处于定位跟随模式时，用户坐标变化即实时同步更新地图视口中心
@@ -482,7 +482,7 @@ fun CampusMapScreen(
             isFullScreenMap = false
             expandRouteSteps = false
             manualOriginBuilding = null
-            selectedIndoorRoom = null
+            selectedIndoorRoomState = null
             isFollowingUser = true
             locationRefreshEpoch++
             if (userLocation?.isInsideLianhuajieCampus == true || userLocation?.isInsideSongshanluCampus == true) {
@@ -590,6 +590,14 @@ fun CampusMapScreen(
         }
     }
 
+    // Render only state whose building/floor identity matches the current selection.
+    val activeIndoorFloorPlan = loadedIndoorFloorPlan?.takeIf {
+        it.buildingFeatureId == activeBuildingFootprint?.featureId && it.levelIndex == selectedIndoorFloorIndex
+    }
+    val selectedIndoorRoom = selectedIndoorRoomState?.takeIf { room ->
+        room.levelIndex == selectedIndoorFloorIndex && activeIndoorFloorPlan?.rooms?.any { it == room } == true
+    }
+
     // 切换目标楼宇时，确保楼层索引处于该楼宇合法楼层区间内
     LaunchedEffect(activeBuildingFootprint?.featureId) {
         val maxLvl = activeBuildingFootprint?.maxLevelIndex ?: 0
@@ -601,12 +609,14 @@ fun CampusMapScreen(
     LaunchedEffect(activeBuildingFootprint?.featureId, selectedIndoorFloorIndex, isLianhuajieActive) {
         val fp = activeBuildingFootprint
         if (!isLianhuajieActive || fp == null || !fp.hasIndoorFloors) {
-            activeIndoorFloorPlan = null
-            selectedIndoorRoom = null
+            loadedIndoorFloorPlan = null
+            selectedIndoorRoomState = null
             isLoadingIndoorFloorPlan = false
             return@LaunchedEffect
         }
         val safeFloor = selectedIndoorFloorIndex.coerceIn(fp.minLevelIndex, fp.maxLevelIndex.coerceAtLeast(0))
+        loadedIndoorFloorPlan = null
+        selectedIndoorRoomState = null
         isLoadingIndoorFloorPlan = true
         val floorPlan = try {
             HautOfficialGisClient.loadIndoorFloorPlan(
@@ -617,9 +627,9 @@ fun CampusMapScreen(
         } finally {
             isLoadingIndoorFloorPlan = false
         }
-        activeIndoorFloorPlan = floorPlan
+        loadedIndoorFloorPlan = floorPlan
         val cleanRoomCode = HautOfficialGisClient.extractCleanRoomCode(searchQuery)
-        selectedIndoorRoom = if (floorPlan != null && !cleanRoomCode.isNullOrBlank()) {
+        selectedIndoorRoomState = if (floorPlan != null && !cleanRoomCode.isNullOrBlank()) {
             floorPlan.rooms.firstOrNull {
                 it.name.equals(cleanRoomCode, ignoreCase = true) ||
                     it.name.contains(cleanRoomCode, ignoreCase = true)
@@ -639,7 +649,8 @@ fun CampusMapScreen(
         userLocation,
         manualOriginBuilding,
         campusBuildings,
-        searchQuery
+        searchQuery,
+        selectedIndoorRoom
     ) {
         if (targetBuilding == null) null
         else CampusMapNavigator.buildInAppNavigationPlan(
@@ -654,18 +665,13 @@ fun CampusMapScreen(
         )
     }
 
-    var officialNavigationPlan by remember { mutableStateOf<InAppNavigationPlan?>(null) }
+    val routeRequestKey = listOf(targetBuilding?.id, userLocation?.latitude, userLocation?.longitude,
+        manualOriginBuilding?.id, selectedIndoorRoom, selectedIndoorFloorIndex, searchQuery, isLianhuajieActive)
+    var officialNavigationPlan by remember(routeRequestKey) { mutableStateOf<InAppNavigationPlan?>(null) }
 
-    LaunchedEffect(
-        targetBuilding?.id,
-        userLocation?.latitude,
-        userLocation?.longitude,
-        manualOriginBuilding?.id,
-        selectedIndoorRoom?.id,
-        selectedIndoorFloorIndex,
-        searchQuery,
-        isLianhuajieActive
-    ) {
+    LaunchedEffect(routeRequestKey) {
+        officialNavigationPlan = null
+        isOfficialRouteActive = false
         val dest = targetBuilding
         if (dest == null || !isLianhuajieActive) {
             officialNavigationPlan = null
@@ -739,10 +745,13 @@ fun CampusMapScreen(
                 selectedIndoorFloorIndex = floorIdx
             },
             onSelectRoom = { room ->
-                selectedIndoorRoom = room
+                if (!isLoadingIndoorFloorPlan && activeIndoorFloorPlan?.rooms?.contains(room) == true) {
+                    selectedIndoorRoomState = room
+                }
             },
-            onConfirmRoomForOutdoorRoute = { room ->
-                selectedIndoorRoom = room
+            onConfirmRoomForOutdoorRoute = confirmRoom@{ room ->
+                if (isLoadingIndoorFloorPlan || activeIndoorFloorPlan?.rooms?.contains(room) != true || room.levelIndex != selectedIndoorFloorIndex) return@confirmRoom
+                selectedIndoorRoomState = room
                 searchQuery = room.name
                 inAppNavigationActive = true
                 showIndoorSecondaryMap = false
@@ -1047,7 +1056,7 @@ fun CampusMapScreen(
                                 IconButton(
                                     onClick = {
                                         searchQuery = ""
-                                        selectedIndoorRoom = null
+                                        selectedIndoorRoomState = null
                                     }
                                 ) {
                                     Icon(
@@ -1378,7 +1387,7 @@ fun CampusMapScreen(
                                 selected = selectedBuilding?.id == b.id,
                                 onClick = {
                                     selectedBuilding = b
-                                    selectedIndoorRoom = null
+                                    selectedIndoorRoomState = null
                                     val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
                                     mapCenterLatGcj = glat
                                     mapCenterLonGcj = glon
@@ -1595,7 +1604,7 @@ fun CampusMapScreen(
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable {
                                         selectedBuilding = b
-                                        selectedIndoorRoom = null
+                                        selectedIndoorRoomState = null
                                         val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
                                         mapCenterLatGcj = glat
                                         mapCenterLonGcj = glon
@@ -1650,7 +1659,7 @@ fun CampusMapScreen(
                                             compact = true,
                                             onClick = {
                                                 selectedBuilding = b
-                                                selectedIndoorRoom = null
+                                                selectedIndoorRoomState = null
                                                 showIndoorSecondaryMap = true
                                             }
                                         )
@@ -1661,7 +1670,7 @@ fun CampusMapScreen(
                                         compact = true,
                                         onClick = {
                                             selectedBuilding = b
-                                            selectedIndoorRoom = null
+                                            selectedIndoorRoomState = null
                                             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(b.latitude, b.longitude)
                                             mapCenterLatGcj = glat
                                             mapCenterLonGcj = glon
@@ -1723,7 +1732,7 @@ fun CampusMapScreen(
             },
             onSelectBuilding = { clicked ->
                 if (selectedBuilding?.id != clicked.id) {
-                    selectedIndoorRoom = null
+                    selectedIndoorRoomState = null
                 }
                 selectedBuilding = clicked
                 inAppNavigationActive = true
@@ -1797,7 +1806,7 @@ fun CampusMapScreen(
                                 IconButton(
                                     onClick = {
                                         searchQuery = ""
-                                        selectedIndoorRoom = null
+                                        selectedIndoorRoomState = null
                                     }
                                 ) {
                                     Icon(
@@ -2256,7 +2265,7 @@ fun CampusMapScreen(
                         compact = true,
                         onClick = {
                             if (selectedBuilding?.id != b.id) {
-                                selectedIndoorRoom = null
+                                selectedIndoorRoomState = null
                             }
                             selectedBuilding = b
                             isFollowingUser = false
@@ -2273,7 +2282,7 @@ fun CampusMapScreen(
                 FloatingRouteBottomSheet(
                     building = targetBuilding,
                     plan = navigationPlan,
-                    isOfficialGisRoute = isOfficialRouteActive,
+                    isOfficialGisRoute = isOfficialRouteActive && officialNavigationPlan != null,
                     activeFootprint = activeBuildingFootprint,
                     selectedIndoorRoom = selectedIndoorRoom,
                     allBuildings = buildings,
@@ -2678,23 +2687,28 @@ private fun OfficialGisWebViewDialog(
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.databaseEnabled = true
-                            settings.setGeolocationEnabled(true)
+                            settings.setGeolocationEnabled(false)
                             settings.loadWithOverviewMode = true
                             settings.useWideViewPort = true
-                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             webChromeClient = object : WebChromeClient() {
                                 override fun onGeolocationPermissionsShowPrompt(
                                     origin: String?,
                                     callback: GeolocationPermissions.Callback?
                                 ) {
-                                    callback?.invoke(origin, true, false)
+                                    // Web location requires browser-managed per-origin consent.
+                                    callback?.invoke(origin, false, false)
                                 }
                             }
                             webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView?,
                                     request: WebResourceRequest?
-                                ): Boolean = false
+                                ): Boolean = !isAllowedOfficialMapUrl(request?.url)
+
+                                @Suppress("DEPRECATION")
+                                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean =
+                                    !isAllowedOfficialMapUrl(url?.let { Uri.parse(it) })
                             }
                             loadUrl(HautOfficialGisClient.OFFICIAL_GIS_WEB_URL)
                         }
@@ -3425,3 +3439,8 @@ private fun RealCampusTileMap(
         }
     }
 }
+
+// Deliberately block external navigation here; the explicit browser action owns external browsing.
+private fun isAllowedOfficialMapUrl(uri: Uri?): Boolean =
+    uri?.scheme == "https" && uri.host == "gis.haut.edu.cn" &&
+        (uri.port == -1 || uri.port == 443) && uri.userInfo == null

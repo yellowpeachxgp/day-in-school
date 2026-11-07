@@ -17,8 +17,6 @@ internal object ChengfangParsers {
         '五' to 5, '六' to 6, '日' to 7, '天' to 7
     )
 
-    private val WEEK_RANGE = Regex("(\\d{1,2})\\s*(?:-|~|至|—)\\s*(\\d{1,2})")
-    private val WEEK_SINGLE = Regex("\\d{1,2}")
     private val SECTION_RANGE = Regex("(\\d{1,2})\\s*-\\s*(\\d{1,2})")
     private val SECTION_SINGLE = Regex("(\\d{1,2})")
     private val CLOCK = Regex("(\\d{1,2}):(\\d{2})")
@@ -49,23 +47,7 @@ internal object ChengfangParsers {
     }
 
     /** "1-16周" / "1-8,10-16周" / "第3周"；解析不出时返回空集而不是 1..16 之类的猜测。 */
-    fun weeks(raw: String?): Set<Int> {
-        val value = raw?.trim().orEmpty()
-        if (value.isEmpty()) return emptySet()
-        val result = linkedSetOf<Int>()
-        WEEK_RANGE.findAll(value).forEach { match ->
-            val start = match.groupValues[1].toIntOrNull() ?: return@forEach
-            val end = match.groupValues[2].toIntOrNull() ?: return@forEach
-            if (start < 1 || end > 80 || start > end) return@forEach
-            for (week in start..end) result += week
-        }
-        if (result.isEmpty()) {
-            WEEK_SINGLE.findAll(value).forEach { match ->
-                match.value.toIntOrNull()?.takeIf { it in 1..80 }?.let { result += it }
-            }
-        }
-        return result
-    }
+    fun weeks(raw: String?): Set<Int> = cn.edu.haut.campus.core.protocol.TeachingWeekParser.parse(raw)
 
     fun decimal(raw: String?): BigDecimal? {
         val value = raw?.trim().orEmpty()

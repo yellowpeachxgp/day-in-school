@@ -206,4 +206,37 @@ class CampusDiningRecommenderTest {
         assertTrue(canteen4Candidate.recommendedDishes.any { it.contains("自选秘制叉烧饭") })
         assertTrue(canteen4Candidate.recommendedDishes.none { it.contains("招牌脆皮鸡米饭") })
     }
+
+    @Test
+    fun allAvoidedDishesStayExcludedRatherThanReturningAsFallback() {
+        val profile = CampusDiningRecommender.CANTEENS.first()
+        val reviews = profile.lunchDinnerDishes.mapIndexed { index, name ->
+            CanteenDishReview("avoid-$index", profile.buildingId, name, stars = 1)
+        }
+        val date = LocalDate.of(2026, 11, 7)
+        val recommendation = CampusDiningRecommender.buildRecommendation(date,
+            date.atTime(18, 0).atZone(HAUT_ZONE_ID).toInstant(), emptyList(), emptyList(), userReviews = reviews)
+        assertTrue(recommendation.allCandidates.first { it.profile.buildingId == profile.buildingId }.recommendedDishes.isEmpty())
+    }
+
+    @Test
+    fun breakfastFavoritesAreNotRecommendedAtDinner() {
+        val dish = CampusDiningRecommender.DEFAULT_DISH_CATALOG.first { it.mealSlots == setOf(DiningMealSlot.BRUNCH) }
+        val review = CanteenDishReview("favorite", dish.canteenBuildingId, dish.dishName, stars = 5)
+        val date = LocalDate.of(2026, 11, 7)
+        val dinner = CampusDiningRecommender.buildRecommendation(date,
+            date.atTime(18, 0).atZone(HAUT_ZONE_ID).toInstant(), emptyList(), emptyList(), userReviews = listOf(review))
+        assertTrue(dinner.allCandidates.flatMap { it.recommendedDishes }.none { it.contains(dish.dishName) })
+        val brunch = CampusDiningRecommender.buildRecommendation(date,
+            date.atTime(9, 0).atZone(HAUT_ZONE_ID).toInstant(), emptyList(), emptyList(), userReviews = listOf(review))
+        assertTrue(brunch.allCandidates.flatMap { it.recommendedDishes }.any { it.contains(dish.dishName) })
+    }
+
+    @Test
+    fun presetWeightsAreNotPresentedAsRealReviewCounts() {
+        val rating = CampusDiningRecommender.aggregateDishRatings().first()
+        assertTrue(rating.hasPresetRating)
+        assertEquals(0, rating.totalReviewCount)
+        assertTrue(rating.displayComment.startsWith("预设示例："))
+    }
 }
