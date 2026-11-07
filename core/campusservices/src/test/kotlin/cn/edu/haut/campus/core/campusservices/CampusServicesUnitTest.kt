@@ -841,4 +841,32 @@ class CampusServicesUnitTest {
         assertTrue(syncScript.contains("__hautNullScrubberInstalled"))
         assertTrue(syncScript.contains("07:30-22:00"))
     }
+
+    @Test
+    fun wslibSpringBootMessageCodes_translateAndClassifyOpeningAndDuplicateErrors() {
+        val raw10079 = "No message found under code 'seat.10079' for locale ''."
+        val raw10057 = "No message found under code 'seat.10057' for locale ''."
+        val raw10062 = "No message found under code 'seat.10062' for locale ''."
+
+        assertEquals(
+            "未到07:00开放时间或该时段内已有生效预约",
+            HautLibrarySeatAuthClient.translateWslibDiagnosticMessage(raw10079)
+        )
+        assertEquals(
+            "只能预约1天之内的时间(含当天)",
+            HautLibrarySeatAuthClient.translateWslibDiagnosticMessage(raw10057)
+        )
+        assertEquals(
+            "本座位已锁定 请稍后再试!",
+            HautLibrarySeatAuthClient.translateWslibDiagnosticMessage(raw10062)
+        )
+
+        assertTrue(HautLibrarySeatAuthClient.isWslibNotYetOpenMessage(raw10079))
+        assertTrue(HautLibrarySeatAuthClient.isWslibNotYetOpenMessage(raw10057))
+        assertTrue(HautLibrarySeatAuthClient.isWslibNotYetOpenMessage("只能预约1天之内的时间(含当天)"))
+        assertFalse(HautLibrarySeatAuthClient.isWslibNotYetOpenMessage("本座位已锁定 请稍后再试!"))
+
+        assertTrue(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage(raw10079))
+        assertTrue(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage("每个学生一个时间段只能预约一个座位"))
+    }
 }

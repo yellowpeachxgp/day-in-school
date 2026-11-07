@@ -2751,12 +2751,37 @@ class CampusRepository internal constructor(
                 }
 
                 val existingPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+                val activeCloudPlans = existingPlansSnapshot.filter {
+                    it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                        it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "CONFIRMED")
+                }
                 val hasActiveCloudBookingPlan = existingPlansSnapshot.any {
                     it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
                         it.status !in setOf("CANCELLED", "FAILED", "EXPIRED")
                 }
                 val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
                 val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
+                val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+                )
+
+                val localPlanUpserts = activeCloudPlans.map { plan ->
+                    val seats = plan.preferredSeatLabel
+                        .split(",", "，", "、", "/", "|", ";", "；")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .ifEmpty { listOf(plan.preferredSeatLabel.trim().ifBlank { "01桌 B座" }) }
+                    cn.edu.haut.campus.core.campusservices.CloudUnsyncedPlanUpsertDto(
+                        planId = plan.id,
+                        targetLocalDate = plan.targetLocalDate,
+                        targetLocalTime = plan.targetLocalTime,
+                        areaName = plan.preferredAreaName.trim().ifBlank { "五层中区" },
+                        candidateSeats = seats,
+                        repeatDays = plan.repeatDays.coerceIn(1, 30),
+                        remainingDays = plan.remainingDays.coerceIn(1, 30),
+                        allowAlternativeSeat = plan.allowAlternativeSeat
+                    )
+                }
 
                 val localParcels = cloudAndParcelDao.getParcelItemsSnapshot().map { p ->
                     CloudSyncedParcelDto(
@@ -2780,7 +2805,9 @@ class CampusRepository internal constructor(
                     studentNo = localStudentNo,
                     delegatedSecret = effectiveDelegatedSecret,
                     localParcels = localParcels,
-                    cancelledJobOrPlanIds = cancelledJobIds
+                    cancelledJobOrPlanIds = cancelledJobIds,
+                    localActiveCloudPlans = localPlanUpserts,
+                    cloudBaseUrl = cloudBaseUrl
                 )
                 if (snapshot == null) {
                     token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
@@ -2790,7 +2817,9 @@ class CampusRepository internal constructor(
                             studentNo = localStudentNo,
                             delegatedSecret = effectiveDelegatedSecret,
                             localParcels = localParcels,
-                            cancelledJobOrPlanIds = cancelledJobIds
+                            cancelledJobOrPlanIds = cancelledJobIds,
+                            localActiveCloudPlans = localPlanUpserts,
+                            cloudBaseUrl = cloudBaseUrl
                         )
                     }
                 }
@@ -3011,7 +3040,11 @@ class CampusRepository internal constructor(
         var token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken(forceRefresh = false) else ""
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED && token.isNotBlank()) {
             val (studentNoBundle, delegatedBundle) = buildDelegatedCredentialBundle()
-            val studentNo = studentNoBundle ?: preferencesFlow.first().savedStudentId.orEmpty()
+            val prefsSnap = preferencesFlow.first()
+            val studentNo = studentNoBundle ?: prefsSnap.savedStudentId.orEmpty()
+            val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsSnap.networkProxyConfig.customCloudApiBaseUrl
+            )
             var remoteJobOrPlanId = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.syncCloudHostedReservationPlan(
                     accessToken = token,
@@ -3022,6 +3055,7 @@ class CampusRepository internal constructor(
                     preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                     preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
                     planIdempotencyKey = planId,
+                    cloudBaseUrl = cloudBaseUrl,
                     repeatDays = normalizedRepeatDays
                 )
             }
@@ -3038,6 +3072,7 @@ class CampusRepository internal constructor(
                             preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                             preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
                             planIdempotencyKey = planId,
+                            cloudBaseUrl = cloudBaseUrl,
                             repeatDays = normalizedRepeatDays
                         )
                     }
@@ -3093,6 +3128,9 @@ class CampusRepository internal constructor(
         )
         cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
+        if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            repoScope.launch { runCatching { syncWithCampusCloud() } }
+        }
         entity
     }
 
@@ -3321,7 +3359,7 @@ class CampusRepository internal constructor(
             }
             updated
         }
-        if (stage == TripleScheduleStage.FIRE && current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+        if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
         finalEntity
@@ -3355,9 +3393,13 @@ class CampusRepository internal constructor(
             if (plan != null && !plan.cloudJobId.isNullOrBlank() && !plan.cloudJobId.startsWith("cjob_")) {
                 val cloudToken = resolveValidCloudAccessToken()
                 if (cloudToken.isNotBlank()) {
+                    val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                        preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+                    )
                     CampusCloudOidcHelper.cancelCloudHostedReservationSeat(
                         accessToken = cloudToken,
-                        jobId = plan.cloudJobId
+                        jobId = plan.cloudJobId,
+                        cloudBaseUrl = cloudBaseUrl
                     )
                 }
             }
@@ -3392,9 +3434,7 @@ class CampusRepository internal constructor(
     suspend fun rescheduleActiveLocalBookingPlans() {
         val all = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in all) {
-            if (!plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true) &&
-                plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED")
-            ) {
+            if (plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "EXPIRED")) {
                 LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan)
             }
         }

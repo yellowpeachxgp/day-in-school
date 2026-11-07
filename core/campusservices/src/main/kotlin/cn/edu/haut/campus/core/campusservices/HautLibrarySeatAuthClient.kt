@@ -1220,34 +1220,53 @@ object HautLibrarySeatAuthClient {
                 ).getOrNull()
 
                 if (roomSnapshot != null && roomSnapshot.seats.isNotEmpty()) {
-                    // 优先按用户点选的首选/备选顺序找空闲座位，若都被占则尝试该自习室其他空闲座位
+                    // 优先按用户点选的首选/备选顺序找座位（即便早高峰跨日快照也能锁定候选 seatId）
                     val orderedCandidates = mutableListOf<LibrarySeatItem>()
                     for (wanted in candidateSeatNames) {
                         val normWanted = wanted.replace(" ", "")
                         roomSnapshot.seats.firstOrNull { s ->
                             val normSeat = s.seatName.replace(" ", "")
-                            s.isAvailable && (
-                                s.seatName.equals(wanted, ignoreCase = true) ||
-                                    normSeat.equals(normWanted, ignoreCase = true) ||
-                                    normSeat.trimStart('0').equals(normWanted.trimStart('0'), ignoreCase = true) ||
-                                    normSeat.endsWith(normWanted, ignoreCase = true)
-                                )
+                            s.seatName.equals(wanted, ignoreCase = true) ||
+                                normSeat.equals(normWanted, ignoreCase = true) ||
+                                normSeat.trimStart('0').equals(normWanted.trimStart('0'), ignoreCase = true) ||
+                                normSeat.endsWith(normWanted, ignoreCase = true)
                         }?.let { orderedCandidates.add(it) }
                     }
-                    if (orderedCandidates.isEmpty()) {
-                        roomSnapshot.seats.filter { it.isAvailable }.take(2).forEach { orderedCandidates.add(it) }
+                    roomSnapshot.seats.filter { it.isAvailable }.take(4).forEach { avail ->
+                        if (orderedCandidates.none { it.id == avail.id }) {
+                            orderedCandidates.add(avail)
+                        }
                     }
 
-                    for (seat in orderedCandidates.distinctBy { it.id }.take(3)) {
-                        val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
-                        val respText = runCatching {
-                            executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
-                        }.getOrDefault("")
-                        val respObj = runCatching { JSONObject(respText) }.getOrNull()
-                        val code = respObj?.optInt("code", -1) ?: -1
-                        apiRawMessage = respObj?.optString("msg").orEmpty()
-                        if (code == 200) {
-                            bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
+                    val candidatePool = orderedCandidates.distinctBy { it.id }.take(5)
+                    val waveDelaysMs = listOf(0L, 200L, 280L, 380L, 500L, 700L, 1000L, 1400L)
+                    for (delayMs in waveDelaysMs) {
+                        if (delayMs > 0L) {
+                             kotlinx.coroutines.delay(delayMs)
+                        }
+                        var needWaitOpening = false
+                        for (seat in candidatePool) {
+                            val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
+                            val respText = runCatching {
+                                executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
+                            }.getOrDefault("")
+                            val respObj = runCatching { JSONObject(respText) }.getOrNull()
+                            val code = respObj?.optInt("code", -1) ?: -1
+                            val rawMsg = respObj?.optString("msg").orEmpty()
+                            apiRawMessage = translateWslibDiagnosticMessage(rawMsg)
+                            if (code == 200) {
+                                bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
+                                break
+                            }
+                            if (isWslibAlreadyBookedMessage(rawMsg) || isWslibAlreadyBookedMessage(apiRawMessage)) {
+                                break
+                            }
+                            if (isWslibNotYetOpenMessage(rawMsg) || isWslibNotYetOpenMessage(apiRawMessage)) {
+                                needWaitOpening = true
+                                break
+                            }
+                        }
+                        if (bookedIdFromApi != null || !needWaitOpening) {
                             break
                         }
                     }
@@ -1265,13 +1284,13 @@ object HautLibrarySeatAuthClient {
 
                 val targetSeatId = matchedHistorical?.seatId
                 if (targetSeatId != null && targetSeatId > 0L) {
-                    val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode("$targetDate 07:00:00", "UTF-8")}&endtime=${URLEncoder.encode("$targetDate 22:00:00", "UTF-8")}"
+                    val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode("$targetDate 07:30:00", "UTF-8")}&endtime=${URLEncoder.encode("$targetDate 22:00:00", "UTF-8")}"
                     val respText = runCatching {
                         executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
                     }.getOrDefault("")
                     val respObj = runCatching { JSONObject(respText) }.getOrNull()
                     if (apiRawMessage.isBlank()) {
-                        apiRawMessage = respObj?.optString("msg").orEmpty()
+                        apiRawMessage = translateWslibDiagnosticMessage(respObj?.optString("msg").orEmpty())
                     }
                 }
             }
@@ -1311,6 +1330,31 @@ object HautLibrarySeatAuthClient {
         }
     }
 
+    internal fun translateWslibDiagnosticMessage(rawMsg: String): String {
+        val text = rawMsg.trim()
+        if (text.isEmpty()) return ""
+        return when {
+            text.contains("seat.10056", ignoreCase = true) -> "预约开始时间须大于当前时间"
+            text.contains("seat.10057", ignoreCase = true) -> "只能预约1天之内的时间(含当天)"
+            text.contains("seat.10058", ignoreCase = true) -> "预约时间不在自习室开放时段内"
+            text.contains("seat.10062", ignoreCase = true) -> "本座位已锁定 请稍后再试!"
+            text.contains("seat.10079", ignoreCase = true) -> "未到07:00开放时间或该时段内已有生效预约"
+            else -> text
+        }
+    }
+
+    internal fun isWslibNotYetOpenMessage(rawMsg: String): Boolean {
+        val text = rawMsg.trim()
+        return Regex("""未到|未开放|不在.*时间|只能预约|尚未开放|seat\.10057|seat\.10058|seat\.10079""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+    }
+
+    internal fun isWslibAlreadyBookedMessage(rawMsg: String): Boolean {
+        val text = rawMsg.trim()
+        return Regex("""已有.*预约|不能重复|已预约|只能预约一个座位|seat\.10060|seat\.10061|seat\.10079""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+    }
+
     private fun executeAuthenticatedApiGet(url: String, cleanToken: String): String {
         val uri = validateAuthUri(url)
         val conn = (uri.toURL().openConnection() as HttpURLConnection)
@@ -1320,6 +1364,7 @@ object HautLibrarySeatAuthClient {
             conn.connectTimeout = 8_000
             conn.readTimeout = 8_000
             conn.setRequestProperty("User-Agent", USER_AGENT)
+            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             conn.setRequestProperty("Authorization", "Bearer $cleanToken")
             conn.setRequestProperty("Access-Control-Allow-Methods", "POST,GET,OPTIONS")
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
@@ -1346,6 +1391,7 @@ object HautLibrarySeatAuthClient {
                 conn.connectTimeout = 8_000
                 conn.readTimeout = 8_000
                 conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 conn.setRequestProperty("Authorization", "Bearer $cleanToken")
                 conn.setRequestProperty("Accept", "application/json, text/plain, */*")
                 val status = conn.responseCode

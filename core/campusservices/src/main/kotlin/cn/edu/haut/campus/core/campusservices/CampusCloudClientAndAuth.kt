@@ -113,6 +113,17 @@ data class CloudSyncedOrderDto(
     val createdAtIso: String
 )
 
+data class CloudUnsyncedPlanUpsertDto(
+    val planId: String,
+    val targetLocalDate: String,
+    val targetLocalTime: String,
+    val areaName: String,
+    val candidateSeats: List<String>,
+    val repeatDays: Int = 1,
+    val remainingDays: Int = 1,
+    val allowAlternativeSeat: Boolean = true
+)
+
 data class CloudSyncSnapshotResult(
     val cloudUserId: String,
     val ssoSubject: String,
@@ -704,6 +715,7 @@ object CampusCloudOidcHelper {
         delegatedSecret: String?,
         localParcels: List<CloudSyncedParcelDto>,
         cancelledJobOrPlanIds: List<String>,
+        localActiveCloudPlans: List<CloudUnsyncedPlanUpsertDto> = emptyList(),
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
     ): CloudSyncSnapshotResult? {
         if (accessToken.isBlank()) return null
@@ -752,6 +764,26 @@ object CampusCloudOidcHelper {
                 val cancelArr = JSONArray()
                 cancelledJobOrPlanIds.forEach { cancelArr.put(it) }
                 bodyObj.put("reservation_cancellations", cancelArr)
+            }
+            if (localActiveCloudPlans.isNotEmpty()) {
+                val planUpsertsArr = JSONArray()
+                for (lp in localActiveCloudPlans) {
+                    val seatsArr = JSONArray()
+                    lp.candidateSeats.forEach { seatsArr.put(it) }
+                    planUpsertsArr.put(
+                        JSONObject()
+                            .put("plan_id", lp.planId)
+                            .put("target_local_date", lp.targetLocalDate)
+                            .put("target_local_time", lp.targetLocalTime)
+                            .put("area_code", lp.areaName)
+                            .put("area_name", lp.areaName)
+                            .put("candidate_seats", seatsArr)
+                            .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
+                            .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
+                            .put("allow_alternative_seat", lp.allowAlternativeSeat)
+                    )
+                }
+                bodyObj.put("reservation_plan_upserts", planUpsertsArr)
             }
 
             val raw = httpJsonRequest(

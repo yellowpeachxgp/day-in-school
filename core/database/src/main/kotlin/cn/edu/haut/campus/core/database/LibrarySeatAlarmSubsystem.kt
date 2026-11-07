@@ -127,10 +127,6 @@ object LibrarySeatAlarmSubsystem {
 
     fun schedulePlanAlarms(context: Context, plan: LibraryBookingPlanEntity) {
         val appContext = context.applicationContext
-        if (plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true)) {
-            cancelPlanAlarms(appContext, plan.id)
-            return
-        }
         if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED")) {
             cancelPlanAlarms(appContext, plan.id)
             return
@@ -145,10 +141,12 @@ object LibrarySeatAlarmSubsystem {
             true
         }
 
+        val isCloudHosted = plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true)
+        val fireTriggerMs = if (isCloudHosted) plan.fireAtEpochMillis + 2_000L else plan.fireAtEpochMillis
         val stages = listOf(
             "PRECHECK" to plan.precheckAtEpochMillis,
             "FINAL_CHECK" to plan.finalCheckAtEpochMillis,
-            "FIRE" to plan.fireAtEpochMillis
+            "FIRE" to fireTriggerMs
         )
 
         for ((stage, triggerAtMs) in stages) {
