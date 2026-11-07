@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,8 +54,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -77,13 +80,17 @@ import kotlin.math.sqrt
 /**
  * Calibrated optical & interaction engine based on Glass-HQ/liquid-glass
  * (https://github.com/Glass-HQ/liquid-glass) and Apple iOS 26 / macOS Tahoe Liquid Glass:
- * - Pre-frosted dual-sigma backdrop synthesis so both the screen backdrop and every root
- *   `REGULAR` glass surface share an identical, silky-smooth optical field.
- * - Hierarchical `REGULAR` (root cards, dialogs, bottom dock) vs `CLEAR` (nested wells,
- *   pills, segmented thumb, switch thumb) composition so nested controls never punch raw
- *   background holes through parent cards.
- * - Adaptive 18dp circular-arc lens bezel refraction (`optics.ts`), positive-only sky/floor
- *   caustics, and `maps.wgsl` Plane 1 directional top/bottom specular rim + side micro-shade.
+ * 1. Four-Zone Physical Meniscus Lens Profile:
+ *    - Zone 1 (`0.0dp..-1.2dp`): `maps.wgsl` Plane 1 directional top/bottom specular rim & oblique cut.
+ *    - Zone 2 (`-1.0dp..-4.4dp`): Refractive Meniscus Caustic Tube (`弯月面内聚光亮环`) with RGB chromatic dispersion.
+ *    - Zone 3 (`-4.2dp..-10.5dp`): Optical Thickness Trough (`玻璃体厚度暗谷`) that gives 4mm curved slab depth.
+ *    - Zone 4 (`Interior Dome`): Creamy frosted convex dome with S-curve luminance gradient.
+ * 2. Radial + Tangential Astigmatic Warping (`radialDisp + swirlDisp`):
+ *    - Bends and stretches background silk ribbons and multi-angle caustic harmonics around squircle corners.
+ * 3. Real-Time Content-Distorting `RenderEffect` (`LIQUID_CAPSULE_WARP_AGSL`):
+ *    - Applied to `XPeachBottomDock`, `XPeachSegmentedTabs`, and `LiquidGlassSwitch` so sliding a
+ *      liquid capsule lens physically warps, magnifies, and chromatically disperses the actual UI
+ *      icons, labels, and track underneath its curved meniscus edge in 120Hz real time.
  */
 enum class LiquidGlassMaterial {
     REGULAR,
@@ -127,8 +134,8 @@ object LiquidGlassOptics {
     const val REGULAR_DARK_FILL_SIGMA_DP = 21.8f
     const val REGULAR_LIGHT_FILL_OPACITY = 0.34f
     const val REGULAR_DARK_FILL_OPACITY = 0.65f
-    const val REGULAR_LIGHT_CHROMA = 1.06f
-    const val REGULAR_DARK_CHROMA = 1.04f
+    const val REGULAR_LIGHT_CHROMA = 1.08f
+    const val REGULAR_DARK_CHROMA = 1.06f
     const val DEFAULT_REFRACTION_PX = 60f
     const val BEZEL_INVERSE_HEIGHT = 0.05f
     const val LISSE_CORNER_SMOOTHING = 0.8125f
@@ -286,10 +293,9 @@ object LiquidGlassOptics {
     }
 
     /**
-     * Synthesizes a pre-frosted, eye-friendly `240 x 480` backdrop bitmap shared between the
-     * screen background and `uWallpaperShader` inside `liquidGlassEffect` so that:
-     * 1. Inside vs. outside of cards share the exact same blurred color field (zero mismatch).
-     * 2. No harsh bottom color blocks (`底部色块`) or green `tertiaryColor` stains exist.
+     * Synthesizes a structured `280 x 560` optical backdrop with diagonal silk light ribbons
+     * and multi-band gradients so that when a Liquid Glass lens refracts `uWallpaperShader`
+     * along its curved 20dp meniscus bezel, the light bands visibly bend, magnify, and warp.
      */
     fun getOrBuildFrostedBackdropBitmap(
         rawWallpaper: ImageBitmap?,
@@ -302,18 +308,18 @@ object LiquidGlassOptics {
     ): ImageBitmap {
         val quantAlpha = (backdropAlpha * 20f).roundToInt()
         val quantBlur = (blurDp * 2f).roundToInt()
-        val cacheKey = "${wallpaperKey ?: "ambient"}|$isDark|${primaryColor.toArgb()}|${secondaryColor.toArgb()}|$quantAlpha|$quantBlur"
+        val cacheKey = "v2|${wallpaperKey ?: "ambient"}|$isDark|${primaryColor.toArgb()}|${secondaryColor.toArgb()}|$quantAlpha|$quantBlur"
         frostedBackdropCache[cacheKey]?.let { return it }
 
-        val w = 240
-        val h = 480
+        val w = 280
+        val h = 560
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        val baseBg = if (isDark) Color(0xFF0A0F18) else Color(0xFFF3F7FC)
+        val baseBg = if (isDark) Color(0xFF0B111D) else Color(0xFFF1F6FD)
         canvas.drawColor(baseBg.toArgb())
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        val safeAlpha = backdropAlpha.coerceIn(0.15f, 1.0f)
+        val safeAlpha = backdropAlpha.coerceIn(0.22f, 1.0f)
 
         if (rawWallpaper != null) {
             val src = rawWallpaper.asAndroidBitmap()
@@ -326,23 +332,21 @@ object LiquidGlassOptics {
             canvas.drawBitmap(src, null, Rect(left, top, left + dstW, top + dstH), paint)
             paint.alpha = 255
 
-            // Eye-comfort protective veil over custom photo wallpaper
-            val veilAlpha = ((1f - safeAlpha) * 0.42f + 0.16f).coerceIn(0.16f, 0.58f)
+            val veilAlpha = ((1f - safeAlpha) * 0.36f + 0.12f).coerceIn(0.12f, 0.48f)
             canvas.drawColor(baseBg.copy(alpha = veilAlpha).toArgb())
         } else {
-            // Calm, top/mid-biased analogous blooms (zero harsh bottom orbs, zero green contamination)
-            val c1 = if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.28f)
-            val c2 = if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.32f)
+            val c1 = if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.15f)
+            val c2 = if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.18f)
             val cMid = lerp(c1, c2, 0.5f)
 
-            val a1 = ((if (isDark) 0.24f else 0.18f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
-            val a2 = ((if (isDark) 0.18f else 0.14f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
-            val aMid = ((if (isDark) 0.12f else 0.09f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
+            val a1 = ((if (isDark) 0.34f else 0.28f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
+            val a2 = ((if (isDark) 0.28f else 0.24f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
+            val aMid = ((if (isDark) 0.22f else 0.18f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
 
             paint.shader = RadialGradient(
-                w * 0.18f,
-                h * 0.12f,
-                w * 1.05f,
+                w * 0.16f,
+                h * 0.14f,
+                w * 0.92f,
                 intArrayOf(
                     android.graphics.Color.argb(a1, (c1.red * 255).toInt(), (c1.green * 255).toInt(), (c1.blue * 255).toInt()),
                     android.graphics.Color.TRANSPARENT
@@ -353,9 +357,9 @@ object LiquidGlassOptics {
             canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
 
             paint.shader = RadialGradient(
-                w * 0.85f,
-                h * 0.24f,
-                w * 0.98f,
+                w * 0.86f,
+                h * 0.28f,
+                w * 0.88f,
                 intArrayOf(
                     android.graphics.Color.argb(a2, (c2.red * 255).toInt(), (c2.green * 255).toInt(), (c2.blue * 255).toInt()),
                     android.graphics.Color.TRANSPARENT
@@ -366,9 +370,9 @@ object LiquidGlassOptics {
             canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
 
             paint.shader = RadialGradient(
-                w * 0.48f,
-                h * 0.48f,
-                w * 1.15f,
+                w * 0.36f,
+                h * 0.56f,
+                w * 0.95f,
                 intArrayOf(
                     android.graphics.Color.argb(aMid, (cMid.red * 255).toInt(), (cMid.green * 255).toInt(), (cMid.blue * 255).toInt()),
                     android.graphics.Color.TRANSPARENT
@@ -378,28 +382,30 @@ object LiquidGlassOptics {
             )
             canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
 
-            // Soft diagonal silk wave in the upper-middle zone for subtle bezel refraction gleam
-            val waveAlpha = ((if (isDark) 0.10f else 0.14f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
+            // Structured diagonal silk caustic ribbons so lens refraction bends visible light bands
+            val ribbonAlpha = ((if (isDark) 0.20f else 0.26f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
+            val whiteRibbonAlpha = ((if (isDark) 0.12f else 0.42f) * safeAlpha * 255f).roundToInt().coerceIn(0, 255)
             paint.shader = LinearGradient(
                 0f,
-                h * 0.16f,
+                h * 0.08f,
                 w.toFloat(),
-                h * 0.58f,
+                h * 0.72f,
                 intArrayOf(
                     android.graphics.Color.TRANSPARENT,
-                    android.graphics.Color.argb(waveAlpha, (c1.red * 255).toInt(), (c1.green * 255).toInt(), (c1.blue * 255).toInt()),
-                    android.graphics.Color.argb((waveAlpha * 0.7f).toInt(), 255, 255, 255),
+                    android.graphics.Color.argb(ribbonAlpha, (c1.red * 255).toInt(), (c1.green * 255).toInt(), (c1.blue * 255).toInt()),
+                    android.graphics.Color.argb(whiteRibbonAlpha, 255, 255, 255),
+                    android.graphics.Color.argb(ribbonAlpha, (c2.red * 255).toInt(), (c2.green * 255).toInt(), (c2.blue * 255).toInt()),
+                    android.graphics.Color.argb(whiteRibbonAlpha, 255, 255, 255),
                     android.graphics.Color.TRANSPARENT
                 ),
-                floatArrayOf(0f, 0.38f, 0.56f, 1f),
+                floatArrayOf(0f, 0.22f, 0.38f, 0.58f, 0.76f, 1f),
                 Shader.TileMode.CLAMP
             )
             canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
             paint.shader = null
         }
 
-        // Apply fast 2-pass separable box blur on the 240x480 buffer to guarantee silky-smooth frosting
-        val blurRadius = (blurDp * 0.65f).roundToInt().coerceIn(2, 18)
+        val blurRadius = (blurDp * 0.35f).roundToInt().coerceIn(2, 8)
         val blurred = fastBoxBlur(bmp, blurRadius)
         val imageBmp = blurred.asImageBitmap()
         if (frostedBackdropCache.size > 16) {
@@ -418,7 +424,6 @@ object LiquidGlassOptics {
         src.getPixels(pix, 0, w, 0, 0, w, h)
         val div = 2 * radius + 1
 
-        // Horizontal pass
         for (y in 0 until h) {
             val rowOffset = y * w
             var rSum = 0
@@ -440,7 +445,6 @@ object LiquidGlassOptics {
             }
         }
 
-        // Vertical pass
         for (x in 0 until w) {
             var rSum = 0
             var gSum = 0
@@ -467,13 +471,17 @@ object LiquidGlassOptics {
     }
 
     /**
-     * Calibrated AGSL shader:
-     * - Root surfaces (`uNested < 0.5`): sample the pre-frosted `uWallpaperShader` at displaced
-     *   screen coordinates `screenPos - n * edge * uRefractionPx`, blended with a creamy frosted
-     *   milk-glass / slate fill (`glassFillMix = 0.68..0.74`) so text is 100% effortless to read.
-     * - Nested controls (`uNested > 0.5`): never punch raw background holes through parent cards;
-     *   instead render a crystal-clear translucent highlight lens with `maps.wgsl` Plane 1
-     *   directional top/bottom specular rim and side micro-shade.
+     * Four-Zone Meniscus Lens & Astigmatic S-Warp AGSL Shader:
+     * - Applies radial Snell refraction (`-n * pow(edge, 1.12) * uRefractionPx`) + tangential corner
+     *   S-curve warping (`tangent * cornerAstigmatism * edge`) across both `REGULAR` and `CLEAR` lenses.
+     * - Modulates the scene with multi-harmonic screen-space silk caustic ribbons so scrolling or
+     *   pressing produces unmistakable glass bending, magnification, and RGB chromatic dispersion
+     *   along the curved 20dp meniscus bevel.
+     * - Renders the 4-zone physical glass thickness profile:
+     *   1) Outer specular rim (`maps.wgsl` Plane 1)
+     *   2) Inner Meniscus Caustic Ridge (`dDp = -2.3dp`, bright focused light tube + prismatic fringe)
+     *   3) Optical Thickness Valley (`dDp = -6.4dp`, subtle refractive density dip giving 4mm slab depth)
+     *   4) Creamy convex dome interior (`bodyRgb` with top-left to bottom-right S-curve sheen)
      */
     private const val LIQUID_GLASS_AGSL_SOURCE = """
         uniform float2 uSize;
@@ -499,25 +507,38 @@ object LiquidGlassOptics {
             return clamp(x, 0.0, 1.0);
         }
 
-        float3 evalCalmAmbientFallback(float2 screenPt) {
+        float3 evalSilkCausticField(float2 screenPt, float waveBoost) {
             float2 uv = screenPt / max(uViewportSize, float2(1.0));
-            float3 bgBase = uDark > 0.5 ? float3(0.039, 0.059, 0.094) : float3(0.953, 0.969, 0.988);
-            float d1 = length((uv - float2(0.18, 0.12)) * float2(1.0, 1.25));
-            float d2 = length((uv - float2(0.85, 0.24)) * float2(1.0, 1.25));
+            float3 bgBase = uDark > 0.5 ? float3(0.043, 0.067, 0.114) : float3(0.945, 0.969, 0.992);
+            float d1 = length((uv - float2(0.16, 0.14)) * float2(1.0, 1.25));
+            float d2 = length((uv - float2(0.86, 0.28)) * float2(1.0, 1.25));
             float w1 = exp(-d1 * d1 * 2.2);
             float w2 = exp(-d2 * d2 * 2.4);
-            float intensity = uDark > 0.5 ? 0.20 : 0.14;
+            float intensity = uDark > 0.5 ? 0.26 : 0.20;
             float3 col = mix(bgBase, uPrimaryRgb, sat(w1 * intensity));
-            col = mix(col, uSecondaryRgb, sat(w2 * intensity * 0.85));
+            col = mix(col, uSecondaryRgb, sat(w2 * intensity * 0.90));
+
+            // Multi-angle optical silk ribbons that bend and magnify inside the curved lens bezel
+            float phase1 = uv.x * 11.5 + uv.y * 7.8;
+            float phase2 = uv.x * -8.4 + uv.y * 13.2;
+            float2 warpUv = uv + 0.06 * float2(sin(phase2), cos(phase1));
+            float ribbon1 = pow(0.5 + 0.5 * sin(warpUv.x * 16.0 + warpUv.y * 10.5), 3.0);
+            float ribbon2 = pow(0.5 + 0.5 * cos(warpUv.x * 12.0 - warpUv.y * 15.0), 3.0);
+            float3 ribbonColor = mix(uPrimaryRgb, uSecondaryRgb, ribbon2);
+            float3 specWhite = uDark > 0.5 ? mix(ribbonColor, float3(1.0), 0.45) : float3(1.0);
+            col = mix(col, ribbonColor, ribbon1 * mix(0.06, 0.24, waveBoost));
+            col = mix(col, specWhite, (ribbon1 * ribbon2) * mix(0.04, 0.28, waveBoost));
             return clamp(col, float3(0.0), float3(1.0));
         }
 
-        float3 sampleSceneAt(float2 screenPt) {
+        float3 sampleSceneAt(float2 screenPt, float waveBoost) {
+            float3 silk = evalSilkCausticField(screenPt, waveBoost);
             if (uHasWallpaper > 0.5) {
                 float2 clampedPt = clamp(screenPt, float2(1.0), max(uViewportSize - float2(1.0), float2(1.0)));
-                return uWallpaperShader.eval(clampedPt).rgb;
+                float3 wp = uWallpaperShader.eval(clampedPt).rgb;
+                return mix(wp, silk, mix(0.14, 0.42, waveBoost));
             }
-            return evalCalmAmbientFallback(screenPt);
+            return silk;
         }
 
         half4 main(float2 fragCoord) {
@@ -544,88 +565,127 @@ object LiquidGlassOptics {
                 return half4(0.0);
             }
 
-            // Adaptive circular-arc lens bezel profile (scales down on compact pills/buttons)
+            // Adaptive circular-arc lens bezel profile (optics.ts edgeDisplacement)
             float dDp = d / max(uDpr, 1.0);
             float minDimDp = min(uSize.x, uSize.y) / max(uDpr, 1.0);
-            float bezelWidthDp = clamp(minDimDp * 0.36, 6.0, uNested > 0.5 ? 11.0 : 18.0);
+            float bezelWidthDp = clamp(minDimDp * 0.42, 8.0, uNested > 0.5 ? 14.0 : 22.0);
             float depth = sat(-dDp / bezelWidthDp);
             float edge = 1.0 - sat(sqrt(max(0.0, (2.0 - depth) * depth)));
+            float edgeCurve = pow(edge, 1.12);
+
+            // Radial Snell refraction + tangential corner S-curve astigmatic warping
+            float2 tangent = float2(-n.y, n.x);
+            float cornerAstigmatism = 2.0 * n.x * n.y;
+            float pressBoost = 1.0 + 0.42 * uPressProgress;
+            float2 radialDisp = -n * edgeCurve * uRefractionPx * 1.45 * pressBoost;
+            float2 swirlDisp = tangent * cornerAstigmatism * edge * (1.0 - edge * 0.40) * uRefractionPx * 0.68 * pressBoost;
+            float2 domeMag = -p * 0.045 * (1.0 - edge);
+            float2 disp = radialDisp + swirlDisp + domeMag;
+
+            float2 screenPos = uScreenOffset + fragCoord;
+            float waveBoost = sat(edge * 1.25 + uPressProgress * 0.45);
+            float dispersion = (0.14 + 0.08 * uPressProgress) * edge;
+
+            // Prismatic 3-channel RGB refraction sampling
+            float rChan = sampleSceneAt(screenPos + disp * (1.0 - dispersion), waveBoost).r;
+            float gChan = sampleSceneAt(screenPos + disp, waveBoost).g;
+            float bChan = sampleSceneAt(screenPos + disp * (1.0 + dispersion), waveBoost).b;
+            float3 refractedRgb = float3(rChan, gChan, bChan);
+
+            // Convex dome S-curve luminance across the glass body (top-left bright, bottom-right deep)
+            float2 normUv = fragCoord / max(uSize, float2(1.0));
+            float domeAxis = (1.0 - normUv.x) * 0.52 + (1.0 - normUv.y) * 0.48;
+            float domeLift = (domeAxis - 0.48) * mix(0.055, 0.040, uDark);
+
+            // Four-Zone Meniscus Thickness Profile:
+            // Zone 2: Inner Meniscus Caustic Tube (dDp around -2.2dp)
+            float meniscusTube = exp(-pow((dDp + 2.2) / 1.40, 2.0));
+            // Zone 3: Optical Thickness Trough / Lens Valley (dDp around -6.2dp)
+            float lensTrough = exp(-pow((dDp + 6.2) / 2.50, 2.0));
 
             float3 bodyRgb;
             float bodyA;
 
             if (uNested > 0.5) {
-                // Nested control lens (Well, Pill, Segmented Thumb, Dock Pill):
-                // Alpha-blends a crystal-clear translucent lens over the parent card without punching a hole!
-                bodyRgb = uBaseColor.rgb;
+                // Nested CLEAR convex droplet lens (Well, Pill, Segmented Thumb, Switch Thumb):
+                // Combines refracted caustic rim with convex dome highlight & meniscus thickness ring
+                float nestedFill = mix(0.52, 0.48, uDark) * (1.0 - 0.35 * edge);
+                bodyRgb = mix(refractedRgb, uBaseColor.rgb + float3(domeLift), clamp(nestedFill, 0.25, 0.78));
                 if (uHasTint > 0.5) {
-                    bodyRgb = mix(bodyRgb, uTintColor.rgb, 0.18);
+                    bodyRgb = mix(bodyRgb, uTintColor.rgb, 0.22);
                 }
-                float topCatch = max(0.0, -n.y) * edge * mix(0.08, 0.05, uDark);
-                float botCatch = max(0.0, n.y) * edge * mix(0.04, 0.025, uDark);
-                bodyRgb = clamp(bodyRgb + float3(topCatch + botCatch), float3(0.0), float3(1.0));
-                bodyA = sat(mix(uBodyAlpha * 0.52, min(0.88, uBodyAlpha * 0.78), edge * 0.6)) * coverage;
+                // Prismatic meniscus caustic ring + thickness trough
+                float3 cyanShift = float3(-0.03, 0.04, 0.09) * max(0.0, -n.x - n.y);
+                float3 warmShift = float3(0.07, 0.02, -0.02) * max(0.0, n.x + n.y);
+                float causticGain = meniscusTube * mix(0.18, 0.14, uDark) * (0.65 + 0.55 * max(abs(n.y), abs(n.x)));
+                float troughDip = lensTrough * mix(-0.038, -0.055, uDark);
+                bodyRgb = clamp(
+                    bodyRgb + float3(causticGain + troughDip) + (cyanShift + warmShift) * meniscusTube * 0.55,
+                    float3(0.0),
+                    float3(1.0)
+                );
+                float baseAlpha = clamp(uBodyAlpha, 0.48, 0.94);
+                bodyA = sat(mix(baseAlpha * 0.78, min(0.96, baseAlpha * 1.06), edge * 0.65 + meniscusTube * 0.25)) * coverage;
             } else {
-                // Root REGULAR glass surface (Card, Dialog, Floating Dock):
-                // Refracts the pre-frosted backdrop at the 18dp curved bezel and blends with creamy frosted body
-                float2 disp = -n * edge * uRefractionPx * (1.0 + 0.16 * uPressProgress);
-                float2 screenPos = uScreenOffset + fragCoord;
-                float dispersion = 0.025 * edge;
-                float rChan = sampleSceneAt(screenPos + disp * (1.0 - dispersion)).r;
-                float gChan = sampleSceneAt(screenPos + disp).g;
-                float bChan = sampleSceneAt(screenPos + disp * (1.0 + dispersion)).b;
-                float3 refractedRgb = float3(rChan, gChan, bChan);
-
-                // Creamy milk-glass / slate fill ratio (more refractive at the 18dp bezel, calmer in the text center)
-                float centerFill = mix(0.76, 0.74, uDark) * sat(uBodyAlpha * 1.12);
-                float bezelFill = mix(0.58, 0.56, uDark) * sat(uBodyAlpha * 1.05);
-                float glassFillMix = clamp(mix(centerFill, bezelFill, edge), 0.45, 0.92);
-                bodyRgb = mix(refractedRgb, uBaseColor.rgb, glassFillMix);
+                // Root REGULAR glass slab (Card, Dialog, Floating Dock):
+                // Clear refractive 22dp meniscus bevel transitioning into a creamy, legible frosted dome
+                float centerFill = mix(0.72, 0.70, uDark) * sat(uBodyAlpha * 1.08);
+                float bezelFill = mix(0.32, 0.34, uDark) * sat(uBodyAlpha * 0.90);
+                float glassFillMix = clamp(mix(centerFill, bezelFill, pow(edge, 0.85)), 0.24, 0.86);
+                bodyRgb = mix(refractedRgb, uBaseColor.rgb + float3(domeLift), glassFillMix);
 
                 if (uHasTint > 0.5) {
                     float luma = dot(bodyRgb, float3(0.2126, 0.7152, 0.0722));
                     float3 tintedGlass = uTintColor.rgb * mix(luma, 1.0, 0.48);
-                    bodyRgb = mix(bodyRgb, tintedGlass, 0.18);
+                    bodyRgb = mix(bodyRgb, tintedGlass, 0.20);
                 }
 
-                // Strictly positive top/bottom bezel caustics + ultra-subtle micro-crease (never darkens bottom edge)
-                float topCaustic = max(0.0, -n.y) * edge * mix(0.08, 0.05, uDark);
-                float botCaustic = max(0.0, n.y) * edge * mix(0.035, 0.02, uDark);
-                float innerCrease = exp(-pow((dDp + 1.5) / 0.85, 2.0)) * mix(-0.012, -0.020, uDark);
-                bodyRgb = clamp(bodyRgb + float3(topCaustic + botCaustic + innerCrease), float3(0.0), float3(1.0));
-                bodyA = sat(mix(uBodyAlpha * 0.92, min(0.96, uBodyAlpha * 1.02), edge * 0.4)) * coverage;
+                // Prismatic meniscus caustic tube + 4mm optical thickness trough
+                float topCaustic = max(0.0, -n.y) * edge * mix(0.11, 0.075, uDark);
+                float botCaustic = max(0.0, n.y) * edge * mix(0.055, 0.035, uDark);
+                float tubeCaustic = meniscusTube * mix(0.14, 0.10, uDark) * (0.55 + 0.45 * abs(n.y - n.x * 0.5));
+                float troughDip = lensTrough * mix(-0.032, -0.048, uDark);
+                float3 prismFringe = float3(-0.025, 0.035, 0.085) * max(0.0, -n.y) * meniscusTube
+                    + float3(0.065, 0.020, -0.025) * max(0.0, n.y) * meniscusTube;
+
+                bodyRgb = clamp(
+                    bodyRgb + float3(topCaustic + botCaustic + tubeCaustic + troughDip) + prismFringe * 0.60,
+                    float3(0.0),
+                    float3(1.0)
+                );
+                bodyA = sat(mix(uBodyAlpha * 0.92, min(0.98, uBodyAlpha * 1.05), edge * 0.55 + meniscusTube * 0.20)) * coverage;
             }
 
             // interaction.ts: internal radial illumination (--lg-glow) when pressed
             if (uPressProgress > 0.001) {
                 float distCenter = length(p) / max(min(uSize.x, uSize.y) * 0.65, 1.0);
-                float radialGlow = (1.0 - sat(distCenter)) * uPressProgress * mix(0.14, 0.10, uDark);
+                float radialGlow = (1.0 - sat(distCenter)) * uPressProgress * mix(0.18, 0.14, uDark);
                 bodyRgb = clamp(bodyRgb + float3(radialGlow), float3(0.0), float3(1.0));
             }
 
-            // maps.wgsl Plane 1: directional top & bottom specular (spread = 1.08) + 4.5dp diffuse + side rim shade
+            // Zone 1: maps.wgsl Plane 1 directional top & bottom specular (spread = 1.08) + 4.5dp diffuse + side rim shade
             float cosSpread = 0.471328;   // cos(1.08)
             float cosDiffuse = 0.763552;  // cos(1.08 * 0.65)
-            float directional = pow(sat((abs(n.y) - cosSpread) / (1.0 - cosSpread)), 1.25);
-            float diffuseDir = pow(sat((abs(n.y) - cosDiffuse) / (1.0 - cosDiffuse)), 1.25);
-            float stroke = sat((dDp + 0.95) + 0.5) * sat(0.5 - dDp);
+            float directional = pow(sat((abs(n.y) - cosSpread) / (1.0 - cosSpread)), 1.20);
+            float diffuseDir = pow(sat((abs(n.y) - cosDiffuse) / (1.0 - cosDiffuse)), 1.20);
+            float stroke = sat((dDp + 1.15) + 0.5) * sat(0.5 - dDp);
             float specular = directional * stroke;
-            specular = specular / (1.0 + 0.5 * (1.0 - specular));
-            float diffuse = diffuseDir * 0.15 * pow(1.0 - sat(-dDp / 4.5), 2.0) * coverage;
-            float highlight = sat(specular * mix(0.90, 0.74, uDark) + diffuse * mix(0.80, 0.38, uDark));
+            specular = specular / (1.0 + 0.42 * (1.0 - specular));
+            float diffuse = diffuseDir * 0.22 * pow(1.0 - sat(-dDp / 5.2), 2.0) * coverage;
+            float highlight = sat(specular * mix(0.98, 0.84, uDark) + diffuse * mix(0.88, 0.46, uDark));
 
             float adjusted = dDp;
-            float falloff = 1.0 - sat(-adjusted / 0.8);
-            float ramp = mix(falloff > 0.0 ? 0.25 : 0.0, falloff, 0.75);
-            float outline = ramp * sat((adjusted + 0.8) + 0.5) * sat(-adjusted + 0.5);
+            float falloff = 1.0 - sat(-adjusted / 0.9);
+            float ramp = mix(falloff > 0.0 ? 0.28 : 0.0, falloff, 0.72);
+            float outline = ramp * sat((adjusted + 0.9) + 0.5) * sat(-adjusted + 0.5);
             float cosSide = 0.557023;     // cos(0.98)
             float wx = sat((abs(n.x) - cosSide) / (1.0 - cosSide)) * outline;
-            float shade = (wx / (1.0 + 0.4 * (1.0 - wx))) * mix(0.18, 0.28, uDark);
+            float shade = (wx / (1.0 + 0.38 * (1.0 - wx))) * mix(0.24, 0.36, uDark);
 
             float overlayAlpha = sat(highlight + shade * (1.0 - highlight)) * coverage;
-            float lightScalar = mix(1.0, 0.86, uDark) * highlight / max(overlayAlpha, 0.00001);
+            float lightScalar = mix(1.0, 0.90, uDark) * highlight / max(overlayAlpha, 0.00001);
             float3 lightRgb = uHasTint > 0.5
-                ? mix(float3(lightScalar), uTintColor.rgb * lightScalar * 1.10, 0.22)
+                ? mix(float3(lightScalar), uTintColor.rgb * lightScalar * 1.12, 0.26)
                 : float3(lightScalar);
 
             float outA = overlayAlpha + bodyA * (1.0 - overlayAlpha);
@@ -634,9 +694,107 @@ object LiquidGlassOptics {
         }
     """
 
+    /**
+     * Real-Time Content-Distorting Capsule Lens AGSL Shader (`RenderEffect.createRuntimeShaderEffect`):
+     * Warps, magnifies, and chromatically disperses the actual rendered child pixels (`content`)
+     * underneath a sliding Liquid Glass capsule indicator (`XPeachBottomDock`, `XPeachSegmentedTabs`,
+     * `LiquidGlassSwitch`).
+     */
+    private const val LIQUID_CAPSULE_WARP_AGSL = """
+        uniform shader content;
+        uniform float2 uSize;
+        uniform float4 uLensRect;
+        uniform float uLensRadius;
+        uniform float uDpr;
+        uniform float uDark;
+        uniform float uRefractionPx;
+        uniform float uPressProgress;
+
+        float sat(float x) {
+            return clamp(x, 0.0, 1.0);
+        }
+
+        half4 main(float2 fragCoord) {
+            float2 lensCenter = 0.5 * (uLensRect.xy + uLensRect.zw);
+            float2 lensHalf = max(0.5 * (uLensRect.zw - uLensRect.xy), float2(1.0));
+            float r = min(uLensRadius, min(lensHalf.x, lensHalf.y));
+            float2 p = fragCoord - lensCenter;
+            float2 b = max(lensHalf - float2(r), float2(0.0));
+            float2 q = abs(p) - b;
+
+            float2 qPos = max(q, float2(0.0));
+            float cornerDist = pow(pow(qPos.x, 2.45) + pow(qPos.y, 2.45), 1.0 / 2.45);
+            float d = cornerDist + min(max(q.x, q.y), 0.0) - r;
+
+            if (d >= 0.5) {
+                return content.eval(fragCoord);
+            }
+
+            float2 gradCorner = (q.x > 0.0 && q.y > 0.0)
+                ? normalize(float2(pow(qPos.x, 1.45), pow(qPos.y, 1.45)) + float2(1e-5))
+                : (q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0));
+            float2 sx = float2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+            float2 n = normalize(gradCorner * sx + float2(1e-6));
+
+            float dDp = d / max(uDpr, 1.0);
+            float minDimDp = min(lensHalf.x * 2.0, lensHalf.y * 2.0) / max(uDpr, 1.0);
+            float bezelWidthDp = clamp(minDimDp * 0.42, 7.0, 15.0);
+            float depth = sat(-dDp / bezelWidthDp);
+            float edge = 1.0 - sat(sqrt(max(0.0, (2.0 - depth) * depth)));
+
+            // Snell refraction + corner swirl + convex dome magnification of underlying UI pixels
+            float2 tangent = float2(-n.y, n.x);
+            float swirl = 2.0 * n.x * n.y * edge * (1.0 - edge * 0.4);
+            float pressBoost = 1.0 + 0.45 * uPressProgress;
+            float2 disp = (-n * pow(edge, 1.15) * uRefractionPx + tangent * swirl * uRefractionPx * 0.55) * pressBoost
+                - p * (0.06 + 0.04 * uPressProgress) * (1.0 - edge);
+
+            float dispersion = (0.16 + 0.10 * uPressProgress) * edge;
+            float2 ptR = clamp(fragCoord + disp * (1.0 - dispersion), float2(0.0), max(uSize - float2(1.0), float2(1.0)));
+            float2 ptG = clamp(fragCoord + disp, float2(0.0), max(uSize - float2(1.0), float2(1.0)));
+            float2 ptB = clamp(fragCoord + disp * (1.0 + dispersion), float2(0.0), max(uSize - float2(1.0), float2(1.0)));
+
+            half4 cR = content.eval(ptR);
+            half4 cG = content.eval(ptG);
+            half4 cB = content.eval(ptB);
+            float3 refracted = float3(cR.r, cG.g, cB.b);
+
+            float meniscusTube = exp(-pow((dDp + 1.8) / 1.25, 2.0));
+            float lensTrough = exp(-pow((dDp + 4.8) / 1.90, 2.0));
+            float causticBoost = meniscusTube * mix(0.16, 0.12, uDark) + lensTrough * mix(-0.028, -0.042, uDark);
+            float3 finalRgb = clamp(refracted + float3(causticBoost), float3(0.0), float3(1.0));
+            return half4(half3(finalRgb), cG.a);
+        }
+    """
+
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     fun createLiquidGlassShaderOrNull(): RuntimeShader? =
         runCatching { RuntimeShader(LIQUID_GLASS_AGSL_SOURCE) }.getOrNull()
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    fun buildCapsuleLensRenderEffectOrNull(
+        widthPx: Float,
+        heightPx: Float,
+        lensLeftPx: Float,
+        lensTopPx: Float,
+        lensRightPx: Float,
+        lensBottomPx: Float,
+        lensRadiusPx: Float,
+        dpr: Float,
+        isDark: Boolean,
+        refractionPx: Float,
+        pressProgress: Float = 0f
+    ): RenderEffect? = runCatching {
+        val shader = RuntimeShader(LIQUID_CAPSULE_WARP_AGSL)
+        shader.setFloatUniform("uSize", widthPx.coerceAtLeast(1f), heightPx.coerceAtLeast(1f))
+        shader.setFloatUniform("uLensRect", lensLeftPx, lensTopPx, lensRightPx, lensBottomPx)
+        shader.setFloatUniform("uLensRadius", lensRadiusPx)
+        shader.setFloatUniform("uDpr", dpr.coerceAtLeast(1f))
+        shader.setFloatUniform("uDark", if (isDark) 1f else 0f)
+        shader.setFloatUniform("uRefractionPx", refractionPx)
+        shader.setFloatUniform("uPressProgress", pressProgress.coerceIn(0f, 1f))
+        RenderEffect.createRuntimeShaderEffect(shader, "content")
+    }.getOrNull()
 }
 
 /**
@@ -650,7 +808,7 @@ fun Modifier.liquidGlassEffect(
     material: LiquidGlassMaterial = LiquidGlassMaterial.REGULAR,
     accentTint: Color? = null,
     nested: Boolean = false,
-    refractionDp: Float = if (material == LiquidGlassMaterial.CLEAR) 16f else 24f,
+    refractionDp: Float = if (material == LiquidGlassMaterial.CLEAR) 18f else 28f,
     pressProgress: Float = 0f
 ): Modifier {
     if (!enabled) return this
@@ -685,7 +843,7 @@ fun Modifier.liquidGlassEffect(
 
         Modifier
             .onGloballyPositioned { coords ->
-                if (!nested && coords.isAttached) {
+                if (coords.isAttached) {
                     val pos = coords.positionInWindow()
                     if (abs(pos.x - windowOffset.x) > 0.5f || abs(pos.y - windowOffset.y) > 0.5f) {
                         windowOffset = pos
@@ -699,18 +857,18 @@ fun Modifier.liquidGlassEffect(
                 val rPx = min(cornerRadius.toPx(), min(w, h) * 0.5f)
                 val refractionPx = refractionDp.dp.toPx()
 
-                val rawAlpha = baseColor.alpha.coerceIn(0.24f, 0.96f)
+                val rawAlpha = baseColor.alpha.coerceIn(0.32f, 0.96f)
                 val effectiveAlpha = if (material == LiquidGlassMaterial.CLEAR) {
-                    (rawAlpha * (if (isDark) 0.76f else 0.72f)).coerceIn(0.20f, 0.88f)
+                    (rawAlpha * (if (isDark) 0.86f else 0.84f)).coerceIn(0.36f, 0.92f)
                 } else {
                     rawAlpha
                 }
                 val calibratedBase = if (isDark) {
                     val darkFloor = if (nested) Color(0xFF1D273A) else Color(0xFF151E2E)
-                    lerp(baseColor.copy(alpha = 1f), darkFloor, if (nested) 0.25f else 0.32f)
+                    lerp(baseColor.copy(alpha = 1f), darkFloor, if (nested) 0.22f else 0.30f)
                 } else {
                     val lightLift = Color(0xFFFCFEFF)
-                    lerp(baseColor.copy(alpha = 1f), lightLift, if (material == LiquidGlassMaterial.REGULAR) 0.52f else 0.35f)
+                    lerp(baseColor.copy(alpha = 1f), lightLift, if (material == LiquidGlassMaterial.REGULAR) 0.48f else 0.32f)
                 }
                 val cleanTint = accentTint?.takeIf { it != Color.Transparent && it != Color.Unspecified }
 
@@ -778,19 +936,19 @@ fun Modifier.liquidGlassEffect(
                     }
                 }
 
-                // API 31-32 analytical fallback
-                val bezelDepthPx = min(18.dp.toPx(), h * 0.40f).coerceAtLeast(1f)
-                val topSpecAlpha = if (isDark) 0.64f else 0.88f
-                val botSpecAlpha = if (isDark) 0.42f else 0.64f
-                val sideShadeAlpha = if (isDark) 0.28f else 0.16f
-                val topDiffuseColor = (cleanTint?.let { lerp(Color.White, it, 0.22f) } ?: Color.White)
-                    .copy(alpha = if (isDark) 0.12f else 0.28f)
+                // API 31-32 analytical fallback with 4-zone meniscus ring & thickness trough
+                val bezelDepthPx = min(20.dp.toPx(), h * 0.42f).coerceAtLeast(1f)
+                val topSpecAlpha = if (isDark) 0.72f else 0.94f
+                val botSpecAlpha = if (isDark) 0.50f else 0.74f
+                val sideShadeAlpha = if (isDark) 0.34f else 0.22f
+                val topDiffuseColor = (cleanTint?.let { lerp(Color.White, it, 0.25f) } ?: Color.White)
+                    .copy(alpha = if (isDark) 0.18f else 0.36f)
 
                 val bodyBrush = Brush.verticalGradient(
                     colors = listOf(
-                        calibratedBase.copy(alpha = (effectiveAlpha * 1.02f).coerceIn(0f, 0.96f)),
+                        calibratedBase.copy(alpha = (effectiveAlpha * 1.04f).coerceIn(0f, 0.96f)),
                         calibratedBase.copy(alpha = effectiveAlpha),
-                        calibratedBase.copy(alpha = (effectiveAlpha * 0.96f).coerceIn(0f, 0.96f))
+                        calibratedBase.copy(alpha = (effectiveAlpha * 0.95f).coerceIn(0f, 0.96f))
                     ),
                     startY = 0f,
                     endY = h
@@ -810,7 +968,7 @@ fun Modifier.liquidGlassEffect(
                     endY = h
                 )
                 val cr = CornerRadius(rPx, rPx)
-                val strokeWidth = 1.dp.toPx()
+                val strokeWidth = 1.1.dp.toPx()
 
                 onDrawBehind {
                     drawRoundRect(brush = bodyBrush, cornerRadius = cr)
@@ -827,6 +985,34 @@ fun Modifier.liquidGlassEffect(
     }
 }
 
+/**
+ * Unified switch control that automatically renders the refractive `LiquidGlassSwitch` droplet lens
+ * in Liquid Glass mode, and a clean Material 3 `Switch` in standard modes.
+ */
+@Composable
+fun XPeachSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    if (XPeachTheme.isLiquidGlass && onCheckedChange != null) {
+        LiquidGlassSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = modifier,
+            enabled = enabled
+        )
+    } else {
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = modifier,
+            enabled = enabled
+        )
+    }
+}
+
 @Composable
 fun LiquidGlassSwitch(
     checked: Boolean,
@@ -835,38 +1021,67 @@ fun LiquidGlassSwitch(
     enabled: Boolean = true
 ) {
     val isDark = XPeachTheme.isDark
+    val density = LocalDensity.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
     val thumbTravelDp by animateDpAsState(
-        targetValue = if (checked) 18.dp else 0.dp,
+        targetValue = if (checked) 20.dp else 0.dp,
         animationSpec = LiquidGlassSpringPreset.SWITCH.toSpringSpec(),
         label = "lgSwitchTravel"
     )
     val pressProgress by animateFloatAsState(
         targetValue = if (isPressed && enabled) 1f else 0f,
-        animationSpec = tween(durationMillis = 190),
+        animationSpec = tween(durationMillis = 180),
         label = "lgSwitchPressProgress"
     )
     val trackColor by animateColorAsState(
         targetValue = if (checked) {
-            XPeachTheme.readablePrimary.copy(alpha = if (enabled) 0.90f else 0.45f)
+            XPeachTheme.readablePrimary.copy(alpha = if (enabled) 0.92f else 0.45f)
         } else {
-            Color(0xFF8E8E93).copy(alpha = if (isDark) 0.42f else 0.32f)
+            Color(0xFF788296).copy(alpha = if (isDark) 0.44f else 0.34f)
         },
         animationSpec = tween(durationMillis = 200),
         label = "lgSwitchTrackColor"
     )
 
-    val swellX = (6.dp * pressProgress)
-    val swellY = (4.dp * pressProgress)
+    val swellX = 7.dp * pressProgress
+    val swellY = 4.5.dp * pressProgress
+    val thumbW = 32.dp + swellX
+    val thumbH = 22.dp + swellY
 
     Box(
         modifier = modifier
-            .width(54.dp)
-            .height(24.dp)
+            .width(56.dp)
+            .height(26.dp)
             .clip(CircleShape)
             .background(trackColor)
+            .then(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    Modifier.graphicsLayer {
+                        val padPx = 2.dp.toPx()
+                        val leftPx = padPx + (thumbTravelDp - swellX * 0.5f).toPx()
+                        val topPx = padPx - (swellY * 0.5f).toPx()
+                        val wPx = thumbW.toPx()
+                        val hPx = thumbH.toPx()
+                        renderEffect = LiquidGlassOptics.buildCapsuleLensRenderEffectOrNull(
+                            widthPx = size.width,
+                            heightPx = size.height,
+                            lensLeftPx = leftPx,
+                            lensTopPx = topPx,
+                            lensRightPx = leftPx + wPx,
+                            lensBottomPx = topPx + hPx,
+                            lensRadiusPx = hPx * 0.5f,
+                            dpr = density.density,
+                            isDark = isDark,
+                            refractionPx = 18.dp.toPx(),
+                            pressProgress = pressProgress
+                        )?.asComposeRenderEffect()
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -877,34 +1092,31 @@ fun LiquidGlassSwitch(
             .padding(2.dp),
         contentAlignment = Alignment.CenterStart
     ) {
+        val thumbBaseColor = if (isDark) {
+            Color(0xFFF8FAFC).copy(alpha = (0.86f - 0.32f * pressProgress).coerceIn(0.46f, 0.92f))
+        } else {
+            Color.White.copy(alpha = (0.90f - 0.36f * pressProgress).coerceIn(0.46f, 0.94f))
+        }
         Box(
             modifier = Modifier
                 .offset(x = thumbTravelDp - (swellX * 0.5f))
-                .size(width = 32.dp + swellX, height = 20.dp + swellY)
-                .then(
-                    if (pressProgress <= 0.05f) {
-                        Modifier.shadow(elevation = 2.dp, shape = CircleShape, clip = false)
-                    } else {
-                        Modifier
-                    }
+                .size(width = thumbW, height = thumbH)
+                .shadow(
+                    elevation = if (pressProgress > 0.2f) 4.dp else 2.dp,
+                    shape = CircleShape,
+                    clip = false
                 )
                 .clip(CircleShape)
-                .then(
-                    if (pressProgress > 0.05f) {
-                        Modifier.liquidGlassEffect(
-                            enabled = true,
-                            isDark = isDark,
-                            cornerRadius = 999.dp,
-                            baseColor = Color.White.copy(alpha = (1f - 0.52f * pressProgress).coerceIn(0.38f, 0.96f)),
-                            material = LiquidGlassMaterial.CLEAR,
-                            accentTint = null,
-                            nested = true,
-                            refractionDp = 16f,
-                            pressProgress = pressProgress
-                        )
-                    } else {
-                        Modifier.background(Color.White.copy(alpha = if (enabled) 0.98f else 0.65f))
-                    }
+                .liquidGlassEffect(
+                    enabled = true,
+                    isDark = isDark,
+                    cornerRadius = 999.dp,
+                    baseColor = thumbBaseColor,
+                    material = LiquidGlassMaterial.CLEAR,
+                    accentTint = if (checked) XPeachTheme.readablePrimary else null,
+                    nested = true,
+                    refractionDp = 20f,
+                    pressProgress = pressProgress
                 )
         )
     }

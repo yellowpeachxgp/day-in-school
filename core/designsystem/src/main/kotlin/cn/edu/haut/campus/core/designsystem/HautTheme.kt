@@ -28,6 +28,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -78,6 +80,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -88,6 +91,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -1706,9 +1710,9 @@ private fun LiquidGlassAmbientBackdrop(
     backdropAlpha: Float,
     blurDp: Float
 ) {
-    val baseColor = if (isDark) Color(0xFF0A0F18) else Color(0xFFF3F7FC)
-    val glowAlpha = backdropAlpha.coerceIn(0.20f, 1.0f)
-    val blurSoftening = 1f - (blurDp / 48f).coerceIn(0f, 0.40f)
+    val baseColor = if (isDark) Color(0xFF0B111D) else Color(0xFFF1F6FD)
+    val glowAlpha = backdropAlpha.coerceIn(0.22f, 1.0f)
+    val blurSoftening = 1f - (blurDp / 48f).coerceIn(0f, 0.35f)
 
     Box(
         modifier = Modifier
@@ -1717,32 +1721,44 @@ private fun LiquidGlassAmbientBackdrop(
             .drawWithCache {
                 val w = size.width.coerceAtLeast(1f)
                 val h = size.height.coerceAtLeast(1f)
-                val c1 = (if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.30f))
-                    .copy(alpha = (if (isDark) 0.22f else 0.16f) * glowAlpha * blurSoftening)
-                val c2 = (if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.34f))
-                    .copy(alpha = (if (isDark) 0.16f else 0.12f) * glowAlpha * blurSoftening)
+                val c1 = (if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.16f))
+                    .copy(alpha = (if (isDark) 0.30f else 0.24f) * glowAlpha * blurSoftening)
+                val c2 = (if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.20f))
+                    .copy(alpha = (if (isDark) 0.24f else 0.19f) * glowAlpha * blurSoftening)
                 val cMid = lerp(c1, c2, 0.5f)
-                    .copy(alpha = (if (isDark) 0.10f else 0.08f) * glowAlpha * blurSoftening)
+                    .copy(alpha = (if (isDark) 0.16f else 0.14f) * glowAlpha * blurSoftening)
+                val silkWhite = Color.White.copy(alpha = (if (isDark) 0.08f else 0.36f) * glowAlpha * blurSoftening)
 
                 val topZenithBloom = Brush.radialGradient(
                     colors = listOf(c1, Color.Transparent),
-                    center = Offset(w * 0.18f, h * 0.12f),
-                    radius = w * 1.10f
+                    center = Offset(w * 0.16f, h * 0.14f),
+                    radius = w * 0.96f
                 )
                 val upperRightBloom = Brush.radialGradient(
                     colors = listOf(c2, Color.Transparent),
-                    center = Offset(w * 0.85f, h * 0.24f),
-                    radius = w * 1.02f
+                    center = Offset(w * 0.86f, h * 0.28f),
+                    radius = w * 0.90f
                 )
                 val midAmbientWash = Brush.radialGradient(
                     colors = listOf(cMid, Color.Transparent),
-                    center = Offset(w * 0.48f, h * 0.48f),
-                    radius = w * 1.20f
+                    center = Offset(w * 0.36f, h * 0.56f),
+                    radius = w * 1.02f
+                )
+                val diagonalSilkRibbon = Brush.linearGradient(
+                    0.0f to Color.Transparent,
+                    0.24f to c1,
+                    0.40f to silkWhite,
+                    0.58f to c2,
+                    0.76f to silkWhite,
+                    1.0f to Color.Transparent,
+                    start = Offset(0f, h * 0.08f),
+                    end = Offset(w, h * 0.72f)
                 )
                 onDrawBehind {
                     drawRect(brush = topZenithBloom)
                     drawRect(brush = upperRightBloom)
                     drawRect(brush = midAmbientWash)
+                    drawRect(brush = diagonalSilkRibbon)
                 }
             }
     )
@@ -2696,11 +2712,14 @@ fun <T> XPeachSegmentedTabs(
     val isLiquid = XPeachTheme.isLiquidGlass
     val hasBackdrop = XPeachTheme.hasActiveBackdrop
     val glassAlpha = XPeachTheme.glassCardAlpha
+    val density = LocalDensity.current
+    val latestOptions by rememberUpdatedState(options)
+    val latestOnSelect by rememberUpdatedState(onSelect)
 
     val trackBg = when {
         isLiquid || hasBackdrop -> {
             val base = if (isDark) Color(0xFF0E1520) else MaterialTheme.colorScheme.surfaceVariant
-            base.copy(alpha = (glassAlpha * 0.72f).coerceIn(0.18f, 0.86f))
+            base.copy(alpha = (glassAlpha * 0.76f).coerceIn(0.28f, 0.88f))
         }
         isDark -> Color(0xFF10151D)
         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
@@ -2708,27 +2727,51 @@ fun <T> XPeachSegmentedTabs(
     val selectedThumbBg = when {
         isLiquid || hasBackdrop -> {
             val base = if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color.White
-            base.copy(alpha = (glassAlpha * 0.96f).coerceIn(0.32f, 0.96f))
+            base.copy(alpha = (glassAlpha * 0.94f).coerceIn(0.45f, 0.96f))
         }
         isDark -> MaterialTheme.colorScheme.surfaceContainerHighest
         else -> MaterialTheme.colorScheme.surface
     }
-    // GlassTabs (tabs.tsx): outer list and sliding indicator are both capsules (999.dp),
-    // and GlassTabsIndicator is a clear refractive selection lens (material = CLEAR)
     val outerRadius = if (isLiquid) 999.dp else FlutterM3Tokens.SegmentedContainerRadius
     val innerRadius = if (isLiquid) 999.dp else FlutterM3Tokens.SegmentedThumbRadius
     val containerShape = RoundedCornerShape(outerRadius)
     val thumbShape = RoundedCornerShape(innerRadius)
     val count = options.size.coerceAtLeast(1)
     val selectedIdx = options.indexOf(selectedOption).coerceIn(0, count - 1)
+
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    var isPressing by remember { mutableStateOf(false) }
+
+    val targetFraction = dragFraction ?: selectedIdx.toFloat()
     val animatedIndex by animateFloatAsState(
-        targetValue = selectedIdx.toFloat(),
+        targetValue = targetFraction,
         animationSpec = if (isLiquid) {
             LiquidGlassSpringPreset.MORPH.toSpringSpec()
         } else {
             spring(dampingRatio = 0.78f, stiffness = 420f)
         },
         label = "segSlidingThumbOffset"
+    )
+    val pressProgress by animateFloatAsState(
+        targetValue = if (isPressing && isLiquid) 1f else 0f,
+        animationSpec = tween(160),
+        label = "segPressProgress"
+    )
+
+    val travelDelta = abs(targetFraction - animatedIndex)
+    val thumbScaleX by animateFloatAsState(
+        targetValue = if (isLiquid) {
+            1f + (travelDelta * 0.24f).coerceAtMost(0.20f) + (if (isPressing) 0.045f else 0f)
+        } else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+        label = "segThumbScaleX"
+    )
+    val thumbScaleY by animateFloatAsState(
+        targetValue = if (isLiquid) {
+            1f - (travelDelta * 0.08f).coerceAtMost(0.08f) + (if (isPressing) 0.025f else 0f)
+        } else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 450f),
+        label = "segThumbScaleY"
     )
 
     BoxWithConstraints(
@@ -2745,18 +2788,86 @@ fun <T> XPeachSegmentedTabs(
                         baseColor = trackBg,
                         material = LiquidGlassMaterial.CLEAR,
                         nested = true,
-                        refractionDp = 18f
+                        refractionDp = 20f
                     )
                 } else {
                     Modifier.background(trackBg)
                 }
             )
+            .then(
+                if (isLiquid && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    Modifier.graphicsLayer {
+                        val padPx = 3.dp.toPx()
+                        val slotW = ((size.width - padPx * 2f) / count).coerceAtLeast(1f)
+                        val leftPx = padPx + slotW * animatedIndex
+                        val topPx = padPx
+                        val rightPx = leftPx + slotW
+                        val bottomPx = (size.height - padPx).coerceAtLeast(topPx + 1f)
+                        renderEffect = LiquidGlassOptics.buildCapsuleLensRenderEffectOrNull(
+                            widthPx = size.width,
+                            heightPx = size.height,
+                            lensLeftPx = leftPx,
+                            lensTopPx = topPx,
+                            lensRightPx = rightPx,
+                            lensBottomPx = bottomPx,
+                            lensRadiusPx = (bottomPx - topPx) * 0.5f,
+                            dpr = density.density,
+                            isDark = isDark,
+                            refractionPx = 16.dp.toPx(),
+                            pressProgress = pressProgress
+                        )?.asComposeRenderEffect()
+                    }
+                } else {
+                    Modifier
+                }
+            )
+            .pointerInput(count) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isPressing = true
+                    val totalW = size.width.toFloat().coerceAtLeast(1f)
+                    val slotW = totalW / count
+                    var lastIdx = (down.position.x / slotW).toInt().coerceIn(0, count - 1)
+                    var hasDragged = false
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        if (abs(change.position.x - down.position.x) > viewConfiguration.touchSlop * 0.45f) {
+                            hasDragged = true
+                        }
+                        if (hasDragged) {
+                            change.consume()
+                            val rawFrac = ((change.position.x / slotW) - 0.5f).coerceIn(0f, (count - 1).toFloat())
+                            dragFraction = rawFrac
+                            val hovered = rawFrac.roundToInt().coerceIn(0, count - 1)
+                            if (hovered != lastIdx) {
+                                lastIdx = hovered
+                                latestOptions.getOrNull(hovered)?.let { latestOnSelect(it) }
+                            }
+                        }
+                    }
+                    isPressing = false
+                    if (hasDragged) {
+                        val finalIdx = (dragFraction ?: selectedIdx.toFloat()).roundToInt().coerceIn(0, count - 1)
+                        dragFraction = null
+                        latestOptions.getOrNull(finalIdx)?.let { latestOnSelect(it) }
+                    } else {
+                        dragFraction = null
+                        val tappedIdx = (down.position.x / slotW).toInt().coerceIn(0, count - 1)
+                        latestOptions.getOrNull(tappedIdx)?.let { latestOnSelect(it) }
+                    }
+                }
+            }
             .padding(3.dp)
     ) {
         val slotWidth = maxWidth / count
         val thumbOffsetX = slotWidth * animatedIndex
 
-        // 1. 物理弹簧滑动胶囊透镜滑块（对齐 GlassTabsIndicator: material = "clear", radius = "capsule"）
         val thumbBorderMod = if (isLiquid) {
             Modifier
         } else {
@@ -2773,6 +2884,10 @@ fun <T> XPeachSegmentedTabs(
                 .offset(x = thumbOffsetX)
                 .width(slotWidth)
                 .fillMaxHeight()
+                .graphicsLayer {
+                    scaleX = thumbScaleX
+                    scaleY = thumbScaleY
+                }
                 .then(
                     if (!isDark && !isLiquid) {
                         Modifier.shadow(
@@ -2794,9 +2909,10 @@ fun <T> XPeachSegmentedTabs(
                             cornerRadius = innerRadius,
                             baseColor = selectedThumbBg,
                             material = LiquidGlassMaterial.CLEAR,
-                            accentTint = null,
+                            accentTint = XPeachTheme.readablePrimary,
                             nested = true,
-                            refractionDp = 16f
+                            refractionDp = 20f,
+                            pressProgress = pressProgress
                         )
                     } else {
                         Modifier.background(selectedThumbBg)
@@ -2805,25 +2921,17 @@ fun <T> XPeachSegmentedTabs(
                 .then(thumbBorderMod)
         )
 
-        // 2. 前景标签行
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             options.forEachIndexed { idx, option ->
-                val isSelected = idx == selectedIdx
-                val interactionSource = remember { MutableInteractionSource() }
-                val isPressed by interactionSource.collectIsPressedAsState()
-                val labelScale by animateFloatAsState(
-                    targetValue = if (isPressed) 0.95f else 1f,
-                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 520f),
-                    label = "segLabelScale_$idx"
-                )
+                val isSelected = abs(animatedIndex - idx) < 0.5f
                 val tabFg by animateColorAsState(
                     targetValue = if (isSelected) {
                         if (isLiquid) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isPressed) 0.65f else 0.92f)
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.92f)
                     },
                     animationSpec = tween(160),
                     label = "segTabFg_$idx"
@@ -2832,11 +2940,6 @@ fun <T> XPeachSegmentedTabs(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(thumbShape)
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null
-                        ) { onSelect(option) }
                         .padding(horizontal = if (options.size >= 4) 3.dp else 6.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -2851,11 +2954,7 @@ fun <T> XPeachSegmentedTabs(
                         color = tabFg,
                         maxLines = 1,
                         softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = labelScale
-                            scaleY = labelScale
-                        }
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

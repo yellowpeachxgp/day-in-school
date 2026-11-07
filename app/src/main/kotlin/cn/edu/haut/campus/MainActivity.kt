@@ -84,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -104,6 +105,7 @@ import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.core.designsystem.LiquidGlassMaterial
+import cn.edu.haut.campus.core.designsystem.LiquidGlassOptics
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
@@ -1031,6 +1033,34 @@ private fun XPeachBottomDock(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(
+                        if (isLiquid && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val dockDensity = LocalDensity.current
+                            Modifier.graphicsLayer {
+                                val padPx = 5.dp.toPx()
+                                val slotW = ((size.width - padPx * 2f) / tabs.size.coerceAtLeast(1)).coerceAtLeast(1f)
+                                val leftPx = padPx + slotW * animatedFraction
+                                val topPx = padPx
+                                val rightPx = leftPx + slotW
+                                val bottomPx = (size.height - padPx).coerceAtLeast(topPx + 1f)
+                                renderEffect = LiquidGlassOptics.buildCapsuleLensRenderEffectOrNull(
+                                    widthPx = size.width,
+                                    heightPx = size.height,
+                                    lensLeftPx = leftPx,
+                                    lensTopPx = topPx,
+                                    lensRightPx = rightPx,
+                                    lensBottomPx = bottomPx,
+                                    lensRadiusPx = (bottomPx - topPx) * 0.5f,
+                                    dpr = dockDensity.density,
+                                    isDark = isDark,
+                                    refractionPx = 22.dp.toPx(),
+                                    pressProgress = if (isPressing) 1f else 0f
+                                )?.asComposeRenderEffect()
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(horizontal = 5.dp, vertical = 5.dp)
                     .pointerInput(tabs.size) {
                         awaitEachGesture {

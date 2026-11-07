@@ -76,6 +76,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachSwitch
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
@@ -586,7 +587,7 @@ fun ParcelHubScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Switch(
+                            XPeachSwitch(
                                 checked = aiConsentGranted,
                                 onCheckedChange = { aiConsentGranted = it }
                             )
@@ -1006,8 +1007,22 @@ private fun XiaomiLoginWebViewDialog(
                         DisposableEffect(Unit) {
                             onDispose {
                                 runCatching {
+                                    // 仅清理小米域 Cookie，避免连带登出学校 CAS/wslib 共享会话
                                     val cm = CookieManager.getInstance()
-                                    cm.removeAllCookies(null)
+                                    listOf(
+                                        "https://account.xiaomi.com",
+                                        "https://sts.api.miui.com",
+                                        "https://api.assistant.miui.com",
+                                        "https://i.mi.com",
+                                        "https://hd.minimobile.com"
+                                    ).forEach { host ->
+                                        cm.getCookie(host)?.split(";")?.forEach { pair ->
+                                            val name = pair.substringBefore("=").trim()
+                                            if (name.isNotEmpty()) {
+                                                cm.setCookie(host, "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                                            }
+                                        }
+                                    }
                                     cm.flush()
                                 }
                                 webViewInstance?.apply {
@@ -1026,8 +1041,22 @@ private fun XiaomiLoginWebViewDialog(
                                         ViewGroup.LayoutParams.MATCH_PARENT,
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
+                                    // 仅清理小米域 Cookie，避免连带登出学校 CAS/wslib 共享会话
                                     val cm = CookieManager.getInstance()
-                                    cm.removeAllCookies(null)
+                                    listOf(
+                                        "https://account.xiaomi.com",
+                                        "https://sts.api.miui.com",
+                                        "https://api.assistant.miui.com",
+                                        "https://i.mi.com",
+                                        "https://hd.minimobile.com"
+                                    ).forEach { host ->
+                                        cm.getCookie(host)?.split(";")?.forEach { pair ->
+                                            val name = pair.substringBefore("=").trim()
+                                            if (name.isNotEmpty()) {
+                                                cm.setCookie(host, "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                                            }
+                                        }
+                                    }
                                     cm.flush()
                                     cm.setAcceptCookie(true)
                                     cm.setAcceptThirdPartyCookies(this, false)

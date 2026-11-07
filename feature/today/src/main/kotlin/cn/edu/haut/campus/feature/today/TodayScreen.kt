@@ -89,6 +89,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachSwitch
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
@@ -2954,7 +2955,7 @@ private fun CampusDiningRecommendationDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(
+                        XPeachSwitch(
                             checked = mealRecommendEnabled,
                             onCheckedChange = onToggleEnabled
                         )

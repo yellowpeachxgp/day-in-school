@@ -104,6 +104,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachSwitch
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
@@ -1415,7 +1416,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("小组件紧凑布局", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
+                        XPeachSwitch(
                             checked = prefs.widgetDefaultCompact,
                             onCheckedChange = { checked ->
                                 scope.launch {
@@ -1432,7 +1433,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("小组件隐藏课程名与教室", style = MaterialTheme.typography.bodyMedium)
-                        Switch(
+                        XPeachSwitch(
                             checked = prefs.widgetDefaultPrivacyMode,
                             onCheckedChange = { checked ->
                                 scope.launch {
@@ -1542,7 +1543,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = rCfg.enabled,
                         onCheckedChange = { enabled ->
                             if (enabled &&
@@ -1698,7 +1699,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = rCfg.examDayBeforeEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch {
@@ -1721,7 +1722,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = rCfg.examHourBeforeEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch {
@@ -1744,7 +1745,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = rCfg.preciseReminderPreferred,
                         onCheckedChange = { preferred ->
                             scope.launch {
@@ -1767,7 +1768,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = rCfg.lockscreenPrivate,
                         onCheckedChange = { priv ->
                             scope.launch {
@@ -2046,7 +2047,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("显示宿舍水电服务", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.utilitiesEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setCampusServiceFeatureFlag(utilitiesEnabled = enabled) }
@@ -2059,7 +2060,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("显示图书馆馆藏查询", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.libraryNativeEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setCampusServiceFeatureFlag(libraryNativeEnabled = enabled) }
@@ -2072,7 +2073,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("显示图书馆座位预约", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.librarySeatEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setCampusServiceFeatureFlag(librarySeatEnabled = enabled) }
@@ -2085,7 +2086,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("显示自习专注计时", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.focusEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setCampusServiceFeatureFlag(focusEnabled = enabled) }
@@ -2098,7 +2099,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("在「今天」页显示自习专注快捷栏", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.showTodayFocusQuickPill,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setCampusServiceFeatureFlag(showTodayFocusQuickPill = enabled) }
@@ -2119,7 +2120,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.autoSyncEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setAutoSyncEnabled(enabled) }
@@ -2142,7 +2143,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.gpaPrivacyShieldEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setGpaPrivacyShield(enabled) }
@@ -2250,7 +2251,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    XPeachSwitch(
                         checked = prefs.autoCheckUpdateEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch { repository.setAutoCheckUpdateEnabled(enabled) }
@@ -3365,7 +3366,7 @@ private fun ThemePaletteAndCardLayoutSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(
+                XPeachSwitch(
                     checked = prefs.useDynamicColor,
                     onCheckedChange = onToggleDynamicColor
                 )
@@ -4218,7 +4219,7 @@ private fun NetworkProxyAndCloudConfigSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Switch(
+            XPeachSwitch(
                 checked = proxyConfig.autoFallbackMirror,
                 onCheckedChange = { enabled ->
                     onSaveProxyConfig(proxyConfig.copy(autoFallbackMirror = enabled))
