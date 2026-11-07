@@ -82,11 +82,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- 1. 下一节课 Mini 2x2 小组件 -->
+        <!-- 1. 下一节课 2x2 小组件 -->
         <receiver
             android:name="cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider"
             android:exported="true"
-            android:label="下一节课 Mini (2×2)">
+            android:label="下一节课 (2×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
@@ -99,11 +99,11 @@
                 android:resource="@xml/widget_next_class_info" />
         </receiver>
 
-        <!-- 2. 今日课程 Today 4x2 小组件 -->
+        <!-- 2. 今日课程 4x2 小组件 -->
         <receiver
             android:name="cn.edu.haut.campus.widget.today.TodayAppWidgetProvider"
             android:exported="true"
-            android:label="今日课程 Today (4×2)">
+            android:label="今日课程 (4×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
@@ -116,11 +116,11 @@
                 android:resource="@xml/widget_today_info" />
         </receiver>
 
-        <!-- 3. 日程时间轴 Timeline 4x4 小组件 -->
+        <!-- 3. 今日日程 4x4 小组件 -->
         <receiver
             android:name="cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider"
             android:exported="true"
-            android:label="日程时间轴 Timeline (4×4)">
+            android:label="今日日程 (4×4)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
@@ -133,11 +133,11 @@
                 android:resource="@xml/widget_timeline_info" />
         </receiver>
 
-        <!-- 4. 周课表 Week 4x4 小组件 -->
+        <!-- 4. 本周课表 4x4 小组件 -->
         <receiver
             android:name="cn.edu.haut.campus.widget.week.WeekAppWidgetProvider"
             android:exported="true"
-            android:label="周课表 Week (4×4)">
+            android:label="本周课表 (4×4)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.DATE_CHANGED" />
@@ -150,11 +150,11 @@
                 android:resource="@xml/widget_week_info" />
         </receiver>
 
-        <!-- 5. 快递取件码 Parcel 4x2 小组件 -->
+        <!-- 5. 取件码 4x2 小组件 -->
         <receiver
             android:name="cn.edu.haut.campus.widget.today.ParcelAppWidgetProvider"
             android:exported="true"
-            android:label="快递取件码 Parcel (4×2)">
+            android:label="取件码 (4×2)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.DATE_CHANGED" />

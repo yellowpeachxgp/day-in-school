@@ -21,7 +21,7 @@ enum class CampusCompetitionCategory(val label: String, val shortLabel: String) 
     ALGO_PROGRAMMING("算法与程序设计", "算法编程"),
     ELECTRONICS_ROBO("电子与机器人硬件", "硬件机器人"),
     MATH_MODELING("数学建模与数据分析", "数学建模"),
-    INNOVATION_ENTREPRENEURSHIP("创新创业与双创孵化", "创新创业"),
+    INNOVATION_ENTREPRENEURSHIP("创新创业", "创新创业"),
     CYBER_SECURITY_AI("网安与人工智能", "网安与AI"),
     DIGITAL_MEDIA_ART("数媒创意与外语综合", "数媒与综合");
 
@@ -46,7 +46,7 @@ enum class CampusMajorTrack(
     ALL_MAJORS(
         label = "全专业通用",
         shortLabel = "全部专业",
-        collegesHint = "不限专业背景，零基础或跨学科组队均可参赛",
+        collegesHint = "不限专业，支持跨学科组队",
         keywords = emptyList()
     ),
     CS_AI_SOFTWARE(
@@ -120,9 +120,9 @@ enum class CampusMajorTrack(
  */
 data class CampusCommunityBulletin(
     val enabled: Boolean = true,
-    val title: String = "河工大合作社团与学科竞赛云端直通车",
-    val content: String = "官方合作社团招新 QQ 群与教育部白名单学科竞赛指南已接入云端实时下发，支持按专业与兴趣匹配赛事、直达官网并一键加群组队。",
-    val tag: String = "云端实时同步",
+    val title: String = "合作社团与学科竞赛",
+    val content: String = "收录校内合作社团招新群与常见学科竞赛信息，可按专业筛选赛事并查看官网。",
+    val tag: String = "社团与竞赛",
     val actionUrl: String = ""
 )
 
@@ -207,30 +207,30 @@ data class CampusCompetitionItem(
 
     fun recognitionValueText(): String = when {
         id == "comp_cyds" || id == "comp_tiaozhanbei" ->
-            "教育部顶尖双创赛事（高教排行榜 T0 级），河工大保研推免、国家奖学金、创新学分与综测加分权重最高级别。"
+            "国家级重点创新创业赛事，常用于综测加分、创新学分认定与推免参考。"
         tierBadge.contains("顶尖") || id == "comp_icpc_ccpc" ->
-            "教育部白名单顶尖算法赛事，大厂核心研发岗免笔试绿卡，信息/AI学院保研与硬核技术简历含金量天花板。"
-        tierBadge.contains("白名单 A 类") ->
-            "教育部全国普通高校学科竞赛排行榜白名单 A 类赛事，河工大各学院综测加分、创新创业学分认定与保研夏令营核心认可奖项。"
+            "权威程序设计竞赛，受高校推免与软件研发岗位广泛认可。"
+        tierBadge.contains("白名单 A 类") || tierBadge.contains("A 类") ->
+            "全国普通高校学科竞赛排行榜赛事，适用于综测加分、创新学分认定与推免参考。"
         else ->
-            "国家级高认可度学科综合赛事，按校内参赛比例评奖，是积累竞赛履历、综测加分与检验专业基本功的高性价比选择。"
+            "全国性学科综合赛事，按参赛比例评奖，适合检验专业基础与积累参赛经验。"
     }
 
     fun targetPersonaText(): String = buildString {
-        append(if (beginnerFriendly) "适合大一/大二零基础或跨专业同学快速上手；" else "适合有一定专业课与实验室集训基础的同学进阶冲刺；")
-        append("参赛模式为「$teamMode」，尤其契合 ")
+        append(if (beginnerFriendly) "适合低年级或跨专业同学入门；" else "适合具备一定专业基础的同学参加；")
+        append("参赛形式：$teamMode，适合 ")
         append(recommendedMajorTracks.joinToString("、") { it.shortLabel })
-        append(" 方向学子。")
+        append(" 相关专业。")
     }
 
     fun stagedProgressionRoadmap(): List<Pair<String, String>> = listOf(
-        "🌱 大一阶段（破冰打底 / 攒首奖）" to if (beginnerFriendly) {
-            "报名参赛摸清赛制流程，完成「${skillRoadmap.substringBefore("→").trim()}」基础储备，冲击校奖/省三以上。"
+        "大一阶段 · 基础入门" to if (beginnerFriendly) {
+            "熟悉赛制流程，学习「${skillRoadmap.substringBefore("→").trim()}」，争取校级或省级奖项。"
         } else {
-            "加入${partnerClubName.ifBlank { "学院实验室与技术社团" }}跟学长学姐实训，重点夯实「${skillRoadmap.substringBefore("→").trim()}」基本功。"
+            "参与${partnerClubName.ifBlank { "实验室或技术社团" }}日常训练，掌握「${skillRoadmap.substringBefore("→").trim()}」基础。"
         },
-        "🚀 大二阶段（核心主力 / 冲省一国奖）" to "作为团队核心主力深入「${skillRoadmap.substringAfter("→", skillRoadmap).trim()}」，利用寒暑假集中打磨作品或真题，全力冲击省一及全国总决赛。",
-        "🏆 大三阶段（成果转化 / 保研秋招）" to "带领学弟学妹梯队传承，将参赛项目沉淀为专利/软著/科研论文，转化为保研夏令营代表作或名企面试核心项目经历。"
+        "大二阶段 · 进阶备赛" to "深入学习「${skillRoadmap.substringAfter("→", skillRoadmap).trim()}」，利用假期完善作品或练习真题，争取省级或国家级奖项。",
+        "大三阶段 · 成果整理" to "整理参赛作品与技术文档，可进一步申报软著、专利或作为推免与求职项目经历。"
     )
 }
 
@@ -240,24 +240,24 @@ enum class CompetitionGradeStage(
     val strategyAdvice: String
 ) {
     FRESHMAN(
-        label = "大一萌新（打基础/攒首奖）",
-        shortLabel = "🌱 大一萌新",
-        strategyAdvice = "大一重在破冰与试错：优先选择个人赛或零基础友好的白名单省赛练手，同时加入合作社团积累软硬件基础。"
+        label = "大一（基础入门）",
+        shortLabel = "大一",
+        strategyAdvice = "建议优先参加规则清晰的个人赛或入门级团队赛，熟悉参赛流程并积累专业基础。"
     ),
     SOPHOMORE(
-        label = "大二骨干（冲国奖/进实验室）",
-        shortLabel = "🚀 大二骨干",
-        strategyAdvice = "大二是竞赛黄金爆发期：建议以核心主力身份组建 3–5 人跨专业铁三角，冲击全国电赛、数模国赛、智能车等高含金量国奖。"
+        label = "大二（组队进阶）",
+        shortLabel = "大二",
+        strategyAdvice = "适合组建 3–5 人跨专业团队，重点备战电赛、数模、智能车等综合性学科竞赛。"
     ),
     JUNIOR(
-        label = "大三冲刺（保研加分/名企实习）",
-        shortLabel = "🏆 大三冲刺",
-        strategyAdvice = "大三聚焦成果变现：9月保研夏令营与秋招前，优先攻克周期短、保研综测加分明确的 A 类赛事或名企直通算法/安全赛。"
+        label = "大三（推免与求职）",
+        shortLabel = "大三",
+        strategyAdvice = "建议结合推免或求职时间线，选择周期合适、加分规则明确的重点赛事。"
     ),
     SENIOR_OR_ALL(
-        label = "大四/全阶段",
-        shortLabel = "🎓 大四/全阶段",
-        strategyAdvice = "结合毕业设计或已有科研成果转化参赛（如中国国际大学生创新大赛、挑战杯、计算机设计大赛），实现毕设与双创双丰收。"
+        label = "大四 / 研究生",
+        shortLabel = "大四及以上",
+        strategyAdvice = "可将毕业设计或课题研究成果整理参赛，如创新大赛、挑战杯或计算机设计大赛。"
     )
 }
 
@@ -267,23 +267,23 @@ enum class CompetitionCareerGoal(
     val keywords: List<String>
 ) {
     POSTGRAD_BONUS(
-        label = "保研与综测加分",
-        shortLabel = "🎯 保研/综测加分",
+        label = "推免与综测加分",
+        shortLabel = "推免 / 综测",
         keywords = listOf("保研", "综测", "白名单", "A 类")
     ),
     HIGH_PAY_JOB(
-        label = "高薪就业与硬核简历",
-        shortLabel = "💼 高薪就业/大厂简历",
+        label = "求职与项目经历",
+        shortLabel = "求职 / 实习",
         keywords = listOf("大厂", "名企", "算法", "工程", "实战", "CTF", "嵌入式")
     ),
     HANDS_ON_RESEARCH(
-        label = "动手造物与科研探索",
-        shortLabel = "🔬 动手造物/科研探索",
+        label = "工程实践与科研",
+        shortLabel = "工程 / 科研",
         keywords = listOf("硬件", "单片机", "机器人", "智能车", "机械", "数学建模", "学术")
     ),
     BIZ_CROSS_TEAM(
-        label = "商业策划与跨界组队",
-        shortLabel = "🤝 商业策划/跨界组队",
+        label = "商业策划与跨学科合作",
+        shortLabel = "商业 / 跨学科",
         keywords = listOf("双创", "商业", "电商", "路演", "跨学科", "广告", "设计")
     )
 }
@@ -295,8 +295,8 @@ enum class CompetitionSkillPreference(
     val tagKeywords: List<String>
 ) {
     CODE_ALGO_AI(
-        label = "写代码/算法/AI",
-        shortLabel = "💻 代码/算法/AI",
+        label = "编程 / 算法 / AI",
+        shortLabel = "编程 / 算法 / AI",
         matchedCategories = setOf(
             CampusCompetitionCategory.ALGO_PROGRAMMING,
             CampusCompetitionCategory.CYBER_SECURITY_AI
@@ -304,32 +304,32 @@ enum class CompetitionSkillPreference(
         tagKeywords = listOf("算法", "编程", "App", "AI", "CTF", "安全")
     ),
     CIRCUIT_MCU_ROBO(
-        label = "焊电路/单片机/机器人",
-        shortLabel = "🤖 电路/单片机/机器人",
+        label = "电路 / 单片机 / 机器人",
+        shortLabel = "电路 / 单片机 / 机器人",
         matchedCategories = setOf(CampusCompetitionCategory.ELECTRONICS_ROBO),
         tagKeywords = listOf("单片机", "STM32", "PCB", "硬件", "机器人", "智能车", "机械")
     ),
     MATH_DATA(
-        label = "数学建模/数据分析",
-        shortLabel = "📐 数模/数据分析",
+        label = "数学建模 / 数据分析",
+        shortLabel = "数模 / 数据分析",
         matchedCategories = setOf(CampusCompetitionCategory.MATH_MODELING),
         tagKeywords = listOf("MATLAB", "数据分析", "建模", "可视化")
     ),
     PRODUCT_BP_PITCH(
-        label = "做产品/写BP/路演",
-        shortLabel = "📊 做产品/写BP/路演",
+        label = "产品策划 / 商业计划 / 路演",
+        shortLabel = "产品 / 商业计划",
         matchedCategories = setOf(CampusCompetitionCategory.INNOVATION_ENTREPRENEURSHIP),
         tagKeywords = listOf("商业计划书", "路演", "双创", "电商", "调研")
     ),
     DESIGN_VIDEO_ACG(
-        label = "设计/视频/动漫文创",
-        shortLabel = "🎨 设计/视频/动漫文创",
+        label = "视觉设计 / 视频 / 数媒",
+        shortLabel = "设计 / 视频 / 数媒",
         matchedCategories = setOf(CampusCompetitionCategory.DIGITAL_MEDIA_ART),
         tagKeywords = listOf("海报", "动画", "短视频", "数媒", "交互")
     ),
     FOREIGN_CRITICAL(
-        label = "外语/综合思辨",
-        shortLabel = "🌍 外语/综合思辨",
+        label = "外语 / 演讲写作",
+        shortLabel = "外语 / 写作",
         matchedCategories = setOf(
             CampusCompetitionCategory.DIGITAL_MEDIA_ART,
             CampusCompetitionCategory.INNOVATION_ENTREPRENEURSHIP
@@ -345,21 +345,21 @@ enum class CompetitionSeasonWindow(
     val matchTokens: List<String>
 ) {
     AUTUMN_REG(
-        label = "秋季学期 9–12月报名",
-        shortLabel = "🍂 秋季 9–12月（报名/秋赛）",
-        periodSubtitle = "新生破冰与次年春季 A 类赛事黄金报名窗口（蓝桥杯/三创赛/智能车/数模正赛）",
+        label = "秋季学期（9–12月）",
+        shortLabel = "秋季 9–12月",
+        periodSubtitle = "秋季赛事开展与次年春季赛事报名阶段（数模国赛、蓝桥杯、三创赛、智能车等）",
         matchTokens = listOf("9月", "10月", "11月", "12月")
     ),
     SPRING_PROVINCIAL(
-        label = "春季学期 3–5月省赛",
-        shortLabel = "🌱 春季 3–5月（校赛/省赛）",
-        periodSubtitle = "全年省赛密集爆发期，检验寒假与春季集训成果（蓝桥杯省赛/大英赛/4C/大广赛/挑杯）",
+        label = "春季学期（3–5月）",
+        shortLabel = "春季 3–5月",
+        periodSubtitle = "校级选拔与省级比赛集中阶段（蓝桥杯省赛、英语竞赛、计算机设计大赛、大广赛等）",
         matchTokens = listOf("2月", "3月", "4月", "5月")
     ),
     SUMMER_NATIONAL(
-        label = "暑期黄金集训 6–8月国赛",
-        shortLabel = "🔥 暑期 6–8月（集训/国赛）",
-        periodSubtitle = "实验室留校封闭集训与全国总决赛巅峰期（全国电赛/智能车国赛/数模夏训/创新大赛）",
+        label = "暑期阶段（6–8月）",
+        shortLabel = "暑期 6–8月",
+        periodSubtitle = "暑期集中备赛与全国总决赛阶段（全国电赛、智能车国赛、数模培训、创新大赛等）",
         matchTokens = listOf("6月", "7月", "8月")
     )
 }
@@ -430,9 +430,9 @@ object CompetitionCompassEngine {
                 .thenBy { it.sortOrder }
         )
         val stepLabels = listOf(
-            "第一步 · 破冰首战（先打这个攒信心与首奖）",
-            "第二步 · 进阶主力（组队打磨核心作品/省一）",
-            "第三步 · 巅峰冲刺（冲击国奖/保研名企王牌）"
+            "第一阶段 · 入门参赛",
+            "第二阶段 · 团队进阶",
+            "第三阶段 · 重点突破"
         )
         val entryOrder = orderedForProgression.mapIndexed { idx, item ->
             stepLabels.getOrElse(idx) { "进阶推荐" } to item
@@ -525,15 +525,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.EE_AUTOMATION_IOT,
                 CampusMajorTrack.MATH_PHYSICS_CIVIL
             ),
-            interestTags = listOf("算法编程", "单片机/EDA", "大厂笔试直通", "保研/综测加分"),
+            interestTags = listOf("算法编程", "单片机/EDA", "大厂笔试", "保研/综测加分"),
             organizer = "工业和信息化部人才交流中心",
             hautHostCollege = "信息科学与工程学院 / 人工智能与大数据学院",
             registrationWindow = "每年 10月–12月报名 · 次年 4月省赛 / 6月国赛",
             teamMode = "个人赛（软件类 C/C++/Java/Python · 电子类单片机/EDA）",
-            difficultyLabel = "大一友好 · 零基础可冲省奖",
+            difficultyLabel = "入门友好 · 个人参赛",
             beginnerFriendly = true,
-            summary = "国内参赛规模最大的个人编程与电子设计赛事，分 C/C++、Java、Python、Web 及单片机/嵌入式赛道，是理工科学生大一练手、斩获首个省级/国家级奖项的最佳跳板。",
-            skillRoadmap = "掌握一门主力语言 (C++/Python/Java) → 熟悉数组、字符串、搜索 (BFS/DFS) 与贪心 → 攻克动态规划与图论基础 → 刷透近 5 年省赛真题",
+            summary = "面向高校学生的个人编程与电子设计赛事，设 C/C++、Java、Python、Web 及单片机赛道，适合低年级学生参赛练习。",
+            skillRoadmap = "掌握一门编程语言 (C++/Python/Java) → 熟悉基础数据结构、搜索与贪心算法 → 学习动态规划与图论基础并练习历年真题",
             officialWebsiteUrl = "https://dasai.lanqiao.cn",
             partnerClubId = "club_partner_computer_service",
             partnerClubName = "计算机服务社",
@@ -555,12 +555,12 @@ object PresetCampusCommunityCatalog {
             interestTags = listOf("STM32/嵌入式", "PCB硬件设计", "电源与信号调理", "视觉控制"),
             organizer = "教育部高等教育司 / 工业和信息化部人事教育司",
             hautHostCollege = "电气工程学院 / 信息科学与工程学院",
-            registrationWindow = "每年 5月–6月报名 · 8月四天三夜封闭极限竞赛",
+            registrationWindow = "每年 5月–6月报名 · 8月四天三夜集中竞赛",
             teamMode = "3人组队（硬件电路 + 嵌入式控制 + 信号算法/报告）",
-            difficultyLabel = "硬核工程 · 实验室实战集训",
+            difficultyLabel = "较高难度 · 需实验室集训",
             beginnerFriendly = false,
-            summary = "电子信息、电气工程与自动化专业含金量最高的国家级学科竞赛，采用全国统一命题、四天三夜半封闭制作实物的极限赛制，全面检验硬件电路与嵌入式系统功底。",
-            skillRoadmap = "大一入门 STM32 单片机与立创 EDA 画板 → 掌握 PID 控制、运放电路与传感器驱动 → 参加硬件技术联盟日常实训与暑期集训",
+            summary = "电子信息、电气与自动化领域的国家级学科竞赛，采用全国统一命题、四天三夜制作实物的赛制，考察硬件电路与嵌入式开发能力。",
+            skillRoadmap = "学习 STM32 单片机与 EDA 电路设计 → 掌握 PID 控制、运放电路与传感器驱动 → 参与社团日常训练与暑期集训",
             officialWebsiteUrl = "https://nuedc-training.com.cn",
             partnerClubId = "club_partner_hardware_alliance",
             partnerClubName = "硬件技术联盟",
@@ -581,15 +581,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.EE_AUTOMATION_IOT,
                 CampusMajorTrack.ECON_MGMT_FINANCE
             ),
-            interestTags = listOf("MATLAB/Python", "数据分析与优化", "LaTeX科研排版", "保研核心加分"),
+            interestTags = listOf("MATLAB/Python", "数据分析与优化", "LaTeX排版", "保研/综测加分"),
             organizer = "中国工业与应用数学学会 (CSIAM)",
             hautHostCollege = "理学院",
             registrationWindow = "每年 6月–8月校内选拔培训 · 9月上旬三天三夜正赛",
-            teamMode = "3人组队（数学建模手 + MATLAB/Python 编程手 + 论文写作手）",
-            difficultyLabel = "大一/大二友好 · 跨专业组队首选",
+            teamMode = "3人组队（数学建模 + MATLAB/Python 编程 + 论文写作）",
+            difficultyLabel = "入门友好 · 适合跨专业组队",
             beginnerFriendly = true,
-            summary = "全国规模最大、覆盖全部专业的基础性学科竞赛，通过建立数学模型与计算机仿真解决工程、经济或社会实际问题，是保研加分与培养科研论文撰写能力的必修课。",
-            skillRoadmap = "组建建模+编程+写作铁三角 → 掌握评价类(TOPSIS/熵权法)、预测类(时间序列/机器学习)、优化类(规划模型/启发式算法) → 熟练使用 MATLAB/Python 与 LaTeX 排版",
+            summary = "覆盖各专业的基础学科竞赛，通过建立数学模型与计算机仿真解决实际问题，锻炼数据分析与论文写作能力。",
+            skillRoadmap = "组建建模、编程与写作团队 → 掌握常见评价、预测与优化模型 → 熟悉 MATLAB/Python 编程与论文排版",
             officialWebsiteUrl = "https://www.mcm.edu.cn",
             partnerClubId = "club_partner_computer_service",
             partnerClubName = "计算机服务社",
@@ -610,15 +610,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.ECON_MGMT_FINANCE,
                 CampusMajorTrack.MECH_VEHICLE_ROBO
             ),
-            interestTags = listOf("双创最高奖", "粮油食品特色赛道", "商业计划书", "路演答辩"),
+            interestTags = listOf("双创赛事", "粮油食品赛道", "商业计划书", "路演答辩"),
             organizer = "教育部等十二部委联合主办",
             hautHostCollege = "创新创业学院 / 教务处",
             registrationWindow = "每年 4月–6月校赛网评 · 7月–8月省赛 · 10月全国总决赛",
             teamMode = "3–15人跨学科组队（技术研发 + 商业模式 + 财务法务 + 路演PPT）",
-            difficultyLabel = "大一友好 · 全专业皆可参与",
+            difficultyLabel = "全专业可参加",
             beginnerFriendly = true,
-            summary = "教育部排名第一的国家级顶尖双创赛事（含高教主赛道、红旅赛道、产业命题赛道），河工大在智慧粮油、食品工程、智能装备与新材料等交叉领域极具冲金优势。",
-            skillRoadmap = "结合导师科研课题或河工大粮油食品/智能制造学科优势 → 撰写真实落地的商业计划书(BP) → 准备专利/软著/企业应用证明与高水准路演 PPT",
+            summary = "综合性大学生创新创业赛事（含高教主赛道、红旅赛道与产业命题赛道），可结合粮油食品、智能装备、信息技术等学科方向组队参赛。",
+            skillRoadmap = "结合科研课题或学科特色确定选题 → 撰写商业计划书 (BP) → 准备专利、软著或应用证明及路演材料",
             officialWebsiteUrl = "https://cy.ncss.cn",
             pinned = true,
             sortOrder = 16
@@ -633,15 +633,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.CS_AI_SOFTWARE,
                 CampusMajorTrack.MATH_PHYSICS_CIVIL
             ),
-            interestTags = listOf("ACM集训", "算法巅峰", "团队极限编程", "名企免笔试"),
+            interestTags = listOf("ACM集训", "算法程序设计", "团队协作", "名企研发认可"),
             organizer = "ICPC 国际大学生程序设计竞赛基金会 / CCPC 组委会",
             hautHostCollege = "信息科学与工程学院",
             registrationWindow = "每年 3月–5月省赛/邀请赛 · 9月–11月网络赛与区域赛",
-            teamMode = "3人组队（共用 1 台电脑限时 5 小时攻克 10–13 道算法题）",
-            difficultyLabel = "硬核算法 · 冲击名企与保研顶峰",
+            teamMode = "3人组队（共用 1 台电脑限时 5 小时完成算法题）",
+            difficultyLabel = "高难度 · 需长期算法训练",
             beginnerFriendly = false,
-            summary = "全球含金量最高的大学生算法与程序设计巅峰赛事，代表高校计算机学科硬核编程实力，获奖选手深受字节、腾讯、华为等核心研发部门青睐。",
-            skillRoadmap = "洛谷/Codeforces 入门刷题 → 系统学习高级数据结构（线段树/树状数组/并查集） → 图论网络流、数论与博弈论 → 3 人组队分工模拟赛",
+            summary = "国际通用的大学生算法与程序设计竞赛，重点考察算法设计与编程实现能力，受高校与软件研发企业认可。",
+            skillRoadmap = "在线题库入门练习 → 系统学习高级数据结构（线段树/树状数组/并查集） → 图论网络流、数论与博弈论 → 3 人组队模拟训练",
             officialWebsiteUrl = "https://ccpc.io",
             partnerClubId = "club_partner_computer_service",
             partnerClubName = "计算机服务社",
@@ -660,15 +660,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.MECH_VEHICLE_ROBO,
                 CampusMajorTrack.CS_AI_SOFTWARE
             ),
-            interestTags = listOf("自动驾驶竞速", "PID控制算法", "嵌入式硬件", "机器视觉"),
+            interestTags = listOf("自动控制", "PID控制算法", "嵌入式硬件", "机器视觉"),
             organizer = "中国自动化学会",
             hautHostCollege = "电气工程学院 / 机电工程学院",
             registrationWindow = "每年 11月发布赛题 → 次年 7月分赛区赛 / 8月全国总决赛",
             teamMode = "3–5人组队（机械车模调校 + 硬件驱动板 + 视觉/电磁循迹控制）",
-            difficultyLabel = "进阶实战 · 软硬件全栈闭环",
+            difficultyLabel = "进阶实践 · 软硬件结合",
             beginnerFriendly = true,
-            summary = "以竞速智能车为载体的综合工程探索赛事，涵盖电磁循迹、摄像头视觉识别、平衡控制、越野信标等组别，亲手打造一辆风驰电掣的微型自动驾驶赛车。",
-            skillRoadmap = "学习 C 语言与微控制器 PWM/编码器驱动 → 自行设计电机驱动与电源稳压 PCB → 图像二值化赛道提取与串级 PID 转向/速度闭环调参",
+            summary = "以智能车为载体的工程实践赛事，涵盖电磁循迹、视觉识别、平衡控制等组别，综合考察机械、硬件与控制算法。",
+            skillRoadmap = "学习 C 语言与微控制器 PWM/编码器驱动 → 设计电机驱动与电源稳压 PCB → 图像赛道提取与串级 PID 闭环调参",
             officialWebsiteUrl = "https://smartcar.cdstm.cn",
             partnerClubId = "club_partner_hardware_alliance",
             partnerClubName = "硬件技术联盟",
@@ -687,15 +687,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.EE_AUTOMATION_IOT,
                 CampusMajorTrack.CS_AI_SOFTWARE
             ),
-            interestTags = listOf("机甲大师", "SolidWorks机械", "ROS2/机器视觉", "电控开发"),
+            interestTags = listOf("机器人设计", "SolidWorks机械", "ROS2/机器视觉", "电控开发"),
             organizer = "共青团中央 / 全国学联",
             hautHostCollege = "机电工程学院 / 电气工程学院",
             registrationWindow = "每年 9月–10月招新与赛季注册 · 次年 5月区域赛 / 8月全国赛",
             teamMode = "战队协作（机械结构 + 嵌入式电控 + 机器视觉算法 + 战队运营）",
-            difficultyLabel = "硬核工程 · 多学科团队协同",
+            difficultyLabel = "较高难度 · 多学科团队协作",
             beginnerFriendly = true,
-            summary = "专为青年工程师打造的机器人科创盛事，融合机械传动设计、嵌入式电控、OpenCV/深度学习装甲板识别与战术对抗，堪称工科生的热血赛场。",
-            skillRoadmap = "按方向选修：机械组掌握 SolidWorks 三维建模；电控组掌握 FreeRTOS 与 CAN 总线电机控制；算法组掌握相机标定、PNP 解算与神经网络推理",
+            summary = "综合性机器人工程竞赛，融合机械结构设计、嵌入式电控与机器视觉算法，适合多专业学生组队参与。",
+            skillRoadmap = "按方向分工学习：机械组掌握 SolidWorks 三维建模；电控组掌握 FreeRTOS 与 CAN 总线控制；算法组掌握相机标定与视觉识别",
             officialWebsiteUrl = "https://www.robomaster.com",
             partnerClubId = "club_partner_hardware_alliance",
             partnerClubName = "硬件技术联盟",
@@ -716,15 +716,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.CS_AI_SOFTWARE,
                 CampusMajorTrack.ECON_MGMT_FINANCE
             ),
-            interestTags = listOf("学术奥林匹克", "科技发明制作", "社会调研报告", "团委核心赛事"),
+            interestTags = listOf("学术科技", "科技发明制作", "社会调研报告", "创新创业"),
             organizer = "共青团中央 / 中国科协 / 教育部 / 全国学联",
             hautHostCollege = "校团委",
             registrationWindow = "每年 11月–次年3月校赛立项 · 5月省赛 · 10月全国终审决赛",
             teamMode = "3–10人组队（大挑：学术科技发明制作/哲学社科调查；小挑：创业计划）",
-            difficultyLabel = "进阶科研 · 学术与社会调研并重",
+            difficultyLabel = "学术科技与社会调研",
             beginnerFriendly = true,
-            summary = "被誉为当代大学生科技创新的“奥林匹克”盛会，奇数年举办课外学术科技作品竞赛（大挑），偶数年举办中国大学生创业计划竞赛（小挑），文理工商学子均可找到专属赛道。",
-            skillRoadmap = "大一加入导师课题组或大创项目 → 理工科聚焦硬核实物样机与核心论文/专利，人文经管聚焦扎实的田野调查问卷与政策建议报告",
+            summary = "全国性大学生课外学术科技与创业竞赛，奇数年举办学术科技作品竞赛（大挑），偶数年举办创业计划竞赛（小挑），适合各专业学生参加。",
+            skillRoadmap = "参与导师课题组或大创项目 → 理工科侧重实物样机与论文专利，人文经管侧重实地调研与分析报告",
             officialWebsiteUrl = "https://www.tiaozhanbei.net",
             pinned = false,
             sortOrder = 26
@@ -739,15 +739,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.CS_AI_SOFTWARE,
                 CampusMajorTrack.EE_AUTOMATION_IOT
             ),
-            interestTags = listOf("CTF夺旗赛", "Web渗透与逆向", "密码学", "安全创新作品"),
+            interestTags = listOf("CTF解题", "Web渗透与逆向", "密码学", "安全创新作品"),
             organizer = "教育部高等学校网络空间安全专业教学指导委员会",
             hautHostCollege = "信息科学与工程学院",
             registrationWindow = "每年 3月–4月报名 · 5月分区赛 · 7月全国总决赛",
             teamMode = "4人组队（创新实践能力赛 CTF 解题/AWD 攻防 · 安全作品赛）",
-            difficultyLabel = "进阶挑战 · 网络攻防实战",
+            difficultyLabel = "进阶难度 · 网络安全实践",
             beginnerFriendly = false,
-            summary = "网络空间安全与计算机领域权威国家级赛事，分为 CTF 夺旗攻防实战赛与信息安全作品赛两大方向，全面锤炼漏洞挖掘、逆向工程、密码学与安全系统研发能力。",
-            skillRoadmap = "入门 Linux 与计算机网络协议 → 选定 Web 渗透、Reverse 逆向、Pwn 二进制漏洞或 Crypto 密码学方向 → 在 CTFHub/BUUCTF 靶场持续刷题实战",
+            summary = "网络空间安全领域的国家级赛事，设 CTF 攻防赛与信息安全作品赛两个方向，考察漏洞分析、逆向工程、密码学与安全开发。",
+            skillRoadmap = "学习 Linux 与计算机网络协议 → 选定 Web 渗透、逆向工程、二进制安全或密码学方向 → 结合在线靶场持续练习",
             officialWebsiteUrl = "https://www.ciscn.cn",
             partnerClubId = "club_partner_computer_service",
             partnerClubName = "计算机服务社",
@@ -767,15 +767,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.EE_AUTOMATION_IOT,
                 CampusMajorTrack.ALL_MAJORS
             ),
-            interestTags = listOf("App/小程序开发", "AI大模型应用", "数据可视化", "数媒交互设计"),
+            interestTags = listOf("软件与小程序", "人工智能应用", "数据可视化", "数字媒体设计"),
             organizer = "教育部高等学校计算机类专业教学指导委员会等",
             hautHostCollege = "人工智能与大数据学院 / 信息科学与工程学院",
             registrationWindow = "每年 3月–4月校赛选拔 · 5月省赛 · 7月–8月全国总决赛",
             teamMode = "1–5人组队（软件应用开发 / 人工智能应用 / 信息可视化 / 数媒动漫游戏）",
-            difficultyLabel = "大一友好 · 作品导向极易上手",
+            difficultyLabel = "入门友好 · 提交作品参赛",
             beginnerFriendly = true,
-            summary = "面向全校各专业学生的作品类计算机大赛，不考限时算法题，而是提交完整软件、小程序、AI 应用、数据可视化或数媒动画作品，非常适合喜欢做项目的同学。",
-            skillRoadmap = "确定实用选题（如校园工具、智慧农业/粮仓监测、中华传统文化数媒展示） → 完成前后端/移动端开发或交互设计 → 录制高清演示视频与设计说明书",
+            summary = "面向各专业学生的作品类计算机竞赛，通过提交软件、小程序、人工智能应用、数据可视化或数字媒体作品参赛。",
+            skillRoadmap = "确定选题方向 → 完成前后端/移动端开发或数字媒体设计 → 录制演示视频并撰写设计说明书",
             officialWebsiteUrl = "https://jsjds.blcu.edu.cn",
             partnerClubId = "club_partner_computer_service",
             partnerClubName = "计算机服务社",
@@ -798,10 +798,10 @@ object PresetCampusCommunityCatalog {
             hautHostCollege = "机电工程学院",
             registrationWindow = "每两年一届（奇数年发布主题，偶数年 4月省赛 / 7月国赛）",
             teamMode = "3–5人组队（机构创新设计 + 力学仿真 + 样机加工装配）",
-            difficultyLabel = "进阶工程 · 机械学科王牌赛",
+            difficultyLabel = "进阶难度 · 机械工程实践",
             beginnerFriendly = true,
-            summary = "国内机械工程领域最高水平的大学生学科竞赛，聚焦兴农机械、仿生机械、高性能智能装备等主题，要求完成从机构原理构思、三维建模仿真到全尺寸实物样机制作。",
-            skillRoadmap = "学透机械原理与机械设计基础 → 熟练掌握 SolidWorks/UG 三维装配、运动仿真与 ANSYS 有限元分析 → 联合电控同学完成样机加工调试",
+            summary = "机械工程领域的全国性学科竞赛，围绕农业机械、仿生机械与智能装备等主题，考察机构设计、三维建模仿真与样机制作。",
+            skillRoadmap = "掌握机械原理与机械设计基础 → 使用 SolidWorks/UG 进行三维建模、运动仿真与有限元分析 → 联合电控同学完成样机加工调试",
             officialWebsiteUrl = "https://umic.ckcest.cn",
             partnerClubId = "club_partner_hardware_alliance",
             partnerClubName = "硬件技术联盟",
@@ -822,15 +822,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.DESIGN_MEDIA_FOREIGN,
                 CampusMajorTrack.ALL_MAJORS
             ),
-            interestTags = listOf("电商运营与实战", "乡村振兴助农", "新媒体营销", "零门槛双创"),
+            interestTags = listOf("电商策划", "乡村振兴", "新媒体运营", "跨专业组队"),
             organizer = "全国电子商务产教融合创新联盟",
             hautHostCollege = "经济贸易学院 / 管理学院",
             registrationWindow = "每年 10月–12月官网注册报名 · 次年 3月–4月校赛 / 5月省赛 / 7月国赛",
             teamMode = "3–5人组队（常规赛 + 跨境电商/乡村振兴/产学用实战赛）",
-            difficultyLabel = "大一友好 · 经管与工科跨界首选",
+            difficultyLabel = "入门友好 · 适合跨专业组队",
             beginnerFriendly = true,
-            summary = "教育部白名单中对经贸、管理、营销与工科交叉最友好的全国性大赛，强调真实商业策划、跨境电商、直播助农与数字经济创新，大一新生即可快速组队参赛。",
-            skillRoadmap = "年底前务必在官网完成团队注册 → 结合河南农产品/粮油品牌或校园数字化需求选定赛道 → 打磨市场调研数据、盈利模型与实战运营佐证材料",
+            summary = "面向经管、工科及文科学生的全国性电子商务竞赛，涵盖商业策划、跨境电商、助农电商与数字经济等方向。",
+            skillRoadmap = "在官网完成团队报名 → 结合农产品电商、品牌营销或数字化应用选定方向 → 完善市场调研、财务模型与运营材料",
             officialWebsiteUrl = "https://www.3chuang.net",
             pinned = false,
             sortOrder = 34
@@ -846,15 +846,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.ECON_MGMT_FINANCE,
                 CampusMajorTrack.ALL_MAJORS
             ),
-            interestTags = listOf("海报/IP插画", "二维/三维动画", "短视频拍摄", "品牌广告策划"),
+            interestTags = listOf("海报/插画", "二维/三维动画", "短视频拍摄", "品牌广告策划"),
             organizer = "中国高等教育学会广告教育专业委员会",
             hautHostCollege = "设计艺术学院 / 新闻与传播学院",
             registrationWindow = "每年 3月–5月企业命题发布与创作 · 6月省赛 · 8月全国评审",
             teamMode = "1–3人（平面/文案/UI）或 1–5人（视频/动画/广播/策划案）",
-            difficultyLabel = "大一友好 · 创意与ACG爱好者天堂",
+            difficultyLabel = "入门友好 · 视觉与创意设计",
             beginnerFriendly = true,
-            summary = "文科、艺术设计与数字媒体领域规模最大的教育部白名单赛事，由知名品牌提供真实商业命题，涵盖平面设计、动画、短视频、互动H5、广播与广告语创作。",
-            skillRoadmap = "下载当季企业命题策略单 → 针对品牌痛点提炼核心创意概念 → 运用 PS/AI/Blender/AE/PR 完成视觉、动画或视频成片，严守原创规范",
+            summary = "艺术设计、新闻传播与数字媒体领域的全国性竞赛，围绕企业命题开展平面设计、动画、短视频、策划案与文案创作。",
+            skillRoadmap = "阅读当季企业命题要求 → 提炼创意方案 → 使用设计或剪辑软件完成平面、动画或视频作品",
             officialWebsiteUrl = "https://www.sun-ada.net",
             partnerClubId = "club_partner_chiyekong_acg",
             partnerClubName = "炽夜空动漫社",
@@ -873,15 +873,15 @@ object PresetCampusCommunityCatalog {
                 CampusMajorTrack.DESIGN_MEDIA_FOREIGN,
                 CampusMajorTrack.ECON_MGMT_FINANCE
             ),
-            interestTags = listOf("英语综合能力", "四六级/考研神助攻", "保研外语加分", "个人赛"),
+            interestTags = listOf("英语综合能力", "四六级备考", "保研/综测加分", "个人赛"),
             organizer = "国际英语外语教师协会中国英语外语教师协会 / 高等学校大学外语教学研究会",
             hautHostCollege = "外语学院",
             registrationWindow = "每年 2月–3月报名 · 4月中旬初赛 / 5月中旬全国决赛",
             teamMode = "个人赛（A类研究生 / B类英语专业 / C类非英语本科 / D类艺体类）",
-            difficultyLabel = "大一友好 · 按校内比例评奖",
+            difficultyLabel = "入门友好 · 按参赛比例评奖",
             beginnerFriendly = true,
-            summary = "全国唯一统考的大学生英语综合能力竞赛（C类面向全校非英语专业本科生），按各校参赛人数比例直接评定全国特等奖及一、二、三等奖，获奖率高且保研综测高度认可。",
-            skillRoadmap = "巩固四六级高频词汇与长难句阅读 → 针对性训练赛题特有的智力推理题(IQ)、篇章改错、英汉翻译与图表应用文写作 → 限时刷近 5 年真题卷",
+            summary = "全国统考的大学生英语综合能力竞赛（C类面向非英语专业本科生），按各校参赛人数比例评定奖项。",
+            skillRoadmap = "巩固四六级词汇与阅读理解 → 练习赛题中的逻辑推理、改错、翻译与应用文写作 → 限时练习历年真题",
             officialWebsiteUrl = "https://www.chinaneccs.cn",
             pinned = false,
             sortOrder = 38

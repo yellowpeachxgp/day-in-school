@@ -238,11 +238,11 @@ fun GradesScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "暂无成绩数据",
+                                text = "暂无成绩",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "同步教务后自动计算绩点与学分",
+                                text = "同步后可查看成绩与绩点",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -252,7 +252,7 @@ fun GradesScreen(
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                         ) {
-                            Text("去同步", maxLines = 1, softWrap = false)
+                            Text("同步", maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -270,11 +270,11 @@ fun GradesScreen(
             val focusSub = if (runningFocus != null) {
                 val remMin = ((runningFocus.remainingMillis(System.currentTimeMillis()) + 59_999L) / 60_000L)
                     .coerceAtLeast(1L)
-                "进行中 · 约剩 $remMin 分钟"
+                "剩余 $remMin 分钟"
             } else if (todayDoneMins > 0) {
                 "今日已专注 $todayDoneMins 分钟"
             } else {
-                "番茄钟倒计时与课前提醒"
+                "番茄钟倒计时"
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -306,7 +306,7 @@ fun GradesScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "实时余位查询与在线选座",
+                            text = "余位查询与选座",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -337,7 +337,7 @@ fun GradesScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "书目搜索与在馆索书号",
+                            text = "书目与索书号查询",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -402,7 +402,7 @@ fun GradesScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "空教室自习",
+                                text = "空闲教室",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -415,7 +415,7 @@ fun GradesScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "按节次查 5–11 号楼无课教室",
+                            text = "按教学楼与节次查询",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -436,7 +436,7 @@ fun GradesScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "学科竞赛与专业发展指南",
+                            text = "学科竞赛",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -444,7 +444,7 @@ fun GradesScreen(
                             modifier = Modifier.weight(1f)
                         )
                         XPeachStatusBadge(
-                            text = "${prefs.campusCommunityCatalog.competitions.size} 项白名单赛事",
+                            text = "${prefs.campusCommunityCatalog.competitions.size} 项赛事",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = XPeachTheme.readablePrimary
                         )
@@ -456,7 +456,7 @@ fun GradesScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "按本专业与兴趣方向匹配高含金量比赛、直达官网并关联合作社团组队",
+                            text = "竞赛日程、官网与组队信息",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
@@ -466,7 +466,7 @@ fun GradesScreen(
                                 .padding(end = 10.dp)
                         )
                         XPeachFilterPill(
-                            label = "匹配比赛",
+                            label = "查看",
                             selected = true,
                             compact = true,
                             onClick = onNavigateToCompetitions
@@ -577,7 +577,7 @@ fun GradesScreen(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "计划新修学分：${simulatedNewCredits.toInt()} 学分",
+                            text = "新增学分：${simulatedNewCredits.toInt()}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -587,7 +587,7 @@ fun GradesScreen(
                             valueRange = 2f..60f
                         )
                         Text(
-                            text = "新修课程平均绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
+                            text = "预期绩点：${String.format(java.util.Locale.US, "%.2f", simulatedNewGpa)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -803,8 +803,8 @@ fun GradesScreen(
                                 }
                             } else {
                                 XPeachEmptyState(
-                                    title = "暂无符合筛选条件的成绩记录",
-                                    subtitle = "可切换学期或课程性质筛选，或从教务系统同步最新成绩",
+                                    title = "无匹配成绩",
+                                    subtitle = "可切换筛选条件或同步成绩",
                                     actionLabel = "同步成绩",
                                     onActionClick = onNavigateToImporter
                                 )
@@ -819,7 +819,7 @@ fun GradesScreen(
                             if (filteredExams.isEmpty()) {
                                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                                     Text(
-                                        text = "暂无考试安排，点击右上角按钮可从教务系统同步。",
+                                        text = "暂无考试安排",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1100,7 +1100,7 @@ private fun AcademicPlanProgressSection(
         }
         TrainingPlan(
             id = "local-reference-plan",
-            title = "本科参考培养方案",
+            title = "培养方案",
             version = "参考方案",
             applicableGradeYears = setOf(1, 2, 3, 4),
             source = PlanSource.UNKNOWN,
@@ -1120,22 +1120,20 @@ private fun AcademicPlanProgressSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "已修学分汇总",
+                    text = "学分汇总",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 XPeachStatusDotText(
-                    text = if (officialSnapshot != null) "教务公布" else "按课程学分计算"
+                    text = if (officialSnapshot != null) "教务数据" else "本地计算"
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = buildString {
-                    append("• 已获得总学分：")
+                    append("已获学分：")
                     append(if (privacyMasked) "∗∗.∗" else "${aggregation.totalCreditedCredits.toPlainString()} 学分")
-                    append("（重修或补考不重复计分）\n")
-                    append("• 重修或补考课程：${aggregation.multiAttemptCourseCount} 门\n")
-                    append("• 平时分与期末分明细以教务系统公布为准。")
+                    append("\n重修/补考：${aggregation.multiAttemptCourseCount} 门")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1143,7 +1141,7 @@ private fun AcademicPlanProgressSection(
             if (aggregation.multiAttemptCourseCount > 0) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "注：存在 ${aggregation.multiAttemptCourseCount} 门重修或补考记录，已按最高成绩去重统计。",
+                    text = "重修或补考课程已按最高成绩计入",
                     style = MaterialTheme.typography.labelSmall,
                     color = XPeachTheme.readablePrimary
                 )
@@ -1158,21 +1156,21 @@ private fun AcademicPlanProgressSection(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "毕业学分分组进度",
+                        text = "学分进度",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "按课程性质统计已修学分与毕业参考目标",
+                        text = "按课程性质统计",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 XPeachStatusDotText(
                     text = when (degreeProgress.provenance) {
-                        Provenance.OFFICIAL -> "教务公布"
-                        Provenance.DERIVED -> "按成绩单计算"
-                        Provenance.ESTIMATED -> "参考测算"
+                        Provenance.OFFICIAL -> "教务数据"
+                        Provenance.DERIVED -> "本地计算"
+                        Provenance.ESTIMATED -> "参考值"
                     }
                 )
             }
@@ -1195,7 +1193,7 @@ private fun AcademicPlanProgressSection(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "已修 ${if (privacyMasked) "∗∗" else grp.earnedCredits.toPlainString()} / 参考目标 ${grp.requiredCredits.toPlainString()} 学分",
+                            text = "已修 ${if (privacyMasked) "∗∗" else grp.earnedCredits.toPlainString()} / ${grp.requiredCredits.toPlainString()} 学分",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1209,7 +1207,7 @@ private fun AcademicPlanProgressSection(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "注：以上为参考学分进度，具体毕业要求请以本专业培养方案为准。",
+                text = "仅供参考，以本专业培养方案为准",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1246,18 +1244,18 @@ private fun AcademicPlanProgressSection(
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Text(
-                            text = "创新创业与实践学分 · 推荐参赛清单",
+                            text = "推荐赛事",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "参加教育部白名单 A 类赛事可申请创新学分认定与保研/综测加分",
+                            text = "可申请创新学分与综测加分",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     XPeachStatusDotText(
-                        text = inferredTrack?.shortLabel ?: "全专业通用",
+                        text = inferredTrack?.shortLabel ?: "通用",
                         dotColor = XPeachTheme.readablePrimary
                     )
                 }
@@ -1297,7 +1295,7 @@ private fun AcademicPlanProgressSection(
                             )
                         }
                         XPeachFilterPill(
-                            label = "去备赛",
+                            label = "查看",
                             selected = true,
                             compact = true,
                             onClick = onNavigateToCompetitions
@@ -1361,15 +1359,15 @@ private fun SelectionDraftSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "选课预排与撞课检测",
+                    text = "选课预排",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                XPeachStatusDotText(text = "撞课检测")
+                XPeachStatusDotText(text = "冲突检测")
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "添加想选的课程，自动检测与本学期已排课表及草稿的时间冲突。",
+                text = "检测候选课程与现有课表的时间冲突",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1378,7 +1376,7 @@ private fun SelectionDraftSection(
             OutlinedTextField(
                 value = courseNameInput,
                 onValueChange = { courseNameInput = it.take(40) },
-                label = { Text("候选课程名称") },
+                label = { Text("课程名称") },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -1459,12 +1457,12 @@ private fun SelectionDraftSection(
                         ).draft
                     )
                     courseNameInput = ""
-                    submissionNotice = "已加入选课预排草稿"
+                    submissionNotice = "已加入草稿"
                 },
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("加入选课草稿")
+                Text("加入草稿")
             }
             submissionNotice?.let { notice ->
                 Spacer(modifier = Modifier.height(6.dp))

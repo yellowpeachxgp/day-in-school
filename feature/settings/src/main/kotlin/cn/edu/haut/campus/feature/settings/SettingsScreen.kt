@@ -650,7 +650,7 @@ fun SettingsScreen(
                         onlineDevices.joinToString(" · ") { it.balanceRaw.ifBlank { "在线水电" } }
                     }
                     latestReading != null && primaryMeter != null -> "剩余 ${latestReading.value}${primaryMeter.unit}"
-                    else -> "点击绑定寝室水电"
+                    else -> "绑定寝室水电"
                 }
                 val todayFocusMinutes = remember(completedFocusSessions, today) {
                     completedFocusSessions.todayFocusMinutes(today, HAUT_ZONE_ID)
@@ -686,7 +686,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "自动同步物流与驿站取件码",
+                                text = "取件码与物流进度",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -768,7 +768,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "今日已专注 ${todayFocusMinutes} 分钟 · 累计 ${totalFocusMinutes} 分钟（${completedFocusSessions.size} 次）",
+                                text = "今日 ${todayFocusMinutes} 分钟 · 累计 ${totalFocusMinutes} 分钟",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -803,7 +803,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "已收录 ${prefs.campusCommunityCatalog.clubs.size} 个官方合作社团 · 一键复制或唤醒手机 QQ 加群",
+                                text = "共 ${prefs.campusCommunityCatalog.clubs.size} 个社团 · 活动介绍与交流群",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -833,12 +833,12 @@ fun SettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "学科竞赛与专业发展指南",
+                                text = "学科竞赛指南",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "${prefs.campusCommunityCatalog.competitions.size} 项教育部白名单赛事 · 30秒专业兴趣自测与官网直通",
+                                text = "共 ${prefs.campusCommunityCatalog.competitions.size} 项赛事 · 专业筛选与赛事官网",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -868,15 +868,15 @@ fun SettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "云账号与抢座服务 (测试版)",
+                                text = "云账号与扩展 (测试版)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
                                 text = if (cloudBinding != null) {
-                                    "已登录 ${cloudBinding?.displayName} · 积分仅作内测防恶意滥用 · 扩展 $enabledPluginCount/${extensionPlugins.size}"
+                                    "已登录 ${cloudBinding?.displayName} · 已启用 $enabledPluginCount 个扩展"
                                 } else {
-                                    "代抢座位服务（测试版） · 积分仅用于内部测试防止恶意利用"
+                                    "云端定时选座与扩展功能"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -884,7 +884,7 @@ fun SettingsScreen(
                         }
                         if (peachFormatted != null) {
                             XPeachStatusBadge(
-                                text = "内测 ${peachFormatted} 🍑",
+                                text = "配额 ${peachFormatted}",
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = XPeachTheme.readablePrimary
                             )
@@ -915,15 +915,15 @@ fun SettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "教务同步与多身份管理",
+                                text = "教务同步记录",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
                                 text = if (latestAudit != null) {
-                                    "身份：$activeProfileLabel · 最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)}（${courses.size} 门课 / ${attempts.size} 条成绩）"
+                                    "最近同步 ${AUDIT_TIME_FMT.format(latestAudit.importedAt)} · ${courses.size} 门课"
                                 } else {
-                                    "当前身份：$activeProfileLabel · 尚未同步教务数据"
+                                    "尚未同步教务数据"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1092,9 +1092,9 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("桌面小组件画廊", style = MaterialTheme.typography.titleMedium)
+                            Text("桌面小组件", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                text = "全新 Bento 视觉风格 · 点击预览卡片可一键添加至桌面",
+                                text = "点击卡片添加至桌面",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2834,13 +2834,13 @@ private fun ProfileDisclaimerSection() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "免责条款与服务说明",
+                text = "服务说明",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             XPeachStatusBadge(
-                text = "内测声明",
+                text = "说明",
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2850,22 +2850,22 @@ private fun ProfileDisclaimerSection() {
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = "1. 非官方工具声明：本应用为独立开发的非营利校园效率辅助工具，与高校官方教务、图书馆及后勤系统无任何隶属或委托关系。",
+                text = "1. 本应用为独立开发的非官方校园工具，与学校教务、图书馆及后勤系统无隶属关系。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "2. 代抢座位服务（测试版）：图书馆抢座辅助与云端代抢目前处于内部测试版（Beta）阶段，受网络波动及场馆策略影响不承诺成功率；请遵守场馆管理规定按时签到，未签到产生的违约记录由使用者自行承担。",
+                text = "2. 选座辅助处于测试阶段，不承诺预约成功率；请遵守场馆规定按时签到。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "3. 内测防滥用积分（🍑）：账户内的 🍑 积分仅用于内部测试期间防止恶意高频请求与算力滥用，不具备任何货币价值，不提供任何商业充值、付费购买或提现变现服务。",
+                text = "3. 测试配额仅用于限制高频请求，无货币价值，不支持充值或提现。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "4. 隐私与数据准则：教务与场馆凭据仅加密存储于本机（主动开启测试版云端代抢任务除外）。课表、成绩、绩点、水电及快递数据仅供参考，请以学校官方系统为准。",
+                text = "4. 账号凭据默认加密存储于本机。课表、成绩、水电及快递数据仅供参考，请以学校系统为准。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2967,19 +2967,19 @@ private fun ThemePaletteAndCardLayoutSection(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "主题与视觉风格工作台",
+                    text = "主题与外观",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "4 套全局设计语言（清新森系 / 奶油手账 / 液态毛玻璃 / 经典质感）与 15 款色板",
+                    text = "界面风格、主题配色与首页卡片",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             val currentPaletteLabel = when {
-                isLiquidGlassActive && hasCustomWallpaper -> "液态毛玻璃 · 桌面背景"
-                isLiquidGlassActive -> "透明液态毛玻璃"
+                isLiquidGlassActive && hasCustomWallpaper -> "毛玻璃 · 桌面背景"
+                isLiquidGlassActive -> "毛玻璃"
                 hasCustomWallpaper -> "${currentStyle.label} · 壁纸"
                 prefs.useDynamicColor -> "${currentStyle.label} · 系统取色"
                 prefs.themePaletteKey == "CUSTOM" -> "${currentStyle.label} · $customHexText"
@@ -2993,7 +2993,7 @@ private fun ThemePaletteAndCardLayoutSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 0. 四大产品设计语言 2×2 卡片选择
+        // 0. 界面风格选择
         val styleRows = remember { UiDesignStyle.entries.chunked(2) }
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -3069,9 +3069,9 @@ private fun ThemePaletteAndCardLayoutSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 0.2 一键清新主题套装（风格 + 配色一键联动）
+        // 0.2 预设主题组合
         Text(
-            text = "一键清新主题套装",
+            text = "预设主题组合",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -3079,14 +3079,14 @@ private fun ThemePaletteAndCardLayoutSection(
         Spacer(modifier = Modifier.height(6.dp))
         val curatedSuites = remember {
             listOf(
-                Triple("FRESH_BREEZE", "MINT_BREEZE", "🌿 薄荷晨风 · 森系"),
-                Triple("CREAM_PASTEL", "PEACH_OOLONG", "🍑 白桃乌龙 · 奶油"),
-                Triple("FRESH_BREEZE", "SKY_SODA", "🫧 晴空苏打 · 森系"),
-                Triple("FRESH_BREEZE", "MATCHA_CREAM", "🍵 抹茶奶盖 · 森系"),
-                Triple("CREAM_PASTEL", "LAVENDER_MIST", "💜 海盐香芋 · 奶油"),
-                Triple("CREAM_PASTEL", "POMELO_SUN", "🍊 西柚暖阳 · 奶油"),
-                Triple("LIQUID_GLASS", "LIQUID_GLASS", "✨ 冰川流光 · 毛玻璃"),
-                Triple("FLUTTER_M3", "HAUT_BLUE", "📘 工大经典 · 现代")
+                Triple("FRESH_BREEZE", "MINT_BREEZE", "薄荷晨风"),
+                Triple("CREAM_PASTEL", "PEACH_OOLONG", "白桃乌龙"),
+                Triple("FRESH_BREEZE", "SKY_SODA", "晴空苏打"),
+                Triple("FRESH_BREEZE", "MATCHA_CREAM", "抹茶奶盖"),
+                Triple("CREAM_PASTEL", "LAVENDER_MIST", "海盐香芋"),
+                Triple("CREAM_PASTEL", "POMELO_SUN", "西柚暖阳"),
+                Triple("LIQUID_GLASS", "LIQUID_GLASS", "冰川毛玻璃"),
+                Triple("FLUTTER_M3", "HAUT_BLUE", "工大蓝")
             )
         }
         Row(
@@ -3111,7 +3111,7 @@ private fun ThemePaletteAndCardLayoutSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 0.5 透明毛玻璃主题与桌面壁纸一键同步工作台
+        // 0.5 背景图片与毛玻璃设置
         XPeachWell(
             modifier = Modifier.fillMaxWidth(),
             containerColor = if (isLiquidGlassActive) {
@@ -3132,22 +3132,22 @@ private fun ThemePaletteAndCardLayoutSection(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = if (isLiquidGlassActive) "透明液态毛玻璃已启用" else "透明毛玻璃主题",
+                        text = if (isLiquidGlassActive) "毛玻璃背景已启用" else "背景图片与毛玻璃",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = if (hasCustomWallpaper) {
-                            "已加载壁纸背景，可调节毛玻璃透光度与模糊度"
+                            "已设置背景图，可在下方调节透明度与模糊度"
                         } else {
-                            "支持获取系统桌面背景、桌面主题色或上传相册壁纸"
+                            "使用系统壁纸或相册图片作为背景"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 XPeachStatusBadge(
-                    text = if (isLiquidGlassActive) "液态毛玻璃 UI" else "Flutter UI",
+                    text = if (isLiquidGlassActive) "已启用" else "标准",
                     containerColor = if (isLiquidGlassActive) {
                         MaterialTheme.colorScheme.primaryContainer
                     } else {
@@ -3169,13 +3169,13 @@ private fun ThemePaletteAndCardLayoutSection(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 XPeachFilterPill(
-                    label = "获取桌面背景",
+                    label = "使用系统壁纸",
                     selected = hasCustomWallpaper && isLiquidGlassActive,
                     compact = true,
                     onClick = onSyncDesktopWallpaper
                 )
                 XPeachFilterPill(
-                    label = "提取桌面主题色",
+                    label = "提取壁纸颜色",
                     selected = false,
                     compact = true,
                     onClick = onExtractDesktopColors
@@ -3235,12 +3235,12 @@ private fun ThemePaletteAndCardLayoutSection(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Android 系统动态色彩",
+                        text = "系统动态取色",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "跟随系统 Material You 壁纸色板（兼容毛玻璃）",
+                        text = "跟随系统壁纸自动调整主题色",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3326,13 +3326,13 @@ private fun ThemePaletteAndCardLayoutSection(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "液态毛玻璃光学参数",
+                            text = "背景与模糊度",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             XPeachFilterPill(
-                                label = "极清 36%",
+                                label = "通透 36%",
                                 selected = abs(localCardAlpha - 0.36f) < 0.04f,
                                 compact = true,
                                 onClick = {
@@ -3370,7 +3370,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "毛玻璃卡片不透明度 (${(localCardAlpha * 100).toInt()}% · 越低越通透)",
+                        text = "卡片不透明度 (${(localCardAlpha * 100).toInt()}%)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3384,7 +3384,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     )
 
                     Text(
-                        text = "背景毛玻璃模糊度 (${localWallpaperBlur.toInt()} dp)",
+                        text = "背景模糊度 (${localWallpaperBlur.toInt()} dp)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3398,7 +3398,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     )
 
                     Text(
-                        text = "背景显色透光度 (${(localWallpaperAlpha * 100).toInt()}%)",
+                        text = "背景不透明度 (${(localWallpaperAlpha * 100).toInt()}%)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -3416,9 +3416,9 @@ private fun ThemePaletteAndCardLayoutSection(
 
         XPeachInsetDivider(verticalPadding = 10.dp)
 
-        // 2. 9款精选预设主题色卡矩阵（首项为“透明毛玻璃”）
+        // 2. 主题配色
         Text(
-            text = "精选主题配色（点击「透明毛玻璃」即刻切换液态毛玻璃 UI）",
+            text = "主题配色",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

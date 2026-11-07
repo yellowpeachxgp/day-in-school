@@ -14,28 +14,28 @@ enum class ProxyMode(
 ) {
     PRESET_MIRROR(
         key = "PRESET_MIRROR",
-        label = "预置镜像加速",
-        subtitle = "通过内置高速镜像节点加速 GitHub 更新与资源拉取"
+        label = "预置镜像",
+        subtitle = "使用预置镜像节点下载更新与资源"
     ),
     CUSTOM_REVERSE_PROXY(
         key = "CUSTOM_REVERSE_PROXY",
-        label = "自定义反代前缀",
-        subtitle = "使用自建 Worker / Nginx 反代前缀转发 GitHub 与云服务请求"
+        label = "自定义镜像前缀",
+        subtitle = "使用自定义 HTTPS 镜像前缀转发请求"
     ),
     HTTP_PROXY(
         key = "HTTP_PROXY",
         label = "HTTP 代理",
-        subtitle = "通过自定义 HTTP 代理服务器 (Host:Port) 转发网络流量"
+        subtitle = "通过 HTTP 代理服务器连接"
     ),
     SOCKS_PROXY(
         key = "SOCKS_PROXY",
         label = "SOCKS5 代理",
-        subtitle = "通过自定义 SOCKS5 代理服务器 (Host:Port) 转发网络流量"
+        subtitle = "通过 SOCKS5 代理服务器连接"
     ),
     DIRECT(
         key = "DIRECT",
         label = "直连模式",
-        subtitle = "直接连接目标服务器，不经过额外代理中转"
+        subtitle = "直接连接服务器，不使用代理"
     );
 
     companion object {
@@ -47,8 +47,8 @@ enum class ProxyMode(
 }
 
 /**
- * 预置加速镜像代理线路：
- * 面向无代理客户端环境下的 GitHub Release 安装包与版本检测加速。
+ * 预置镜像代理线路：
+ * 面向无代理客户端环境下的 GitHub Release 安装包与版本检测下载。
  */
 enum class PresetMirrorNode(
     val key: String,
@@ -58,27 +58,27 @@ enum class PresetMirrorNode(
 ) {
     GHFAST_TOP(
         key = "GHFAST_TOP",
-        label = "GHFast 高速线路",
+        label = "GHFast 镜像",
         prefixUrl = "https://ghfast.top/",
-        description = "国内 CDN 节点加速，推荐默认使用"
+        description = "默认镜像节点"
     ),
     GH_PROXY_COM(
         key = "GH_PROXY_COM",
-        label = "GH-Proxy 主线路",
+        label = "GH-Proxy 镜像",
         prefixUrl = "https://gh-proxy.com/",
-        description = "通用 GitHub Release 资产镜像代理"
+        description = "通用镜像节点"
     ),
     GHPROXY_NET(
         key = "GHPROXY_NET",
         label = "GHProxy.net 镜像",
         prefixUrl = "https://ghproxy.net/",
-        description = "海外优选边缘节点反向代理"
+        description = "备用镜像节点"
     ),
     MOEYY_CN(
         key = "MOEYY_CN",
-        label = "Moeyy 公益镜像",
+        label = "Moeyy 镜像",
         prefixUrl = "https://github.moeyy.cn/",
-        description = "国内公益 GitHub Release 下载加速节点"
+        description = "国内备用镜像节点"
     );
 
     companion object {

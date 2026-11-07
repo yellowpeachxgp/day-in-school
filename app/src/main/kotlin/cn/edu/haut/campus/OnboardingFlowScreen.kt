@@ -138,27 +138,27 @@ enum class OnboardingWizardStep(
 ) {
     WELCOME_FEATURES(
         stepNumber = 1,
-        shortTitle = "核心速览",
-        headline = "欢迎来到日在校园",
-        subtitle = "课表时间轴、校区室内外导航、图书馆抢座与驿站取件一站就绪",
+        shortTitle = "功能概览",
+        headline = "欢迎使用日在校园",
+        subtitle = "课表查询、校区地图、图书馆预约与取件管理",
     ),
     VISUAL_THEME_STUDIO(
         stepNumber = 2,
-        shortTitle = "视觉主题",
-        headline = "定制你的专属视觉风格",
-        subtitle = "自由切换 Flutter 经典质感或透明液态毛玻璃，支持提取桌面壁纸与主题色",
+        shortTitle = "外观主题",
+        headline = "选择外观风格",
+        subtitle = "设置界面风格、深浅模式与主题配色",
     ),
     SCHOOL_AND_PERMISSIONS(
         stepNumber = 3,
         shortTitle = "校区与提醒",
-        headline = "选择校区并开启智能提醒",
-        subtitle = "配置双校区地图识别与课前通知权限，不错过每一节重要课程",
+        headline = "设置校区与上课提醒",
+        subtitle = "选择默认校区，按需开启定位与课前提醒权限",
     ),
     ACADEMIC_DATA_SETUP(
         stepNumber = 4,
-        shortTitle = "课表建档",
-        headline = "同步课表与学业数据",
-        subtitle = "支持统一身份认证一键同步、网页/CSV 多源导入或体验演示课表",
+        shortTitle = "导入课表",
+        headline = "导入课表与成绩",
+        subtitle = "支持教务登录同步、文件导入或加载演示课表",
     );
 }
 
@@ -200,7 +200,7 @@ fun OnboardingFlowScreen(
         hasLocationPermission = result.values.any { it } || CampusMapNavigator.hasLocationPermission(context)
         if (hasLocationPermission) {
             bannerTone = XPeachFeedbackTone.SUCCESS
-            bannerMessage = "位置权限已开启，校园地图可实时定位并规划步行路线"
+            bannerMessage = "位置权限已开启"
         }
     }
 
@@ -210,7 +210,7 @@ fun OnboardingFlowScreen(
         reminderPermSnapshot = ReminderPermissions.inspect(context)
         if (reminderPermSnapshot.canPostNotifications) {
             bannerTone = XPeachFeedbackTone.SUCCESS
-            bannerMessage = "通知权限已开启，课前与考试提醒将准时推送"
+            bannerMessage = "通知权限已开启"
         }
     }
 
@@ -404,9 +404,9 @@ fun OnboardingFlowScreen(
                                 )
                                 bannerTone = if (ok) XPeachFeedbackTone.SUCCESS else XPeachFeedbackTone.INFO
                                 bannerMessage = if (ok) {
-                                    "请在系统弹窗中确认添加「2×2 下一节课」小组件"
+                                    "请在弹窗中确认添加小组件"
                                 } else {
-                                    "也可以在进入首页后长按手机桌面空白处添加小组件"
+                                    "也可在手机桌面长按空白处添加小组件"
                                 }
                             },
                         )
@@ -419,7 +419,7 @@ fun OnboardingFlowScreen(
                                 scope.launch {
                                     repository.setUiDesignStyle(style.key)
                                     bannerTone = XPeachFeedbackTone.SUCCESS
-                                    bannerMessage = "已切换为「${style.label}」设计语言"
+                                    bannerMessage = "已切换为「${style.label}」风格"
                                 }
                             },
                             onSyncDesktopWallpaper = {
@@ -437,7 +437,7 @@ fun OnboardingFlowScreen(
                                         }
                                         .onFailure {
                                             bannerTone = XPeachFeedbackTone.WARNING
-                                            bannerMessage = "未能直接读取系统壁纸，你可以点击「从相册选图」上传背景"
+                                            bannerMessage = "无法读取系统壁纸，请从相册选择图片"
                                         }
                                 }
                             },
@@ -451,11 +451,11 @@ fun OnboardingFlowScreen(
                                                 extractedSwatches = swatches,
                                             )
                                             bannerTone = XPeachFeedbackTone.SUCCESS
-                                            bannerMessage = "已提取系统桌面主题色并应用到全局控件"
+                                            bannerMessage = "已应用系统壁纸主题色"
                                         }
                                         .onFailure {
                                             bannerTone = XPeachFeedbackTone.WARNING
-                                            bannerMessage = "暂未能读取系统桌面主题色，你可以选择下方预设色板"
+                                            bannerMessage = "无法读取系统壁纸颜色，请选择下方预设配色"
                                         }
                                 }
                             },
@@ -464,7 +464,7 @@ fun OnboardingFlowScreen(
                                 scope.launch {
                                     repository.clearCustomWallpaperTheme()
                                     bannerTone = XPeachFeedbackTone.INFO
-                                    bannerMessage = "已移除自定义壁纸背景"
+                                    bannerMessage = "已移除自定义背景"
                                 }
                             },
                             onSelectThemeMode = { mode ->
@@ -502,9 +502,9 @@ fun OnboardingFlowScreen(
                                     repository.setSelectedCampusId(campusId)
                                     bannerTone = XPeachFeedbackTone.SUCCESS
                                     bannerMessage = when (campusId) {
-                                        "lianhuajie" -> "已固定为莲花街校区地图与作息"
-                                        "songshanlu" -> "已固定为嵩山路校区地图与作息"
-                                        else -> "已设为根据 GPS 位置自动识别校区"
+                                        "lianhuajie" -> "已设为莲花街校区"
+                                        "songshanlu" -> "已设为嵩山路校区"
+                                        else -> "已设为自动识别校区"
                                     }
                                 }
                             },
@@ -596,7 +596,7 @@ fun OnboardingFlowScreen(
                     }
                 } else {
                     Text(
-                        text = "${activeSchool.displayName} · 欢迎向导",
+                        text = activeSchool.displayName,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -635,7 +635,7 @@ fun OnboardingFlowScreen(
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("进入日在校园", maxLines = 1, softWrap = false)
+                        Text("开始使用", maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -683,7 +683,7 @@ private fun OnboardingWelcomeFeaturesStep(
                     )
                 }
                 Text(
-                    text = "专为高校同学打造的课表、地图、图书馆与校园服务全能工作台。仅需 1 分钟即可完成个性化配置。",
+                    text = "提供课表、校园地图、图书馆预约与取件码管理。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -691,25 +691,25 @@ private fun OnboardingWelcomeFeaturesStep(
         }
     }
 
-    // 2x2 Bento 四大能力矩阵
+    // 2x2 功能概览
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             XPeachBentoTile(
-                title = "智慧课表",
+                title = "课程表",
                 badgeText = "1-10节",
-                subtitle = "连堂小课间拆解、重课冲突分栏、调休停课自动换算",
+                subtitle = "查看每日课程、周课表与调休安排",
                 icon = Icons.Rounded.CalendarMonth,
                 accentColor = XPeachTheme.readablePrimary,
                 onClick = { onJumpToStep(OnboardingWizardStep.ACADEMIC_DATA_SETUP) },
                 modifier = Modifier.weight(1f),
             )
             XPeachBentoTile(
-                title = "校园与室内地图",
+                title = "校园地图",
                 badgeText = "双校区",
-                subtitle = "莲花街与嵩山路教学楼检索、逐层室内教室平面图与步行路线",
+                subtitle = "教学楼搜索、教室楼层图与步行导航",
                 icon = Icons.Rounded.Explore,
                 accentColor = Color(0xFF0D9488),
                 onClick = { onJumpToStep(OnboardingWizardStep.SCHOOL_AND_PERMISSIONS) },
@@ -723,17 +723,17 @@ private fun OnboardingWelcomeFeaturesStep(
         ) {
             XPeachBentoTile(
                 title = "图书馆与快递",
-                badgeText = "一站聚合",
-                subtitle = "馆藏图书查询、座位预约、菜鸟驿站取件码与寝室电费监控",
+                badgeText = "常用服务",
+                subtitle = "馆藏检索、座位预约、取件码与宿舍电费",
                 icon = Icons.Rounded.LocalLibrary,
                 accentColor = Color(0xFF7C3AED),
                 onClick = { onJumpToStep(OnboardingWizardStep.ACADEMIC_DATA_SETUP) },
                 modifier = Modifier.weight(1f),
             )
             XPeachBentoTile(
-                title = "四大清新与流光主题",
-                badgeText = "全新风格",
-                subtitle = "支持清新森系、奶油手账、透明液态毛玻璃与经典质感 4 套全局设计语言",
+                title = "外观与主题",
+                badgeText = "个性化",
+                subtitle = "支持多种界面风格、深浅模式与自定义背景",
                 icon = Icons.Rounded.Palette,
                 accentColor = Color(0xFF10B981),
                 onClick = { onJumpToStep(OnboardingWizardStep.VISUAL_THEME_STUDIO) },
@@ -772,12 +772,12 @@ private fun OnboardingWelcomeFeaturesStep(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "Bento 桌面小组件套装",
+                        text = "桌面小组件",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "支持 2×2 下一节、4×2 今日双栏、4×2 驿站取件码与 4×4 周课表",
+                        text = "支持下一节课、今日课程、取件码与周课表小组件",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -788,12 +788,12 @@ private fun OnboardingWelcomeFeaturesStep(
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             ) {
-                Text("添加 2×2", maxLines = 1, softWrap = false)
+                Text("添加小组件", maxLines = 1, softWrap = false)
             }
         }
     }
 
-    // 本地优先与隐私安全承诺
+    // 本地存储与隐私保护
     XPeachWell(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -808,13 +808,13 @@ private fun OnboardingWelcomeFeaturesStep(
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "本地优先存储 · 硬件级凭据加密",
+                    text = "本地存储与隐私保护",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = "你的学号与教务密码仅使用 Android Keystore 硬件密钥加密保存在本机，课表与成绩支持完全离线查看。",
+                    text = "学号与密码加密保存在本机，课表与成绩支持离线查看。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -847,7 +847,7 @@ private fun OnboardingVisualThemeStudioStep(
         mutableFloatStateOf(prefs.wallpaperBlurDp)
     }
 
-    // 1. 四大全局设计语言 2×2 画廊选择卡
+    // 1. 界面风格选择卡
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -856,12 +856,12 @@ private fun OnboardingVisualThemeStudioStep(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "选择全局设计语言（4 套风格）",
+                    text = "界面风格",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "切换后全局卡片圆角、底色氛围与课表色块将实时联动",
+                    text = "切换卡片样式与界面配色",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -960,10 +960,10 @@ private fun OnboardingVisualThemeStudioStep(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 桌面壁纸与毛玻璃调节工作台
+        // 背景图片与透明度
         XPeachWell(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "桌面背景与毛玻璃透光调节",
+                text = "背景图片与透明度",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -974,26 +974,26 @@ private fun OnboardingVisualThemeStudioStep(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 XPeachFilterPill(
-                    label = "获取手机桌面背景",
+                    label = "使用系统壁纸",
                     selected = hasCustomWallpaper && isLiquidGlass,
                     compact = true,
                     onClick = onSyncDesktopWallpaper,
                 )
                 XPeachFilterPill(
-                    label = "仅提取桌面主题色",
+                    label = "提取壁纸颜色",
                     selected = false,
                     compact = true,
                     onClick = onExtractDesktopColors,
                 )
                 XPeachFilterPill(
-                    label = if (hasCustomWallpaper) "更换相册背景" else "从相册选图",
+                    label = if (hasCustomWallpaper) "更换图片" else "从相册选图",
                     selected = hasCustomWallpaper && !isLiquidGlass,
                     compact = true,
                     onClick = onPickGalleryWallpaper,
                 )
                 if (hasCustomWallpaper) {
                     XPeachFilterPill(
-                        label = "清除背景图",
+                        label = "移除背景",
                         selected = false,
                         compact = true,
                         onClick = onClearWallpaper,
@@ -1008,7 +1008,7 @@ private fun OnboardingVisualThemeStudioStep(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "毛玻璃卡片不透明度",
+                        text = "卡片不透明度",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1033,7 +1033,7 @@ private fun OnboardingVisualThemeStudioStep(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "背景磨砂模糊半径",
+                        text = "背景模糊度",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1059,7 +1059,7 @@ private fun OnboardingVisualThemeStudioStep(
     // 2. 深浅模式与预设色板
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "深浅外观与主题色板",
+            text = "深浅模式与主题色",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
@@ -1083,8 +1083,8 @@ private fun OnboardingVisualThemeStudioStep(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Spacer(modifier = Modifier.height(6.dp))
             XPeachSwitchRow(
-                title = "跟随系统动态取色 (Material You)",
-                subtitle = "自动同步 Android 12+ 系统壁纸主色调",
+                title = "跟随系统动态取色",
+                subtitle = "使用系统壁纸主色调",
                 checked = prefs.useDynamicColor,
                 onCheckedChange = onToggleDynamicColor,
             )
@@ -1128,7 +1128,7 @@ private fun OnboardingVisualThemeStudioStep(
         }
     }
 
-    // 3. 实时课程卡片视觉预览
+    // 3. 课程预览
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1137,7 +1137,7 @@ private fun OnboardingVisualThemeStudioStep(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "实时视觉预览 · 算法设计与分析",
+                    text = "课程预览 · 算法设计与分析",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                 )
@@ -1207,7 +1207,7 @@ private fun OnboardingSchoolAndPermissionsStep(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "支持多校区地图切换、其它高校导入或纯离线课表模式",
+                        text = "支持切换校区或离线使用课表",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1225,14 +1225,14 @@ private fun OnboardingSchoolAndPermissionsStep(
         if (isHautSchool) {
             XPeachInsetDivider(verticalPadding = 10.dp)
             Text(
-                text = "默认活动校区",
+                text = "默认校区",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(6.dp))
             val campusOptions = remember {
                 listOf(
-                    "auto" to "GPS 自动识别",
+                    "auto" to "自动识别",
                     "lianhuajie" to "莲花街校区",
                     "songshanlu" to "嵩山路校区",
                 )
@@ -1248,10 +1248,10 @@ private fun OnboardingSchoolAndPermissionsStep(
         }
     }
 
-    // 2. 地图定位与通知提醒权限一站式配置
+    // 2. 地图定位与通知提醒权限
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "权限与课前提醒设置",
+            text = "权限与课前提醒",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
@@ -1286,12 +1286,12 @@ private fun OnboardingSchoolAndPermissionsStep(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "校区定位权限",
+                        text = "位置权限",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        text = "用于在校园地图中显示实时位置、最近教学楼与步行路线",
+                        text = "用于地图定位与步行导航",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1345,12 +1345,12 @@ private fun OnboardingSchoolAndPermissionsStep(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "上课与考试通知权限",
+                        text = "通知权限",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        text = "课前自动发送教室位置提醒与实况倒计时通知",
+                        text = "用于发送课前与考试提醒",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1387,12 +1387,12 @@ private fun OnboardingSchoolAndPermissionsStep(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "精确闹钟唤醒权限",
+                        text = "精确闹钟权限",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                     )
                     Text(
-                        text = "确保手机锁屏休眠时课前提醒与番茄钟准点响起",
+                        text = "确保锁屏时准时发出提醒",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1410,8 +1410,8 @@ private fun OnboardingSchoolAndPermissionsStep(
         XPeachInsetDivider(verticalPadding = 8.dp)
 
         XPeachSwitchRow(
-            title = "启用课前与考试自动提醒",
-            subtitle = "默认在每节课上课前提前发送教室与节次提醒",
+            title = "开启课前与考试提醒",
+            subtitle = "上课前发送教室与节次通知",
             checked = prefs.reminderConfig.enabled,
             onCheckedChange = onToggleRemindersEnabled,
         )
@@ -1424,7 +1424,7 @@ private fun OnboardingSchoolAndPermissionsStep(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "课前提前提醒时间",
+                    text = "提前提醒时间",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1490,13 +1490,13 @@ private fun OnboardingAcademicDataSetupStep(
                     modifier = Modifier.size(20.dp),
                 )
                 Text(
-                    text = if (isHautSchool) "方式一：统一身份认证一键同步" else "课表导入与建档",
+                    text = if (isHautSchool) "教务系统同步" else "导入课表",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
             XPeachStatusDotText(
-                text = if (isHautSchool) "官方直连" else activeSchool.displayName
+                text = if (isHautSchool) "教务直连" else activeSchool.displayName
             )
         }
 
@@ -1510,7 +1510,7 @@ private fun OnboardingAcademicDataSetupStep(
                         val plainPwd = passwordInput
                         isSyncing = true
                         isErrorStatus = false
-                        syncStatusMessage = "正在同步课表、考试安排与成绩记录..."
+                        syncStatusMessage = "正在同步课表、考试与成绩..."
                         val result = HautLiveAcademicClient.fetchLiveAcademicData(
                             studentId = studentIdInput.trim(),
                             passwordPlain = plainPwd,
@@ -1526,7 +1526,7 @@ private fun OnboardingAcademicDataSetupStep(
                             }
                             if (applied.isFailure) {
                                 isErrorStatus = true
-                                syncStatusMessage = "保存同步数据失败，请重试（已有数据不受影响）"
+                                syncStatusMessage = "保存失败，请重试"
                                 return@onSuccess
                             }
                             val saved = runCatching {
@@ -1539,7 +1539,7 @@ private fun OnboardingAcademicDataSetupStep(
                             }
                             repository.setAutoSyncEnabled(saved.isSuccess)
                             syncStatusMessage = syncData.syncSummaryText() +
-                                if (saved.isFailure) "\n凭据保存失败，已关闭后台自动更新" else ""
+                                if (saved.isFailure) "\n密码保存失败，已关闭自动同步" else ""
                             repository.completeOnboarding()
                             onCompleted()
                         }.onFailure { err ->
@@ -1649,7 +1649,7 @@ private fun OnboardingAcademicDataSetupStep(
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("正在同步并建档...", maxLines = 1, softWrap = false)
+                    Text("正在同步...", maxLines = 1, softWrap = false)
                 } else {
                     Text(
                         text = "登录并同步 (${AcademicTermResolver.formatTermLabel(selectedXnm, selectedXqm)})",
@@ -1660,17 +1660,17 @@ private fun OnboardingAcademicDataSetupStep(
             }
         } else {
             Text(
-                text = "当前所选学校支持通过教务网页抓包、CSV/ICS 标准课表文件导入或手动录入课程。",
+                text = "支持通过教务网页、CSV/ICS 文件导入或手动添加课程。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 
-    // 2. 多源导入与演示/空白体验入口卡片
+    // 2. 其他导入方式
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "更多建档与体验方式",
+            text = "其他导入方式",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
@@ -1685,7 +1685,7 @@ private fun OnboardingAcademicDataSetupStep(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                Text("网页 / CSV 导入", maxLines = 1, softWrap = false)
+                Text("网页 / 文件导入", maxLines = 1, softWrap = false)
             }
 
             if (isHautSchool) {
@@ -1718,7 +1718,7 @@ private fun OnboardingAcademicDataSetupStep(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                text = if (isHautSchool) "暂不登录，直接进入空白主页 ›" else "进入离线课表主页 ›",
+                text = "暂不导入，直接进入首页 ›",
                 maxLines = 1,
                 softWrap = false,
             )

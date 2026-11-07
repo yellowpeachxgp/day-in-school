@@ -170,7 +170,7 @@ fun TimetableScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = if (viewMode == 2) "原始课表" else "第 $selectedWeek 周",
+            title = if (viewMode == 2) "总课表" else "第 $selectedWeek 周",
             subtitle = term?.displayName ?: "选择学期",
             badgeText = if (viewMode == 2) "全学期" else if (selectedWeek == currentActualWeek) "本周" else null,
             onSubtitleClick = { showTermSwitcherDialog = true },
@@ -250,7 +250,7 @@ fun TimetableScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "查看明细 ▸",
+                    text = "查看 ▸",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = XPeachTheme.readablePrimary
@@ -262,7 +262,7 @@ fun TimetableScreen(
                 onDismissRequest = { showUnscheduled = false },
                 title = {
                     Text(
-                        text = "实践与时间待定课程 (${pendingCourses.size})",
+                        text = "时间待定课程 (${pendingCourses.size})",
                         style = MaterialTheme.typography.titleLarge
                     )
                 },
@@ -272,7 +272,7 @@ fun TimetableScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "以下实践课暂未安排固定上课时间。",
+                            text = "以下课程暂未安排固定时间",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -348,13 +348,13 @@ fun TimetableScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${term?.displayName ?: "当前学期"}暂无排课，可切换至 ${targetOtherTerm.displayName}",
+                        text = "当前学期无课，可切至 ${targetOtherTerm.displayName}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = if (otherTermsWithCourses.size == 1) "一键切换 ▸" else "切换学期 ▸",
+                        text = "切换 ▸",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = XPeachTheme.readablePrimary
@@ -758,7 +758,7 @@ fun TimetableScreen(
 
         XPeachAlertDialog(
             onDismissRequest = { editingOccurrence = null },
-            title = { Text("课程编辑") },
+            title = { Text("编辑课程") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -796,7 +796,7 @@ fun TimetableScreen(
                     OutlinedTextField(
                         value = editedWeeksText,
                         onValueChange = { editedWeeksText = it },
-                        label = { Text("周次（如 1-16周）") },
+                        label = { Text("周次") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -834,7 +834,7 @@ fun TimetableScreen(
                     ) {
                         Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("在地图中查看教室位置", maxLines = 1, softWrap = false)
+                        Text("查看教室位置", maxLines = 1, softWrap = false)
                     }
                 }
             },
@@ -884,7 +884,7 @@ fun TimetableScreen(
 
         XPeachAlertDialog(
             onDismissRequest = { showAddCourseDialog = false },
-            title = { Text("添加自定义课程") },
+            title = { Text("添加课程") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -894,7 +894,7 @@ fun TimetableScreen(
                         value = newName,
                         onValueChange = { newName = it },
                         label = { Text("课程名称") },
-                        placeholder = { Text("例如：高等数学 / 英语口语") },
+                        placeholder = { Text("如：高等数学") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -903,7 +903,7 @@ fun TimetableScreen(
                         value = newRoom,
                         onValueChange = { newRoom = it },
                         label = { Text("上课教室") },
-                        placeholder = { Text("例如：5号教学楼5204") },
+                        placeholder = { Text("如：5号教学楼5204") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -911,13 +911,13 @@ fun TimetableScreen(
                     OutlinedTextField(
                         value = newTeacher,
                         onValueChange = { newTeacher = it },
-                        label = { Text("任课教师（选填）") },
+                        label = { Text("教师（选填）") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        text = "点选星期：",
+                        text = "星期",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -937,7 +937,7 @@ fun TimetableScreen(
                         }
                     }
                     Text(
-                        text = "点选节次：",
+                        text = "节次",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -959,7 +959,7 @@ fun TimetableScreen(
                         }
                     }
                     Text(
-                        text = "上课周次：",
+                        text = "周次",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -970,7 +970,7 @@ fun TimetableScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         for ((label, expr) in listOf(
-                            "全周 1-16周" to "1-16周",
+                            "1-16周" to "1-16周",
                             "单周" to "1,3,5,7,9,11,13,15周",
                             "双周" to "2,4,6,8,10,12,14,16周",
                             "前8周" to "1-8周",
@@ -986,7 +986,7 @@ fun TimetableScreen(
                     OutlinedTextField(
                         value = newWeeks,
                         onValueChange = { newWeeks = it },
-                        label = { Text("自定义周次范围") },
+                        label = { Text("周次范围") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -1039,14 +1039,14 @@ fun TimetableScreen(
 
         XPeachAlertDialog(
             onDismissRequest = { showTermSwitcherDialog = false },
-            title = { Text("切换学期与校历设置") },
+            title = { Text("学期与校历") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "选择当前显示学期",
+                        text = "当前学期",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1080,7 +1080,7 @@ fun TimetableScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
+                                    text = "${t.startDate} 开学 · 共 ${t.weekCount} 周",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1097,7 +1097,7 @@ fun TimetableScreen(
                     XPeachInsetDivider(verticalPadding = 4.dp)
 
                     Text(
-                        text = "校准当前学期（${term?.displayName ?: ""}）第1周周一日期",
+                        text = "第一周周一日期",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1107,7 +1107,7 @@ fun TimetableScreen(
                             startDateInput = it
                             dateError = null
                         },
-                        label = { Text("格式 YYYY-MM-DD") },
+                        label = { Text("YYYY-MM-DD") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -1128,7 +1128,7 @@ fun TimetableScreen(
                                 val parsedDate = runCatching { LocalDate.parse(startDateInput.trim()) }.getOrNull()
                                 val activeTermId = term?.id
                                 if (parsedDate == null || activeTermId == null) {
-                                    dateError = "请输入有效日期，如 2026-03-02 或 2026-08-31"
+                                    dateError = "日期格式无效，如 2026-08-31"
                                 } else {
                                     scope.launch {
                                         repository.updateTermStartDate(activeTermId, parsedDate)
@@ -1140,7 +1140,7 @@ fun TimetableScreen(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("保存开学日期", maxLines = 1, softWrap = false)
+                            Text("保存日期", maxLines = 1, softWrap = false)
                         }
                         FilledTonalButton(
                             onClick = {
@@ -1150,7 +1150,7 @@ fun TimetableScreen(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("去同步该学期", maxLines = 1, softWrap = false)
+                            Text("同步该学期", maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -1206,13 +1206,13 @@ private fun TimetableWeekListView(
         if (totalClasses == 0) {
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "本周暂无排课安排",
+                    text = "本周无课",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "可切换至「总课表」查看全学期全部周次课程，或点击右上角切换周次。",
+                    text = "可在「总课表」查看全学期课程",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1381,12 +1381,12 @@ private fun RawMasterTimetableView(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = "$termDisplayName · 全学期总课表",
+                        text = termDisplayName,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "共 $distinctCourseCount 门课程，${sortedRules.size} 个上课时段",
+                        text = "共 $distinctCourseCount 门课 · ${sortedRules.size} 个时段",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1413,12 +1413,12 @@ private fun RawMasterTimetableView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "全学期课表速览",
+                    text = "全学期课表",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "左右滑动查看完整7日 ›",
+                    text = "左右滑动 ›",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1572,7 +1572,7 @@ private fun RawMasterTimetableView(
         // 3. 原始排课完整明细清单（含周次、节次、教师、教室、来源）
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "全部课程明细 (${sortedRules.size})",
+                text = "课程明细 (${sortedRules.size})",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1580,7 +1580,7 @@ private fun RawMasterTimetableView(
 
             if (sortedRules.isEmpty()) {
                 Text(
-                    text = "当前学期暂无课程记录，点击上方「导入/导出」可从教务系统同步。",
+                    text = "暂无课程，可从教务系统同步",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1654,13 +1654,13 @@ private fun RawMasterTimetableView(
         if (unscheduledCourses.isNotEmpty()) {
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "本学期实践课程 (${unscheduledCourses.size})",
+                    text = "实践课程 (${unscheduledCourses.size})",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "以下实践课暂未安排固定上课时间。",
+                    text = "暂未安排固定时间",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -268,12 +268,12 @@ fun TodayScreen(
                 }
                 XPeachIconButton(
                     icon = Icons.Default.CloudDownload,
-                    contentDescription = "刷新课表与考试",
+                    contentDescription = "同步教务",
                     onClick = {
                         if (prefs.hasSavedCredentials && !isDynamicSyncing) {
                             scope.launch {
                                 isDynamicSyncing = true
-                                dynamicSyncBanner = "正在更新课表和考试..."
+                                dynamicSyncBanner = "正在同步…"
                                 val res = repository.performDynamicAcademicSync(force = true)
                                 isDynamicSyncing = false
                                 if (res == null) {
@@ -283,7 +283,7 @@ fun TodayScreen(
                                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                         dynamicSyncBanner = "已同步 ${syncData.timetableCandidates.size} 门课程、${syncData.examItems.size} 场考试"
                                     }.onFailure { err ->
-                                        dynamicSyncBanner = "更新失败：${err.message ?: "请检查网络"}"
+                                        dynamicSyncBanner = "同步失败：${err.message ?: "请检查网络"}"
                                     }
                                 }
                             }
@@ -294,7 +294,7 @@ fun TodayScreen(
                 )
                 XPeachIconButton(
                     icon = Icons.Default.Settings,
-                    contentDescription = "我的与设置",
+                    contentDescription = "设置",
                     onClick = onNavigateToSettings
                 )
             }
@@ -392,11 +392,11 @@ fun TodayScreen(
                     },
                     onSyncParcels = {
                         scope.launch {
-                            dynamicSyncBanner = "正在同步快递与云端包裹..."
+                            dynamicSyncBanner = "正在同步快递…"
                             runCatching { repository.syncXiaomiExpressPackages() }
                             runCatching { repository.syncWithCampusCloud() }
                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                            dynamicSyncBanner = "已更新最新快递取件码"
+                            dynamicSyncBanner = "快递已更新"
                         }
                     },
                     onOpenParcelHub = onNavigateToParcelHub
@@ -640,7 +640,7 @@ fun TodayScreen(
     if (showTermSwitcherDialog) {
         XPeachAlertDialog(
             onDismissRequest = { showTermSwitcherDialog = false },
-            title = { Text("切换当前学期") },
+            title = { Text("切换学期") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -676,7 +676,7 @@ fun TodayScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "第1周周一：${t.startDate} · 共 ${t.weekCount} 周",
+                                    text = "${t.startDate} 开学 · 共 ${t.weekCount} 周",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -697,7 +697,7 @@ fun TodayScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("去同步其他学期课表", maxLines = 1, softWrap = false)
+                        Text("同步其他学期", maxLines = 1, softWrap = false)
                     }
                 }
             },
@@ -886,7 +886,7 @@ private fun CourseDetailAndSnoozeDialog(
                                                 updatedAtEpochMs = System.currentTimeMillis()
                                             )
                                         )
-                                        actionFeedback = if (nextEnabled) "已开启这门课的提醒" else "已关闭这门课的提醒"
+                                        actionFeedback = if (nextEnabled) "已开启提醒" else "已关闭提醒"
                                         refreshTrigger++
                                     }
                                 }
@@ -894,19 +894,19 @@ private fun CourseDetailAndSnoozeDialog(
                         }
 
                         val statusSummary = when {
-                            !effectivePolicy.enabled -> "这门课已关闭提醒"
+                            !effectivePolicy.enabled -> "已关闭提醒"
                             activeTask?.status == ReminderTaskStatus.SNOOZED -> {
                                 val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
                                     .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
                                 "将在 $t 再次提醒"
                             }
                             activeTask?.status == ReminderTaskStatus.FIRED -> {
-                                "已发送提醒，可在下方选择稍后提醒"
+                                "已提醒"
                             }
                             activeTask?.status == ReminderTaskStatus.PENDING -> {
                                 val t = Instant.ofEpochMilli(activeTask.scheduledAtEpochMs)
                                     .atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FMT)
-                                "将在 $t 提醒（提前 ${effectivePolicy.classLeadMinutes} 分钟）"
+                                "将在 $t 提醒"
                             }
                             else -> "课前 ${effectivePolicy.classLeadMinutes} 分钟提醒"
                         }
@@ -1327,7 +1327,7 @@ private fun TodayExpressPickupHeroCard(
 ) {
     val groupedByStation = remember(pendingPickups) {
         pendingPickups.groupBy {
-            it.stationName.cleanUiText() ?: "校园快递驿站"
+            it.stationName.cleanUiText() ?: "快递驿站"
         }
     }
 
@@ -1354,7 +1354,7 @@ private fun TodayExpressPickupHeroCard(
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                     Text(
-                        text = "待取快递提醒",
+                        text = "待取快递",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1399,7 +1399,7 @@ private fun TodayExpressPickupHeroCard(
                         )
                         if (stationParcels.size > 1 && stationParcels.first().stationName.cleanUiText() != null) {
                             XPeachFilterPill(
-                                label = "本驿站全取",
+                                label = "全部已取",
                                 selected = false,
                                 compact = true,
                                 onClick = { onMarkStationAllPickedUp(stationName) }
@@ -1427,7 +1427,7 @@ private fun TodayExpressPickupHeroCard(
                                 verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 Text(
-                                    text = parcel.pickupCode.cleanUiText() ?: "待出取件码",
+                                    text = parcel.pickupCode.cleanUiText() ?: "暂未出码",
                                     style = MaterialTheme.typography.headlineMedium.copy(
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold
@@ -1458,7 +1458,7 @@ private fun TodayExpressPickupHeroCard(
 
                     if (stationParcels.size > 4) {
                         Text(
-                            text = "还有 ${stationParcels.size - 4} 件待取包裹，点击查看全部",
+                            text = "其余 ${stationParcels.size - 4} 件 ›",
                             style = MaterialTheme.typography.labelSmall,
                             color = XPeachTheme.readablePrimary,
                             modifier = Modifier.clickable(onClick = onOpenParcelHub)
@@ -1493,7 +1493,7 @@ private fun TodayLibrarySeatDynamicCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     XPeachStatusBadge(
-                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已预约" else "等待开抢",
+                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已预约" else "待预约",
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
@@ -1514,20 +1514,20 @@ private fun TodayLibrarySeatDynamicCard(
 
             activePlans.take(2).forEachIndexed { idx, plan ->
                 XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 6.dp)
-                val cleanArea = plan.preferredAreaName.cleanUiText() ?: "图书馆自习区"
+                val cleanArea = plan.preferredAreaName.cleanUiText() ?: "自习区"
                 val firstSeat = plan.preferredSeatLabel.cleanUiText().orEmpty().split(",")
                     .map { it.trim() }
-                    .firstOrNull { it.isNotEmpty() } ?: "自动优选"
+                    .firstOrNull { it.isNotEmpty() } ?: "自动选座"
                 val statusLabel = when (plan.status) {
-                    "CONFIRMED" -> "已成功预约座位"
-                    "FINAL_CHECK_OK" -> "即将开抢，准备就绪"
-                    "PRECHECK_OK" -> "登录有效，等待开抢"
-                    else -> "已预约定时抢座"
+                    "CONFIRMED" -> "预约成功"
+                    "FINAL_CHECK_OK" -> "即将预约"
+                    "PRECHECK_OK" -> "等待预约"
+                    else -> "已设定时预约"
                 }
                 val engineLabel = if (plan.executionMode == "CLOUD_HOSTED") {
-                    "云端代抢(测试版)"
+                    "云端预约"
                 } else {
-                    "本机抢座(测试版)"
+                    "本机预约"
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1615,7 +1615,7 @@ private fun TodayCampusBentoSection(
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit
 ) {
-    // 顶部板块栏：左标题 + 右侧「定制卡片」按钮
+    // 顶部板块栏：左标题 + 右侧「编辑」按钮
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1624,13 +1624,13 @@ private fun TodayCampusBentoSection(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "校园板块",
+            text = "常用功能",
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         XPeachFilterPill(
-            label = "定制卡片",
+            label = "编辑",
             selected = false,
             onClick = onOpenCustomizer
         )
@@ -1667,23 +1667,23 @@ private fun TodayCampusBentoSection(
     } else if (todayDoneMins > 0) {
         "今日已专注 $todayDoneMins 分钟"
     } else {
-        "15 / 25 / 45 分钟倒计时"
+        "番茄钟倒计时"
     }
 
     val (elecBadge, elecSub) = remember(onlineRooms, utilityMeters, utilityReadings) {
         if (onlineRooms.isNotEmpty()) {
             val room = onlineRooms.first()
             val firstDev = decodeOnlineDevicesJson(room.devicesJson).firstOrNull()
-            val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑寝室"
+            val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑定"
             b to room.roomName
         } else if (utilityMeters.isNotEmpty()) {
             val meter = utilityMeters.first()
             val latest = utilityReadings.filter { it.meterId == meter.id }
                 .maxByOrNull { it.recordedAtEpochMs }
-            val b = if (latest != null) "${latest.value}${meter.unit}" else "台账"
+            val b = if (latest != null) "${latest.value}${meter.unit}" else "记录"
             b to "${meter.roomName} · ${meter.name}"
         } else {
-            "水电" to "寝室电费余量与趋势"
+            "电费" to "剩余电量与用电记录"
         }
     }
 
@@ -1721,12 +1721,12 @@ private fun TodayCampusBentoSection(
     } else {
         HomeModularCardSpec(
             id = "EXAM_SUMMARY",
-            title = "考试与学业成绩",
+            title = "考试与成绩",
             badgeText = "学业",
             subtitle = if (examSchedules.isNotEmpty()) {
-                "本学期共记录 ${examSchedules.size} 场考试 · 查看成绩与 GPA"
+                "本学期 ${examSchedules.size} 场考试 · 成绩与绩点"
             } else {
-                "查看学期成绩、GPA 测算与考试安排"
+                "成绩、绩点与考试安排"
             },
             onClick = onNavigateToGrades
         )
@@ -1744,7 +1744,7 @@ private fun TodayCampusBentoSection(
         ),
         "DORM_ELECTRICITY" to HomeModularCardSpec(
             id = "DORM_ELECTRICITY",
-            title = "宿舍水电",
+            title = "宿舍电费",
             badgeText = elecBadge,
             subtitle = elecSub,
             onClick = onNavigateToElectricity
@@ -1754,12 +1754,12 @@ private fun TodayCampusBentoSection(
                 it.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CONFIRMED")
             }
             if (activePlan != null) {
-                val cleanArea = activePlan.preferredAreaName.cleanUiText() ?: "图书馆自习区"
-                val seatNo = activePlan.preferredSeatLabel.cleanUiText()?.split(",")?.firstOrNull()?.trim() ?: "优选座"
+                val cleanArea = activePlan.preferredAreaName.cleanUiText() ?: "自习区"
+                val seatNo = activePlan.preferredSeatLabel.cleanUiText()?.split(",")?.firstOrNull()?.trim() ?: "自动选座"
                 HomeModularCardSpec(
                     id = "LIBRARY_SEAT",
                     title = "座位预约",
-                    badgeText = if (activePlan.status == "CONFIRMED") "已约座" else "待开抢",
+                    badgeText = if (activePlan.status == "CONFIRMED") "已预约" else "待预约",
                     subtitle = "$cleanArea · ${seatNo}号 (${activePlan.targetLocalTime})",
                     highlighted = true,
                     onClick = onNavigateToLibrarySeats
@@ -1768,8 +1768,8 @@ private fun TodayCampusBentoSection(
                 HomeModularCardSpec(
                     id = "LIBRARY_SEAT",
                     title = "座位预约",
-                    badgeText = "测试版",
-                    subtitle = "点选区域与座位号 · 准点抢座辅助（测试版）",
+                    badgeText = "选座",
+                    subtitle = "选区选座与定时预约",
                     onClick = onNavigateToLibrarySeats
                 )
             }
@@ -1789,7 +1789,7 @@ private fun TodayCampusBentoSection(
                         ?: firstWaiting.trackingNumber
                     "$codeLabel · $stationOrTitle"
                 } else {
-                    "手机号同步小米快递 · 短信识别取件码"
+                    "取件码汇总与查件"
                 },
                 highlighted = waitingCount > 0,
                 onClick = onNavigateToParcelHub
@@ -1806,14 +1806,14 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查空闲教室",
+            subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查询",
             onClick = onNavigateToEmptyClassrooms
         ),
         HomeCardModule.CAMPUS_COMMUNITY.id to HomeModularCardSpec(
             id = HomeCardModule.CAMPUS_COMMUNITY.id,
             title = HomeCardModule.CAMPUS_COMMUNITY.title,
             badgeText = "$campusClubsCount 社团",
-            subtitle = "官方合作社团与技术交流群",
+            subtitle = "校园社团与交流群",
             onClick = onNavigateToCommunity
         ),
         HomeCardModule.COMPETITION_GUIDE.id to HomeModularCardSpec(
@@ -1838,7 +1838,7 @@ private fun TodayCampusBentoSection(
                 .clickable(onClick = onOpenCustomizer)
         ) {
             Text(
-                text = "已隐藏全部卡片，点击重新设置",
+                text = "卡片已全部隐藏，点击恢复",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1976,9 +1976,9 @@ private fun HomeCardLayoutCustomizerDialog(
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("首页卡片设置", style = MaterialTheme.typography.titleLarge)
+                Text("卡片管理", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "调整卡片顺序、大小或隐藏不需要的卡片",
+                    text = "调整顺序、尺寸与显示状态",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2050,7 +2050,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 XPeachFilterPill(
-                                    label = if (isFull) "切换小卡" else "切换大卡",
+                                    label = if (isFull) "小卡" else "大卡",
                                     selected = isFull,
                                     compact = true,
                                     onClick = {
@@ -2062,7 +2062,7 @@ private fun HomeCardLayoutCustomizerDialog(
                                     }
                                 )
                                 XPeachFilterPill(
-                                    label = if (isVisible) "显示中" else "已隐藏",
+                                    label = if (isVisible) "显示" else "隐藏",
                                     selected = isVisible,
                                     compact = true,
                                     onClick = {
@@ -2210,7 +2210,7 @@ private fun EmptyDayTimelineBox(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = if (hasAnyCourses) "当日没有安排课程" else "还没有课表，登录教务系统即可导入本学期课表",
+                text = if (hasAnyCourses) "当日无课" else "暂未导入课表",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2232,7 +2232,7 @@ private fun EmptyDayTimelineBox(
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text("去同步课表", maxLines = 1, softWrap = false)
+                    Text("导入课表", maxLines = 1, softWrap = false)
                 }
             }
         }

@@ -142,8 +142,8 @@ fun XPeachCloudAccountScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "云账号与扩展功能 (测试版)",
-            subtitle = "代抢座位服务（测试版） · 积分仅用于内部测试防止恶意利用",
+            title = "云账号与扩展",
+            subtitle = "云端定时选座与扩展管理",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -189,13 +189,13 @@ fun XPeachCloudAccountScreen(
             if (selectedTab == 0) {
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "关于代抢座位（测试版）与内测积分",
+                        text = "服务说明",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "课表、成绩、电费、空教室与查快递均无需登录云账号。代抢座位服务目前为内部测试版，账户中的 🍑 积分仅用于内部测试防止恶意高频调用与滥用，无任何商业收费、充值或提现属性。",
+                        text = "课表、成绩、电费与快递等基础功能无需登录云账号。云端选座处于测试阶段，配额仅用于限制高频请求，不支持充值或提现。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -205,13 +205,13 @@ fun XPeachCloudAccountScreen(
                 if (binding == null) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "尚未登录内测云账号",
+                            text = "未登录云账号",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "登录后可同步内测防滥用配额积分，开启云端关机代抢（测试版）。",
+                            text = "登录后可使用云端定时选座（测试版）",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -284,7 +284,7 @@ fun XPeachCloudAccountScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             Text(
-                                text = "内测防滥用配额积分",
+                                text = "测试配额",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -299,7 +299,7 @@ fun XPeachCloudAccountScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "🍑 积分仅用于内部测试防止恶意利用与高频滥用，无任何收费或货币属性；每次云端命中消耗 1 🍑 测试配额，未命中或取消不消耗。",
+                            text = "每次预约成功消耗 1 配额，未成功或取消不扣减。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

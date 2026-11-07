@@ -251,7 +251,7 @@ internal fun BuildingIndoorMapDialog(
                             strokeWidth = 2.4.dp
                         )
                         Text(
-                            text = "正在加载 ${selectedFloorIndex + 1}F 室内平面图…",
+                            text = "正在加载 ${selectedFloorIndex + 1}F…",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
@@ -327,12 +327,11 @@ internal fun BuildingIndoorMapDialog(
                                     )
                                 }
                                 Text(
-                                    text = buildString {
-                                        append("独立二级室内图")
-                                        if (floorPlan != null) {
-                                            val count = floorPlan.rooms.count { it.name.isNotBlank() }
-                                            append(" · 本层已标注 $count 处房间/设施")
-                                        }
+                                    text = if (floorPlan != null) {
+                                        val count = floorPlan.rooms.count { it.name.isNotBlank() }
+                                        "本层共 $count 处房间与设施"
+                                    } else {
+                                        "室内平面图"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -348,7 +347,7 @@ internal fun BuildingIndoorMapDialog(
                             onValueChange = { indoorSearchQuery = it },
                             placeholder = {
                                 Text(
-                                    text = "在本楼内搜房间号（如 201、305，支持跨层自动跳转）",
+                                    text = "搜索房间号（如 201、305）",
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -580,7 +579,7 @@ internal fun BuildingIndoorMapDialog(
                                     text = buildString {
                                         append("${building.name} · ${selectedRoom.floorLabel}")
                                         if (indoorWalkMeters != null) {
-                                            append(" · 距本层最近楼梯/电梯约 ${indoorWalkMeters}m")
+                                            append(" · 距楼梯/电梯约 ${indoorWalkMeters}m")
                                         }
                                     },
                                     style = MaterialTheme.typography.labelSmall,
@@ -601,7 +600,7 @@ internal fun BuildingIndoorMapDialog(
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("导航到此房间", maxLines = 1, softWrap = false)
+                                Text("去这里", maxLines = 1, softWrap = false)
                             }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
@@ -612,7 +611,7 @@ internal fun BuildingIndoorMapDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "点击平面图中的房间或下方门牌号即可高亮定位",
+                                text = "点击房间或下方房号查看位置",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f).padding(end = 8.dp)
@@ -622,7 +621,7 @@ internal fun BuildingIndoorMapDialog(
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                Text("返回室外路线", style = MaterialTheme.typography.labelSmall)
+                                Text("返回地图", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -638,7 +637,7 @@ internal fun BuildingIndoorMapDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${selectedFloorIndex + 1}F 门牌：",
+                                text = "${selectedFloorIndex + 1}F 房间：",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -655,7 +654,7 @@ internal fun BuildingIndoorMapDialog(
                         }
                     } else if (!isLoadingFloorPlan) {
                         Text(
-                            text = "当前楼层暂无匹配的标注房间，可切换右侧楼层查看",
+                            text = "当前楼层无匹配房间",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

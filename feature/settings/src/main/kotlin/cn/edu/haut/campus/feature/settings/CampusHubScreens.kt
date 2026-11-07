@@ -350,8 +350,8 @@ fun CampusCommunityScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "社团、竞赛与频道",
-            subtitle = "河南工业大学 · 官方合作社团、学科竞赛指南与交流群",
+            title = "社团与竞赛",
+            subtitle = "河南工业大学 · 社团、竞赛与交流群",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -361,7 +361,7 @@ fun CampusCommunityScreen(
             },
             actions = {
                 XPeachFilterPill(
-                    label = if (isRefreshingCloud) "刷新中…" else "同步云端",
+                    label = if (isRefreshingCloud) "刷新中…" else "刷新",
                     selected = false,
                     onClick = {
                         if (!isRefreshingCloud) {
@@ -369,10 +369,10 @@ fun CampusCommunityScreen(
                                 isRefreshingCloud = true
                                 repository.refreshCampusCommunityContent()
                                     .onSuccess { updated ->
-                                        feedbackText = "已同步云端最新目录：合作社团 ${updated.clubs.size} 个 · 竞赛指南 ${updated.competitions.size} 项 · 校园频道 ${updated.channels.size} 个"
+                                        feedbackText = "已更新目录：社团 ${updated.clubs.size} 个、竞赛 ${updated.competitions.size} 项"
                                     }
                                     .onFailure {
-                                        feedbackText = "当前展示本地缓存目录，稍后可重试刷新"
+                                        feedbackText = "刷新失败，当前显示本地数据"
                                     }
                                 isRefreshingCloud = false
                             }
@@ -429,7 +429,7 @@ fun CampusCommunityScreen(
                     XPeachSearchField(
                         value = clubSearchQuery,
                         onValueChange = { clubSearchQuery = it },
-                        placeholder = "搜索社团名称、活动方向、场地或 QQ 群号"
+                        placeholder = "搜索社团、场地或群号"
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -555,11 +555,11 @@ fun CampusCommunityScreen(
                     onApplyToFilter = {
                         selectedCompCategory = compassSkillPref.matchedCategories.firstOrNull()
                         onlyBeginnerFriendly = compassGradeStage == CompetitionGradeStage.FRESHMAN
-                        feedbackText = "已按您的自测画像筛选下方赛事列表"
+                        feedbackText = "已按所选条件筛选竞赛"
                     }
                 )
 
-                // 2. 竞赛指南与专业/兴趣/季节匹配器
+                // 2. 竞赛指南与筛选器
                 val majorName = studentProfile?.major?.takeIf { it.isNotBlank() }
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     if (majorName != null && inferredMajorTrack != null) {
@@ -579,19 +579,19 @@ fun CampusCommunityScreen(
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     Text(
-                                        text = "🎓 已识别您的专业：$majorName",
+                                        text = "当前专业：$majorName",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "推荐赛道：${inferredMajorTrack.label}（优先置顶本专业核心白名单赛事）",
+                                        text = "已优先显示 ${inferredMajorTrack.label} 相关赛事",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 XPeachFilterPill(
-                                    label = if (selectedMajorTrack == inferredMajorTrack) "已匹配本专业" else "匹配本专业",
+                                    label = if (selectedMajorTrack == inferredMajorTrack) "当前专业" else "只看本专业",
                                     selected = selectedMajorTrack == inferredMajorTrack,
                                     compact = true,
                                     onClick = {
@@ -606,13 +606,13 @@ fun CampusCommunityScreen(
                     XPeachSearchField(
                         value = compSearchQuery,
                         onValueChange = { compSearchQuery = it },
-                        placeholder = "搜索竞赛名称、适合专业、技能路线或合作社团…"
+                        placeholder = "搜索竞赛、专业或社团"
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "🎓 按专业赛道匹配适合你的比赛：",
+                        text = "专业方向",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -645,7 +645,7 @@ fun CampusCommunityScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "🧭 按兴趣发展方向与入门难度筛选：",
+                        text = "竞赛类别",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -658,7 +658,7 @@ fun CampusCommunityScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         XPeachFilterPill(
-                            label = "全部方向",
+                            label = "全部类别",
                             selected = selectedCompCategory == null && !onlyBeginnerFriendly,
                             compact = true,
                             onClick = {
@@ -667,7 +667,7 @@ fun CampusCommunityScreen(
                             }
                         )
                         XPeachFilterPill(
-                            label = "✨ 大一/零基础友好",
+                            label = "入门友好",
                             selected = onlyBeginnerFriendly,
                             compact = true,
                             onClick = { onlyBeginnerFriendly = !onlyBeginnerFriendly }
@@ -687,7 +687,7 @@ fun CampusCommunityScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "🗓️ 全年备赛月历视图（按学期窗口防错过报名）：",
+                        text = "报名时段",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -719,7 +719,7 @@ fun CampusCommunityScreen(
                     if (selectedSeasonWindow != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "💡 ${selectedSeasonWindow!!.periodSubtitle}",
+                            text = selectedSeasonWindow!!.periodSubtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = XPeachTheme.readablePrimary
                         )
@@ -765,10 +765,10 @@ fun CampusCommunityScreen(
 
                 if (filteredCompetitions.isEmpty()) {
                     XPeachEmptyState(
-                        title = "未找到匹配的学科竞赛",
-                        subtitle = "可尝试切换至「全部专业 / 全年时段」或清除搜索词查看完整白名单赛事名录",
+                        title = "未找到匹配的竞赛",
+                        subtitle = "请尝试调整筛选条件或搜索关键词",
                         icon = Icons.Rounded.EmojiEvents,
-                        actionLabel = "重置全部筛选",
+                        actionLabel = "重置筛选",
                         onAction = {
                             selectedMajorTrack = null
                             selectedCompCategory = null
@@ -817,10 +817,10 @@ fun CampusCommunityScreen(
             } else {
                 if (catalog.channels.isEmpty()) {
                     XPeachEmptyState(
-                        title = "校园频道暂时置空",
-                        subtitle = "当前仅开放官方合作学生社团与学科竞赛指南，校园频道后续将通过云端实时下发开放。",
+                        title = "暂无校园频道",
+                        subtitle = "当前仅提供合作社团与竞赛指南",
                         icon = Icons.Rounded.Forum,
-                        actionLabel = "浏览学科竞赛指南 (${catalog.competitions.size})",
+                        actionLabel = "查看竞赛指南",
                         onAction = { selectedTab = 1 }
                     )
                 }
@@ -1035,20 +1035,20 @@ private fun MajorInterestCompassCard(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "🧭 30秒专业与兴趣参赛自测罗盘",
+                        text = "参赛方向筛选",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "不知道适合打什么比赛？3步生成专属参赛顺序与组队社团",
+                        text = "按年级、目标和兴趣推荐适合的竞赛",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
             XPeachFilterPill(
-                label = if (isExpanded) "收起向导" else "开始自测",
+                label = if (isExpanded) "收起" else "展开",
                 selected = isExpanded,
                 compact = true,
                 onClick = onToggleExpand
@@ -1061,7 +1061,7 @@ private fun MajorInterestCompassCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "第 1 步：选择你当前的年级阶段",
+                text = "1. 年级阶段",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -1084,7 +1084,7 @@ private fun MajorInterestCompassCard(
 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "第 2 步：选择你的核心参赛目标",
+                text = "2. 参赛目标",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -1107,7 +1107,7 @@ private fun MajorInterestCompassCard(
 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "第 3 步：选择你感兴趣的技能方向",
+                text = "3. 兴趣方向",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -1138,7 +1138,7 @@ private fun MajorInterestCompassCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "✨ 专属参赛诊断与阶梯规划",
+                        text = "推荐竞赛",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = XPeachTheme.readablePrimary
@@ -1172,7 +1172,7 @@ private fun MajorInterestCompassCard(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "${item.tierBadge} · ${item.registrationWindow}（点击查看备赛路线）",
+                                text = "${item.tierBadge} · ${item.registrationWindow}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1182,7 +1182,7 @@ private fun MajorInterestCompassCard(
                     if (compassResult.recommendedClubs.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "🤝 推荐加入的校内合作社团（找学长学姐带练 & 组队）：",
+                            text = "相关社团",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -1201,7 +1201,7 @@ private fun MajorInterestCompassCard(
                                 )
                             }
                             XPeachFilterPill(
-                                label = "将自测应用到列表",
+                                label = "应用到列表筛选",
                                 selected = true,
                                 compact = true,
                                 onClick = onApplyToFilter
@@ -1264,7 +1264,7 @@ private fun CommunityBulletinHeroCard(
                         )
                     }
                     XPeachStatusBadge(
-                        text = "云控 v$version · ${clubsCount}社团 · ${competitionsCount}竞赛",
+                        text = "${clubsCount} 个社团 · ${competitionsCount} 项竞赛",
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = XPeachTheme.readablePrimary
                     )
@@ -1377,7 +1377,7 @@ private fun CampusClubCard(
                 ) {
                     if (club.pinned) {
                         XPeachStatusBadge(
-                            text = "官方合作 · 置顶",
+                            text = "合作社团",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = XPeachTheme.readablePrimary
                         )
@@ -1459,7 +1459,7 @@ private fun CampusClubCard(
                         modifier = Modifier.size(15.dp)
                     )
                     Text(
-                        text = "常规活动场地：${club.activityVenue}",
+                        text = "活动场地：${club.activityVenue}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -1480,7 +1480,7 @@ private fun CampusClubCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "招新/交流 QQ 群：$effectiveGroupNo",
+                        text = "QQ 群：$effectiveGroupNo",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = XPeachTheme.readablePrimary,
@@ -1490,7 +1490,7 @@ private fun CampusClubCard(
                     )
                     if (isGroupCustomized) {
                         XPeachStatusDotText(
-                            text = "已自定义",
+                            text = "已修改",
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }
@@ -1507,7 +1507,7 @@ private fun CampusClubCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             XPeachFilterPill(
-                label = "自定义群号",
+                label = "修改群号",
                 selected = false,
                 compact = true,
                 onClick = onEditGroupNo
@@ -1524,7 +1524,7 @@ private fun CampusClubCard(
                     onClick = onCopyGroupNo
                 )
                 XPeachFilterPill(
-                    label = "一键加群",
+                    label = "加入群聊",
                     selected = true,
                     compact = false,
                     onClick = onJoinGroup
@@ -1743,13 +1743,13 @@ private fun CampusCompetitionCard(
                 ) {
                     if (isCoreForSelectedMajor) {
                         XPeachStatusBadge(
-                            text = "★ 本专业核心推荐",
+                            text = "本专业推荐",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = XPeachTheme.readablePrimary
                         )
                     } else if (comp.pinned) {
                         XPeachStatusBadge(
-                            text = "重点推荐",
+                            text = "推荐",
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
                             contentColor = XPeachTheme.readablePrimary
                         )
@@ -1858,7 +1858,7 @@ private fun CampusCompetitionCard(
                             modifier = Modifier.size(15.dp).padding(top = 2.dp)
                         )
                         Text(
-                            text = "备赛成长路线：${comp.skillRoadmap}",
+                            text = "备赛建议：${comp.skillRoadmap}",
                             style = MaterialTheme.typography.labelSmall,
                             lineHeight = 17.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1868,13 +1868,13 @@ private fun CampusCompetitionCard(
                 }
 
                 Text(
-                    text = "🗓️ 赛程与赛制：${comp.registrationWindow} · ${comp.teamMode}",
+                    text = "赛程与赛制：${comp.registrationWindow} · ${comp.teamMode}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Text(
-                    text = "🏛️ 校内组织：${comp.hautHostCollege}（${comp.organizer}）",
+                    text = "承办与主办：${comp.hautHostCollege}（${comp.organizer}）",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1892,7 +1892,7 @@ private fun CampusCompetitionCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "组队合作社团：${comp.partnerClubName}（QQ 群：$effectivePartnerQq）",
+                            text = "关联社团：${comp.partnerClubName}（QQ 群：$effectivePartnerQq）",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = XPeachTheme.readablePrimary,
@@ -1938,13 +1938,13 @@ private fun CampusCompetitionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 XPeachFilterPill(
-                    label = "深度认知",
+                    label = "赛事详情",
                     selected = false,
                     compact = true,
                     onClick = onOpenDetail
                 )
                 XPeachFilterPill(
-                    label = "复制官网",
+                    label = "复制链接",
                     selected = false,
                     compact = true,
                     onClick = onCopyWebsite
@@ -1957,14 +1957,14 @@ private fun CampusCompetitionCard(
             ) {
                 if (comp.partnerClubName.isNotBlank() && effectivePartnerQq.isNotBlank()) {
                     XPeachFilterPill(
-                        label = "加社团群组队",
+                        label = "加入社团群",
                         selected = false,
                         compact = true,
                         onClick = onJoinPartnerClub
                     )
                 }
                 XPeachFilterPill(
-                    label = "打开竞赛官网",
+                    label = "打开官网",
                     selected = true,
                     compact = false,
                     onClick = onOpenWebsite
@@ -2032,7 +2032,7 @@ private fun CompetitionDetailDialog(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "💎 赛事含金量与保研/综测认可度",
+                            text = "赛事级别与认可度",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = XPeachTheme.readablePrimary
@@ -2051,7 +2051,7 @@ private fun CompetitionDetailDialog(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "🎯 适合人群画像与专业方向",
+                            text = "适合专业与对象",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -2070,7 +2070,7 @@ private fun CompetitionDetailDialog(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "🗺️ 大一到大三进阶备赛路线图",
+                            text = "分阶段备赛建议",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -2099,7 +2099,7 @@ private fun CompetitionDetailDialog(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "🏛️ 河工大组织单位与官方通道",
+                            text = "组织单位与官网",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -2111,14 +2111,14 @@ private fun CompetitionDetailDialog(
                         )
                         if (comp.partnerClubName.isNotBlank() && effectivePartnerQq.isNotBlank()) {
                             Text(
-                                text = "🤝 组队合作社团：${comp.partnerClubName}（QQ群：$effectivePartnerQq）",
+                                text = "关联社团：${comp.partnerClubName}（QQ 群：$effectivePartnerQq）",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = XPeachTheme.readablePrimary
                             )
                         }
                         Text(
-                            text = "🌐 官方网站：${comp.officialWebsiteUrl}",
+                            text = "官方网站：${comp.officialWebsiteUrl}",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = XPeachTheme.readablePrimary
@@ -2132,7 +2132,7 @@ private fun CompetitionDetailDialog(
                 onClick = onOpenWebsite,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("直达赛事官网")
+                Text("打开官网")
             }
         },
         dismissButton = {
@@ -2166,7 +2166,7 @@ private fun openCompetitionWebsite(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
-        "已复制官网链接，正在为您打开「$title」官方网站…"
+        "已复制链接，正在打开「$title」官网…"
     }.getOrElse {
         "已复制「$title」官网链接到剪贴板：$cleanUrl"
     }

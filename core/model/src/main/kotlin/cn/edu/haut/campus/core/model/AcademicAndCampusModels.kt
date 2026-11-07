@@ -456,17 +456,17 @@ object CustomCampusZoneCodec {
 }
 
 enum class WidgetType(val label: String, val gridSpec: String) {
-    NEXT_CLASS_2X2("下一节课 Mini", "2×2"),
-    TODAY_4X2("今日课程 Today", "4×2"),
-    TIMELINE_4X4("日程时间轴 Timeline", "4×4"),
-    WEEK_4X4("周课表 Week", "4×4"),
-    PARCEL_4X2("快递取件码 Parcel", "4×2")
+    NEXT_CLASS_2X2("下一节课", "2×2"),
+    TODAY_4X2("今日课程", "4×2"),
+    TIMELINE_4X4("今日日程", "4×4"),
+    WEEK_4X4("本周课表", "4×4"),
+    PARCEL_4X2("取件码", "4×2")
 }
 
 enum class WidgetThemeStyle(val label: String) {
-    DYNAMIC_SYSTEM("系统动态色 (Android 12+)"),
-    WARM_PEACH("暖橙/桃色强调"),
-    NEUTRAL_RATIONAL("极简理性灰")
+    DYNAMIC_SYSTEM("跟随系统动态色"),
+    WARM_PEACH("暖橙强调色"),
+    NEUTRAL_RATIONAL("中性灰")
 }
 
 data class WidgetInstanceConfig(

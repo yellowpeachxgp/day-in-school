@@ -818,7 +818,7 @@ fun CampusMapScreen(
             onDismissRequest = { showZoneImportExportDialog = false },
             title = {
                 Text(
-                    text = "导入或分享自定义校区",
+                    text = "导入或分享校区",
                     style = MaterialTheme.typography.titleLarge
                 )
             },
@@ -828,14 +828,14 @@ fun CampusMapScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "可粘贴同学分享的校区配置 JSON，或复制当前校区配置分享给他人：",
+                        text = "粘贴他人分享的配置，或复制当前配置：",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
                         value = zoneAdaptationJsonInput.ifBlank { currentExportJson },
                         onValueChange = { zoneAdaptationJsonInput = it },
-                        label = { Text("校区配置 JSON") },
+                        label = { Text("校区配置") },
                         minLines = 6,
                         maxLines = 10,
                         shape = RoundedCornerShape(12.dp),
@@ -854,11 +854,11 @@ fun CampusMapScreen(
                                 val textToCopy = zoneAdaptationJsonInput.ifBlank { currentExportJson }
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                 cm?.setPrimaryClip(ClipData.newPlainText("campus_zone_json", textToCopy))
-                                zoneAdaptationFeedback = "已复制校区配置到剪贴板"
+                                zoneAdaptationFeedback = "已复制到剪贴板"
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("复制当前配置")
+                            Text("复制配置")
                         }
                         if (customZones.isNotEmpty()) {
                             TextButton(
@@ -866,11 +866,11 @@ fun CampusMapScreen(
                                     scope.launch {
                                         repository.saveCustomCampusZonesJson("[]")
                                         repository.setSelectedCampusId("auto")
-                                        zoneAdaptationFeedback = "已清空本地自定义校区"
+                                        zoneAdaptationFeedback = "已清空自定义校区"
                                     }
                                 }
                             ) {
-                                Text("清空自定义")
+                                Text("清空")
                             }
                         }
                     }
@@ -882,7 +882,7 @@ fun CampusMapScreen(
                         val raw = zoneAdaptationJsonInput.ifBlank { currentExportJson }
                         val parsed = CustomCampusZoneCodec.decodeList(raw)
                         if (parsed.isEmpty()) {
-                            zoneAdaptationFeedback = "未能识别有效的校区配置，请检查 JSON 格式"
+                            zoneAdaptationFeedback = "配置格式无效，请检查后重试"
                         } else {
                             val merged = (parsed + customZones).distinctBy { it.campusId }
                             scope.launch {
@@ -897,7 +897,7 @@ fun CampusMapScreen(
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("导入并启用")
+                    Text("导入")
                 }
             },
             dismissButton = {
@@ -928,7 +928,7 @@ fun CampusMapScreen(
                     OutlinedTextField(
                         value = pendingPinName,
                         onValueChange = { pendingPinName = it },
-                        label = { Text("建筑或地标名称（如：综合教学楼、南门）") },
+                        label = { Text("建筑或地标名称") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -948,7 +948,7 @@ fun CampusMapScreen(
                             longitude = pt.longitude,
                             category = CampusCategory.TEACHING_BUILDING,
                             entrances = listOf("正门"),
-                            description = "${drawingZoneName.ifBlank { "自定义校区" }} · 用户标注建筑",
+                            description = drawingZoneName.ifBlank { "自定义校区" },
                             verifiedAt = LocalDate.now()
                         )
                         drawingZoneBuildings = drawingZoneBuildings + newBuilding
@@ -957,7 +957,7 @@ fun CampusMapScreen(
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("添加地标")
+                    Text("添加")
                 }
             },
             dismissButton = {
@@ -969,21 +969,21 @@ fun CampusMapScreen(
     }
 
     if (!isFullScreenMap) {
-        // 默认展示「校园生活 + 官方 GIS 交互预览」一体化概览页
+        // 默认展示「校园生活 + 地图预览」一体化概览页
         val (elecBadge, elecSub) = remember(onlineRooms, utilityMeters, utilityReadings) {
             if (onlineRooms.isNotEmpty()) {
                 val room = onlineRooms.first()
                 val firstDev = decodeOnlineDevicesJson(room.devicesJson).firstOrNull()
-                val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑寝室"
+                val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑定"
                 b to room.roomName
             } else if (utilityMeters.isNotEmpty()) {
                 val meter = utilityMeters.first()
                 val latest = utilityReadings.filter { it.meterId == meter.id }
                     .maxByOrNull { it.recordedAtEpochMs }
-                val b = if (latest != null) "${latest.value}${meter.unit}" else "台账"
+                val b = if (latest != null) "${latest.value}${meter.unit}" else "记录"
                 b to "${meter.roomName} · ${meter.name}"
             } else {
-                "水电" to "寝室电费余量与趋势"
+                "电费" to "剩余电量与用电记录"
             }
         }
 
@@ -995,11 +995,11 @@ fun CampusMapScreen(
             XPeachTopBar(
                 title = "校园",
                 subtitle = "${activeSchool.displayName} · ${detectedCampus.campusName}",
-                badgeText = if (isLianhuajieActive && gisDataset != null) "官方 GIS 已接入" else detectedCampus.source.label,
+                badgeText = detectedCampus.source.label,
                 actions = {
                     if (isLianhuajieActive) {
                         XPeachFilterPill(
-                            label = "官方GIS网页",
+                            label = "网页地图",
                             selected = false,
                             onClick = { showOfficialWebGisDialog = true }
                         )
@@ -1029,7 +1029,7 @@ fun CampusMapScreen(
                         onValueChange = { searchQuery = it },
                         placeholder = {
                             Text(
-                                text = "搜教室号（如 3101、5204、31201）或楼宇/校园服务",
+                                text = "搜索教室、楼宇或服务设施",
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1223,7 +1223,7 @@ fun CampusMapScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "暂未收录「${activeSchool.displayName}」的校园地图数据，你可以通过上方「+ 自定义校区」自行标注建筑与边界。",
+                            text = "暂未收录该校地图，可通过「+ 自定义校区」添加",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1237,7 +1237,7 @@ fun CampusMapScreen(
                     }
                 }
 
-                // 1. 深度集成官方 GIS 的交互式校园室外地图卡片（室内平面图拆分为独立二级地图页）
+                // 1. 交互式校园室外地图卡片（室内平面图拆分为独立二级地图页）
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(14.dp)
@@ -1254,7 +1254,7 @@ fun CampusMapScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = targetBuilding?.name ?: "校区官方 GIS 实测地图",
+                                text = targetBuilding?.name ?: "校园地图",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -1267,11 +1267,8 @@ fun CampusMapScreen(
                                         if (selectedIndoorRoom != null) {
                                             append(" · ${selectedIndoorRoom!!.floorLabel} ${selectedIndoorRoom!!.name}")
                                         }
-                                        if (isOfficialRouteActive) {
-                                            append(" · 官方GIS路网")
-                                        }
                                     } else {
-                                        append("已同步 gis.haut.edu.cn 实测建筑轮廓与校园路网")
+                                        append("点击建筑查看路线与室内平面图")
                                     }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
@@ -1369,7 +1366,7 @@ fun CampusMapScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "重点楼宇：",
+                            text = "常用地点：",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1408,7 +1405,7 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "宿舍水电",
+                                text = "宿舍电费",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -1443,7 +1440,7 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "空教室速查",
+                                text = "空闲教室",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -1459,7 +1456,7 @@ fun CampusMapScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "按教学楼与节次反查空闲教室",
+                            text = "按教学楼与节次查询",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1497,7 +1494,7 @@ fun CampusMapScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "官方合作社团与一键加群",
+                            text = "校园社团与交流群",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1531,7 +1528,7 @@ fun CampusMapScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "按专业匹配白名单赛事与官网",
+                            text = "学科竞赛日程与报名信息",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1540,7 +1537,7 @@ fun CampusMapScreen(
                     }
                 }
 
-                // 3. 校区地标与建筑目录（含官方 GIS 实测楼层标记）
+                // 3. 校区地标与建筑目录
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1548,17 +1545,12 @@ fun CampusMapScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "校区建筑与室内导航目录",
+                            text = "校园地点",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = buildString {
-                                append("共 ${filteredBuildings.size} 处")
-                                if (gisDataset != null) {
-                                    append(" · GIS矢量 ${gisDataset!!.buildings.size} 栋")
-                                }
-                            },
+                            text = "共 ${filteredBuildings.size} 处",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1787,7 +1779,7 @@ fun CampusMapScreen(
                         onValueChange = { searchQuery = it },
                         placeholder = {
                             Text(
-                                text = "搜教室或地点（如 3101、5204、图书馆）",
+                                text = "搜索教室或地点",
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1893,7 +1885,7 @@ fun CampusMapScreen(
                         )
                     }
                     XPeachFilterPill(
-                        label = "官方GIS网页",
+                        label = "网页地图",
                         selected = false,
                         compact = true,
                         onClick = { showOfficialWebGisDialog = true }
@@ -1946,7 +1938,7 @@ fun CampusMapScreen(
                     )
                 }
                 XPeachFilterPill(
-                    label = if (isDrawingZoneMode) "退出圈定" else "自定义校区",
+                    label = if (isDrawingZoneMode) "退出编辑" else "自定义校区",
                     selected = isDrawingZoneMode,
                     compact = true,
                     onClick = {
@@ -1959,7 +1951,7 @@ fun CampusMapScreen(
                 )
             }
 
-            // 官方 GIS 实时搜索结果下拉面板（支持教室/实验室直接定位到具体楼层与房间多边形）
+            // 搜索结果下拉面板
             AnimatedVisibility(visible = searchQuery.isNotBlank() && officialSearchResults.isNotEmpty()) {
                 XPeachCard(
                     contentPadding = PaddingValues(10.dp),
@@ -1971,7 +1963,7 @@ fun CampusMapScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "官方 GIS 检索结果（点击直达楼层与教室）",
+                            text = "搜索结果",
                             style = MaterialTheme.typography.labelSmall,
                             color = XPeachTheme.readablePrimary,
                             fontWeight = FontWeight.SemiBold
@@ -2038,19 +2030,19 @@ fun CampusMapScreen(
                 }
             }
 
-            // 电子区划自定义圈定校区交互控制条
+            // 自定义校区边界绘制控制条
             if (isDrawingZoneMode) {
                 XPeachCard(
                     contentPadding = PaddingValues(12.dp),
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f)
                 ) {
                     Text(
-                        text = "圈定校区范围（已标 ${drawingZoneVertices.size} 个点，${drawingZoneBuildings.size} 处建筑）",
+                        text = "绘制校区边界（${drawingZoneVertices.size} 个点，${drawingZoneBuildings.size} 处建筑）",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "点击地图标记校区边界（至少 3 个点），也可在地图中心添加建筑。",
+                        text = "点击地图添加至少 3 个边界点",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2058,7 +2050,7 @@ fun CampusMapScreen(
                     OutlinedTextField(
                         value = drawingZoneName,
                         onValueChange = { drawingZoneName = it },
-                        placeholder = { Text("输入自定义校区名称（如：江北校区、东校区）") },
+                        placeholder = { Text("校区名称") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -2077,7 +2069,7 @@ fun CampusMapScreen(
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("+ 在中心加建筑")
+                            Text("添加建筑")
                         }
                         OutlinedButton(
                             enabled = drawingZoneVertices.isNotEmpty(),
@@ -2086,7 +2078,7 @@ fun CampusMapScreen(
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("撤销上一点")
+                            Text("撤销")
                         }
                         Button(
                             enabled = drawingZoneVertices.size >= 3,
@@ -2115,7 +2107,7 @@ fun CampusMapScreen(
                                 }
                             }
                         ) {
-                            Text("保存并启用校区")
+                            Text("保存")
                         }
                     }
                 }
@@ -2395,9 +2387,6 @@ private fun FloatingRouteBottomSheet(
                             append(" (${selectedIndoorRoom.floorLabel} · ${selectedIndoorRoom.name})")
                         }
                         append(" · $headingHint")
-                        if (isOfficialGisRoute) {
-                            append(" · 官方GIS路网")
-                        }
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = XPeachTheme.readablePrimary,
@@ -2414,7 +2403,7 @@ private fun FloatingRouteBottomSheet(
             )
         }
 
-        // 若当前楼宇支持官方室内平面图，提供醒目的二级室内地图入口条（不在室外地图上堆叠房间）
+        // 若当前楼宇支持室内平面图，提供二级室内地图入口条
         if (hasIndoorMap) {
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
@@ -2446,9 +2435,9 @@ private fun FloatingRouteBottomSheet(
                         )
                         Text(
                             text = if (selectedIndoorRoom != null) {
-                                "已定位 ${selectedIndoorRoom.floorLabel} · ${selectedIndoorRoom.name}，点击打开独立室内平面图"
+                                "已选 ${selectedIndoorRoom.floorLabel} ${selectedIndoorRoom.name} · 查看室内平面图"
                             } else {
-                                "查看「${building.shortName}」独立室内分层平面图（1F–${activeFootprint!!.maxLevelIndex + 1}F）"
+                                "查看 ${building.shortName} 室内平面图（1F–${activeFootprint!!.maxLevelIndex + 1}F）"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
@@ -2458,7 +2447,7 @@ private fun FloatingRouteBottomSheet(
                         )
                     }
                     Text(
-                        text = "进入室内 >",
+                        text = "查看 ›",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = XPeachTheme.readablePrimary
@@ -2624,7 +2613,7 @@ private fun FloatingRouteBottomSheet(
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("官方GIS", maxLines = 1, softWrap = false)
+                    Text("网页地图", maxLines = 1, softWrap = false)
                 }
             }
 
@@ -2665,8 +2654,8 @@ private fun OfficialGisWebViewDialog(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 XPeachTopBar(
-                    title = "工大官方校园 GIS",
-                    subtitle = "gis.haut.edu.cn · 官方校园地理信息系统",
+                    title = "网页版校园地图",
+                    subtitle = "gis.haut.edu.cn",
                     navigationIcon = {
                         XPeachIconButton(
                             icon = Icons.AutoMirrored.Filled.ArrowBack,

@@ -136,26 +136,26 @@ enum class UiDesignStyle(
     FRESH_BREEZE(
         key = "FRESH_BREEZE",
         label = "清新森系",
-        subtitle = "氧气感晨雾留白、温润大圆角与水彩课表",
-        badgeText = "推荐 · 清新治愈"
+        subtitle = "浅色背景、大圆角卡片与柔和课表配色",
+        badgeText = "推荐"
     ),
     CREAM_PASTEL(
         key = "CREAM_PASTEL",
         label = "奶油手账",
-        subtitle = "暖调燕麦纸感底色、柔和奶霜卡与马卡龙色",
-        badgeText = "温柔马卡龙"
+        subtitle = "暖白底色、大圆角卡片与低饱和配色",
+        badgeText = "暖色"
     ),
     LIQUID_GLASS(
         key = "LIQUID_GLASS",
-        label = "透明液态毛玻璃",
-        subtitle = "全局半透明磨砂折射、斜向流光边与景深透传",
-        badgeText = "流光磨砂"
+        label = "毛玻璃",
+        subtitle = "半透明卡片与背景模糊",
+        badgeText = "半透明"
     ),
     FLUTTER_M3(
         key = "FLUTTER_M3",
-        label = "Flutter 经典质感",
-        subtitle = "高对比度现代扁平卡片与清晰利落边界",
-        badgeText = "经典高效"
+        label = "经典现代",
+        subtitle = "标准卡片与清晰边框",
+        badgeText = "标准"
     );
 
     companion object {
@@ -786,21 +786,21 @@ enum class PresetThemePalette(
     val activatesLiquidGlass: Boolean = false,
     val recommendedStyle: UiDesignStyle? = null
 ) {
-    MINT_BREEZE("MINT_BREEZE", "薄荷晨风", "氧气森系绿", 0xFF10B981, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
-    SKY_SODA("SKY_SODA", "晴空苏打", "清透冰川蓝", 0xFF0EA5E9, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
-    PEACH_OOLONG("PEACH_OOLONG", "白桃乌龙", "温柔蜜桃粉", 0xFFF472B6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
-    MATCHA_CREAM("MATCHA_CREAM", "抹茶奶盖", "清新春茶绿", 0xFF22C55E, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
-    LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "治愈薰衣草", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
-    POMELO_SUN("POMELO_SUN", "西柚暖阳", "元气奶油橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
-    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "液态流光磨砂", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
-    HAUT_BLUE("HAUT_BLUE", "工大蓝", "经典沉稳蓝", 0xFF0066CC, recommendedStyle = UiDesignStyle.FLUTTER_M3),
-    PINE_TEAL("PINE_TEAL", "松石青", "清透青碧色", 0xFF0D9488),
-    JADE_GREEN("JADE_GREEN", "翡翠绿", "自然护眼绿", 0xFF16A34A),
-    AMBER_GOLD("AMBER_GOLD", "琥珀金", "暖阳活力橙", 0xFFD97706),
-    CORAL_RED("CORAL_RED", "朱砂红", "明快珊瑚红", 0xFFE11D48),
-    IRIS_PURPLE("IRIS_PURPLE", "鸢尾紫", "静谧学院紫", 0xFF7C3AED),
-    SAKURA_PINK("SAKURA_PINK", "樱花粉", "柔和春日粉", 0xFFDB2777),
-    SLATE_INK("SLATE_INK", "玄墨灰", "极简水墨灰", 0xFF334155);
+    MINT_BREEZE("MINT_BREEZE", "薄荷晨风", "清新薄荷绿", 0xFF10B981, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    SKY_SODA("SKY_SODA", "晴空苏打", "清澈天蓝", 0xFF0EA5E9, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    PEACH_OOLONG("PEACH_OOLONG", "白桃乌龙", "柔和浅粉", 0xFFF472B6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    MATCHA_CREAM("MATCHA_CREAM", "抹茶奶盖", "柔和浅绿", 0xFF22C55E, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "淡雅浅紫", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    POMELO_SUN("POMELO_SUN", "西柚暖阳", "温暖珊瑚橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "半透明模糊", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
+    HAUT_BLUE("HAUT_BLUE", "工大蓝", "标准深蓝", 0xFF0066CC, recommendedStyle = UiDesignStyle.FLUTTER_M3),
+    PINE_TEAL("PINE_TEAL", "松石青", "沉稳青绿", 0xFF0D9488),
+    JADE_GREEN("JADE_GREEN", "翡翠绿", "自然深绿", 0xFF16A34A),
+    AMBER_GOLD("AMBER_GOLD", "琥珀金", "温暖琥珀色", 0xFFD97706),
+    CORAL_RED("CORAL_RED", "朱砂红", "珊瑚红", 0xFFE11D48),
+    IRIS_PURPLE("IRIS_PURPLE", "鸢尾紫", "沉稳深紫", 0xFF7C3AED),
+    SAKURA_PINK("SAKURA_PINK", "樱花粉", "柔和浅粉", 0xFFDB2777),
+    SLATE_INK("SLATE_INK", "玄墨灰", "中性深灰", 0xFF334155);
 
     companion object {
         fun fromKey(key: String): PresetThemePalette? = entries.firstOrNull { it.key == key }
@@ -811,7 +811,7 @@ data class WallpaperImportResult(
     val localFilePath: String,
     val primarySeedArgb: Long,
     val extractedSwatches: List<Long>,
-    val statusMessage: String = "已应用背景图并提取主题色"
+    val statusMessage: String = "已应用背景图"
 )
 
 /**
@@ -883,7 +883,7 @@ object WallpaperThemeEngine {
                 context = context,
                 bitmap = decodedBitmap,
                 extraSwatches = emptyList(),
-                statusMessage = "已应用相册壁纸并提取主题色"
+                statusMessage = "已应用相册背景"
             )
         }
     }
@@ -908,7 +908,7 @@ object WallpaperThemeEngine {
                     context = context,
                     bitmap = scaled,
                     extraSwatches = systemColors,
-                    statusMessage = "已同步系统桌面背景并提取桌面主题色"
+                    statusMessage = "已同步系统壁纸"
                 )
             } else {
                 val synthesized = renderSystemDesktopLiquidMeshBitmap(
@@ -920,7 +920,7 @@ object WallpaperThemeEngine {
                     context = context,
                     bitmap = synthesized,
                     extraSwatches = systemColors,
-                    statusMessage = "已提取系统桌面主题色并生成液态毛玻璃背景"
+                    statusMessage = "已根据系统壁纸生成背景"
                 )
             }
         }

@@ -151,7 +151,7 @@ fun ImporterScreen(
                 } else {
                     ""
                 }
-                statusBanner = "已从${parsed.sourceLabel}解析 ${parsed.candidates.size} 条课程记录，请确认下方预览。$warnSuffix"
+                statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认预览$warnSuffix"
             }.onFailure { err ->
                 statusBanner = "导入文件失败：${err.message ?: "请检查文件格式"}"
             }
@@ -173,7 +173,7 @@ fun ImporterScreen(
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     out.write(jsonText.toByteArray(Charsets.UTF_8))
                 }
-                statusBanner = "已导出 JSON 课表文件（不含个人信息）。"
+                statusBanner = "已导出 JSON 课表"
             }.onFailure { err ->
                 statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
             }
@@ -195,7 +195,7 @@ fun ImporterScreen(
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     out.write(mdText.toByteArray(Charsets.UTF_8))
                 }
-                statusBanner = "已导出 Markdown 课表文件（不含个人信息）。"
+                statusBanner = "已导出 Markdown 课表"
             }.onFailure { err ->
                 statusBanner = "导出失败：${err.message ?: "无法写入文件"}"
             }
@@ -234,7 +234,7 @@ fun ImporterScreen(
     ) {
         XPeachTopBar(
             title = "同步与导入",
-            subtitle = "当前学期：${currentTerm?.displayName ?: selectedTermId}",
+            subtitle = currentTerm?.displayName ?: selectedTermId,
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -252,7 +252,7 @@ fun ImporterScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
-                items = listOf("账号登录", "网页登录", "文件与 CSV"),
+                items = listOf("账号登录", "网页登录", "文件导入"),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
             )
@@ -310,21 +310,21 @@ fun ImporterScreen(
                                     scope.launch {
                                         isSyncing = true
                                         repository.selectCurrentTerm(selectedTermId)
-                                        statusBanner = "正在更新 $selectedTermId 课表、考试与成绩..."
+                                        statusBanner = "正在同步 $selectedTermId…"
                                         val res = repository.performDynamicAcademicSync(force = true)
                                         isSyncing = false
                                         res?.onSuccess { syncData ->
                                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             statusBanner = syncData.syncSummaryText()
                                         }?.onFailure { err ->
-                                            statusBanner = "更新失败：${err.message ?: "请检查网络或重新输入密码"}"
+                                            statusBanner = "同步失败：${err.message ?: "请检查网络或重新输入密码"}"
                                         }
                                     }
                                 } else if (!isSyncing && studentIdInput.isNotBlank() && passwordInput.isNotBlank()) {
                                     scope.launch {
                                         val plainPwd = passwordInput
                                         isSyncing = true
-                                        statusBanner = "正在连接统一身份认证并同步 $selectedTermId 课表、考试与成绩..."
+                                        statusBanner = "正在同步 $selectedTermId…"
                                         val result = HautLiveAcademicClient.fetchLiveAcademicData(
                                             studentId = studentIdInput,
                                             passwordPlain = plainPwd,
@@ -339,7 +339,7 @@ fun ImporterScreen(
                                                 repository.applyLiveSyncData(syncData, overwriteUserConflicts = overwriteUserEdits)
                                             }
                                             if (applied.isFailure) {
-                                                statusBanner = "保存失败，请重试（已有数据不受影响）"
+                                                statusBanner = "保存失败，请重试"
                                                 return@onSuccess
                                             }
                                             val credentialFailure = if (rememberForAutoSync) {
@@ -370,12 +370,12 @@ fun ImporterScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "教务账号登录",
+                                        text = "账号登录",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     XPeachStatusDotText(
-                                        text = "课表 + 考试 + 成绩",
+                                        text = "课表 · 考试 · 成绩",
                                         dotColor = XPeachTheme.readablePrimary
                                     )
                                 }
@@ -397,12 +397,12 @@ fun ImporterScreen(
                                                     .padding(end = 10.dp)
                                             ) {
                                                 Text(
-                                                    text = "已绑定学号 ${prefs.savedStudentId ?: ""}",
+                                                    text = "学号 ${prefs.savedStudentId ?: ""}",
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     fontWeight = FontWeight.SemiBold
                                                 )
                                                 Text(
-                                                    text = "无需重输密码即可更新本学期课表、考试与成绩",
+                                                    text = "可直接同步本学期课表、考试与成绩",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
@@ -412,7 +412,7 @@ fun ImporterScreen(
                                                 onClick = triggerDirectSync,
                                                 shape = RoundedCornerShape(12.dp)
                                             ) {
-                                                Text("立即更新", maxLines = 1, softWrap = false)
+                                                Text("立即同步", maxLines = 1, softWrap = false)
                                             }
                                         }
                                     }
@@ -438,7 +438,7 @@ fun ImporterScreen(
                                     onValueChange = { passwordInput = it },
                                     label = {
                                         Text(
-                                            text = if (prefs.hasSavedCredentials) "密码（已保存，重输可更新）" else "密码",
+                                            text = if (prefs.hasSavedCredentials) "密码（已保存）" else "密码",
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -525,7 +525,7 @@ fun ImporterScreen(
                                         onCheckedChange = { rememberForAutoSync = it }
                                     )
                                     Text(
-                                        text = "启动时自动更新课表、考试与成绩",
+                                        text = "启动时自动同步",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -564,12 +564,12 @@ fun ImporterScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "网页登录导入",
+                                        text = "网页登录",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     XPeachStatusDotText(
-                                        text = "课表 + 考试 + 成绩",
+                                        text = "课表 · 考试 · 成绩",
                                         dotColor = XPeachTheme.readablePrimary
                                     )
                                 }
@@ -641,7 +641,7 @@ fun ImporterScreen(
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("刷新登录页", maxLines = 1, softWrap = false)
+                                        Text("刷新网页", maxLines = 1, softWrap = false)
                                     }
                                     Button(
                                         onClick = {
@@ -680,7 +680,7 @@ fun ImporterScreen(
                                                     }.getOrNull().orEmpty()
                                                     val wrapper = runCatching { JSONObject(decoded) }.getOrNull()
                                                     if (wrapper?.optString("error") == "NOT_ON_JWGLXT") {
-                                                        statusBanner = "请先在下方网页完成统一身份认证登录，等待页面跳转至正方教务系统后再点击「同步教务」。"
+                                                        statusBanner = "请先在下方网页登录教务系统，再点击「同步教务」"
                                                         return@launch
                                                     }
                                                     val kbJson = wrapper?.optString("kb").orEmpty()
@@ -729,7 +729,7 @@ fun ImporterScreen(
                                                         diffPreview = null
                                                         statusBanner = syncData.syncSummaryText()
                                                     } else {
-                                                        statusBanner = "未在 $selectedTermId 检测到教务数据，请确认下方网页已登录进入教务系统，或切换学年/学期后重试。"
+                                                        statusBanner = "未获取到 $selectedTermId 的数据，请确认已登录或切换学期"
                                                     }
                                                 }
                                             }
@@ -745,7 +745,7 @@ fun ImporterScreen(
                                             scope.launch {
                                                 HautSessionManager.clearAuthorizedSessionCookies()
                                                 SchoolWebSessionManager.clearAllSchoolWebSessions(webViewRef)
-                                                statusBanner = "已清除网页会话。"
+                                                statusBanner = "已退出网页登录"
                                             }
                                         },
                                         shape = RoundedCornerShape(12.dp),
@@ -822,7 +822,7 @@ fun ImporterScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "课表文件导入与导出",
+                                            text = "课表文件",
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -833,7 +833,7 @@ fun ImporterScreen(
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "支持导入或导出 .md / .json 课表文件（导出文件不包含学号等个人信息）。",
+                                        text = "导入或导出 .md、.json 格式课表",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -880,7 +880,7 @@ fun ImporterScreen(
 
                             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = "文本导入（支持 CSV / Markdown 课表 / JSON）",
+                                    text = "粘贴文本导入",
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -910,7 +910,7 @@ fun ImporterScreen(
                                                         source = CourseSource.CSV_ICS,
                                                         candidates = parsed.candidates
                                                     )
-                                                    statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认下方预览。"
+                                                    statusBanner = "已解析 ${parsed.candidates.size} 条课程，请确认预览"
                                                 }.onFailure { err ->
                                                     statusBanner = "解析失败：${err.message ?: "请检查文本格式"}"
                                                 }
@@ -922,7 +922,7 @@ fun ImporterScreen(
                                                     source = CourseSource.CSV_ICS,
                                                     candidates = candidates
                                                 )
-                                                statusBanner = "已解析 ${candidates.size} 条 CSV 课程，请确认下方预览。"
+                                                statusBanner = "已解析 ${candidates.size} 条课程，请确认预览"
                                             }
                                         }
                                     },
@@ -980,7 +980,7 @@ fun ImporterScreen(
                                 onCheckedChange = { applyInterchangeCalendar = it }
                             )
                             Text(
-                                text = "同时应用文件中的开学日期与作息节次时间",
+                                text = "同步文件中的开学日期与作息时间",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
@@ -994,7 +994,7 @@ fun ImporterScreen(
                                 onCheckedChange = { keepLocal -> overwriteUserEdits = !keepLocal }
                             )
                             Text(
-                                text = "保留手动修改过的课程项",
+                                text = "保留手动修改的课程",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
