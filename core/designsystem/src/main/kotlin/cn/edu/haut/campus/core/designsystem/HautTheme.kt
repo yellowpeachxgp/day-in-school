@@ -122,23 +122,40 @@ import kotlin.math.abs
 
 /**
  * 全局产品设计语言枚举：
- * - [FLUTTER_M3]: 经典高对比度现代扁平卡片体系（Flutter Material 3 & Cupertino 规范）
+ * - [FRESH_BREEZE]: 清新森系 · 氧气呼吸（晨雾薄荷留白、22dp 温润大圆角、水彩低饱和课表与柔和微光边）
+ * - [CREAM_PASTEL]: 奶油手账 · 温柔马卡龙（暖调燕麦纸感底色、24dp 云朵圆角、奶霜白卡片与手账马卡龙色块）
  * - [LIQUID_GLASS]: 透明液态毛玻璃设计语言（全局半透明磨砂折射、斜向流光高光边、桌面背景/流光网格透传）
+ * - [FLUTTER_M3]: 经典高对比度现代扁平卡片体系（Flutter Material 3 & Cupertino 规范）
  */
 enum class UiDesignStyle(
     val key: String,
     val label: String,
-    val subtitle: String
+    val subtitle: String,
+    val badgeText: String
 ) {
-    FLUTTER_M3(
-        key = "FLUTTER_M3",
-        label = "Flutter 经典质感",
-        subtitle = "高对比度现代扁平卡片与清晰边界"
+    FRESH_BREEZE(
+        key = "FRESH_BREEZE",
+        label = "清新森系",
+        subtitle = "氧气感晨雾留白、温润大圆角与水彩课表",
+        badgeText = "推荐 · 清新治愈"
+    ),
+    CREAM_PASTEL(
+        key = "CREAM_PASTEL",
+        label = "奶油手账",
+        subtitle = "暖调燕麦纸感底色、柔和奶霜卡与马卡龙色",
+        badgeText = "温柔马卡龙"
     ),
     LIQUID_GLASS(
         key = "LIQUID_GLASS",
         label = "透明液态毛玻璃",
-        subtitle = "全局半透明磨砂折射、斜向流光边与景深透传"
+        subtitle = "全局半透明磨砂折射、斜向流光边与景深透传",
+        badgeText = "流光磨砂"
+    ),
+    FLUTTER_M3(
+        key = "FLUTTER_M3",
+        label = "Flutter 经典质感",
+        subtitle = "高对比度现代扁平卡片与清晰利落边界",
+        badgeText = "经典高效"
     );
 
     companion object {
@@ -284,6 +301,22 @@ object XPeachTheme {
         @Composable
         @ReadOnlyComposable
         get() = LocalUiDesignStyle.current == UiDesignStyle.LIQUID_GLASS
+
+    val isFreshBreeze: Boolean
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalUiDesignStyle.current == UiDesignStyle.FRESH_BREEZE
+
+    val isCreamPastel: Boolean
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalUiDesignStyle.current == UiDesignStyle.CREAM_PASTEL
+
+    val isSoftFreshStyle: Boolean
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalUiDesignStyle.current == UiDesignStyle.FRESH_BREEZE ||
+            LocalUiDesignStyle.current == UiDesignStyle.CREAM_PASTEL
 
     val hasActiveBackdrop: Boolean
         @Composable
@@ -526,18 +559,29 @@ object XPeachTheme {
     fun courseContainer(rawArgb: Long, active: Boolean = false): Color {
         val dark = isDark
         val liquid = isLiquidGlass
+        val freshBreeze = isFreshBreeze
+        val creamPastel = isCreamPastel
         val hasBackdrop = hasActiveBackdrop
         val cardAlpha = glassCardAlpha
         val baseWell = MaterialTheme.colorScheme.surfaceVariant
-        return remember(rawArgb, dark, active, liquid, hasBackdrop, cardAlpha, baseWell) {
+        return remember(rawArgb, dark, active, liquid, freshBreeze, creamPastel, hasBackdrop, cardAlpha, baseWell) {
             val raw = Color(rawArgb)
             if (!dark) {
-                if (liquid || hasBackdrop) {
-                    val frostedTint = lerp(Color.White, raw, if (active) 0.28f else 0.19f)
-                    val targetAlpha = (cardAlpha * (if (active) 0.94f else 0.84f)).coerceIn(0.20f, 0.96f)
-                    frostedTint.copy(alpha = targetAlpha)
-                } else {
-                    raw.copy(alpha = if (active) 0.14f else 0.10f)
+                when {
+                    liquid || hasBackdrop -> {
+                        val frostedTint = lerp(Color.White, raw, if (active) 0.28f else 0.19f)
+                        val targetAlpha = (cardAlpha * (if (active) 0.94f else 0.84f)).coerceIn(0.20f, 0.96f)
+                        frostedTint.copy(alpha = targetAlpha)
+                    }
+                    creamPastel -> {
+                        lerp(Color(0xFFFFFDF8), raw, if (active) 0.24f else 0.16f)
+                    }
+                    freshBreeze -> {
+                        lerp(Color(0xFFFAFFFD), raw, if (active) 0.23f else 0.15f)
+                    }
+                    else -> {
+                        raw.copy(alpha = if (active) 0.14f else 0.10f)
+                    }
                 }
             } else {
                 val accent = adjustColorForReadability(raw, darkTheme = true)
@@ -739,10 +783,17 @@ enum class PresetThemePalette(
     val label: String,
     val subtitle: String,
     val seedArgb: Long,
-    val activatesLiquidGlass: Boolean = false
+    val activatesLiquidGlass: Boolean = false,
+    val recommendedStyle: UiDesignStyle? = null
 ) {
-    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "液态流光磨砂", 0xFF0EA5E9, activatesLiquidGlass = true),
-    HAUT_BLUE("HAUT_BLUE", "工大蓝", "经典沉稳蓝", 0xFF0066CC),
+    MINT_BREEZE("MINT_BREEZE", "薄荷晨风", "氧气森系绿", 0xFF10B981, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    SKY_SODA("SKY_SODA", "晴空苏打", "清透冰川蓝", 0xFF0EA5E9, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    PEACH_OOLONG("PEACH_OOLONG", "白桃乌龙", "温柔蜜桃粉", 0xFFF472B6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    MATCHA_CREAM("MATCHA_CREAM", "抹茶奶盖", "清新春茶绿", 0xFF22C55E, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
+    LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "治愈薰衣草", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    POMELO_SUN("POMELO_SUN", "西柚暖阳", "元气奶油橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
+    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "液态流光磨砂", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
+    HAUT_BLUE("HAUT_BLUE", "工大蓝", "经典沉稳蓝", 0xFF0066CC, recommendedStyle = UiDesignStyle.FLUTTER_M3),
     PINE_TEAL("PINE_TEAL", "松石青", "清透青碧色", 0xFF0D9488),
     JADE_GREEN("JADE_GREEN", "翡翠绿", "自然护眼绿", 0xFF16A34A),
     AMBER_GOLD("AMBER_GOLD", "琥珀金", "暖阳活力橙", 0xFFD97706),
@@ -1190,7 +1241,8 @@ fun buildSeedColorScheme(
     seedArgb: Long,
     darkTheme: Boolean,
     hasCustomWallpaper: Boolean = false,
-    cardTemplateAlpha: Float = 0.82f
+    cardTemplateAlpha: Float = 0.82f,
+    uiDesignStyle: UiDesignStyle = UiDesignStyle.FLUTTER_M3
 ): ColorScheme {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(seedArgb.toInt(), hsv)
@@ -1209,32 +1261,52 @@ fun buildSeedColorScheme(
     val safeHighContainerAlpha = if (hasCustomWallpaper) (cardTemplateAlpha * 1.05f).coerceIn(0.32f, 0.96f) else 1f
 
     return if (!darkTheme) {
-        val primary = hsvColor(hue, sat.coerceAtLeast(0.22f), value.coerceIn(0.42f, 0.82f))
-        val primaryContainer = hsvColor(hue, (sat * 0.24f).coerceIn(0.08f, 0.26f), 0.97f)
-            .copy(alpha = safeContainerAlpha)
-        val onPrimaryContainer = hsvColor(hue, (sat * 0.95f).coerceIn(0.45f, 0.95f), 0.40f)
-        val secondary = hsvColor(hue + 18f, (sat * 0.75f).coerceIn(0.25f, 0.78f), 0.68f)
-        val secondaryContainer = hsvColor(hue + 18f, (sat * 0.20f).coerceIn(0.06f, 0.20f), 0.96f)
-            .copy(alpha = safeContainerAlpha)
-        val onSecondaryContainer = hsvColor(hue + 18f, (sat * 0.85f).coerceIn(0.4f, 0.85f), 0.38f)
-
-        val surfaceTint = if (hasCustomWallpaper) {
-            hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.09f), 0.995f).copy(alpha = safeCardAlpha)
-        } else {
-            XPeachCardLight
-        }
-        val wellTint = hsvColor(
+        val isCream = uiDesignStyle == UiDesignStyle.CREAM_PASTEL
+        val isFresh = uiDesignStyle == UiDesignStyle.FRESH_BREEZE
+        val primary = hsvColor(
             hue,
-            if (hasCustomWallpaper) (sat * 0.14f).coerceIn(0.04f, 0.14f) else (sat * 0.08f).coerceIn(0.02f, 0.07f),
-            0.96f
-        ).copy(alpha = safeWellAlpha)
-        val bgTint = if (hasCustomWallpaper) {
-            Color.Transparent
-        } else {
-            hsvColor(hue, (sat * 0.05f).coerceIn(0.01f, 0.045f), 0.975f)
+            if (isFresh || isCream) sat.coerceIn(0.28f, 0.78f) else sat.coerceAtLeast(0.22f),
+            if (isFresh || isCream) value.coerceIn(0.48f, 0.80f) else value.coerceIn(0.42f, 0.82f)
+        )
+        val primaryContainer = hsvColor(
+            hue,
+            if (isCream) (sat * 0.20f).coerceIn(0.07f, 0.22f) else (sat * 0.24f).coerceIn(0.08f, 0.26f),
+            0.975f
+        ).copy(alpha = safeContainerAlpha)
+        val onPrimaryContainer = hsvColor(hue, (sat * 0.92f).coerceIn(0.45f, 0.92f), 0.38f)
+        val secondary = hsvColor(hue + 20f, (sat * 0.72f).coerceIn(0.24f, 0.76f), 0.68f)
+        val secondaryContainer = hsvColor(hue + 20f, (sat * 0.18f).coerceIn(0.06f, 0.18f), 0.965f)
+            .copy(alpha = safeContainerAlpha)
+        val onSecondaryContainer = hsvColor(hue + 20f, (sat * 0.82f).coerceIn(0.4f, 0.82f), 0.36f)
+
+        val surfaceTint = when {
+            hasCustomWallpaper -> hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.09f), 0.995f).copy(alpha = safeCardAlpha)
+            isCream -> Color(0xFFFFFDF9)
+            isFresh -> Color(0xFFFFFFFF)
+            else -> XPeachCardLight
         }
-        val borderTint = hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.12f), 0.90f)
-        val borderStrong = hsvColor(hue, (sat * 0.18f).coerceIn(0.05f, 0.15f), 0.84f)
+        val wellTint = when {
+            hasCustomWallpaper -> hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.14f), 0.96f).copy(alpha = safeWellAlpha)
+            isCream -> lerp(Color(0xFFF7F2EA), hsvColor(hue, 0.08f, 0.97f), 0.35f)
+            isFresh -> hsvColor(hue, (sat * 0.10f).coerceIn(0.03f, 0.09f), 0.968f)
+            else -> hsvColor(hue, (sat * 0.08f).coerceIn(0.02f, 0.07f), 0.96f).copy(alpha = safeWellAlpha)
+        }
+        val bgTint = when {
+            hasCustomWallpaper -> Color.Transparent
+            isCream -> lerp(Color(0xFFFAF6F0), hsvColor(hue, 0.06f, 0.985f), 0.25f)
+            isFresh -> hsvColor(hue, (sat * 0.07f).coerceIn(0.02f, 0.06f), 0.982f)
+            else -> hsvColor(hue, (sat * 0.05f).coerceIn(0.01f, 0.045f), 0.975f)
+        }
+        val borderTint = when {
+            isCream -> lerp(Color(0xFFEDE3D5), hsvColor(hue, 0.15f, 0.91f), 0.35f)
+            isFresh -> hsvColor(hue, (sat * 0.18f).coerceIn(0.06f, 0.16f), 0.92f)
+            else -> hsvColor(hue, (sat * 0.14f).coerceIn(0.04f, 0.12f), 0.90f)
+        }
+        val borderStrong = when {
+            isCream -> lerp(Color(0xFFE2D5C3), hsvColor(hue, 0.20f, 0.86f), 0.35f)
+            isFresh -> hsvColor(hue, (sat * 0.22f).coerceIn(0.08f, 0.19f), 0.86f)
+            else -> hsvColor(hue, (sat * 0.18f).coerceIn(0.05f, 0.15f), 0.84f)
+        }
 
         lightColorScheme(
             primary = primary,
@@ -1375,6 +1447,8 @@ fun HautCampusTheme(
         UiDesignStyle.fromKey(uiDesignStyleKey)
     }
     val isLiquidGlass = effectiveDesignStyle == UiDesignStyle.LIQUID_GLASS
+    val isFreshBreeze = effectiveDesignStyle == UiDesignStyle.FRESH_BREEZE
+    val isCreamPastel = effectiveDesignStyle == UiDesignStyle.CREAM_PASTEL
 
     val resolvedSeedArgb = when (themePaletteKey) {
         "CUSTOM" -> customSeedArgb
@@ -1403,14 +1477,15 @@ fun HautCampusTheme(
             val context = LocalContext.current
             if (effectiveDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        themePaletteKey == "HAUT_BLUE" && !hasActiveBackdrop -> {
+        themePaletteKey == "HAUT_BLUE" && !hasActiveBackdrop && !isFreshBreeze && !isCreamPastel -> {
             if (effectiveDark) DarkColors else LightColors
         }
         else -> buildSeedColorScheme(
             seedArgb = resolvedSeedArgb,
             darkTheme = effectiveDark,
             hasCustomWallpaper = hasActiveBackdrop,
-            cardTemplateAlpha = safeCardAlpha
+            cardTemplateAlpha = safeCardAlpha,
+            uiDesignStyle = effectiveDesignStyle
         )
     }
     val colorScheme = applyGlassBackdropToScheme(
@@ -1501,11 +1576,71 @@ fun HautCampusTheme(
                     )
                     content()
                 }
+            } else if (isFreshBreeze || isCreamPastel) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    FreshPastelAmbientBackdrop(
+                        isDark = effectiveDark,
+                        isCreamPastel = isCreamPastel,
+                        backgroundColor = colorScheme.background,
+                        primaryColor = colorScheme.primary,
+                        secondaryColor = colorScheme.secondary,
+                        tertiaryColor = colorScheme.tertiary
+                    )
+                    content()
+                }
             } else {
                 content()
             }
         }
     }
+}
+
+/**
+ * 「清新森系 (`FRESH_BREEZE`)」与「奶油手账 (`CREAM_PASTEL`)」专属的顶部晨雾柔光环境底幕：
+ * 在不依赖重型模糊的前提下，以高明度、低饱和度的晨风/奶霜渐变光晕烘托顶部导航与卡片呼吸感。
+ */
+@Composable
+private fun FreshPastelAmbientBackdrop(
+    isDark: Boolean,
+    isCreamPastel: Boolean,
+    backgroundColor: Color,
+    primaryColor: Color,
+    secondaryColor: Color,
+    tertiaryColor: Color
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .drawWithCache {
+                val w = size.width.coerceAtLeast(1f)
+                val h = size.height.coerceAtLeast(1f)
+                val topAlpha = if (isDark) 0.16f else if (isCreamPastel) 0.13f else 0.15f
+                val sideAlpha = if (isDark) 0.12f else if (isCreamPastel) 0.10f else 0.12f
+                val warmOrFreshTint = if (isCreamPastel) Color(0xFFFDE68A) else tertiaryColor
+
+                val topBloom = Brush.radialGradient(
+                    colors = listOf(primaryColor.copy(alpha = topAlpha), Color.Transparent),
+                    center = Offset(w * 0.18f, h * 0.06f),
+                    radius = w * 0.88f
+                )
+                val rightBloom = Brush.radialGradient(
+                    colors = listOf(secondaryColor.copy(alpha = sideAlpha), Color.Transparent),
+                    center = Offset(w * 0.88f, h * 0.14f),
+                    radius = w * 0.72f
+                )
+                val softSubtleBloom = Brush.radialGradient(
+                    colors = listOf(warmOrFreshTint.copy(alpha = sideAlpha * 0.75f), Color.Transparent),
+                    center = Offset(w * 0.50f, h * 0.42f),
+                    radius = w * 0.90f
+                )
+                onDrawBehind {
+                    drawRect(brush = topBloom)
+                    drawRect(brush = rightBloom)
+                    drawRect(brush = softSubtleBloom)
+                }
+            }
+    )
 }
 
 /**
@@ -1623,6 +1758,8 @@ fun XPeachCard(
     val scheme = MaterialTheme.colorScheme
     val isDark = XPeachTheme.isDark
     val isLiquid = XPeachTheme.isLiquidGlass
+    val isFreshBreeze = XPeachTheme.isFreshBreeze
+    val isCreamPastel = XPeachTheme.isCreamPastel
     val hasBackdrop = XPeachTheme.hasActiveBackdrop
     val glassAlpha = XPeachTheme.glassCardAlpha
 
@@ -1664,6 +1801,22 @@ fun XPeachCard(
             )
         }
         borderColor == Color.Transparent -> null
+        isFreshBreeze && borderColor == defaultBorder -> {
+            val freshBorder = if (isDark) {
+                (customAccentBorder ?: scheme.primary).copy(alpha = 0.26f)
+            } else {
+                (customAccentBorder ?: scheme.primary).copy(alpha = 0.18f)
+            }
+            BorderStroke(0.8.dp, freshBorder)
+        }
+        isCreamPastel && borderColor == defaultBorder -> {
+            val creamBorder = if (isDark) {
+                scheme.outlineVariant.copy(alpha = 0.38f)
+            } else {
+                lerp(Color(0xFFEBDCCB), customAccentBorder ?: scheme.primary, 0.22f).copy(alpha = 0.65f)
+            }
+            BorderStroke(0.85.dp, creamBorder)
+        }
         borderColor == defaultBorder -> {
             val m3Border = if (isDark) {
                 customAccentBorder?.copy(alpha = 0.30f) ?: scheme.outlineVariant.copy(alpha = 0.36f)
@@ -1676,10 +1829,12 @@ fun XPeachCard(
     }
 
     val targetCornerRadius by animateDpAsState(
-        targetValue = if (isLiquid && cornerRadius == FlutterM3Tokens.CardCornerRadius) {
-            FlutterM3Tokens.LiquidCardCornerRadius
-        } else {
-            cornerRadius
+        targetValue = when {
+            cornerRadius != FlutterM3Tokens.CardCornerRadius -> cornerRadius
+            isCreamPastel -> 24.dp
+            isFreshBreeze -> 22.dp
+            isLiquid -> FlutterM3Tokens.LiquidCardCornerRadius
+            else -> cornerRadius
         },
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 420f),
         label = "cardCornerRadius"
@@ -1754,6 +1909,7 @@ fun XPeachWell(
 ) {
     val scheme = MaterialTheme.colorScheme
     val isLiquid = XPeachTheme.isLiquidGlass
+    val isSoftFresh = XPeachTheme.isSoftFreshStyle
     val hasBackdrop = XPeachTheme.hasActiveBackdrop
     val glassAlpha = XPeachTheme.glassCardAlpha
 
@@ -1762,10 +1918,11 @@ fun XPeachWell(
     } else {
         containerColor
     }
-    val effectiveRadius = if (isLiquid && cornerRadius == FlutterM3Tokens.WellCornerRadius) {
-        FlutterM3Tokens.LiquidWellCornerRadius
-    } else {
-        cornerRadius
+    val effectiveRadius = when {
+        cornerRadius != FlutterM3Tokens.WellCornerRadius -> cornerRadius
+        isSoftFresh -> 16.dp
+        isLiquid -> FlutterM3Tokens.LiquidWellCornerRadius
+        else -> cornerRadius
     }
     val resolvedBorder: BorderStroke? = when {
         isLiquid -> BorderStroke(

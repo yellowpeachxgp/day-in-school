@@ -150,13 +150,17 @@ object XPeachTokens {
  */
 object XPeachCoursePalette {
     val SwatchesArgb: List<Long> = listOf(
-        0xFF2563EBL, // 经典蓝
+        0xFF10B981L, // 薄荷晨风
+        0xFF0EA5E9L, // 晴空苏打
+        0xFFF472B6L, // 白桃乌龙
+        0xFF8B5CF6L, // 海盐香芋
+        0xFF22C55EL, // 抹茶奶盖
+        0xFFFB7185L, // 西柚暖阳
         0xFF0D9488L, // 松石青
+        0xFF2563EBL, // 经典蓝
         0xFF7C3AEDL, // 学院紫
         0xFFEA580CL, // 暖阳橙
         0xFFDB2777L, // 樱花粉
-        0xFF16A34AL, // 翡翠绿
-        0xFF0284C7L, // 晴空蓝
         0xFF4F46E5L, // 靛青蓝
     )
 

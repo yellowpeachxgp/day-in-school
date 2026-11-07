@@ -431,9 +431,9 @@ class CampusRepository internal constructor(
             useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
             themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
             uiDesignStyle = prefs[PrefKeys.UI_DESIGN_STYLE]
-                ?: if (prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FLUTTER_M3",
-            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
-            customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC,
+                ?: if (prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FRESH_BREEZE",
+            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "MINT_BREEZE",
+            customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF10B981,
             customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
             wallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(
                 prefs[PrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
@@ -1608,14 +1608,61 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setUiDesignStyle(styleKey: String) {
-        val normalized = if (styleKey.equals("LIQUID_GLASS", ignoreCase = true)) "LIQUID_GLASS" else "FLUTTER_M3"
+        val normalized = when {
+            styleKey.equals("LIQUID_GLASS", ignoreCase = true) -> "LIQUID_GLASS"
+            styleKey.equals("FRESH_BREEZE", ignoreCase = true) -> "FRESH_BREEZE"
+            styleKey.equals("CREAM_PASTEL", ignoreCase = true) -> "CREAM_PASTEL"
+            else -> "FLUTTER_M3"
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.UI_DESIGN_STYLE] = normalized
-            if (normalized == "FLUTTER_M3" && prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") {
-                prefs[PrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
+            val currentPalette = prefs[PrefKeys.THEME_PALETTE_KEY]
+            when (normalized) {
+                "FRESH_BREEZE" -> {
+                    if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE") {
+                        prefs[PrefKeys.THEME_PALETTE_KEY] = "MINT_BREEZE"
+                    }
+                }
+                "CREAM_PASTEL" -> {
+                    if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE" || currentPalette == "MINT_BREEZE") {
+                        prefs[PrefKeys.THEME_PALETTE_KEY] = "PEACH_OOLONG"
+                    }
+                }
+                "FLUTTER_M3" -> {
+                    if (currentPalette == "LIQUID_GLASS") {
+                        prefs[PrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
+                    }
+                }
+                "LIQUID_GLASS" -> {
+                    if (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+                        prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+                    }
+                }
             }
-            if (normalized == "LIQUID_GLASS" && prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+        }
+        notifyScheduleOrPolicyChanged("THEME_UPDATED")
+    }
+
+    suspend fun applyCuratedThemePreset(
+        designStyleKey: String,
+        paletteKey: String,
+        clearWallpaper: Boolean = false
+    ) {
+        val normalizedStyle = when {
+            designStyleKey.equals("LIQUID_GLASS", ignoreCase = true) -> "LIQUID_GLASS"
+            designStyleKey.equals("FRESH_BREEZE", ignoreCase = true) -> "FRESH_BREEZE"
+            designStyleKey.equals("CREAM_PASTEL", ignoreCase = true) -> "CREAM_PASTEL"
+            else -> "FLUTTER_M3"
+        }
+        preferences.edit { prefs ->
+            prefs[PrefKeys.UI_DESIGN_STYLE] = normalizedStyle
+            prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
+            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            if (normalizedStyle == "LIQUID_GLASS" && prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
                 prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+            }
+            if (clearWallpaper) {
+                prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
             }
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
@@ -1733,9 +1780,15 @@ class CampusRepository internal constructor(
 
     suspend fun getActiveThemeAccentArgb(): Int {
         val prefs = preferences.data.first()
-        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
-        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF0066CC
+        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "MINT_BREEZE"
+        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF10B981
         val seedLong = when (key) {
+            "MINT_BREEZE" -> 0xFF10B981
+            "SKY_SODA" -> 0xFF0EA5E9
+            "PEACH_OOLONG" -> 0xFFF472B6
+            "MATCHA_CREAM" -> 0xFF22C55E
+            "LAVENDER_MIST" -> 0xFF8B5CF6
+            "POMELO_SUN" -> 0xFFFB7185
             "LIQUID_GLASS" -> 0xFF0EA5E9
             "HAUT_BLUE" -> 0xFF0066CC
             "PINE_TEAL" -> 0xFF0D9488
@@ -1746,7 +1799,7 @@ class CampusRepository internal constructor(
             "SAKURA_PINK" -> 0xFFDB2777
             "SLATE_INK" -> 0xFF334155
             "CUSTOM" -> custom
-            else -> 0xFF0066CC
+            else -> 0xFF10B981
         }
         return seedLong.toInt()
     }

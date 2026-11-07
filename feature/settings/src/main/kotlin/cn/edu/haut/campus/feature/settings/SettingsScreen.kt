@@ -1905,11 +1905,15 @@ fun SettingsScreen(
                     scope.launch {
                         repository.setUiDesignStyle(styleKey)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = if (styleKey == UiDesignStyle.LIQUID_GLASS.key) {
-                            "已切换为透明液态毛玻璃 UI"
-                        } else {
-                            "已切换为 Flutter 经典质感 UI"
-                        }
+                        val chosenStyle = UiDesignStyle.fromKey(styleKey)
+                        feedbackText = "已切换为「${chosenStyle.label}」视觉风格"
+                    }
+                },
+                onApplyCuratedPreset = { styleKey, paletteKey, title ->
+                    scope.launch {
+                        repository.applyCuratedThemePreset(styleKey, paletteKey)
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                        feedbackText = "已应用「$title」清新套装"
                     }
                 },
                 onToggleDynamicColor = { enabled ->
@@ -2906,6 +2910,7 @@ private fun ThemePaletteAndCardLayoutSection(
     prefs: AppPreferencesState,
     onSelectThemeMode: (String) -> Unit,
     onSelectUiDesignStyle: (String) -> Unit,
+    onApplyCuratedPreset: (String, String, String) -> Unit,
     onToggleDynamicColor: (Boolean) -> Unit,
     onSelectPalette: (String, Long?) -> Unit,
     onSyncDesktopWallpaper: () -> Unit,
@@ -2940,8 +2945,12 @@ private fun ThemePaletteAndCardLayoutSection(
     }
     var hexInput by remember(prefs.customThemeSeedArgb) { mutableStateOf(customHexText) }
 
-    val isLiquidGlassActive = prefs.uiDesignStyle == UiDesignStyle.LIQUID_GLASS.key ||
-        prefs.themePaletteKey == PresetThemePalette.LIQUID_GLASS.key
+    val currentStyle = if (prefs.themePaletteKey == PresetThemePalette.LIQUID_GLASS.key) {
+        UiDesignStyle.LIQUID_GLASS
+    } else {
+        UiDesignStyle.fromKey(prefs.uiDesignStyle)
+    }
+    val isLiquidGlassActive = currentStyle == UiDesignStyle.LIQUID_GLASS
     val hasCustomWallpaper = !prefs.customWallpaperPath.isNullOrBlank()
     val showGlassControls = isLiquidGlassActive || hasCustomWallpaper
 
@@ -2958,12 +2967,12 @@ private fun ThemePaletteAndCardLayoutSection(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = "主题与视觉风格",
+                    text = "主题与视觉风格工作台",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "切换 Flutter 经典质感或透明液态毛玻璃 UI",
+                    text = "4 套全局设计语言（清新森系 / 奶油手账 / 液态毛玻璃 / 经典质感）与 15 款色板",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2971,10 +2980,10 @@ private fun ThemePaletteAndCardLayoutSection(
             val currentPaletteLabel = when {
                 isLiquidGlassActive && hasCustomWallpaper -> "液态毛玻璃 · 桌面背景"
                 isLiquidGlassActive -> "透明液态毛玻璃"
-                hasCustomWallpaper -> "自定义壁纸"
-                prefs.useDynamicColor -> "系统取色"
-                prefs.themePaletteKey == "CUSTOM" -> customHexText
-                else -> PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "工大蓝"
+                hasCustomWallpaper -> "${currentStyle.label} · 壁纸"
+                prefs.useDynamicColor -> "${currentStyle.label} · 系统取色"
+                prefs.themePaletteKey == "CUSTOM" -> "${currentStyle.label} · $customHexText"
+                else -> "${currentStyle.label} · ${PresetThemePalette.fromKey(prefs.themePaletteKey)?.label ?: "薄荷晨风"}"
             }
             XPeachStatusDotText(
                 text = currentPaletteLabel,
@@ -2984,21 +2993,121 @@ private fun ThemePaletteAndCardLayoutSection(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 0. 产品设计语言切换（Flutter 经典质感 vs 透明液态毛玻璃）
-        val styleOptions = remember { UiDesignStyle.entries }
-        val currentStyle = if (isLiquidGlassActive) UiDesignStyle.LIQUID_GLASS else UiDesignStyle.FLUTTER_M3
-        XPeachSegmentedTabs(
-            options = styleOptions,
-            selectedOption = currentStyle,
-            labelProvider = { it.label },
-            onSelect = { chosen ->
-                if (chosen == UiDesignStyle.LIQUID_GLASS) {
-                    onSelectUiDesignStyle(UiDesignStyle.LIQUID_GLASS.key)
-                } else {
-                    onSelectUiDesignStyle(UiDesignStyle.FLUTTER_M3.key)
+        // 0. 四大产品设计语言 2×2 卡片选择
+        val styleRows = remember { UiDesignStyle.entries.chunked(2) }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            styleRows.forEach { rowStyles ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    rowStyles.forEach { style ->
+                        val selected = currentStyle == style
+                        val cardShape = RoundedCornerShape(14.dp)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(cardShape)
+                                .background(
+                                    if (selected) {
+                                        XPeachTheme.primaryAccentCardColor
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                    }
+                                )
+                                .border(
+                                    width = if (selected) 1.5.dp else 0.75.dp,
+                                    color = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = cardShape
+                                )
+                                .clickable { onSelectUiDesignStyle(style.key) }
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = style.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                XPeachStatusBadge(
+                                    text = if (selected) "使用中" else style.badgeText,
+                                    containerColor = if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                                    },
+                                    contentColor = if (selected) {
+                                        XPeachTheme.readablePrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                            Text(
+                                text = style.subtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 0.2 一键清新主题套装（风格 + 配色一键联动）
+        Text(
+            text = "一键清新主题套装",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(modifier = Modifier.height(6.dp))
+        val curatedSuites = remember {
+            listOf(
+                Triple("FRESH_BREEZE", "MINT_BREEZE", "🌿 薄荷晨风 · 森系"),
+                Triple("CREAM_PASTEL", "PEACH_OOLONG", "🍑 白桃乌龙 · 奶油"),
+                Triple("FRESH_BREEZE", "SKY_SODA", "🫧 晴空苏打 · 森系"),
+                Triple("FRESH_BREEZE", "MATCHA_CREAM", "🍵 抹茶奶盖 · 森系"),
+                Triple("CREAM_PASTEL", "LAVENDER_MIST", "💜 海盐香芋 · 奶油"),
+                Triple("CREAM_PASTEL", "POMELO_SUN", "🍊 西柚暖阳 · 奶油"),
+                Triple("LIQUID_GLASS", "LIQUID_GLASS", "✨ 冰川流光 · 毛玻璃"),
+                Triple("FLUTTER_M3", "HAUT_BLUE", "📘 工大经典 · 现代")
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            curatedSuites.forEach { (sKey, pKey, title) ->
+                val isSuiteSelected = !prefs.useDynamicColor &&
+                    currentStyle.key == sKey &&
+                    prefs.themePaletteKey == pKey
+                XPeachFilterPill(
+                    label = title,
+                    selected = isSuiteSelected,
+                    compact = true,
+                    onClick = { onApplyCuratedPreset(sKey, pKey, title) }
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(8.dp))
 

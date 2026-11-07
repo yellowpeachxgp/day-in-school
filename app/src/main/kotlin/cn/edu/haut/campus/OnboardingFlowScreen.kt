@@ -731,11 +731,11 @@ private fun OnboardingWelcomeFeaturesStep(
                 modifier = Modifier.weight(1f),
             )
             XPeachBentoTile(
-                title = "液态毛玻璃主题",
-                badgeText = "新视觉",
-                subtitle = "一键同步手机桌面壁纸与主题色，自由调节磨砂玻璃透光度",
+                title = "四大清新与流光主题",
+                badgeText = "全新风格",
+                subtitle = "支持清新森系、奶油手账、透明液态毛玻璃与经典质感 4 套全局设计语言",
                 icon = Icons.Rounded.Palette,
-                accentColor = Color(0xFF0284C7),
+                accentColor = Color(0xFF10B981),
                 onClick = { onJumpToStep(OnboardingWizardStep.VISUAL_THEME_STUDIO) },
                 modifier = Modifier.weight(1f),
             )
@@ -837,6 +837,7 @@ private fun OnboardingVisualThemeStudioStep(
     onSelectPalette: (String, Long?) -> Unit,
     onUpdateGlassParams: (Float?, Float?, Float?) -> Unit,
 ) {
+    val activeDesignStyle = XPeachTheme.uiDesignStyle
     val isLiquidGlass = XPeachTheme.isLiquidGlass
     val hasCustomWallpaper = !prefs.customWallpaperPath.isNullOrBlank()
     var cardAlphaDraft by remember(prefs.wallpaperCardAlpha) {
@@ -846,90 +847,113 @@ private fun OnboardingVisualThemeStudioStep(
         mutableFloatStateOf(prefs.wallpaperBlurDp)
     }
 
-    // 1. 双设计语言并排选择卡
+    // 1. 四大全局设计语言 2×2 画廊选择卡
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "选择全局设计语言",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "选择全局设计语言（4 套风格）",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "切换后全局卡片圆角、底色氛围与课表色块将实时联动",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             XPeachStatusDotText(
-                text = if (isLiquidGlass) "透明液态毛玻璃" else "Flutter 经典质感",
+                text = activeDesignStyle.label,
                 dotColor = XPeachTheme.readablePrimary,
             )
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        Row(
+        val styleRows = remember { UiDesignStyle.entries.chunked(2) }
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            UiDesignStyle.entries.forEach { style ->
-                val selected = (style == UiDesignStyle.LIQUID_GLASS && isLiquidGlass) ||
-                    (style == UiDesignStyle.FLUTTER_M3 && !isLiquidGlass)
-                val cardShape = RoundedCornerShape(16.dp)
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(cardShape)
-                        .background(
-                            if (selected) {
-                                XPeachTheme.primaryAccentCardColor
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                            }
-                        )
-                        .border(
-                            width = if (selected) 1.5.dp else 0.75.dp,
-                            color = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.outlineVariant,
-                            shape = cardShape,
-                        )
-                        .clickable { onSelectDesignStyle(style) }
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+            styleRows.forEach { rowStyles ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = if (style == UiDesignStyle.LIQUID_GLASS) {
-                                Icons.Rounded.AutoAwesome
-                            } else {
-                                Icons.Rounded.Palette
-                            },
-                            contentDescription = null,
-                            tint = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        if (selected) {
-                            XPeachStatusBadge(
-                                text = "当前使用",
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor = XPeachTheme.readablePrimary,
+                    rowStyles.forEach { style ->
+                        val selected = activeDesignStyle == style
+                        val cardShape = RoundedCornerShape(16.dp)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(cardShape)
+                                .background(
+                                    if (selected) {
+                                        XPeachTheme.primaryAccentCardColor
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                    }
+                                )
+                                .border(
+                                    width = if (selected) 1.5.dp else 0.75.dp,
+                                    color = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = cardShape,
+                                )
+                                .clickable { onSelectDesignStyle(style) }
+                                .padding(11.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = when (style) {
+                                        UiDesignStyle.FRESH_BREEZE -> Icons.Rounded.Explore
+                                        UiDesignStyle.CREAM_PASTEL -> Icons.Rounded.Palette
+                                        UiDesignStyle.LIQUID_GLASS -> Icons.Rounded.AutoAwesome
+                                        UiDesignStyle.FLUTTER_M3 -> Icons.Rounded.Widgets
+                                    },
+                                    contentDescription = null,
+                                    tint = if (selected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                XPeachStatusBadge(
+                                    text = if (selected) "当前使用" else style.badgeText,
+                                    containerColor = if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                                    },
+                                    contentColor = if (selected) {
+                                        XPeachTheme.readablePrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                            Text(
+                                text = style.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = style.subtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
-                    Text(
-                        text = style.label,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = style.subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
             }
         }
