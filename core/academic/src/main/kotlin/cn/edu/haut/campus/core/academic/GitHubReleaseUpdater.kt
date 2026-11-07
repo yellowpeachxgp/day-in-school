@@ -269,7 +269,7 @@ object GitHubReleaseUpdater {
         val candidateUrls = proxyConfig.buildGitHubDownloadCandidateUrls(rawNotesUrl)
         for (url in candidateUrls.take(3)) {
             val text = runCatching {
-                val conn = openConnectionFollowingRedirects(url, proxyConfig, maxHops = 4)
+                val conn = openConnectionFollowingRedirects(url, proxyConfig)
                 try {
                     if (conn.responseCode in 200..299) {
                         conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
