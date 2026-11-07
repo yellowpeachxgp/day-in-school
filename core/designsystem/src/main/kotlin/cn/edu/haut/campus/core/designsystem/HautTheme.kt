@@ -1509,9 +1509,40 @@ fun HautCampusTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = view.context.findActivity()?.window ?: return@SideEffect
+            @Suppress("DEPRECATION")
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            @Suppress("DEPRECATION")
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            window.isNavigationBarContrastEnforced = false
+            window.isStatusBarContrastEnforced = false
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.isAppearanceLightStatusBars = !effectiveDark
             insetsController.isAppearanceLightNavigationBars = !effectiveDark
+        }
+    }
+
+    val frostedBackdropBitmap = remember(
+        wallpaperBitmap,
+        customWallpaperPath,
+        effectiveDark,
+        colorScheme.primary,
+        colorScheme.secondary,
+        safeWallpaperAlpha,
+        safeBlurDp,
+        isLiquidGlass
+    ) {
+        if (isLiquidGlass) {
+            LiquidGlassOptics.getOrBuildFrostedBackdropBitmap(
+                rawWallpaper = wallpaperBitmap,
+                wallpaperKey = customWallpaperPath,
+                isDark = effectiveDark,
+                primaryColor = colorScheme.primary,
+                secondaryColor = colorScheme.secondary,
+                backdropAlpha = safeWallpaperAlpha,
+                blurDp = safeBlurDp
+            )
+        } else {
+            wallpaperBitmap
         }
     }
 
@@ -1522,7 +1553,7 @@ fun HautCampusTheme(
         LocalGlassCardAlpha provides safeCardAlpha,
         LocalGlassBlurDp provides safeBlurDp,
         LocalBackdropAlpha provides safeWallpaperAlpha,
-        LocalLiquidGlassWallpaperBitmap provides wallpaperBitmap
+        LocalLiquidGlassWallpaperBitmap provides frostedBackdropBitmap
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
@@ -1531,7 +1562,7 @@ fun HautCampusTheme(
         ) {
             val activeBmp = wallpaperBitmap
             if (activeBmp != null) {
-                val baseBackdrop = if (effectiveDark) Color(0xFF080D16) else Color(0xFFF0F5FB)
+                val baseBackdrop = if (effectiveDark) Color(0xFF0A0F18) else Color(0xFFF3F7FC)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1547,9 +1578,8 @@ fun HautCampusTheme(
                             .then(
                                 if (isLiquidGlass) {
                                     Modifier.graphicsLayer {
-                                        val effectiveSigmaDp = maxOf(safeBlurDp, LiquidGlassOptics.REGULAR_BLUR_SIGMA_DP)
                                         renderEffect = LiquidGlassOptics.buildBackdropRenderEffect(
-                                            blurPx = effectiveSigmaDp.dp.toPx(),
+                                            blurPx = safeBlurDp.dp.toPx(),
                                             isDark = effectiveDark
                                         ).asComposeRenderEffect()
                                     }
@@ -1565,7 +1595,7 @@ fun HautCampusTheme(
                     )
                     // 自适应护眼柔光与液态折射层
                     val veilAlpha = if (isLiquidGlass) {
-                        ((1f - safeWallpaperAlpha) * 0.28f).coerceIn(0.04f, 0.42f)
+                        ((1f - safeWallpaperAlpha) * 0.42f + 0.16f).coerceIn(0.16f, 0.58f)
                     } else {
                         ((1f - safeWallpaperAlpha) * 0.42f).coerceIn(0.06f, 0.50f)
                     }
@@ -1676,8 +1706,9 @@ private fun LiquidGlassAmbientBackdrop(
     backdropAlpha: Float,
     blurDp: Float
 ) {
-    val baseColor = if (isDark) Color(0xFF090E1B) else Color(0xFFE9F3FE)
-    val glowAlpha = backdropAlpha.coerceIn(0.24f, 1.0f)
+    val baseColor = if (isDark) Color(0xFF0A0F18) else Color(0xFFF3F7FC)
+    val glowAlpha = backdropAlpha.coerceIn(0.20f, 1.0f)
+    val blurSoftening = 1f - (blurDp / 48f).coerceIn(0f, 0.40f)
 
     Box(
         modifier = Modifier
@@ -1686,57 +1717,32 @@ private fun LiquidGlassAmbientBackdrop(
             .drawWithCache {
                 val w = size.width.coerceAtLeast(1f)
                 val h = size.height.coerceAtLeast(1f)
-                val c1 = primaryColor.copy(alpha = (if (isDark) 0.56f else 0.44f) * glowAlpha)
-                val c2 = secondaryColor.copy(alpha = (if (isDark) 0.50f else 0.38f) * glowAlpha)
-                val c3 = tertiaryColor.copy(alpha = (if (isDark) 0.42f else 0.32f) * glowAlpha)
-                val indigo = (if (isDark) Color(0xFF616BFF) else Color(0xFF739EFF))
-                    .copy(alpha = (if (isDark) 0.36f else 0.28f) * glowAlpha)
+                val c1 = (if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.30f))
+                    .copy(alpha = (if (isDark) 0.22f else 0.16f) * glowAlpha * blurSoftening)
+                val c2 = (if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.34f))
+                    .copy(alpha = (if (isDark) 0.16f else 0.12f) * glowAlpha * blurSoftening)
+                val cMid = lerp(c1, c2, 0.5f)
+                    .copy(alpha = (if (isDark) 0.10f else 0.08f) * glowAlpha * blurSoftening)
 
-                // 斜向天际波脊 1 (y ≈ 0.32h)
-                val horizonBand1 = Brush.linearGradient(
-                    0.0f to Color.Transparent,
-                    0.24f to c1,
-                    0.34f to indigo,
-                    0.46f to Color.Transparent,
-                    start = Offset(0f, h * 0.14f),
-                    end = Offset(w * 0.45f, h * 0.54f)
-                )
-                // 斜向湖面反射波脊 2 (y ≈ 0.68h)
-                val horizonBand2 = Brush.linearGradient(
-                    0.0f to Color.Transparent,
-                    0.52f to Color.Transparent,
-                    0.66f to c2,
-                    0.78f to c3,
-                    0.92f to Color.Transparent,
-                    start = Offset(w * 0.15f, h * 0.35f),
-                    end = Offset(w * 0.85f, h * 0.95f)
-                )
-                // 对角焦散光带 3
-                val causticRibbon = Brush.linearGradient(
-                    0.0f to Color.Transparent,
-                    0.38f to Color.Transparent,
-                    0.50f to Color.White.copy(alpha = (if (isDark) 0.16f else 0.42f) * glowAlpha),
-                    0.62f to c1.copy(alpha = c1.alpha * 0.7f),
-                    1.0f to Color.Transparent,
-                    start = Offset(0f, 0f),
-                    end = Offset(w, h * 0.88f)
-                )
-                val topOrb = Brush.radialGradient(
+                val topZenithBloom = Brush.radialGradient(
                     colors = listOf(c1, Color.Transparent),
-                    center = Offset(w * 0.18f, h * 0.16f),
-                    radius = w * 0.68f
+                    center = Offset(w * 0.18f, h * 0.12f),
+                    radius = w * 1.10f
                 )
-                val bottomOrb = Brush.radialGradient(
+                val upperRightBloom = Brush.radialGradient(
                     colors = listOf(c2, Color.Transparent),
-                    center = Offset(w * 0.84f, h * 0.76f),
-                    radius = w * 0.64f
+                    center = Offset(w * 0.85f, h * 0.24f),
+                    radius = w * 1.02f
+                )
+                val midAmbientWash = Brush.radialGradient(
+                    colors = listOf(cMid, Color.Transparent),
+                    center = Offset(w * 0.48f, h * 0.48f),
+                    radius = w * 1.20f
                 )
                 onDrawBehind {
-                    drawRect(brush = topOrb)
-                    drawRect(brush = bottomOrb)
-                    drawRect(brush = horizonBand1)
-                    drawRect(brush = horizonBand2)
-                    drawRect(brush = causticRibbon)
+                    drawRect(brush = topZenithBloom)
+                    drawRect(brush = upperRightBloom)
+                    drawRect(brush = midAmbientWash)
                 }
             }
     )
@@ -1749,7 +1755,7 @@ private fun LiquidGlassRefractiveVeil(
     secondaryColor: Color,
     intensity: Float
 ) {
-    val alphaScale = (intensity * 0.22f).coerceIn(0.04f, 0.24f)
+    val alphaScale = (intensity * 0.10f).coerceIn(0.02f, 0.12f)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1758,23 +1764,14 @@ private fun LiquidGlassRefractiveVeil(
                 val h = size.height.coerceAtLeast(1f)
                 val topGlow = Brush.radialGradient(
                     colors = listOf(
-                        primaryColor.copy(alpha = if (isDark) alphaScale else alphaScale * 0.85f),
+                        primaryColor.copy(alpha = if (isDark) alphaScale else alphaScale * 0.75f),
                         Color.Transparent
                     ),
-                    center = Offset(w * 0.15f, h * 0.08f),
-                    radius = w * 0.9f
-                )
-                val bottomGlow = Brush.radialGradient(
-                    colors = listOf(
-                        secondaryColor.copy(alpha = if (isDark) alphaScale * 0.85f else alphaScale * 0.70f),
-                        Color.Transparent
-                    ),
-                    center = Offset(w * 0.85f, h * 0.90f),
-                    radius = w * 0.85f
+                    center = Offset(w * 0.16f, h * 0.10f),
+                    radius = w * 0.95f
                 )
                 onDrawBehind {
                     drawRect(brush = topGlow)
-                    drawRect(brush = bottomGlow)
                 }
             }
     )
@@ -1931,7 +1928,7 @@ fun XPeachCard(
         color = if (isLiquid) Color.Transparent else resolvedContainerColor,
         contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = if (isLiquid) (if (isDark) 10.dp else 6.dp) else 0.dp,
+        shadowElevation = 0.dp,
         border = if (isLiquid) null else resolvedBorderStroke
     ) {
         Column(
@@ -2055,7 +2052,7 @@ fun XPeachGlassSurface(
         color = if (isLiquid) Color.Transparent else resolvedColor,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = if (isLiquid) (shadowElevation * 1.2f) else shadowElevation,
+        shadowElevation = if (isLiquid) 0.dp else shadowElevation,
         border = borderStroke
     ) {
         Box(
@@ -2120,7 +2117,7 @@ fun XPeachAlertDialog(
                 color = Color.Transparent,
                 contentColor = titleContentColor,
                 tonalElevation = 0.dp,
-                shadowElevation = if (isDark) 22.dp else 16.dp,
+                shadowElevation = 0.dp,
                 border = null
             ) {
                 Column(
@@ -2463,7 +2460,7 @@ fun XPeachIconButton(
                         baseColor = bgColor,
                         material = LiquidGlassMaterial.CLEAR,
                         nested = true,
-                        refractionDp = 36f,
+                        refractionDp = 16f,
                         pressProgress = pressProgress
                     )
                 } else {
@@ -2641,10 +2638,10 @@ private fun XPeachFilterPillInternal(
                         isDark = isDark,
                         cornerRadius = 999.dp,
                         baseColor = bg,
-                        material = if (selected) LiquidGlassMaterial.REGULAR else LiquidGlassMaterial.CLEAR,
+                        material = LiquidGlassMaterial.CLEAR,
                         accentTint = if (selected) selectedFg else null,
                         nested = true,
-                        refractionDp = 42f,
+                        refractionDp = 16f,
                         pressProgress = pressProgress
                     )
                 } else {
@@ -2746,9 +2743,9 @@ fun <T> XPeachSegmentedTabs(
                         isDark = isDark,
                         cornerRadius = outerRadius,
                         baseColor = trackBg,
-                        material = LiquidGlassMaterial.REGULAR,
+                        material = LiquidGlassMaterial.CLEAR,
                         nested = true,
-                        refractionDp = 44f
+                        refractionDp = 18f
                     )
                 } else {
                     Modifier.background(trackBg)
@@ -2777,9 +2774,9 @@ fun <T> XPeachSegmentedTabs(
                 .width(slotWidth)
                 .fillMaxHeight()
                 .then(
-                    if (!isDark) {
+                    if (!isDark && !isLiquid) {
                         Modifier.shadow(
-                            elevation = if (isLiquid) 4.dp else 2.dp,
+                            elevation = 2.dp,
                             shape = thumbShape,
                             ambientColor = Color.Black.copy(alpha = 0.12f),
                             spotColor = Color.Black.copy(alpha = 0.16f)
@@ -2797,9 +2794,9 @@ fun <T> XPeachSegmentedTabs(
                             cornerRadius = innerRadius,
                             baseColor = selectedThumbBg,
                             material = LiquidGlassMaterial.CLEAR,
-                            accentTint = XPeachTheme.readablePrimary,
+                            accentTint = null,
                             nested = true,
-                            refractionDp = 36f
+                            refractionDp = 16f
                         )
                     } else {
                         Modifier.background(selectedThumbBg)

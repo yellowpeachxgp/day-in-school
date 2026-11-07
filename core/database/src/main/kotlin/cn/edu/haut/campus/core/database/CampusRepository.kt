@@ -1661,7 +1661,10 @@ class CampusRepository internal constructor(
                 }
                 "LIQUID_GLASS" -> {
                     if (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                        prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+                        prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                    }
+                    if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
+                        prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
                     }
                 }
             }
@@ -1684,8 +1687,13 @@ class CampusRepository internal constructor(
             prefs[PrefKeys.UI_DESIGN_STYLE] = normalizedStyle
             prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
             prefs[PrefKeys.DYNAMIC_COLOR] = false
-            if (normalizedStyle == "LIQUID_GLASS" && prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+            if (normalizedStyle == "LIQUID_GLASS") {
+                if (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                }
+                if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
+                    prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+                }
             }
             if (clearWallpaper) {
                 prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
@@ -1701,8 +1709,11 @@ class CampusRepository internal constructor(
             if (paletteKey == "LIQUID_GLASS") {
                 prefs[PrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
                 val curCardAlpha = prefs[PrefKeys.WALLPAPER_CARD_ALPHA]
-                if (curCardAlpha == null || curCardAlpha > 0.80f) {
-                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = 0.68f
+                if (curCardAlpha == null || curCardAlpha > 0.85f) {
+                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                }
+                if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
+                    prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
                 }
             }
             if (customSeedArgb != null) {

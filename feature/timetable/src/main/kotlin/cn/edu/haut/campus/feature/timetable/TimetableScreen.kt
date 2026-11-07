@@ -451,7 +451,7 @@ fun TimetableScreen(
                     val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
                     val sheetBgColor = if (XPeachTheme.isLiquidGlass || XPeachTheme.hasActiveBackdrop) {
                         MaterialTheme.colorScheme.surface.copy(
-                            alpha = (XPeachTheme.glassCardAlpha * 0.76f).coerceIn(0.18f, 0.90f)
+                            alpha = (XPeachTheme.glassCardAlpha * 0.90f).coerceIn(0.62f, 0.94f)
                         )
                     } else {
                         MaterialTheme.colorScheme.surface

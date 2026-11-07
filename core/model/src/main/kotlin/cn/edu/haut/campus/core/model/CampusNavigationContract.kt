@@ -200,8 +200,8 @@ enum class HomeCardModule(
  */
 object ThemeVisualDefaults {
     const val DEFAULT_WALLPAPER_ALPHA: Float = 0.55f
-    const val DEFAULT_WALLPAPER_BLUR_DP: Float = 10f
-    const val DEFAULT_WALLPAPER_CARD_ALPHA: Float = 0.68f
+    const val DEFAULT_WALLPAPER_BLUR_DP: Float = 16f
+    const val DEFAULT_WALLPAPER_CARD_ALPHA: Float = 0.76f
     const val DEFAULT_TIMELINE_ZOOM_SCALE: Float = 2.0f
 
     const val MIN_GLASS_OPACITY: Float = 0.18f

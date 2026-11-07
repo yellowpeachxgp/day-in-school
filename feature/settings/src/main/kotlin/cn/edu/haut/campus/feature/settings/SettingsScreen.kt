@@ -3332,25 +3332,25 @@ private fun ThemePaletteAndCardLayoutSection(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             XPeachFilterPill(
-                                label = "通透 36%",
-                                selected = abs(localCardAlpha - 0.36f) < 0.04f,
+                                label = "通透 56%",
+                                selected = abs(localCardAlpha - 0.56f) < 0.04f,
                                 compact = true,
                                 onClick = {
-                                    localCardAlpha = 0.36f
-                                    localWallpaperBlur = 14f
-                                    localWallpaperAlpha = 0.70f
-                                    onUpdateWallpaperParams(0.70f, 14f, 0.36f)
+                                    localCardAlpha = 0.56f
+                                    localWallpaperBlur = 18f
+                                    localWallpaperAlpha = 0.62f
+                                    onUpdateWallpaperParams(0.62f, 18f, 0.56f)
                                 }
                             )
                             XPeachFilterPill(
-                                label = "标准 68%",
-                                selected = abs(localCardAlpha - 0.68f) < 0.04f,
+                                label = "标准 76%",
+                                selected = abs(localCardAlpha - 0.76f) < 0.04f,
                                 compact = true,
                                 onClick = {
-                                    localCardAlpha = 0.68f
-                                    localWallpaperBlur = 10f
+                                    localCardAlpha = 0.76f
+                                    localWallpaperBlur = 16f
                                     localWallpaperAlpha = 0.55f
-                                    onUpdateWallpaperParams(0.55f, 10f, 0.68f)
+                                    onUpdateWallpaperParams(0.55f, 16f, 0.76f)
                                 }
                             )
                             XPeachFilterPill(
@@ -3358,8 +3358,8 @@ private fun ThemePaletteAndCardLayoutSection(
                                 selected = false,
                                 compact = true,
                                 onClick = {
-                                    localCardAlpha = 0.68f
-                                    localWallpaperBlur = 10f
+                                    localCardAlpha = 0.76f
+                                    localWallpaperBlur = 16f
                                     localWallpaperAlpha = 0.55f
                                     onResetWallpaperParams()
                                 }
