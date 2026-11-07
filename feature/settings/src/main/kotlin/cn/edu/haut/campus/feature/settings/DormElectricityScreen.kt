@@ -1,5 +1,9 @@
 package cn.edu.haut.campus.feature.settings
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +36,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,12 +47,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
+import cn.edu.haut.campus.core.campusservices.UtilityMeterCategory
 import cn.edu.haut.campus.core.campusservices.UtilitySamplingPolicy
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.DormElectricityNotificationSubsystem
+import cn.edu.haut.campus.core.database.LibrarySeatAlarmSubsystem
 import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.designsystem.CampusMetricChart
 import cn.edu.haut.campus.core.designsystem.CampusMetricPoint
@@ -75,6 +88,8 @@ fun DormElectricityScreen(
     repository: CampusRepository,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
@@ -82,14 +97,50 @@ fun DormElectricityScreen(
     val meters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
     val readings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: 在线水电与趋势, 1: 手工抄表台账
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: 在线水电, 1: 手工台账
     var accountReadState by remember { mutableStateOf(repository.readUtilityAccountResult()) }
     var accountInput by remember { mutableStateOf("") }
     var isQuerying by remember { mutableStateOf(false) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
+    var hasNotifPermission by remember {
+        mutableStateOf(DormElectricityNotificationSubsystem.hasNotificationPermission(context))
+    }
 
     var showAddMeterDialog by remember { mutableStateOf(false) }
     var readingTargetMeter by remember { mutableStateOf<UtilityMeterDomain?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotifPermission = DormElectricityNotificationSubsystem.hasNotificationPermission(context)
+        statusBanner = if (granted || hasNotifPermission) {
+            "已开启电费通知权限。"
+        } else {
+            "通知权限未开启，请在系统设置中允许通知。"
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasNotifPermission = DormElectricityNotificationSubsystem.hasNotificationPermission(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    fun requestNotificationPermissionOrSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            runCatching {
+                context.startActivity(LibrarySeatAlarmSubsystem.buildNotificationSettingsIntent(context))
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         accountReadState = repository.readUtilityAccountResult()
@@ -105,7 +156,7 @@ fun DormElectricityScreen(
     ) {
         XPeachTopBar(
             title = "宿舍水电",
-            subtitle = "电费余量、每日采样与手工抄表",
+            subtitle = "电费余量、每日提醒与手工抄表",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -123,7 +174,7 @@ fun DormElectricityScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
-                items = listOf("在线水电与每日趋势", "手工水电台账"),
+                items = listOf("在线水电", "手工台账"),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
             )
@@ -137,6 +188,173 @@ fun DormElectricityScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                }
+            }
+
+            // 每日电费系统通知配置卡片
+            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "每日电费通知",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "每天弹窗提醒今日用电量与剩余电量",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = prefs.utilityDailyNotifyEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                repository.updateUtilityNotificationConfig(enabled = enabled)
+                            }
+                            if (enabled && !hasNotifPermission) {
+                                requestNotificationPermissionOrSettings()
+                            }
+                        }
+                    )
+                }
+
+                if (prefs.utilityDailyNotifyEnabled) {
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (!hasNotifPermission) {
+                        XPeachWell {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "系统通知权限未开启",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { requestNotificationPermissionOrSettings() }) {
+                                    Text("去开启")
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "提醒时间：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        for ((hour, label) in listOf(
+                            12 to "12:00",
+                            18 to "18:00",
+                            20 to "20:00",
+                            21 to "21:00",
+                            22 to "22:00"
+                        )) {
+                            XPeachFilterPill(
+                                label = label,
+                                selected = prefs.utilityDailyNotifyHour == hour,
+                                compact = true,
+                                onClick = {
+                                    scope.launch {
+                                        repository.updateUtilityNotificationConfig(dailyHour = hour)
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "低电预警：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        for ((threshold, label) in listOf(
+                            10f to "10度",
+                            15f to "15度",
+                            20f to "20度",
+                            30f to "30度"
+                        )) {
+                            XPeachFilterPill(
+                                label = label,
+                                selected = prefs.utilityLowBalanceThreshold.toInt() == threshold.toInt(),
+                                compact = true,
+                                onClick = {
+                                    scope.launch {
+                                        repository.updateUtilityNotificationConfig(lowBalanceThreshold = threshold)
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (!prefs.lastUtilityDailyNotifyDate.isNullOrBlank()) {
+                                "最近提醒：${prefs.lastUtilityDailyNotifyDate}"
+                            } else {
+                                "低于预警线将及时提醒充电费"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                if (!DormElectricityNotificationSubsystem.hasNotificationPermission(context)) {
+                                    requestNotificationPermissionOrSettings()
+                                    statusBanner = "请先允许通知权限后再测试。"
+                                } else {
+                                    scope.launch {
+                                        val ok = repository.sendTestUtilityNotification()
+                                        statusBanner = if (ok) {
+                                            "已发送电费提醒通知。"
+                                        } else {
+                                            "通知未发出，请检查系统通知权限。"
+                                        }
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.size(4.dp))
+                            Text("测试通知")
+                        }
+                    }
                 }
             }
 
@@ -155,14 +373,14 @@ fun DormElectricityScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusDotText(
-                            text = if (activeAcc != null) "已绑定学号" else "输入学号即查",
+                            text = if (activeAcc != null) "已绑定" else "未绑定",
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "输入你的学号（校园卡号），即可自动查询你在完美校园已绑定的寝室剩余电费与每日用电量。",
+                        text = "输入学号即可查询完美校园已绑定寝室的剩余电费与当日用电。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -200,8 +418,8 @@ fun DormElectricityScreen(
                         onValueChange = { accountInput = it },
                         label = {
                             Text(
-                                if (activeAcc != null) "输入新学号可更换绑定（留空直接刷新当前寝室）"
-                                else "输入你的学号 / 校园卡号"
+                                if (activeAcc != null) "输入新学号可更换（留空直接刷新）"
+                                else "学号 / 校园卡号"
                             )
                         },
                         singleLine = true,
@@ -220,7 +438,7 @@ fun DormElectricityScreen(
                             onClick = {
                                 scope.launch {
                                     isQuerying = true
-                                    statusBanner = "正在查询寝室剩余电费..."
+                                    statusBanner = "正在查询寝室电费..."
                                     repository.setAllowUnverifiedUtilityTransport(true)
                                     val res = repository.saveAndRefreshOnlineUtilities(
                                         rawAccount = accountInput.takeIf { it.isNotBlank() },
@@ -235,7 +453,7 @@ fun DormElectricityScreen(
                                         val okCount = snapshots.count { !it.failed }
                                         statusBanner = "已更新寝室水电（共读取 ${snapshots.size} 个房间，$okCount 个成功）。"
                                     }.onFailure { err ->
-                                        statusBanner = err.message ?: "查询未成功，请确认已在完美校园 App 绑定过宿舍房间"
+                                        statusBanner = err.message ?: "查询未成功，请确认已在完美校园绑定宿舍房间"
                                     }
                                 }
                             },
@@ -247,7 +465,7 @@ fun DormElectricityScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.size(6.dp))
-                            Text(if (isQuerying) "正在查询..." else "立即查询寝室电费")
+                            Text(if (isQuerying) "查询中..." else "查询电费")
                         }
                         if (isQuerying) {
                             CircularProgressIndicator(
@@ -262,13 +480,13 @@ fun DormElectricityScreen(
                 if (onlineRooms.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "暂无在线房间快照",
+                            text = "暂无房间数据",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "若已在完美校园绑定宿舍，开启上方开关并输入本人校园卡账号即可查询；也可切换至「手工水电台账」手动记录读数。",
+                            text = "输入学号即可同步完美校园已绑定的宿舍电表，也可切至「手工台账」记录读数。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -354,6 +572,11 @@ fun DormElectricityScreen(
                                         if (idx > 0) {
                                             XPeachInsetDivider(verticalPadding = 10.dp)
                                         }
+                                        val balanceNum = remember(dev.balanceRaw) {
+                                            DormElectricityNotificationSubsystem.parseBalanceNumber(dev.balanceRaw)
+                                        }
+                                        val isLowElectric = dev.category == UtilityMeterCategory.ELECTRICITY &&
+                                            balanceNum != null && balanceNum <= prefs.utilityLowBalanceThreshold.toDouble()
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -367,10 +590,22 @@ fun DormElectricityScreen(
                                                     .weight(1f)
                                                     .padding(end = 8.dp)
                                             )
-                                            XPeachStatusDotText(
-                                                text = dev.statusRaw,
-                                                dotColor = XPeachTheme.readablePrimary
-                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                if (isLowElectric) {
+                                                    XPeachStatusBadge(
+                                                        text = "电费偏低",
+                                                        containerColor = XPeachTheme.dangerContainer,
+                                                        contentColor = XPeachTheme.onDangerContainer
+                                                    )
+                                                }
+                                                XPeachStatusDotText(
+                                                    text = dev.statusRaw,
+                                                    dotColor = if (isLowElectric) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                                                )
+                                            }
                                         }
                                         Spacer(modifier = Modifier.height(6.dp))
                                         Row(
@@ -387,7 +622,7 @@ fun DormElectricityScreen(
                                                     text = dev.balanceRaw,
                                                     style = MaterialTheme.typography.titleSmall,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = XPeachTheme.readablePrimary
+                                                    color = if (isLowElectric) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
                                                 )
                                             }
                                             Column {
@@ -433,7 +668,7 @@ fun DormElectricityScreen(
                                         if (trendPoints.isNotEmpty()) {
                                             Spacer(modifier = Modifier.height(10.dp))
                                             Text(
-                                                text = "每日用电采样趋势",
+                                                text = "每日用电趋势",
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -456,12 +691,12 @@ fun DormElectricityScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "本地手工水电表计",
+                                text = "手工水电表计",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "无需联网，支持记录剩余电量/水量与购入充值，自动计算区间净消耗",
+                                text = "离线记录剩余读数与充值金额，自动计算区间用量",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -480,13 +715,13 @@ fun DormElectricityScreen(
                 if (meters.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "尚未添加手工表计",
+                            text = "尚未添加表计",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "点击右上角「添加表计」可建立宿舍电表或水表台账，随时记录剩余度数或金额。",
+                            text = "点击右上角「添加表计」建立宿舍水电台账。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

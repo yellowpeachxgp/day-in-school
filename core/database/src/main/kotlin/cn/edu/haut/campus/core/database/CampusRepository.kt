@@ -162,6 +162,10 @@ data class AppPreferencesState(
     val timetableInterchangeEnabled: Boolean = true,
     val allowUnverifiedUtilityTransport: Boolean = false,
     val lastUtilitySampleEpochMillis: Long? = null,
+    val utilityDailyNotifyEnabled: Boolean = true,
+    val utilityDailyNotifyHour: Int = 20,
+    val utilityLowBalanceThreshold: Float = 15f,
+    val lastUtilityDailyNotifyDate: String? = null,
     val selectedFocusMinutes: Int = 25,
     val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
     val selectedCampusId: String = "auto",
@@ -288,6 +292,10 @@ class CampusRepository internal constructor(
         val FF_TIMETABLE_INTERCHANGE = booleanPreferencesKey("ff_timetable_interchange_v1")
         val ALLOW_UNVERIFIED_UTILITY_TRANSPORT = booleanPreferencesKey("allow_unverified_utility_transport_v1")
         val LAST_UTILITY_SAMPLE_MS = longPreferencesKey("last_utility_sample_epoch_ms_v1")
+        val UTILITY_DAILY_NOTIFY_ENABLED = booleanPreferencesKey("utility_daily_notify_enabled_v1")
+        val UTILITY_DAILY_NOTIFY_HOUR = intPreferencesKey("utility_daily_notify_hour_v1")
+        val UTILITY_LOW_BALANCE_THRESHOLD = floatPreferencesKey("utility_low_balance_threshold_v1")
+        val LAST_UTILITY_DAILY_NOTIFY_DATE = stringPreferencesKey("last_utility_daily_notify_date_v1")
         val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
         val THEME_MODE = stringPreferencesKey("theme_mode_v1")
         val UI_DESIGN_STYLE = stringPreferencesKey("ui_design_style_v1")
@@ -498,6 +506,10 @@ class CampusRepository internal constructor(
             timetableInterchangeEnabled = prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
             allowUnverifiedUtilityTransport = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
             lastUtilitySampleEpochMillis = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS],
+            utilityDailyNotifyEnabled = prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true,
+            utilityDailyNotifyHour = (prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23),
+            utilityLowBalanceThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).coerceIn(5f, 100f),
+            lastUtilityDailyNotifyDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs),
             selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
@@ -2117,6 +2129,7 @@ class CampusRepository internal constructor(
                 prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
             }
         }
+        runCatching { notifyDailyUtilitySummaryIfEligible(finishedAtMs) }
         snapshots
     }
 
@@ -2130,18 +2143,122 @@ class CampusRepository internal constructor(
         val prefs = preferences.data.first()
         val utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true)
         val allowUnverified = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
-        if (!utilitiesEnabled || !allowUnverified) return false
+        if (!utilitiesEnabled || !allowUnverified) {
+            runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
+            return false
+        }
 
         val lastSampleMs = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] ?: 0L
-        if (!UtilitySamplingPolicy.shouldSample(lastSampleMs, nowEpochMs)) return false
+        if (!UtilitySamplingPolicy.shouldSample(lastSampleMs, nowEpochMs)) {
+            runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
+            return false
+        }
 
         val activeAccount = (utilityAccountStore.readAccountResult() as? UtilityAccountReadResult.Active)
-            ?.plainAccount ?: return false
+            ?.plainAccount ?: run {
+                runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
+                return false
+            }
 
-        return saveAndRefreshOnlineUtilities(
+        val sampled = saveAndRefreshOnlineUtilities(
             rawAccount = activeAccount,
             allowUnverified = true
         ).isSuccess
+        runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
+        return sampled
+    }
+
+    suspend fun updateUtilityNotificationConfig(
+        enabled: Boolean? = null,
+        dailyHour: Int? = null,
+        lowBalanceThreshold: Float? = null
+    ) {
+        preferences.edit { prefs ->
+            enabled?.let { prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] = it }
+            dailyHour?.let { prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] = it.coerceIn(8, 23) }
+            lowBalanceThreshold?.let { prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] = it.coerceIn(5f, 100f) }
+        }
+    }
+
+    suspend fun notifyDailyUtilitySummaryIfEligible(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        val prefs = preferences.data.first()
+        val utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true)
+        if (!utilitiesEnabled) return false
+
+        val notifyEnabled = prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true
+        if (!notifyEnabled) return false
+
+        val zdt = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID)
+        val todayDateText = zdt.toLocalDate().toString()
+        val currentHour = zdt.hour
+        val targetHour = (prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23)
+        val lowThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
+        val lastNotifiedDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE]
+
+        val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
+            onlineRooms = utilityOnlineRoomsFlow.first(),
+            dailySamples = utilityDailySamplesFlow.first(),
+            manualMeters = utilityMetersFlow.first(),
+            manualReadings = utilityReadingsFlow.first(),
+            todayDateText = todayDateText,
+            lowThreshold = lowThreshold
+        ) ?: return false
+
+        val shouldSend = DormElectricityNotificationSubsystem.shouldTriggerAutoNotify(
+            enabled = notifyEnabled,
+            lastNotifiedDate = lastNotifiedDate,
+            todayDateText = todayDateText,
+            currentHourInShanghai = currentHour,
+            targetHour = targetHour,
+            isLowBalance = payload.isLowBalance
+        )
+        if (!shouldSend) return false
+
+        val posted = DormElectricityNotificationSubsystem.postNotification(
+            context = appContext,
+            notificationId = DormElectricityNotificationSubsystem.NOTIFICATION_ID_DAILY,
+            title = payload.title,
+            body = payload.body,
+            profileId = profileId,
+            generation = activeSessionGeneration
+        )
+        if (posted) {
+            preferences.edit { editPrefs ->
+                editPrefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE] = todayDateText
+            }
+        }
+        return posted
+    }
+
+    suspend fun sendTestUtilityNotification(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean {
+        val prefs = preferences.data.first()
+        val todayDateText = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID).toLocalDate().toString()
+        val lowThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
+        val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
+            onlineRooms = utilityOnlineRoomsFlow.first(),
+            dailySamples = utilityDailySamplesFlow.first(),
+            manualMeters = utilityMetersFlow.first(),
+            manualReadings = utilityReadingsFlow.first(),
+            todayDateText = todayDateText,
+            lowThreshold = lowThreshold
+        ) ?: DormElectricityNotificationPayload(
+            title = "今日宿舍用电 · 通知预览",
+            body = "今日用电 3.20度 · 剩余电量 28.50度",
+            isLowBalance = false,
+            primaryRoomName = "宿舍"
+        )
+        return DormElectricityNotificationSubsystem.postNotification(
+            context = appContext,
+            notificationId = DormElectricityNotificationSubsystem.NOTIFICATION_ID_TEST,
+            title = payload.title,
+            body = payload.body,
+            profileId = profileId,
+            generation = activeSessionGeneration
+        )
     }
 
     suspend fun updateOnlineRoomCampus(roomId: String, campusCode: String?) {
@@ -2156,6 +2273,7 @@ class CampusRepository internal constructor(
         }
         preferences.edit { prefs ->
             prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
+            prefs.remove(PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE)
         }
     }
 
@@ -2211,6 +2329,7 @@ class CampusRepository internal constructor(
             note = note.trim().take(80)
         )
         utilityAndFocusDao.upsertReading(entity)
+        runCatching { notifyDailyUtilitySummaryIfEligible(entity.recordedAtEpochMs) }
     }
 
     suspend fun deleteUtilityReading(readingId: String) {

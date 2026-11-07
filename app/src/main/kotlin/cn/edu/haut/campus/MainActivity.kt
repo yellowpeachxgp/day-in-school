@@ -432,6 +432,9 @@ fun HautCampusRootApp(
             runCatching {
                 repository.syncWithCampusCloud()
             }
+            runCatching {
+                repository.performPeriodicUtilitySampleIfEligible()
+            }
             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
         }
     }
