@@ -2,7 +2,7 @@ package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.CampusCategory
-import cn.edu.haut.campus.core.model.CourseOccurrence
+import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -43,29 +43,30 @@ class CampusDiningRecommenderTest {
     @Test
     fun resolveClassBlocksForDay_mergesConsecutiveMorningClassesAndComputesOneHourBeforeEnd() {
         val date = LocalDate.of(2026, 11, 7)
-        val occ1 = CourseOccurrence(
+        val occ1 = ClassOccurrence(
             occurrenceId = "o1",
             courseId = "c1",
             ruleId = "r1",
-            title = "高等数学",
+            overrideId = null,
+            courseName = "高等数学",
             teacher = "张老师",
-            rawRoom = "3号教学楼3202",
-            buildingId = "b_t3",
-            buildingName = "3号教学楼",
+            colorArgb = 0xFF2563EB,
             date = date,
-            dayOfWeek = DayOfWeek.SATURDAY,
+            teachingWeek = 10,
+            weekday = DayOfWeek.SATURDAY,
             startPeriod = 1,
             endPeriod = 2,
             startTime = LocalTime.of(8, 0),
             endTime = LocalTime.of(9, 45),
-            colorArgb = 0xFF2563EB,
-            canceled = false,
-            overrideReason = null,
-            hasConflict = false
+            rawRoom = "3号教学楼3202",
+            buildingId = "b_t3",
+            buildingName = "3号教学楼",
+            isMakeupOrOverridden = false,
+            overrideReason = null
         )
         val occ2 = occ1.copy(
             occurrenceId = "o2",
-            title = "数据结构",
+            courseName = "数据结构",
             rawRoom = "工程训练中心304",
             buildingId = "b_eng",
             startPeriod = 3,
@@ -75,7 +76,7 @@ class CampusDiningRecommenderTest {
         )
         val occ3 = occ1.copy(
             occurrenceId = "o3",
-            title = "计算机网络",
+            courseName = "计算机网络",
             rawRoom = "3号教学楼3105",
             buildingId = "b_t3",
             startPeriod = 5,
@@ -90,7 +91,6 @@ class CampusDiningRecommenderTest {
             buildings = testBuildings
         )
 
-        // 1-2 节与 3-4 节间隔 15 分钟合并为一个上午连续课段（11:45 下课，10:45 触发推荐）
         assertEquals(2, blocks.size)
         val morningBlock = blocks[0]
         assertEquals(LocalTime.of(8, 0), morningBlock.startTime)
@@ -104,27 +104,27 @@ class CampusDiningRecommenderTest {
     @Test
     fun buildRecommendation_detectsOneHourWindowAndSupportsShufflingCanteens() {
         val date = LocalDate.of(2026, 11, 7)
-        val occ = CourseOccurrence(
+        val occ = ClassOccurrence(
             occurrenceId = "o2",
             courseId = "c2",
             ruleId = "r2",
-            title = "金工实习",
+            overrideId = null,
+            courseName = "金工实习",
             teacher = "李老师",
-            rawRoom = "工程训练中心201",
-            buildingId = "b_eng",
-            buildingName = "工程训练中心",
+            colorArgb = 0xFF2563EB,
             date = date,
-            dayOfWeek = DayOfWeek.SATURDAY,
+            teachingWeek = 10,
+            weekday = DayOfWeek.SATURDAY,
             startPeriod = 3,
             endPeriod = 4,
             startTime = LocalTime.of(10, 0),
             endTime = LocalTime.of(11, 45),
-            colorArgb = 0xFF2563EB,
-            canceled = false,
-            overrideReason = null,
-            hasConflict = false
+            rawRoom = "工程训练中心201",
+            buildingId = "b_eng",
+            buildingName = "工程训练中心",
+            isMakeupOrOverridden = false,
+            overrideReason = null
         )
-        // 10:50 距离 11:45 下课还有 55 分钟（处于下课前 1 小时窗口内）
         val nowAt1050 = date.atTime(10, 50).atZone(HAUT_ZONE_ID).toInstant()
         val rec0 = CampusDiningRecommender.buildRecommendation(
             date = date,
@@ -137,13 +137,11 @@ class CampusDiningRecommenderTest {
         assertTrue(rec0.isWithinOneHourBeforeEnd)
         assertEquals(55L, rec0.minutesUntilClassEnd)
         assertEquals(DiningMealSlot.LUNCH, rec0.mealSlot)
-        // 工程训练中心距离第四餐厅最近
         assertEquals("b_canteen4", rec0.primaryCandidate.profile.buildingId)
         assertEquals(5, rec0.allCandidates.size)
         assertNotNull(rec0.primaryCandidate.walkMinutes)
         assertTrue(rec0.notificationTitle.contains("距下课还有 55 分钟"))
 
-        // 点击「换一家」轮换食堂
         val rec1 = CampusDiningRecommender.buildRecommendation(
             date = date,
             now = nowAt1050,

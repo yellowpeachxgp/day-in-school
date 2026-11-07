@@ -1,7 +1,7 @@
 package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.Building
-import cn.edu.haut.campus.core.model.CourseOccurrence
+import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.ReminderEvent
 import cn.edu.haut.campus.core.model.ReminderEventType
@@ -169,11 +169,10 @@ object CampusDiningRecommender {
      */
     fun resolveClassBlocksForDay(
         date: LocalDate,
-        occurrences: List<CourseOccurrence>,
+        occurrences: List<ClassOccurrence>,
         buildings: List<Building> = emptyList()
     ): List<CourseClassBlock> {
         val active = occurrences
-            .filter { !it.canceled }
             .sortedWith(compareBy({ it.startTime }, { it.endTime }))
         if (active.isEmpty()) return emptyList()
 
@@ -202,14 +201,14 @@ object CampusDiningRecommender {
                 if (occ.endTime.isAfter(prev.endTime)) {
                     prev.endTime = occ.endTime
                 }
-                prev.lastCourseTitle = occ.title
+                prev.lastCourseTitle = occ.courseName
                 prev.lastClassroom = occ.rawRoom
                 prev.lastBuildingId = resolvedBldId ?: prev.lastBuildingId
             } else {
                 merged += MutableBlock(
                     startTime = occ.startTime,
                     endTime = occ.endTime,
-                    lastCourseTitle = occ.title,
+                    lastCourseTitle = occ.courseName,
                     lastClassroom = occ.rawRoom,
                     lastBuildingId = resolvedBldId
                 )
@@ -255,25 +254,27 @@ object CampusDiningRecommender {
                 val endLocal = (ev.endAt ?: ev.startAt.plus(Duration.ofMinutes(95)))
                     .atZone(HAUT_ZONE_ID)
                     .toLocalTime()
-                CourseOccurrence(
+                ClassOccurrence(
                     occurrenceId = ev.eventKey,
                     courseId = ev.courseId ?: ev.eventKey,
                     ruleId = ev.eventKey,
-                    title = ev.displayTitle,
+                    overrideId = null,
+                    courseName = ev.displayTitle,
                     teacher = "",
-                    rawRoom = ev.locationText.orEmpty(),
-                    buildingId = ev.buildingId,
-                    buildingName = null,
+                    colorArgb = 0xFF2563EB,
                     date = date,
-                    dayOfWeek = date.dayOfWeek,
+                    teachingWeek = 1,
+                    weekday = date.dayOfWeek,
                     startPeriod = 1,
                     endPeriod = 2,
                     startTime = startLocal,
                     endTime = endLocal,
-                    colorArgb = 0xFF2563EB,
-                    canceled = false,
+                    rawRoom = ev.locationText.orEmpty(),
+                    buildingId = ev.buildingId,
+                    buildingName = null,
+                    isMakeupOrOverridden = false,
                     overrideReason = null,
-                    hasConflict = false
+                    userModified = false
                 )
             }
             result += resolveClassBlocksForDay(date, syntheticOccurrences, buildings)
@@ -289,7 +290,7 @@ object CampusDiningRecommender {
     fun buildRecommendation(
         date: LocalDate,
         now: Instant,
-        occurrences: List<CourseOccurrence>,
+        occurrences: List<ClassOccurrence>,
         buildings: List<Building>,
         shuffleOffset: Int = 0
     ): ClassEndMealRecommendation {
