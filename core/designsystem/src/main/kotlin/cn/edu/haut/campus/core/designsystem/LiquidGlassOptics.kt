@@ -175,7 +175,7 @@ object LiquidGlassOptics {
             specular * (if (isDark) 0.82f else 1.0f) +
                 diffuse * (if (isDark) 0.40f else 1.0f)
         )
-        val adjusted = dDp - 0.5f
+        val adjusted = dDp
         val falloff = 1f - sat(-adjusted / 0.5f)
         val ramp = (if (falloff > 0f) 0.25f else 0f) + 0.75f * falloff
         val outline = ramp * sat((adjusted + 0.5f) / aa + 0.5f) * sat(-adjusted / aa + 0.5f)
@@ -297,7 +297,7 @@ object LiquidGlassOptics {
             float diffuse = diffuseDir * 0.18 * pow(1.0 - sat(-dDp / 4.5), 2.0) * coverage;
             float highlight = sat(specular * mix(1.0, 0.82, uDark) + diffuse * mix(1.0, 0.40, uDark));
 
-            float adjusted = dDp - 0.5;
+            float adjusted = dDp;
             float falloff = 1.0 - sat(-adjusted / 0.5);
             float ramp = mix(falloff > 0.0 ? 1.0 : 0.0, falloff, 0.75);
             float outline = ramp * sat((adjusted + 0.5) / 1.0 + 0.5) * sat(-adjusted / 1.0 + 0.5);
