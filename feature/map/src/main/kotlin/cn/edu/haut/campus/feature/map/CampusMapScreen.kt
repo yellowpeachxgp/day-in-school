@@ -2681,20 +2681,29 @@ private fun OfficialGisWebViewDialog(
                             settings.setGeolocationEnabled(true)
                             settings.loadWithOverviewMode = true
                             settings.useWideViewPort = true
-                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             webChromeClient = object : WebChromeClient() {
                                 override fun onGeolocationPermissionsShowPrompt(
                                     origin: String?,
                                     callback: GeolocationPermissions.Callback?
                                 ) {
-                                    callback?.invoke(origin, true, false)
+                                    val allowed = origin?.let {
+                                        val host = runCatching { android.net.Uri.parse(it).host }
+                                            .getOrNull()
+                                            ?.lowercase()
+                                        host == "haut.edu.cn" || host?.endsWith(".haut.edu.cn") == true
+                                    } == true
+                                    callback?.invoke(origin, allowed, false)
                                 }
                             }
                             webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView?,
                                     request: WebResourceRequest?
-                                ): Boolean = false
+                                ): Boolean {
+                                    val host = request?.url?.host?.lowercase().orEmpty()
+                                    return !(host == "haut.edu.cn" || host.endsWith(".haut.edu.cn"))
+                                }
                             }
                             loadUrl(HautOfficialGisClient.OFFICIAL_GIS_WEB_URL)
                         }

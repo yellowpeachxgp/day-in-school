@@ -139,7 +139,7 @@ fun TimetableScreen(
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
     var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 原始课表
-    var manualSevenDayOverride by remember { mutableStateOf<Boolean?>(null) }
+    var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
 
     val weekOccurrencesMap = remember(
         selectedWeek,
@@ -442,7 +442,7 @@ fun TimetableScreen(
                     val hasWeekendClasses = remember(activeWeekDates, activeWeekOccurrencesMap) {
                         activeWeekDates.drop(5).any { activeWeekOccurrencesMap[it].orEmpty().isNotEmpty() }
                     }
-                    val showSevenDays = manualSevenDayOverride ?: (hasWeekendClasses || today.dayOfWeek.value >= 6)
+                    val showSevenDays = manualSevenDayOverride ?: hasWeekendClasses
                     val visibleDates = remember(activeWeekDates, showSevenDays) {
                         if (showSevenDays) activeWeekDates else activeWeekDates.take(5)
                     }
@@ -544,7 +544,7 @@ fun TimetableScreen(
                         XPeachInsetDivider(verticalPadding = 0.dp)
 
                         // 1-10 节高透气网格（含午休/晚间视觉分段线 + 顶底分离式课程卡片）
-                        val slotHeightDp = 68.dp
+                        val slotHeightDp = if (showSevenDays) 68.dp else 74.dp
                         val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
                         val periodByNo = periodTimes.associateBy { it.periodNo }
 
@@ -654,7 +654,7 @@ fun TimetableScreen(
                                         val accentColor = XPeachTheme.courseAccent(occ.colorArgb)
                                         val blockBg = XPeachTheme.courseContainer(occ.colorArgb, active = isToday)
                                         val blockBorder = XPeachTheme.courseBorder(occ.colorArgb, active = isToday)
-                                        val compactRoom = formatCompactGridRoom(occ.rawRoom)
+                                        val compactRoom = formatCompactGridRoom(occ.rawRoom, compact = showSevenDays)
 
                                         Box(
                                             modifier = Modifier
@@ -662,12 +662,16 @@ fun TimetableScreen(
                                                 .offset(y = topOffset)
                                                 .height(blockHeight)
                                                 .padding(
-                                                    horizontal = if (showSevenDays) 1.5.dp else 2.dp,
+                                                    horizontal = if (showSevenDays) 1.5.dp else 2.5.dp,
                                                     vertical = 2.5.dp
                                                 )
-                                                .clip(RoundedCornerShape(10.dp))
+                                                .clip(RoundedCornerShape(if (showSevenDays) 10.dp else 12.dp))
                                                 .background(blockBg)
-                                                .border(0.8.dp, blockBorder, RoundedCornerShape(10.dp))
+                                                .border(
+                                                    0.8.dp,
+                                                    blockBorder,
+                                                    RoundedCornerShape(if (showSevenDays) 10.dp else 12.dp)
+                                                )
                                                 .clickable { editingOccurrence = occ }
                                         ) {
                                             Column(modifier = Modifier.fillMaxSize()) {
@@ -682,21 +686,34 @@ fun TimetableScreen(
                                                     modifier = Modifier
                                                         .fillMaxSize()
                                                         .padding(
-                                                            horizontal = if (showSevenDays) 3.dp else 4.5.dp,
-                                                            vertical = 4.dp
+                                                            horizontal = if (showSevenDays) 3.dp else 5.5.dp,
+                                                            vertical = if (showSevenDays) 4.dp else 5.dp
                                                         )
                                                 ) {
-                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.5.dp)) {
                                                         Text(
                                                             text = occ.courseName,
                                                             color = MaterialTheme.colorScheme.onSurface,
                                                             style = MaterialTheme.typography.labelSmall.copy(
+                                                                fontSize = if (showSevenDays) 11.5.sp else 12.5.sp,
                                                                 fontWeight = FontWeight.Bold,
-                                                                lineHeight = 14.sp
+                                                                lineHeight = if (showSevenDays) 14.sp else 15.5.sp
                                                             ),
-                                                            maxLines = if (span >= 3) 5 else 4,
+                                                            maxLines = if (span >= 3) 6 else if (showSevenDays) 4 else 5,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
+                                                        if (!showSevenDays && span >= 2 && !occ.teacher.isNullOrBlank() && overlapExtra == 0) {
+                                                            Text(
+                                                                text = occ.teacher!!,
+                                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                                    fontSize = 10.5.sp,
+                                                                    lineHeight = 12.5.sp
+                                                                ),
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
                                                         if (overlapExtra > 0) {
                                                             Text(
                                                                 text = "+${overlapExtra}门重课",
@@ -712,16 +729,20 @@ fun TimetableScreen(
                                                         Box(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .clip(RoundedCornerShape(5.dp))
+                                                                .clip(RoundedCornerShape(if (showSevenDays) 5.dp else 6.dp))
                                                                 .background(accentColor.copy(alpha = 0.13f))
-                                                                .padding(horizontal = 3.5.dp, vertical = 2.dp)
+                                                                .padding(
+                                                                    horizontal = if (showSevenDays) 3.5.dp else 4.5.dp,
+                                                                    vertical = if (showSevenDays) 2.dp else 2.5.dp
+                                                                )
                                                         ) {
                                                             Text(
                                                                 text = compactRoom,
                                                                 color = accentColor,
                                                                 style = MaterialTheme.typography.labelSmall.copy(
+                                                                    fontSize = if (showSevenDays) 10.5.sp else 11.5.sp,
                                                                     fontWeight = FontWeight.SemiBold,
-                                                                    lineHeight = 12.sp
+                                                                    lineHeight = if (showSevenDays) 12.sp else 13.5.sp
                                                                 ),
                                                                 maxLines = 2,
                                                                 overflow = TextOverflow.Ellipsis
@@ -894,7 +915,6 @@ fun TimetableScreen(
                         value = newName,
                         onValueChange = { newName = it },
                         label = { Text("课程名称") },
-                        placeholder = { Text("如：高等数学") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -903,7 +923,6 @@ fun TimetableScreen(
                         value = newRoom,
                         onValueChange = { newRoom = it },
                         label = { Text("上课教室") },
-                        placeholder = { Text("如：5号教学楼5204") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -1128,7 +1147,7 @@ fun TimetableScreen(
                                 val parsedDate = runCatching { LocalDate.parse(startDateInput.trim()) }.getOrNull()
                                 val activeTermId = term?.id
                                 if (parsedDate == null || activeTermId == null) {
-                                    dateError = "日期格式无效，如 2026-08-31"
+                                    dateError = "日期格式无效 (YYYY-MM-DD)"
                                 } else {
                                     scope.launch {
                                         repository.updateTermStartDate(activeTermId, parsedDate)
@@ -1169,7 +1188,7 @@ private fun dateMonthLabel(date: LocalDate?): String =
 
 private val GRID_BUILDING_REGEX = Regex("""^(\d+)号教学楼(\d+[A-Za-z0-9\-]*)$""")
 
-private fun formatCompactGridRoom(rawRoom: String): String {
+private fun formatCompactGridRoom(rawRoom: String, compact: Boolean = false): String {
     val cleaned = rawRoom
         .replace("河南工业大学", "")
         .replace("莲花街校区", "")
@@ -1180,11 +1199,11 @@ private fun formatCompactGridRoom(rawRoom: String): String {
     if (m != null) {
         return "${m.groupValues[1]}教${m.groupValues[2]}"
     }
-    return cleaned
+    val formatted = cleaned
         .replace("号教学楼", "教")
         .replace("教学楼", "教")
         .replace("号楼", "楼")
-        .replace("报告厅", "")
+    return if (compact) formatted.replace("报告厅", "") else formatted
 }
 
 @Composable
@@ -1438,7 +1457,7 @@ private fun RawMasterTimetableView(
             val days = remember(hasWeekendRules) {
                 if (hasWeekendRules) DayOfWeek.entries else DayOfWeek.entries.take(5)
             }
-            val colWidth = if (days.size == 5) 74.dp else 70.dp
+            val colWidth = if (days.size == 5) 86.dp else 70.dp
 
             Column(
                 modifier = Modifier
@@ -1535,7 +1554,7 @@ private fun RawMasterTimetableView(
                                                     fontWeight = FontWeight.Bold
                                                 ),
                                                 color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 2,
+                                                maxLines = if (days.size == 5) 3 else 2,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             if (compactRoom.isNotBlank()) {

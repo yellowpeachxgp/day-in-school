@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
 import cn.edu.haut.campus.core.domain.ChineseLabel
@@ -97,17 +98,24 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
             val byWeekday = snapshot.weekOccurrences.entries.associate { (date, list) ->
                 date.dayOfWeek to (date to list)
             }
+            val hasWeekendClasses = byWeekday[DayOfWeek.SATURDAY]?.second.orEmpty().isNotEmpty() ||
+                byWeekday[DayOfWeek.SUNDAY]?.second.orEmpty().isNotEmpty()
 
             for (spec in rowSpecs) {
                 val pair = byWeekday[spec.weekday]
+                val occurrences = pair?.second.orEmpty().sortedBy { it.startPeriod }
+                if (spec.weekday.value >= 6 && !hasWeekendClasses) {
+                    views.setViewVisibility(spec.rowContainerId, View.GONE)
+                    continue
+                }
+                views.setViewVisibility(spec.rowContainerId, View.VISIBLE)
                 val isToday = pair?.first == day.date || spec.weekday == day.date.dayOfWeek
                 val dayLabel = if (isToday) "● ${spec.weekday.ChineseLabel}" else spec.weekday.ChineseLabel
-                val occurrences = pair?.second.orEmpty().sortedBy { it.startPeriod }
                 val summary = if (occurrences.isEmpty()) {
-                    "自由学习与休息"
+                    "无课"
                 } else {
                     occurrences.joinToString("  ·  ") { occ ->
-                        val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(6)
+                        val shortName = if (snapshot.config.privacyMode) "课程" else occ.courseName.take(10)
                         val compactRoom = WidgetRoomFormatter.formatCompactRoom(occ.rawRoom, snapshot.config.privacyMode)
                         "${occ.startPeriod}-${occ.endPeriod} $shortName @$compactRoom"
                     }
