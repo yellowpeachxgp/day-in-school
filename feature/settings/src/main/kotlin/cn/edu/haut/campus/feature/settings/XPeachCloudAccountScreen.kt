@@ -373,8 +373,10 @@ fun XPeachCloudAccountScreen(
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
-                                        repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢（测试版）任务"
+                                        runCatching { repository.unlinkXpeachCloudAccountAndRevokeCloudPlans() }.fold(
+                                            onSuccess = { feedbackBanner = "已撤回云端凭据授权并退出账号；执行中或结果不确定的预约请到学校核对" },
+                                            onFailure = { feedbackBanner = "未能确认撤回全部云端授权，已保留登录以便重试：${it.message.orEmpty()}" }
+                                        )
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
