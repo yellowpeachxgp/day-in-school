@@ -148,9 +148,9 @@ enum class UiDesignStyle(
     ),
     LIQUID_GLASS(
         key = "LIQUID_GLASS",
-        label = "毛玻璃",
-        subtitle = "半透明卡片与背景模糊",
-        badgeText = "半透明"
+        label = "Liquid Glass",
+        subtitle = "液态透镜折射与双材质高光",
+        badgeText = "液态折射"
     ),
     FLUTTER_M3(
         key = "FLUTTER_M3",
@@ -803,7 +803,7 @@ enum class PresetThemePalette(
     MATCHA_CREAM("MATCHA_CREAM", "抹茶奶盖", "柔和浅绿", 0xFF22C55E, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
     LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "淡雅浅紫", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
     POMELO_SUN("POMELO_SUN", "西柚暖阳", "温暖珊瑚橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
-    LIQUID_GLASS("LIQUID_GLASS", "透明毛玻璃", "半透明模糊", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
+    LIQUID_GLASS("LIQUID_GLASS", "Liquid Glass", "液态透镜折射", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
     HAUT_BLUE("HAUT_BLUE", "工大蓝", "标准深蓝", 0xFF0066CC, recommendedStyle = UiDesignStyle.FLUTTER_M3),
     PINE_TEAL("PINE_TEAL", "松石青", "沉稳青绿", 0xFF0D9488),
     JADE_GREEN("JADE_GREEN", "翡翠绿", "自然深绿", 0xFF16A34A),
@@ -1521,7 +1521,8 @@ fun HautCampusTheme(
         LocalHasActiveBackdrop provides hasActiveBackdrop,
         LocalGlassCardAlpha provides safeCardAlpha,
         LocalGlassBlurDp provides safeBlurDp,
-        LocalBackdropAlpha provides safeWallpaperAlpha
+        LocalBackdropAlpha provides safeWallpaperAlpha,
+        LocalLiquidGlassWallpaperBitmap provides wallpaperBitmap
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
@@ -1663,8 +1664,8 @@ private fun FreshPastelAmbientBackdrop(
 }
 
 /**
- * 当用户启用“透明液态毛玻璃”主题但尚未导入图片壁纸时，
- * 自动渲染多层流光折射环境背景（支持随主题色、深浅色模式、背景透光度与模糊度实时联动）。
+ * 对齐 Glass-HQ/liquid-glass (`duo-day` / `duo-night` & `Backdrop.tsx`) 的多层流光波带环境底幕：
+ * 通过高对比度的天际波脊与焦散色带，使上方滑动或点按的每个 Liquid Glass 透镜产生肉眼可见的 22dp 边缘折射弯曲与色散。
  */
 @Composable
 private fun LiquidGlassAmbientBackdrop(
@@ -1675,52 +1676,67 @@ private fun LiquidGlassAmbientBackdrop(
     backdropAlpha: Float,
     blurDp: Float
 ) {
-    val baseColor = if (isDark) Color(0xFF070C14) else Color(0xFFEEF4FB)
-    val glowAlpha = backdropAlpha.coerceIn(0.12f, 1.0f)
-    val blurModifier = if (blurDp > 0.5f) {
-        Modifier.blur(radius = (blurDp * 0.6f).dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-    } else {
-        Modifier
-    }
+    val baseColor = if (isDark) Color(0xFF090E1B) else Color(0xFFE9F3FE)
+    val glowAlpha = backdropAlpha.coerceIn(0.24f, 1.0f)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(baseColor)
-            .then(blurModifier)
             .drawWithCache {
                 val w = size.width.coerceAtLeast(1f)
                 val h = size.height.coerceAtLeast(1f)
-                val orb1Color = primaryColor.copy(alpha = (if (isDark) 0.42f else 0.34f) * glowAlpha)
-                val orb2Color = secondaryColor.copy(alpha = (if (isDark) 0.36f else 0.30f) * glowAlpha)
-                val orb3Color = Color(0xFF6366F1).copy(alpha = (if (isDark) 0.30f else 0.22f) * glowAlpha)
-                val orb4Color = tertiaryColor.copy(alpha = (if (isDark) 0.26f else 0.20f) * glowAlpha)
+                val c1 = primaryColor.copy(alpha = (if (isDark) 0.56f else 0.44f) * glowAlpha)
+                val c2 = secondaryColor.copy(alpha = (if (isDark) 0.50f else 0.38f) * glowAlpha)
+                val c3 = tertiaryColor.copy(alpha = (if (isDark) 0.42f else 0.32f) * glowAlpha)
+                val indigo = (if (isDark) Color(0xFF616BFF) else Color(0xFF739EFF))
+                    .copy(alpha = (if (isDark) 0.36f else 0.28f) * glowAlpha)
 
-                val brush1 = Brush.radialGradient(
-                    colors = listOf(orb1Color, Color.Transparent),
-                    center = Offset(w * 0.16f, h * 0.14f),
-                    radius = w * 0.85f
+                // 斜向天际波脊 1 (y ≈ 0.32h)
+                val horizonBand1 = Brush.linearGradient(
+                    0.0f to Color.Transparent,
+                    0.24f to c1,
+                    0.34f to indigo,
+                    0.46f to Color.Transparent,
+                    start = Offset(0f, h * 0.14f),
+                    end = Offset(w * 0.45f, h * 0.54f)
                 )
-                val brush2 = Brush.radialGradient(
-                    colors = listOf(orb2Color, Color.Transparent),
-                    center = Offset(w * 0.88f, h * 0.26f),
-                    radius = w * 0.78f
+                // 斜向湖面反射波脊 2 (y ≈ 0.68h)
+                val horizonBand2 = Brush.linearGradient(
+                    0.0f to Color.Transparent,
+                    0.52f to Color.Transparent,
+                    0.66f to c2,
+                    0.78f to c3,
+                    0.92f to Color.Transparent,
+                    start = Offset(w * 0.15f, h * 0.35f),
+                    end = Offset(w * 0.85f, h * 0.95f)
                 )
-                val brush3 = Brush.radialGradient(
-                    colors = listOf(orb3Color, Color.Transparent),
-                    center = Offset(w * 0.24f, h * 0.68f),
-                    radius = w * 0.82f
+                // 对角焦散光带 3
+                val causticRibbon = Brush.linearGradient(
+                    0.0f to Color.Transparent,
+                    0.38f to Color.Transparent,
+                    0.50f to Color.White.copy(alpha = (if (isDark) 0.16f else 0.42f) * glowAlpha),
+                    0.62f to c1.copy(alpha = c1.alpha * 0.7f),
+                    1.0f to Color.Transparent,
+                    start = Offset(0f, 0f),
+                    end = Offset(w, h * 0.88f)
                 )
-                val brush4 = Brush.radialGradient(
-                    colors = listOf(orb4Color, Color.Transparent),
-                    center = Offset(w * 0.82f, h * 0.84f),
-                    radius = w * 0.76f
+                val topOrb = Brush.radialGradient(
+                    colors = listOf(c1, Color.Transparent),
+                    center = Offset(w * 0.18f, h * 0.16f),
+                    radius = w * 0.68f
+                )
+                val bottomOrb = Brush.radialGradient(
+                    colors = listOf(c2, Color.Transparent),
+                    center = Offset(w * 0.84f, h * 0.76f),
+                    radius = w * 0.64f
                 )
                 onDrawBehind {
-                    drawRect(brush = brush1)
-                    drawRect(brush = brush2)
-                    drawRect(brush = brush3)
-                    drawRect(brush = brush4)
+                    drawRect(brush = topOrb)
+                    drawRect(brush = bottomOrb)
+                    drawRect(brush = horizonBand1)
+                    drawRect(brush = horizonBand2)
+                    drawRect(brush = causticRibbon)
                 }
             }
     )
@@ -1861,8 +1877,19 @@ fun XPeachCard(
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val pressProgress by animateFloatAsState(
+        targetValue = if (onClick != null && isPressed) 1f else 0f,
+        animationSpec = if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
+        else LiquidGlassSpringPreset.RELEASE.toSpringSpec(),
+        label = "cardPressProgress"
+    )
+    // In Glass-HQ/liquid-glass (interaction.ts line 184), interactive glass swells outward (1 + grow) under a press
     val pressScale by animateFloatAsState(
-        targetValue = if (onClick != null && isPressed) 0.984f else 1f,
+        targetValue = if (onClick != null && isPressed) {
+            if (isLiquid) 1.018f else 0.984f
+        } else {
+            1f
+        },
         animationSpec = if (isLiquid) {
             if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
             else LiquidGlassSpringPreset.RELEASE.toSpringSpec()
@@ -1886,7 +1913,8 @@ fun XPeachCard(
                 baseColor = resolvedContainerColor,
                 material = LiquidGlassMaterial.REGULAR,
                 accentTint = customAccentBorder,
-                nested = false
+                nested = false,
+                pressProgress = pressProgress
             )
             .then(
                 if (onClick != null) {
@@ -1903,7 +1931,7 @@ fun XPeachCard(
         color = if (isLiquid) Color.Transparent else resolvedContainerColor,
         contentColor = scheme.onSurface,
         tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
+        shadowElevation = if (isLiquid) (if (isDark) 10.dp else 6.dp) else 0.dp,
         border = if (isLiquid) null else resolvedBorderStroke
     ) {
         Column(
@@ -2394,8 +2422,14 @@ fun XPeachIconButton(
     }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val pressProgress by animateFloatAsState(
+        targetValue = if (isPressed) 1f else 0f,
+        animationSpec = if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
+        else LiquidGlassSpringPreset.RELEASE.toSpringSpec(),
+        label = "iconBtnPressProgress"
+    )
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1f,
+        targetValue = if (isPressed) (if (isLiquid) 1.08f else 0.92f) else 1f,
         animationSpec = if (isLiquid) {
             if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
             else LiquidGlassSpringPreset.RELEASE.toSpringSpec()
@@ -2404,7 +2438,7 @@ fun XPeachIconButton(
         },
         label = "iconBtnCustomScale"
     )
-    val shape = RoundedCornerShape(if (isLiquid) 14.dp else FlutterM3Tokens.IconButtonCornerRadius)
+    val shape = if (isLiquid) CircleShape else RoundedCornerShape(FlutterM3Tokens.IconButtonCornerRadius)
     val borderMod = if (isLiquid) {
         Modifier
     } else {
@@ -2425,10 +2459,12 @@ fun XPeachIconButton(
                     Modifier.liquidGlassEffect(
                         enabled = true,
                         isDark = isDark,
-                        cornerRadius = 14.dp,
+                        cornerRadius = 999.dp,
                         baseColor = bgColor,
                         material = LiquidGlassMaterial.CLEAR,
-                        nested = true
+                        nested = true,
+                        refractionDp = 36f,
+                        pressProgress = pressProgress
                     )
                 } else {
                     Modifier.background(bgColor)
@@ -2570,8 +2606,14 @@ private fun XPeachFilterPillInternal(
     )
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val pressProgress by animateFloatAsState(
+        targetValue = if (isPressed) 1f else 0f,
+        animationSpec = if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
+        else LiquidGlassSpringPreset.RELEASE.toSpringSpec(),
+        label = "pillPressProgress"
+    )
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.955f else 1f,
+        targetValue = if (isPressed) (if (isLiquid) 1.055f else 0.955f) else 1f,
         animationSpec = if (isLiquid) {
             if (isPressed) LiquidGlassSpringPreset.PRESS.toSpringSpec()
             else LiquidGlassSpringPreset.RELEASE.toSpringSpec()
@@ -2601,7 +2643,9 @@ private fun XPeachFilterPillInternal(
                         baseColor = bg,
                         material = if (selected) LiquidGlassMaterial.REGULAR else LiquidGlassMaterial.CLEAR,
                         accentTint = if (selected) selectedFg else null,
-                        nested = true
+                        nested = true,
+                        refractionDp = 42f,
+                        pressProgress = pressProgress
                     )
                 } else {
                     Modifier
@@ -2672,8 +2716,10 @@ fun <T> XPeachSegmentedTabs(
         isDark -> MaterialTheme.colorScheme.surfaceContainerHighest
         else -> MaterialTheme.colorScheme.surface
     }
-    val outerRadius = if (isLiquid) 14.dp else FlutterM3Tokens.SegmentedContainerRadius
-    val innerRadius = if (isLiquid) LiquidGlassOptics.concentricRadius(outerRadius, 3.dp) else FlutterM3Tokens.SegmentedThumbRadius
+    // GlassTabs (tabs.tsx): outer list and sliding indicator are both capsules (999.dp),
+    // and GlassTabsIndicator is a clear refractive selection lens (material = CLEAR)
+    val outerRadius = if (isLiquid) 999.dp else FlutterM3Tokens.SegmentedContainerRadius
+    val innerRadius = if (isLiquid) 999.dp else FlutterM3Tokens.SegmentedThumbRadius
     val containerShape = RoundedCornerShape(outerRadius)
     val thumbShape = RoundedCornerShape(innerRadius)
     val count = options.size.coerceAtLeast(1)
@@ -2700,8 +2746,9 @@ fun <T> XPeachSegmentedTabs(
                         isDark = isDark,
                         cornerRadius = outerRadius,
                         baseColor = trackBg,
-                        material = LiquidGlassMaterial.CLEAR,
-                        nested = true
+                        material = LiquidGlassMaterial.REGULAR,
+                        nested = true,
+                        refractionDp = 44f
                     )
                 } else {
                     Modifier.background(trackBg)
@@ -2712,7 +2759,7 @@ fun <T> XPeachSegmentedTabs(
         val slotWidth = maxWidth / count
         val thumbOffsetX = slotWidth * animatedIndex
 
-        // 1. 物理弹簧滑动胶囊滑块（支持 Liquid Glass 高光折射边）
+        // 1. 物理弹簧滑动胶囊透镜滑块（对齐 GlassTabsIndicator: material = "clear", radius = "capsule"）
         val thumbBorderMod = if (isLiquid) {
             Modifier
         } else {
@@ -2732,10 +2779,10 @@ fun <T> XPeachSegmentedTabs(
                 .then(
                     if (!isDark) {
                         Modifier.shadow(
-                            elevation = 2.dp,
+                            elevation = if (isLiquid) 4.dp else 2.dp,
                             shape = thumbShape,
-                            ambientColor = Color.Black.copy(alpha = 0.10f),
-                            spotColor = Color.Black.copy(alpha = 0.12f)
+                            ambientColor = Color.Black.copy(alpha = 0.12f),
+                            spotColor = Color.Black.copy(alpha = 0.16f)
                         )
                     } else {
                         Modifier
@@ -2749,9 +2796,10 @@ fun <T> XPeachSegmentedTabs(
                             isDark = isDark,
                             cornerRadius = innerRadius,
                             baseColor = selectedThumbBg,
-                            material = LiquidGlassMaterial.REGULAR,
+                            material = LiquidGlassMaterial.CLEAR,
                             accentTint = XPeachTheme.readablePrimary,
-                            nested = true
+                            nested = true,
+                            refractionDp = 36f
                         )
                     } else {
                         Modifier.background(selectedThumbBg)

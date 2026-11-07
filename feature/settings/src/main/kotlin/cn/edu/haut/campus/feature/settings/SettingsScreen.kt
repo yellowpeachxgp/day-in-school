@@ -1924,7 +1924,7 @@ fun SettingsScreen(
                         repository.setThemePalette(key, seedArgb)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                         feedbackText = if (key == PresetThemePalette.LIQUID_GLASS.key) {
-                            "已启用透明毛玻璃主题"
+                            "已启用 Liquid Glass 主题"
                         } else {
                             "已更新主题配色"
                         }
@@ -1972,7 +1972,7 @@ fun SettingsScreen(
                 onResetWallpaperParams = {
                     scope.launch {
                         repository.resetWallpaperVisualParams()
-                        feedbackText = "已恢复默认毛玻璃透明度与模糊度"
+                        feedbackText = "已恢复默认 Liquid Glass 参数"
                     }
                 },
                 onClearWallpaper = {
@@ -2978,8 +2978,8 @@ private fun ThemePaletteAndCardLayoutSection(
                 )
             }
             val currentPaletteLabel = when {
-                isLiquidGlassActive && hasCustomWallpaper -> "毛玻璃 · 桌面背景"
-                isLiquidGlassActive -> "毛玻璃"
+                isLiquidGlassActive && hasCustomWallpaper -> "Liquid Glass · 桌面背景"
+                isLiquidGlassActive -> "Liquid Glass"
                 hasCustomWallpaper -> "${currentStyle.label} · 壁纸"
                 prefs.useDynamicColor -> "${currentStyle.label} · 系统取色"
                 prefs.themePaletteKey == "CUSTOM" -> "${currentStyle.label} · $customHexText"
@@ -3085,7 +3085,7 @@ private fun ThemePaletteAndCardLayoutSection(
                 Triple("FRESH_BREEZE", "MATCHA_CREAM", "抹茶奶盖"),
                 Triple("CREAM_PASTEL", "LAVENDER_MIST", "海盐香芋"),
                 Triple("CREAM_PASTEL", "POMELO_SUN", "西柚暖阳"),
-                Triple("LIQUID_GLASS", "LIQUID_GLASS", "冰川毛玻璃"),
+                Triple("LIQUID_GLASS", "LIQUID_GLASS", "Liquid Glass"),
                 Triple("FLUTTER_M3", "HAUT_BLUE", "工大蓝")
             )
         }
@@ -3132,7 +3132,7 @@ private fun ThemePaletteAndCardLayoutSection(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = if (isLiquidGlassActive) "毛玻璃背景已启用" else "背景图片与毛玻璃",
+                        text = if (isLiquidGlassActive) "Liquid Glass 已启用" else "背景图片与 Liquid Glass",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )

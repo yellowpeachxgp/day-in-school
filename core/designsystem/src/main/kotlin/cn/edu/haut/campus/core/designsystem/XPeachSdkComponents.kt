@@ -476,11 +476,19 @@ fun XPeachSwitchRow(
                 }
             }
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
-        )
+        if (XPeachTheme.isLiquidGlass) {
+            LiquidGlassSwitch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                enabled = enabled,
+            )
+        } else {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                enabled = enabled,
+            )
+        }
     }
 }
 

@@ -40,7 +40,8 @@ class LiquidGlassThemeSdkTest {
         val liquidPreset = PresetThemePalette.fromKey("LIQUID_GLASS")
         assertNotNull(liquidPreset)
         assertEquals(PresetThemePalette.LIQUID_GLASS, liquidPreset)
-        assertEquals("透明毛玻璃", liquidPreset?.label)
+        assertEquals("Liquid Glass", liquidPreset?.label)
+        assertEquals("Liquid Glass", UiDesignStyle.LIQUID_GLASS.label)
         assertEquals(0xFF0EA5E9L, liquidPreset?.seedArgb)
 
         // All 15 presets should have distinct keys and non-blank labels
@@ -82,5 +83,9 @@ class LiquidGlassThemeSdkTest {
         val (sideLight, sideAlpha) = LiquidGlassOptics.evaluateRimOverlay(dDp = -0.2f, nx = 1f, ny = 0f, isDark = false)
         assertTrue("Top edge should have strong specular highlight", topLight > sideLight)
         assertTrue(topAlpha > 0f && sideAlpha > 0f)
+
+        // 5. interaction.ts droplet press scale swells (> 1.0) when pressed
+        assertTrue(LiquidGlassOptics.dropletPressScale(120f, 44f, 1f) > 1.0f)
+        assertEquals(1.0f, LiquidGlassOptics.dropletPressScale(120f, 44f, 0f), 1e-4f)
     }
 }
