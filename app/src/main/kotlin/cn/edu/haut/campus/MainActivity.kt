@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -47,8 +48,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CalendarViewWeek
@@ -104,6 +107,7 @@ import cn.edu.haut.campus.core.designsystem.LiquidGlassMaterial
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
+import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.designsystem.liquidGlassEffect
 import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
@@ -116,6 +120,7 @@ import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
 import cn.edu.haut.campus.feature.settings.CampusCommunityScreen
+import cn.edu.haut.campus.feature.settings.CampusMomentsScreen
 import cn.edu.haut.campus.feature.settings.DormElectricityScreen
 import cn.edu.haut.campus.feature.settings.EmptyClassroomScreen
 import cn.edu.haut.campus.feature.settings.LibraryCatalogScreen
@@ -591,6 +596,13 @@ fun HautCampusRootApp(
                 CampusCommunityScreen(
                     repository = repository,
                     initialTab = communityInitialTab,
+                    onOpenMoments = { overlayScreen = "moments" },
+                    onBack = { overlayScreen = null }
+                )
+            }
+            "moments" -> {
+                CampusMomentsScreen(
+                    repository = repository,
                     onBack = { overlayScreen = null }
                 )
             }
@@ -668,6 +680,7 @@ fun HautCampusRootApp(
                                     communityInitialTab = 1
                                     overlayScreen = "community"
                                 },
+                                onNavigateToMoments = { overlayScreen = "moments" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
                                 resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
@@ -736,6 +749,7 @@ fun HautCampusRootApp(
                                     communityInitialTab = 1
                                     overlayScreen = "community"
                                 },
+                                onNavigateToMoments = { overlayScreen = "moments" },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
@@ -786,16 +800,28 @@ fun HautCampusRootApp(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "当前版本 v${releaseToPrompt.currentVersionNormalized}，可更新至 ${releaseToPrompt.tagName}",
+                        text = "当前版本 v${releaseToPrompt.currentVersionNormalized} → 最新版本 ${releaseToPrompt.tagName}",
                         style = MaterialTheme.typography.labelMedium,
                         color = XPeachTheme.readablePrimary
                     )
-                    XPeachInsetDivider(verticalPadding = 2.dp)
                     Text(
-                        text = releaseToPrompt.changelog.take(360),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "本次更新内容：",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+                    XPeachWell(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = releaseToPrompt.changelog.ifBlank { "常规性能优化与体验改进。" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (isDownloadingStartupApk || startupDownloadStatusText != null) {
                         if (isDownloadingStartupApk) {
                             LinearProgressIndicator(

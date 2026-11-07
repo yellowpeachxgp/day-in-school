@@ -296,6 +296,7 @@ fun EmptyClassroomScreen(
 fun CampusCommunityScreen(
     repository: CampusRepository,
     initialTab: Int = 0,
+    onOpenMoments: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -398,6 +399,39 @@ fun CampusCommunityScreen(
                     clubsCount = catalog.clubs.size,
                     competitionsCount = catalog.competitions.size
                 )
+            }
+
+            XPeachCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenMoments)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "失物招领与二手教材",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "寻物招领 (${prefs.campusMomentsSnapshot.posts.size}) · 二手课本 (${prefs.campusMomentsSnapshot.bookListings.size}) · 随身防丢码",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = "进入广场 ›",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = XPeachTheme.readablePrimary
+                    )
+                }
             }
 
             XPeachSegmentedTabs(
@@ -818,10 +852,10 @@ fun CampusCommunityScreen(
                 if (catalog.channels.isEmpty()) {
                     XPeachEmptyState(
                         title = "暂无校园频道",
-                        subtitle = "当前仅提供合作社团与竞赛指南",
+                        subtitle = "可前往「失物招领与二手教材」发布寻物招领、转让闲置课本或生成随身防丢码",
                         icon = Icons.Rounded.Forum,
-                        actionLabel = "查看竞赛指南",
-                        onAction = { selectedTab = 1 }
+                        actionLabel = "打开失物招领与二手书",
+                        onAction = onOpenMoments
                     )
                 }
                 for (channel in catalog.channels) {

@@ -150,6 +150,7 @@ fun TodayScreen(
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
+    onNavigateToMoments: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToGrades: () -> Unit = {},
     resetTrigger: Int = 0
@@ -645,6 +646,7 @@ fun TodayScreen(
                 onNavigateToEmptyClassrooms = onNavigateToEmptyClassrooms,
                 onNavigateToCommunity = onNavigateToCommunity,
                 onNavigateToCompetitions = onNavigateToCompetitions,
+                onNavigateToMoments = onNavigateToMoments,
                 onNavigateToParcelHub = onNavigateToParcelHub
             )
 
@@ -1722,6 +1724,7 @@ private fun TodayCampusBentoSection(
     onNavigateToEmptyClassrooms: () -> Unit,
     onNavigateToCommunity: () -> Unit,
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
+    onNavigateToMoments: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit
 ) {
     // 顶部板块栏：左标题 + 右侧「编辑」按钮
@@ -1922,7 +1925,9 @@ private fun TodayCampusBentoSection(
             id = HomeCardModule.CAMPUS_COMMUNITY.id,
             title = HomeCardModule.CAMPUS_COMMUNITY.title,
             badgeText = "$campusClubsCount 社团",
-            subtitle = "校园社团与交流群",
+            subtitle = "社团 · 失物招领 · 二手书",
+            actionPillText = "失物/二手",
+            onActionPillClick = onNavigateToMoments,
             onClick = onNavigateToCommunity
         ),
         HomeCardModule.COMPETITION_GUIDE.id to HomeModularCardSpec(

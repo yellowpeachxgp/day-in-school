@@ -145,4 +145,39 @@ class GitHubReleaseUpdaterTest {
         val location = "https://github.com/yellowpeachxgp/day-in-school/releases/tag/v0.11.2"
         assertEquals("v0.11.2", GitHubReleaseUpdater.extractTagFromReleaseUrl(location))
     }
+
+    @Test
+    fun `formatCleanChangelog strips markdown headers and full changelog footer`() {
+        val raw = """
+            ## 核心更新
+            - **新增失物招领与二手教材广场**：支持寻物招领、同校区疑似线索匹配、课表一键挂单出书与随身防丢码
+            - **优化版本更新日志**：在设置检查更新与启动更新弹窗中完整展示当前版本更新内容
+            **Full Changelog**: https://github.com/yellowpeachxgp/day-in-school/compare/v0.19.12...v0.20.0
+        """.trimIndent()
+        val formatted = GitHubReleaseUpdater.formatCleanChangelog(raw)
+        assertTrue(formatted.contains("【核心更新】"))
+        assertTrue(formatted.contains("新增失物招领与二手教材广场"))
+        assertFalse(formatted.contains("Full Changelog"))
+        assertFalse(formatted.contains("**"))
+    }
+
+    @Test
+    fun `campus moments catalog computes matched clues and anti-lost qr matrix`() {
+        val snapshot = cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
+        assertTrue(snapshot.posts.isNotEmpty())
+        assertTrue(snapshot.bookListings.isNotEmpty())
+        assertTrue(snapshot.antiLostTags.isNotEmpty())
+
+        val tag = snapshot.antiLostTags.first()
+        assertEquals(
+            "https://campus.yellowpeachxgp.com/claim/HAUT-TAG-7E2A9B",
+            tag.claimWebUrl("https://campus.yellowpeachxgp.com")
+        )
+        val matrix = tag.generateVisualMatrix(21)
+        assertEquals(21, matrix.size)
+        assertEquals(21, matrix[0].size)
+        // Finder pattern top-left corner and center are true
+        assertTrue(matrix[0][0])
+        assertTrue(matrix[3][3])
+    }
 }

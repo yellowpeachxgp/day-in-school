@@ -116,6 +116,9 @@ jobs:
           git rev-parse HEAD > release-assets/SOURCE_COMMIT.txt
           cp version-output.txt release-assets/VERSION.txt
           cp LICENSE THIRD_PARTY_NOTICES.md release-assets/
+          if [ -f RELEASE_NOTES.md ]; then
+            cp RELEASE_NOTES.md release-assets/RELEASE_NOTES.txt
+          fi
           tar -czf release-assets/LICENSES.tar.gz licenses
           printf 'https://github.com/%s/archive/%s.tar.gz\n' "$GITHUB_REPOSITORY" "$(git rev-parse HEAD)" > release-assets/SOURCE_ARCHIVE_URL.txt
           (cd release-assets && sha256sum *.apk > SHA256SUMS.txt)
@@ -137,7 +140,8 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.TAG_NAME }}
           name: "日在校园 ${{ steps.meta.outputs.TAG_NAME }}（Android 12–16）"
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           files: release-assets/*
 
       - name: 校验并补齐 GitHub Release 发行资产
@@ -146,6 +150,9 @@ jobs:
           TAG_NAME: ${{ steps.meta.outputs.TAG_NAME }}
           RELEASE_VERSION: ${{ steps.meta.outputs.VERSION_NAME }}
         run: |
+          if [ -f RELEASE_NOTES.md ]; then
+            gh release edit "$TAG_NAME" --notes-file RELEASE_NOTES.md || true
+          fi
           for f in release-assets/*; do
             fname=$(basename "$f")
             if ! gh release view "$TAG_NAME" --json assets -q '.assets[].name' | grep -Fxq "$fname"; then

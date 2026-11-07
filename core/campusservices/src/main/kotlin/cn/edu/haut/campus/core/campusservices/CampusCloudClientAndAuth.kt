@@ -1,6 +1,8 @@
 package cn.edu.haut.campus.core.campusservices
 
 import android.net.Uri
+import cn.edu.haut.campus.core.model.AntiLostTagItem
+import cn.edu.haut.campus.core.model.AntiLostTagReport
 import cn.edu.haut.campus.core.model.CampusClubCategory
 import cn.edu.haut.campus.core.model.CampusClubItem
 import cn.edu.haut.campus.core.model.CampusCommunityBulletin
@@ -8,7 +10,15 @@ import cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog
 import cn.edu.haut.campus.core.model.CampusCompetitionCategory
 import cn.edu.haut.campus.core.model.CampusCompetitionItem
 import cn.edu.haut.campus.core.model.CampusMajorTrack
+import cn.edu.haut.campus.core.model.CampusMomentsSnapshot
+import cn.edu.haut.campus.core.model.MomentsIsbnCatalogEntry
+import cn.edu.haut.campus.core.model.MomentsMatchedClue
+import cn.edu.haut.campus.core.model.MomentsPostComment
+import cn.edu.haut.campus.core.model.MomentsPostItem
+import cn.edu.haut.campus.core.model.MomentsPostType
+import cn.edu.haut.campus.core.model.MomentsTextbookListing
 import cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog
+import cn.edu.haut.campus.core.model.PresetCampusMomentsCatalog
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1215,4 +1225,481 @@ object CampusCloudOidcHelper {
 
     fun buildRefundIdempotencyKey(orderId: String): String =
         "dis:reservation:$orderId:refund:v1"
+
+    // --- Campus Moments (Lost & Found Plaza, Second-Hand Textbooks, Anti-Lost QR Tags) ---
+    fun fetchMomentsSnapshot(
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Pair<CampusMomentsSnapshot, String>? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val raw = httpJsonRequest(
+            method = "GET",
+            url = "$cleanBase/api/v1/moments/snapshot",
+            bodyJson = null,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        val data = root.optJSONObject("data") ?: return null
+        val snap = parseMomentsSnapshotJson(data) ?: return null
+        snap to data.toString()
+    }.getOrNull()
+
+    fun publishMomentsPostToCloud(
+        post: MomentsPostItem,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsPostItem? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("id", post.id)
+            .put("type", post.type.wireName)
+            .put("title", post.title)
+            .put("category", post.category)
+            .put("campus", post.campus)
+            .put("location", post.location)
+            .put("description", post.description)
+            .put("contact", post.contact)
+            .put("reward_note", post.rewardNote)
+            .put("author_name", post.authorName)
+            .put("author_student_no_masked", post.authorStudentNoMasked)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts",
+            bodyJson = body,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseMomentsPostJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun addMomentsCommentToCloud(
+        postId: String,
+        authorName: String,
+        content: String,
+        contactHint: String = "",
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsPostItem? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("author_name", authorName)
+            .put("content", content)
+            .put("contact_hint", contactHint)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/comments",
+            bodyJson = body,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseMomentsPostJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun mutateMomentsPostOnCloud(
+        postId: String,
+        action: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Boolean = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/action",
+            bodyJson = JSONObject().put("action", action).toString(),
+            bearerToken = null
+        )
+        JSONObject(raw).optBoolean("ok", false)
+    }.getOrDefault(false)
+
+    fun publishMomentsBookToCloud(
+        book: MomentsTextbookListing,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsTextbookListing? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("id", book.id)
+            .put("title", book.title)
+            .put("isbn", book.isbn)
+            .put("author_publisher", book.authorPublisher)
+            .put("course_name", book.courseName)
+            .put("major_track", book.majorTrack.name)
+            .put("campus", book.campus)
+            .put("condition_label", book.conditionLabel)
+            .put("price_yuan", book.priceYuan)
+            .put("original_price_yuan", book.originalPriceYuan)
+            .put("delivery_mode", book.deliveryMode)
+            .put("contact", book.contact)
+            .put("seller_name", book.sellerName)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/books",
+            bodyJson = body,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseMomentsBookJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun mutateMomentsBookOnCloud(
+        bookId: String,
+        action: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Boolean = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/books/${Uri.encode(bookId)}/action",
+            bodyJson = JSONObject().put("action", action).toString(),
+            bearerToken = null
+        )
+        JSONObject(raw).optBoolean("ok", false)
+    }.getOrDefault(false)
+
+    fun upsertAntiLostTagOnCloud(
+        tag: AntiLostTagItem,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): AntiLostTagItem? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("tag_code", tag.tagCode)
+            .put("item_name", tag.itemName)
+            .put("category", tag.category)
+            .put("campus", tag.campus)
+            .put("owner_name", tag.ownerName)
+            .put("owner_contact", tag.ownerContact)
+            .put("return_note", tag.returnNote)
+            .put("status", tag.status)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/anti-lost-tags",
+            bodyJson = body,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseAntiLostTagJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun reportAntiLostTagFoundOnCloud(
+        tagCode: String,
+        finderName: String,
+        foundLocation: String,
+        finderContact: String,
+        message: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): AntiLostTagItem? = runCatching {
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("finder_name", finderName)
+            .put("found_location", foundLocation)
+            .put("finder_contact", finderContact)
+            .put("message", message)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/anti-lost-tags/${Uri.encode(tagCode.trim().uppercase())}/report-found",
+            bodyJson = body,
+            bearerToken = null
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseAntiLostTagJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun parseMomentsSnapshotJsonString(rawJson: String?): CampusMomentsSnapshot? {
+        if (rawJson.isNullOrBlank()) return null
+        return runCatching { parseMomentsSnapshotJson(JSONObject(rawJson)) }.getOrNull()
+    }
+
+    fun encodeMomentsSnapshotJsonString(snapshot: CampusMomentsSnapshot): String {
+        val root = JSONObject()
+        root.put("updated_at", snapshot.updatedAt)
+        val postsArr = JSONArray()
+        for (p in snapshot.posts) {
+            val commentsArr = JSONArray()
+            for (c in p.comments) {
+                commentsArr.put(
+                    JSONObject()
+                        .put("id", c.id)
+                        .put("author_name", c.authorName)
+                        .put("content", c.content)
+                        .put("contact_hint", c.contactHint)
+                        .put("created_at", c.createdAt)
+                )
+            }
+            postsArr.put(
+                JSONObject()
+                    .put("id", p.id)
+                    .put("type", p.type.wireName)
+                    .put("title", p.title)
+                    .put("category", p.category)
+                    .put("campus", p.campus)
+                    .put("location", p.location)
+                    .put("description", p.description)
+                    .put("contact", p.contact)
+                    .put("reward_note", p.rewardNote)
+                    .put("status", p.status)
+                    .put("author_name", p.authorName)
+                    .put("author_student_no_masked", p.authorStudentNoMasked)
+                    .put("likes_count", p.likesCount)
+                    .put("favorites_count", p.favoritesCount)
+                    .put("comments", commentsArr)
+                    .put("created_at", p.createdAt)
+                    .put("updated_at", p.updatedAt)
+            )
+        }
+        root.put("posts", postsArr)
+
+        val booksArr = JSONArray()
+        for (b in snapshot.bookListings) {
+            booksArr.put(
+                JSONObject()
+                    .put("id", b.id)
+                    .put("title", b.title)
+                    .put("isbn", b.isbn)
+                    .put("author_publisher", b.authorPublisher)
+                    .put("course_name", b.courseName)
+                    .put("major_track", b.majorTrack.name)
+                    .put("campus", b.campus)
+                    .put("condition_label", b.conditionLabel)
+                    .put("price_yuan", b.priceYuan)
+                    .put("original_price_yuan", b.originalPriceYuan)
+                    .put("delivery_mode", b.deliveryMode)
+                    .put("contact", b.contact)
+                    .put("seller_name", b.sellerName)
+                    .put("status", b.status)
+                    .put("likes_count", b.likesCount)
+                    .put("created_at", b.createdAt)
+            )
+        }
+        root.put("book_listings", booksArr)
+
+        val tagsArr = JSONArray()
+        for (t in snapshot.antiLostTags) {
+            val repArr = JSONArray()
+            for (r in t.reports) {
+                repArr.put(
+                    JSONObject()
+                        .put("id", r.id)
+                        .put("finder_name", r.finderName)
+                        .put("found_location", r.foundLocation)
+                        .put("finder_contact", r.finderContact)
+                        .put("message", r.message)
+                        .put("created_at", r.createdAt)
+                )
+            }
+            tagsArr.put(
+                JSONObject()
+                    .put("id", t.id)
+                    .put("tag_code", t.tagCode)
+                    .put("item_name", t.itemName)
+                    .put("category", t.category)
+                    .put("campus", t.campus)
+                    .put("owner_name", t.ownerName)
+                    .put("owner_contact", t.ownerContact)
+                    .put("return_note", t.returnNote)
+                    .put("status", t.status)
+                    .put("reports", repArr)
+                    .put("created_at", t.createdAt)
+                    .put("updated_at", t.updatedAt)
+            )
+        }
+        root.put("anti_lost_tags", tagsArr)
+        return root.toString()
+    }
+
+    private fun parseMomentsPostJson(obj: JSONObject): MomentsPostItem? {
+        val id = obj.optCleanString("id")
+        val title = obj.optCleanString("title")
+        if (id.isEmpty() || title.isEmpty()) return null
+        val commentsArr = obj.optJSONArray("comments")
+        val comments = buildList {
+            if (commentsArr != null) {
+                for (i in 0 until commentsArr.length()) {
+                    val c = commentsArr.optJSONObject(i) ?: continue
+                    val content = c.optCleanString("content")
+                    if (content.isEmpty()) continue
+                    add(
+                        MomentsPostComment(
+                            id = c.optCleanString("id", "mc_$i"),
+                            authorName = c.optCleanString("author_name", "热心同学"),
+                            content = content,
+                            contactHint = c.optCleanString("contact_hint"),
+                            createdAt = c.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+                        )
+                    )
+                }
+            }
+        }
+        val cluesArr = obj.optJSONArray("matched_clues")
+        val matchedClues = buildList {
+            if (cluesArr != null) {
+                for (i in 0 until cluesArr.length()) {
+                    val cl = cluesArr.optJSONObject(i) ?: continue
+                    val cid = cl.optCleanString("id")
+                    val cTitle = cl.optCleanString("title")
+                    if (cid.isEmpty() || cTitle.isEmpty()) continue
+                    add(
+                        MomentsMatchedClue(
+                            id = cid,
+                            type = MomentsPostType.fromWireName(cl.optCleanString("type")),
+                            title = cTitle,
+                            location = cl.optCleanString("location", "校内"),
+                            contact = cl.optCleanString("contact"),
+                            matchScore = cl.optInt("match_score", 60)
+                        )
+                    )
+                }
+            }
+        }
+        return MomentsPostItem(
+            id = id,
+            type = MomentsPostType.fromWireName(obj.optCleanString("type")),
+            title = title,
+            category = obj.optCleanString("category", "其他物品"),
+            campus = obj.optCleanString("campus", "莲花街校区"),
+            location = obj.optCleanString("location", "校内"),
+            description = obj.optCleanString("description"),
+            contact = obj.optCleanString("contact"),
+            rewardNote = obj.optCleanString("reward_note"),
+            status = obj.optCleanString("status", "OPEN"),
+            authorName = obj.optCleanString("author_name", "河工大同学"),
+            authorStudentNoMasked = obj.optCleanString("author_student_no_masked"),
+            likesCount = obj.optInt("likes_count", 0).coerceAtLeast(0),
+            favoritesCount = obj.optInt("favorites_count", 0).coerceAtLeast(0),
+            comments = comments,
+            matchedClues = matchedClues,
+            createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" },
+            updatedAt = obj.optCleanString("updated_at")
+        )
+    }
+
+    private fun parseMomentsBookJson(obj: JSONObject): MomentsTextbookListing? {
+        val id = obj.optCleanString("id")
+        val title = obj.optCleanString("title")
+        if (id.isEmpty() || title.isEmpty()) return null
+        return MomentsTextbookListing(
+            id = id,
+            title = title,
+            isbn = obj.optCleanString("isbn"),
+            authorPublisher = obj.optCleanString("author_publisher", "高校教材"),
+            courseName = obj.optCleanString("course_name"),
+            majorTrack = CampusMajorTrack.fromWireName(obj.optCleanString("major_track")),
+            campus = obj.optCleanString("campus", "莲花街校区"),
+            conditionLabel = obj.optCleanString("condition_label", "九成新"),
+            priceYuan = obj.optInt("price_yuan", 15).coerceAtLeast(0),
+            originalPriceYuan = obj.optInt("original_price_yuan", 55).coerceAtLeast(0),
+            deliveryMode = obj.optCleanString("delivery_mode", "莲花街自提"),
+            contact = obj.optCleanString("contact"),
+            sellerName = obj.optCleanString("seller_name", "河工大同学"),
+            status = obj.optCleanString("status", "AVAILABLE"),
+            likesCount = obj.optInt("likes_count", 0).coerceAtLeast(0),
+            createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" }
+        )
+    }
+
+    private fun parseAntiLostTagJson(obj: JSONObject): AntiLostTagItem? {
+        val tagCode = obj.optCleanString("tag_code").uppercase()
+        val itemName = obj.optCleanString("item_name")
+        if (tagCode.isEmpty() || itemName.isEmpty()) return null
+        val repArr = obj.optJSONArray("reports")
+        val reports = buildList {
+            if (repArr != null) {
+                for (i in 0 until repArr.length()) {
+                    val r = repArr.optJSONObject(i) ?: continue
+                    val loc = r.optCleanString("found_location")
+                    if (loc.isEmpty()) continue
+                    add(
+                        AntiLostTagReport(
+                            id = r.optCleanString("id", "rep_$i"),
+                            finderName = r.optCleanString("finder_name", "热心同学"),
+                            foundLocation = loc,
+                            finderContact = r.optCleanString("finder_contact"),
+                            message = r.optCleanString("message"),
+                            createdAt = r.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+                        )
+                    )
+                }
+            }
+        }
+        return AntiLostTagItem(
+            id = obj.optCleanString("id", "tag_$tagCode"),
+            tagCode = tagCode,
+            itemName = itemName,
+            category = obj.optCleanString("category", "水杯雨伞"),
+            campus = obj.optCleanString("campus", "莲花街校区"),
+            ownerName = obj.optCleanString("owner_name", "河工大同学"),
+            ownerContact = obj.optCleanString("owner_contact"),
+            returnNote = obj.optCleanString("return_note", "拾到请联系失主或放至就近服务台"),
+            status = obj.optCleanString("status", "NORMAL"),
+            reports = reports,
+            createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" },
+            updatedAt = obj.optCleanString("updated_at")
+        )
+    }
+
+    private fun parseMomentsSnapshotJson(data: JSONObject): CampusMomentsSnapshot? {
+        return runCatching {
+            val postsArr = data.optJSONArray("posts")
+            val parsedPosts = buildList {
+                if (postsArr != null) {
+                    for (i in 0 until postsArr.length()) {
+                        val pObj = postsArr.optJSONObject(i) ?: continue
+                        parseMomentsPostJson(pObj)?.let { add(it) }
+                    }
+                }
+            }
+            val booksArr = data.optJSONArray("book_listings")
+            val parsedBooks = buildList {
+                if (booksArr != null) {
+                    for (i in 0 until booksArr.length()) {
+                        val bObj = booksArr.optJSONObject(i) ?: continue
+                        parseMomentsBookJson(bObj)?.let { add(it) }
+                    }
+                }
+            }
+            val tagsArr = data.optJSONArray("anti_lost_tags")
+            val parsedTags = buildList {
+                if (tagsArr != null) {
+                    for (i in 0 until tagsArr.length()) {
+                        val tObj = tagsArr.optJSONObject(i) ?: continue
+                        parseAntiLostTagJson(tObj)?.let { add(it) }
+                    }
+                }
+            }
+            val isbnArr = data.optJSONArray("isbn_catalog")
+            val parsedIsbn = buildList {
+                if (isbnArr != null) {
+                    for (i in 0 until isbnArr.length()) {
+                        val c = isbnArr.optJSONObject(i) ?: continue
+                        val isbn = c.optCleanString("isbn")
+                        val title = c.optCleanString("title")
+                        if (isbn.isNotEmpty() && title.isNotEmpty()) {
+                            add(
+                                MomentsIsbnCatalogEntry(
+                                    isbn = isbn,
+                                    title = title,
+                                    authorPublisher = c.optCleanString("author_publisher", "高等教育出版社"),
+                                    courseName = c.optCleanString("course_name"),
+                                    majorTrack = CampusMajorTrack.fromWireName(c.optCleanString("major_track")),
+                                    originalPriceYuan = c.optInt("original_price_yuan", 50)
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            CampusMomentsSnapshot(
+                updatedAt = data.optCleanString("updated_at"),
+                posts = parsedPosts.ifEmpty { PresetCampusMomentsCatalog.defaultPosts },
+                bookListings = parsedBooks.ifEmpty { PresetCampusMomentsCatalog.defaultBookListings },
+                antiLostTags = parsedTags.ifEmpty { PresetCampusMomentsCatalog.defaultAntiLostTags },
+                isbnCatalog = parsedIsbn.ifEmpty { PresetCampusMomentsCatalog.defaultIsbnCatalog }
+            )
+        }.getOrNull()
+    }
 }

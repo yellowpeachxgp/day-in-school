@@ -160,6 +160,7 @@ fun SettingsScreen(
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
+    onNavigateToMoments: () -> Unit = onNavigateToCommunity,
     onNavigateToSchoolCenter: () -> Unit = {},
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToXpeachCloud: () -> Unit = {},
@@ -305,10 +306,14 @@ fun SettingsScreen(
     var apkDownloadProgress by remember { mutableStateOf(0f) }
     var releaseStatusMessage by remember { mutableStateOf<String?>(null) }
     var downloadedApkFile by remember { mutableStateOf<File?>(null) }
+    var showReleaseNotesDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(prefs.networkProxyConfig.mode, prefs.networkProxyConfig.presetMirrorKey) {
         isCheckingRelease = true
-        val checkRes = GitHubReleaseUpdater.checkLatestRelease(currentInstalledVersion)
+        val checkRes = GitHubReleaseUpdater.checkLatestRelease(
+            currentVersionName = currentInstalledVersion,
+            proxyConfig = prefs.networkProxyConfig
+        )
         isCheckingRelease = false
         checkRes.onSuccess { info ->
             releaseInfoState = info
@@ -775,6 +780,41 @@ fun SettingsScreen(
                         }
                         Text(
                             text = "进入计时 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToMoments)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "失物招领与二手教材",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "寻物招领 (${prefs.campusMomentsSnapshot.posts.size}) · 二手课本 (${prefs.campusMomentsSnapshot.bookListings.size}) · 防丢码",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "互助广场 ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )
@@ -2237,19 +2277,47 @@ fun SettingsScreen(
                     )
 
                     releaseInfoState?.let { info ->
-                        Text(
-                            text = "最新版本：${info.releaseTitle} (${info.tagName}) · 通道：${info.resolvedViaRoute}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (info.changelog.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = info.changelog.take(240),
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "最新版本：${info.releaseTitle} (${info.tagName}) · 通道：${info.resolvedViaRoute}",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis
+                                modifier = Modifier.weight(1f)
                             )
+                            if (info.changelog.isNotBlank()) {
+                                TextButton(
+                                    onClick = { showReleaseNotesDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(24.dp)
+                                ) {
+                                    Text("查看更新日志", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        if (info.changelog.isNotBlank()) {
+                            XPeachWell(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showReleaseNotesDialog = true }
+                            ) {
+                                Text(
+                                    text = "更新内容（${info.tagName}）：",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = info.changelog,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 8,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
 
@@ -2286,6 +2354,7 @@ fun SettingsScreen(
                                 isCheckingRelease = false
                                 res.onSuccess { info ->
                                     releaseInfoState = info
+                                    showReleaseNotesDialog = true
                                     releaseStatusMessage = if (info.hasNewerVersion) {
                                         "发现新版本 ${info.tagName}（${info.resolvedViaRoute}），点击右侧按钮下载安装。"
                                     } else {
@@ -2393,6 +2462,56 @@ fun SettingsScreen(
             // 预留底部悬浮胶囊导航栏高度
             Spacer(modifier = Modifier.height(96.dp))
         }
+    }
+
+    val dialogReleaseInfo = releaseInfoState
+    if (showReleaseNotesDialog && dialogReleaseInfo != null) {
+        XPeachAlertDialog(
+            onDismissRequest = { showReleaseNotesDialog = false },
+            title = {
+                Text(
+                    text = if (dialogReleaseInfo.hasNewerVersion) {
+                        "发现新版本 ${dialogReleaseInfo.tagName}"
+                    } else {
+                        "版本更新日志 ${dialogReleaseInfo.tagName}"
+                    },
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (dialogReleaseInfo.hasNewerVersion) {
+                            "当前版本 v$currentInstalledVersion → 最新版本 ${dialogReleaseInfo.tagName}（${dialogReleaseInfo.resolvedViaRoute}）"
+                        } else {
+                            "当前版本 v$currentInstalledVersion 已是最新（${dialogReleaseInfo.resolvedViaRoute}）"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = XPeachTheme.readablePrimary
+                    )
+                    XPeachWell(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = dialogReleaseInfo.changelog.ifBlank { "常规性能优化与体验改进。" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showReleaseNotesDialog = false },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (dialogReleaseInfo.hasNewerVersion) "去下载更新" else "知道了")
+                }
+            }
+        )
     }
 
     // 弹窗 1：编辑个人信息

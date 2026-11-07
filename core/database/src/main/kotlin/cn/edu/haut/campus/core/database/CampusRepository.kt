@@ -169,6 +169,7 @@ data class AppPreferencesState(
     val mealRecommendEnabled: Boolean = true,
     val lastMealRecommendBlockKey: String? = null,
     val canteenDishReviews: List<cn.edu.haut.campus.core.domain.CanteenDishReview> = emptyList(),
+    val campusMomentsSnapshot: cn.edu.haut.campus.core.model.CampusMomentsSnapshot = cn.edu.haut.campus.core.model.CampusMomentsSnapshot(),
     val selectedFocusMinutes: Int = 25,
     val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
     val selectedCampusId: String = "auto",
@@ -273,6 +274,12 @@ class CampusRepository internal constructor(
         val CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1 = stringPreferencesKey("cloud_campus_content_json_v1")
         val CLOUD_CAMPUS_CONTENT_JSON = stringPreferencesKey("cloud_campus_content_json_v2")
         val CLOUD_CAMPUS_CONTENT_SYNCED_MS = longPreferencesKey("cloud_campus_content_synced_ms_v2")
+        val CLOUD_MOMENTS_SNAPSHOT_JSON = stringPreferencesKey("cloud_moments_snapshot_json_v1")
+        val MOMENTS_FAVORITE_POST_IDS = stringPreferencesKey("moments_favorite_post_ids_v1")
+        val MOMENTS_FAVORITE_BOOK_IDS = stringPreferencesKey("moments_favorite_book_ids_v1")
+        val MOMENTS_MY_POST_IDS = stringPreferencesKey("moments_my_post_ids_v1")
+        val MOMENTS_MY_BOOK_IDS = stringPreferencesKey("moments_my_book_ids_v1")
+        val MOMENTS_MY_TAG_CODES = stringPreferencesKey("moments_my_tag_codes_v1")
         val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
         val CLASS_LEAD_MINUTES = intPreferencesKey("class_lead_minutes")
         val CLASS_SNOOZE_DEFAULT_MINUTES = intPreferencesKey("class_snooze_default_minutes")
@@ -522,6 +529,18 @@ class CampusRepository internal constructor(
             canteenDishReviews = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
                 prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
             ),
+            campusMomentsSnapshot = run {
+                val baseSnap = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(
+                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+                ) ?: cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
+                baseSnap.copy(
+                    favoritePostIds = decodeCsvSet(prefs[PrefKeys.MOMENTS_FAVORITE_POST_IDS]),
+                    favoriteBookIds = decodeCsvSet(prefs[PrefKeys.MOMENTS_FAVORITE_BOOK_IDS]),
+                    myPostIds = decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_POST_IDS]),
+                    myBookIds = decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_BOOK_IDS]),
+                    myTagCodes = decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_TAG_CODES])
+                )
+            },
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs),
             selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
@@ -1928,6 +1947,431 @@ class CampusRepository internal constructor(
             val idx = line.indexOf('\t')
             if (idx <= 0) null else line.substring(0, idx) to line.substring(idx + 1)
         }.toMap()
+    }
+
+    private fun decodeCsvSet(raw: String?): Set<String> {
+        if (raw.isNullOrBlank()) return emptySet()
+        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    private fun encodeCsvSet(set: Set<String>): String =
+        set.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(",")
+
+    /**
+     * 刷新校园互助广场（失物招领、二手教材、随身防丢码）云端快照并与本地草稿/发布记录合并。
+     */
+    suspend fun refreshCampusMomentsSnapshot(): Result<cn.edu.haut.campus.core.model.CampusMomentsSnapshot> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val currentPrefs = preferencesFlow.first()
+                val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                    currentPrefs.networkProxyConfig.customCloudApiBaseUrl
+                )
+                val (remoteSnap, _) = CampusCloudOidcHelper.fetchMomentsSnapshot(cloudBaseUrl = baseUrl)
+                    ?: (currentPrefs.campusMomentsSnapshot to "")
+                val localSnap = currentPrefs.campusMomentsSnapshot
+                val mergedPosts = (remoteSnap.posts + localSnap.posts.filter { lp -> remoteSnap.posts.none { it.id == lp.id } })
+                val mergedBooks = (remoteSnap.bookListings + localSnap.bookListings.filter { lb -> remoteSnap.bookListings.none { it.id == lb.id } })
+                val mergedTags = (remoteSnap.antiLostTags + localSnap.antiLostTags.filter { lt -> remoteSnap.antiLostTags.none { it.tagCode.equals(lt.tagCode, ignoreCase = true) } })
+                val finalSnap = remoteSnap.copy(
+                    posts = mergedPosts,
+                    bookListings = mergedBooks,
+                    antiLostTags = mergedTags,
+                    favoritePostIds = localSnap.favoritePostIds,
+                    favoriteBookIds = localSnap.favoriteBookIds,
+                    myPostIds = localSnap.myPostIds,
+                    myBookIds = localSnap.myBookIds,
+                    myTagCodes = localSnap.myTagCodes
+                )
+                preferences.edit { prefs ->
+                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                        CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(finalSnap)
+                }
+                finalSnap
+            }
+        }
+
+    suspend fun publishMomentsPost(
+        type: cn.edu.haut.campus.core.model.MomentsPostType,
+        title: String,
+        category: String,
+        campus: String,
+        location: String,
+        description: String,
+        contact: String,
+        rewardNote: String = ""
+    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanTitle = title.trim().take(64)
+            require(cleanTitle.isNotEmpty()) { "请填写物品名称或标题" }
+            val cleanContact = contact.trim().take(64)
+            require(cleanContact.isNotEmpty()) { "请填写联系方式" }
+            val profile = dao.getStudentProfile()
+            val prefsState = preferencesFlow.first()
+            val authorName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val studentNo = profile?.studentId ?: prefsState.savedStudentId.orEmpty()
+            val maskedNo = if (studentNo.length >= 4) "${studentNo.take(2)}***${studentNo.takeLast(2)}" else ""
+            val postId = "mp_${UUID.randomUUID().toString().replace("-", "").take(10)}"
+            val localItem = cn.edu.haut.campus.core.model.MomentsPostItem(
+                id = postId,
+                type = type,
+                title = cleanTitle,
+                category = category.trim().ifBlank { "其他物品" },
+                campus = campus.trim().ifBlank { "莲花街校区" },
+                location = location.trim().ifBlank { "校内" }.take(64),
+                description = description.trim().take(360),
+                contact = cleanContact,
+                rewardNote = rewardNote.trim().take(64),
+                status = "OPEN",
+                authorName = authorName,
+                authorStudentNoMasked = maskedNo,
+                createdAt = "刚刚"
+            )
+            val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsState.networkProxyConfig.customCloudApiBaseUrl
+            )
+            val cloudSaved = CampusCloudOidcHelper.publishMomentsPostToCloud(localItem, baseUrl) ?: localItem
+            val curSnap = prefsState.campusMomentsSnapshot
+            val nextPosts = listOf(cloudSaved) + curSnap.posts.filterNot { it.id == cloudSaved.id }
+            val nextMyIds = curSnap.myPostIds + cloudSaved.id
+            val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
+            preferences.edit { prefs ->
+                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+                prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
+            }
+            cloudSaved
+        }
+    }
+
+    suspend fun addMomentsComment(
+        postId: String,
+        content: String,
+        contactHint: String = ""
+    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanContent = content.trim().take(240)
+            require(cleanContent.isNotEmpty()) { "请输入线索或留言内容" }
+            val profile = dao.getStudentProfile()
+            val authorName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "热心同学"
+            val prefsState = preferencesFlow.first()
+            val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsState.networkProxyConfig.customCloudApiBaseUrl
+            )
+            val cloudUpdated = CampusCloudOidcHelper.addMomentsCommentToCloud(
+                postId = postId,
+                authorName = authorName,
+                content = cleanContent,
+                contactHint = contactHint.trim().take(48),
+                cloudBaseUrl = baseUrl
+            )
+            val curSnap = prefsState.campusMomentsSnapshot
+            val target = curSnap.posts.firstOrNull { it.id == postId }
+                ?: throw IllegalArgumentException("未找到该帖子")
+            val newComment = cn.edu.haut.campus.core.model.MomentsPostComment(
+                id = "mc_${UUID.randomUUID().toString().replace("-", "").take(8)}",
+                authorName = authorName,
+                content = cleanContent,
+                contactHint = contactHint.trim().take(48),
+                createdAt = "刚刚"
+            )
+            val updatedPost = cloudUpdated ?: target.copy(comments = target.comments + newComment)
+            val nextPosts = curSnap.posts.map { if (it.id == postId) updatedPost else it }
+            val nextSnap = curSnap.copy(posts = nextPosts)
+            preferences.edit { prefs ->
+                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+            }
+            updatedPost
+        }
+    }
+
+    suspend fun toggleMomentsPostLike(postId: String) {
+        val prefsState = preferencesFlow.first()
+        val curSnap = prefsState.campusMomentsSnapshot
+        val nextPosts = curSnap.posts.map {
+            if (it.id == postId) it.copy(likesCount = it.likesCount + 1) else it
+        }
+        val nextSnap = curSnap.copy(posts = nextPosts)
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+        }
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            prefsState.networkProxyConfig.customCloudApiBaseUrl
+        )
+        repoScope.launch {
+            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "LIKE", baseUrl)
+        }
+    }
+
+    suspend fun toggleMomentsPostFavorite(postId: String) {
+        val prefsState = preferencesFlow.first()
+        val curFavs = prefsState.campusMomentsSnapshot.favoritePostIds
+        val nextFavs = if (postId in curFavs) curFavs - postId else curFavs + postId
+        preferences.edit { prefs ->
+            prefs[PrefKeys.MOMENTS_FAVORITE_POST_IDS] = encodeCsvSet(nextFavs)
+        }
+    }
+
+    suspend fun toggleMomentsPostResolved(postId: String) {
+        val prefsState = preferencesFlow.first()
+        val curSnap = prefsState.campusMomentsSnapshot
+        var nextAction = "RESOLVE"
+        val nextPosts = curSnap.posts.map {
+            if (it.id == postId) {
+                val nextStatus = if (it.isResolved) "OPEN" else "RESOLVED"
+                nextAction = if (nextStatus == "RESOLVED") "RESOLVE" else "REOPEN"
+                it.copy(status = nextStatus)
+            } else it
+        }
+        val nextSnap = curSnap.copy(posts = nextPosts)
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+        }
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            prefsState.networkProxyConfig.customCloudApiBaseUrl
+        )
+        repoScope.launch {
+            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, nextAction, baseUrl)
+        }
+    }
+
+    suspend fun deleteMomentsPost(postId: String) {
+        val prefsState = preferencesFlow.first()
+        val curSnap = prefsState.campusMomentsSnapshot
+        val nextPosts = curSnap.posts.filterNot { it.id == postId }
+        val nextMyIds = curSnap.myPostIds - postId
+        val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+            prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
+        }
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            prefsState.networkProxyConfig.customCloudApiBaseUrl
+        )
+        repoScope.launch {
+            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "DELETE", baseUrl)
+        }
+    }
+
+    suspend fun publishMomentsBookListing(
+        title: String,
+        isbn: String,
+        authorPublisher: String,
+        courseName: String,
+        majorTrack: cn.edu.haut.campus.core.model.CampusMajorTrack,
+        campus: String,
+        conditionLabel: String,
+        priceYuan: Int,
+        originalPriceYuan: Int,
+        deliveryMode: String,
+        contact: String
+    ): Result<cn.edu.haut.campus.core.model.MomentsTextbookListing> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanTitle = title.trim().take(80)
+            require(cleanTitle.isNotEmpty()) { "请填写教材名称" }
+            val cleanContact = contact.trim().take(64)
+            require(cleanContact.isNotEmpty()) { "请填写卖家联系方式" }
+            val profile = dao.getStudentProfile()
+            val sellerName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val bookId = "mb_${UUID.randomUUID().toString().replace("-", "").take(10)}"
+            val localBook = cn.edu.haut.campus.core.model.MomentsTextbookListing(
+                id = bookId,
+                title = cleanTitle,
+                isbn = isbn.trim().take(24),
+                authorPublisher = authorPublisher.trim().ifBlank { "高等教育出版社" }.take(64),
+                courseName = courseName.trim().take(40),
+                majorTrack = majorTrack,
+                campus = campus.trim().ifBlank { "莲花街校区" },
+                conditionLabel = conditionLabel.trim().ifBlank { "九成新" },
+                priceYuan = priceYuan.coerceIn(1, 500),
+                originalPriceYuan = originalPriceYuan.coerceIn(priceYuan, 999),
+                deliveryMode = deliveryMode.trim().ifBlank { "莲花街自提" },
+                contact = cleanContact,
+                sellerName = sellerName,
+                status = "AVAILABLE",
+                createdAt = "刚刚"
+            )
+            val prefsState = preferencesFlow.first()
+            val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsState.networkProxyConfig.customCloudApiBaseUrl
+            )
+            val cloudSaved = CampusCloudOidcHelper.publishMomentsBookToCloud(localBook, baseUrl) ?: localBook
+            val curSnap = prefsState.campusMomentsSnapshot
+            val nextBooks = listOf(cloudSaved) + curSnap.bookListings.filterNot { it.id == cloudSaved.id }
+            val nextMyBookIds = curSnap.myBookIds + cloudSaved.id
+            val nextSnap = curSnap.copy(bookListings = nextBooks, myBookIds = nextMyBookIds)
+            preferences.edit { prefs ->
+                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+                prefs[PrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
+            }
+            cloudSaved
+        }
+    }
+
+    suspend fun toggleMomentsBookFavorite(bookId: String) {
+        val prefsState = preferencesFlow.first()
+        val curFavs = prefsState.campusMomentsSnapshot.favoriteBookIds
+        val nextFavs = if (bookId in curFavs) curFavs - bookId else curFavs + bookId
+        preferences.edit { prefs ->
+            prefs[PrefKeys.MOMENTS_FAVORITE_BOOK_IDS] = encodeCsvSet(nextFavs)
+        }
+    }
+
+    suspend fun toggleMomentsBookSold(bookId: String) {
+        val prefsState = preferencesFlow.first()
+        val curSnap = prefsState.campusMomentsSnapshot
+        var nextAction = "MARK_SOLD"
+        val nextBooks = curSnap.bookListings.map {
+            if (it.id == bookId) {
+                val nextStatus = if (it.isSold) "AVAILABLE" else "SOLD"
+                nextAction = if (nextStatus == "SOLD") "MARK_SOLD" else "MARK_AVAILABLE"
+                it.copy(status = nextStatus)
+            } else it
+        }
+        val nextSnap = curSnap.copy(bookListings = nextBooks)
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+        }
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            prefsState.networkProxyConfig.customCloudApiBaseUrl
+        )
+        repoScope.launch {
+            CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, nextAction, baseUrl)
+        }
+    }
+
+    suspend fun deleteMomentsBookListing(bookId: String) {
+        val prefsState = preferencesFlow.first()
+        val curSnap = prefsState.campusMomentsSnapshot
+        val nextBooks = curSnap.bookListings.filterNot { it.id == bookId }
+        val nextMyBookIds = curSnap.myBookIds - bookId
+        val nextSnap = curSnap.copy(bookListings = nextBooks, myBookIds = nextMyBookIds)
+        preferences.edit { prefs ->
+            prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+            prefs[PrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
+        }
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            prefsState.networkProxyConfig.customCloudApiBaseUrl
+        )
+        repoScope.launch {
+            CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, "DELETE", baseUrl)
+        }
+    }
+
+    suspend fun upsertAntiLostTag(
+        tagCode: String = "",
+        itemName: String,
+        category: String,
+        campus: String,
+        ownerContact: String,
+        returnNote: String,
+        status: String = "NORMAL"
+    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanName = itemName.trim().take(48)
+            require(cleanName.isNotEmpty()) { "请填写随身物品名称" }
+            val cleanContact = ownerContact.trim().take(64)
+            require(cleanContact.isNotEmpty()) { "请填写失主联系方式" }
+            val profile = dao.getStudentProfile()
+            val ownerName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val effectiveCode = tagCode.trim().uppercase().takeIf {
+                it.matches(Regex("^HAUT-TAG-[A-Z0-9]{4,10}$"))
+            } ?: "HAUT-TAG-${UUID.randomUUID().toString().replace("-", "").take(6).uppercase()}"
+            val prefsState = preferencesFlow.first()
+            val curSnap = prefsState.campusMomentsSnapshot
+            val existing = curSnap.antiLostTags.firstOrNull { it.tagCode.equals(effectiveCode, ignoreCase = true) }
+            val localTag = cn.edu.haut.campus.core.model.AntiLostTagItem(
+                id = existing?.id ?: "tag_${effectiveCode.takeLast(6)}",
+                tagCode = effectiveCode,
+                itemName = cleanName,
+                category = category.trim().ifBlank { "水杯雨伞" },
+                campus = campus.trim().ifBlank { "莲花街校区" },
+                ownerName = ownerName,
+                ownerContact = cleanContact,
+                returnNote = returnNote.trim().ifBlank { "拾到请联系失主或放至就近服务台，感谢相助" }.take(160),
+                status = status.uppercase(),
+                reports = existing?.reports.orEmpty(),
+                createdAt = existing?.createdAt ?: "今天"
+            )
+            val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsState.networkProxyConfig.customCloudApiBaseUrl
+            )
+            val cloudSaved = CampusCloudOidcHelper.upsertAntiLostTagOnCloud(localTag, baseUrl) ?: localTag
+            val nextTags = listOf(cloudSaved) + curSnap.antiLostTags.filterNot {
+                it.tagCode.equals(cloudSaved.tagCode, ignoreCase = true)
+            }
+            val nextMyCodes = curSnap.myTagCodes + cloudSaved.tagCode
+            val nextSnap = curSnap.copy(antiLostTags = nextTags, myTagCodes = nextMyCodes)
+            preferences.edit { prefs ->
+                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+                prefs[PrefKeys.MOMENTS_MY_TAG_CODES] = encodeCsvSet(nextMyCodes)
+            }
+            cloudSaved
+        }
+    }
+
+    suspend fun reportAntiLostTagFound(
+        tagCode: String,
+        finderName: String,
+        foundLocation: String,
+        finderContact: String,
+        message: String
+    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanCode = tagCode.trim().uppercase()
+            require(cleanCode.isNotEmpty()) { "请输入防丢码编号（如 HAUT-TAG-7E2A9B）" }
+            val cleanLoc = foundLocation.trim().take(80)
+            require(cleanLoc.isNotEmpty()) { "请填写拾得或放置地点" }
+            val prefsState = preferencesFlow.first()
+            val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                prefsState.networkProxyConfig.customCloudApiBaseUrl
+            )
+            val cloudUpdated = CampusCloudOidcHelper.reportAntiLostTagFoundOnCloud(
+                tagCode = cleanCode,
+                finderName = finderName.trim().ifBlank { "热心同学" },
+                foundLocation = cleanLoc,
+                finderContact = finderContact.trim().take(64),
+                message = message.trim().take(200),
+                cloudBaseUrl = baseUrl
+            )
+            val curSnap = prefsState.campusMomentsSnapshot
+            val existing = curSnap.antiLostTags.firstOrNull { it.tagCode.equals(cleanCode, ignoreCase = true) }
+            val newReport = cn.edu.haut.campus.core.model.AntiLostTagReport(
+                id = "rep_${UUID.randomUUID().toString().replace("-", "").take(8)}",
+                finderName = finderName.trim().ifBlank { "热心同学" },
+                foundLocation = cleanLoc,
+                finderContact = finderContact.trim().take(64),
+                message = message.trim().take(200),
+                createdAt = "刚刚"
+            )
+            val finalTag = cloudUpdated ?: (existing?.copy(
+                status = "FOUND_REPORTED",
+                reports = listOf(newReport) + existing.reports
+            ) ?: cn.edu.haut.campus.core.model.AntiLostTagItem(
+                id = "tag_${cleanCode.takeLast(6)}",
+                tagCode = cleanCode,
+                itemName = "防丢码物品 ($cleanCode)",
+                status = "FOUND_REPORTED",
+                reports = listOf(newReport)
+            ))
+            val nextTags = listOf(finalTag) + curSnap.antiLostTags.filterNot {
+                it.tagCode.equals(cleanCode, ignoreCase = true)
+            }
+            val nextSnap = curSnap.copy(antiLostTags = nextTags)
+            preferences.edit { prefs ->
+                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
+            }
+            finalTag
+        }
     }
 
     private fun encodeKeyValueMap(map: Map<String, String>): String {

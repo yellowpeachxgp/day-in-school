@@ -235,11 +235,16 @@ object GitHubReleaseUpdater {
                 if (!extractedTag.isNullOrBlank()) {
                     val apkName = "day-in-school-$extractedTag-release.apk"
                     val rawApkUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$extractedTag/$apkName"
+                    val notesAssetUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$extractedTag/RELEASE_NOTES.txt"
+                    val fetchedNotes = fetchReleaseNotesAssetOrNull(notesAssetUrl, proxyConfig)
+                    val effectiveChangelog = fetchedNotes?.let { formatCleanChangelog(it) }
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "检测到新版本 $extractedTag（通过 $label 通道发版解析）。"
                     return GitHubReleaseInfo(
                         tagName = extractedTag,
                         versionNormalized = normalizeVersion(extractedTag),
                         releaseTitle = "日在校园 $extractedTag",
-                        changelog = "检测到新版本 $extractedTag（通过 $label 通道发版解析）。",
+                        changelog = effectiveChangelog,
                         publishedAt = "",
                         htmlUrl = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/tag/$extractedTag",
                         apkDownloadUrl = rawApkUrl,
@@ -255,6 +260,48 @@ object GitHubReleaseUpdater {
             }
         }
         throw IllegalStateException("未能从镜像或重定向通道解析最新版本号")
+    }
+
+    private fun fetchReleaseNotesAssetOrNull(
+        rawNotesUrl: String,
+        proxyConfig: NetworkProxyConfig
+    ): String? {
+        val candidateUrls = proxyConfig.buildGitHubDownloadCandidateUrls(rawNotesUrl)
+        for (url in candidateUrls.take(3)) {
+            val text = runCatching {
+                val conn = openConnectionFollowingRedirects(url, proxyConfig, maxHops = 4)
+                try {
+                    if (conn.responseCode in 200..299) {
+                        conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
+                    } else null
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+            if (!text.isNullOrBlank()) return text
+        }
+        return null
+    }
+
+    internal fun formatCleanChangelog(rawBody: String): String {
+        val trimmed = rawBody.trim()
+        if (trimmed.isEmpty()) return ""
+        return trimmed
+            .lines()
+            .filterNot { line ->
+                val l = line.trim()
+                l.startsWith("**Full Changelog**", ignoreCase = true) ||
+                    l.startsWith("Full Changelog:", ignoreCase = true) ||
+                    l.equals("## What's Changed", ignoreCase = true)
+            }
+            .joinToString("\n") { line ->
+                line.trimEnd()
+                    .replace(Regex("^#{1,4}\\s+"), "【")
+                    .let { if (it.startsWith("【") && !it.endsWith("】")) "$it】" else it }
+                    .replace("**", "")
+            }
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
     }
 
     internal fun extractTagFromReleaseUrl(urlOrLocation: String): String? {
@@ -335,7 +382,8 @@ object GitHubReleaseUpdater {
         val obj = JSONObject(jsonText)
         val tagName = obj.optString("tag_name", "").ifBlank { "v0.0.0" }
         val releaseTitle = obj.optString("name", tagName).ifBlank { tagName }
-        val changelog = obj.optString("body", "").trim().ifBlank { "常规性能优化与体验改进。" }
+        val rawBody = obj.optString("body", "").trim()
+        val changelog = formatCleanChangelog(rawBody).ifBlank { "常规性能优化与体验改进。" }
         val publishedAt = obj.optString("published_at", "").substringBefore("T")
         val htmlUrl = obj.optString("html_url", RELEASES_PAGE_URL)
 
