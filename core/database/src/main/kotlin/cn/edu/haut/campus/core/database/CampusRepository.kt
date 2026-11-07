@@ -2006,10 +2006,10 @@ class CampusRepository internal constructor(
             require(cleanTitle.isNotEmpty()) { "请填写物品名称或标题" }
             val cleanContact = contact.trim().take(64)
             require(cleanContact.isNotEmpty()) { "请填写联系方式" }
-            val profile = dao.getStudentProfile()
+            val profile = studentProfileFlow.first()
             val prefsState = preferencesFlow.first()
-            val authorName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
-            val studentNo = profile?.studentId ?: prefsState.savedStudentId.orEmpty()
+            val authorName = profile?.displayName?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val studentNo = profile?.schoolId ?: prefsState.savedStudentId.orEmpty()
             val maskedNo = if (studentNo.length >= 4) "${studentNo.take(2)}***${studentNo.takeLast(2)}" else ""
             val postId = "mp_${UUID.randomUUID().toString().replace("-", "").take(10)}"
             val localItem = cn.edu.haut.campus.core.model.MomentsPostItem(
@@ -2052,8 +2052,8 @@ class CampusRepository internal constructor(
         runCatching {
             val cleanContent = content.trim().take(240)
             require(cleanContent.isNotEmpty()) { "请输入线索或留言内容" }
-            val profile = dao.getStudentProfile()
-            val authorName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "热心同学"
+            val profile = studentProfileFlow.first()
+            val authorName = profile?.displayName?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "热心同学"
             val prefsState = preferencesFlow.first()
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
@@ -2175,8 +2175,8 @@ class CampusRepository internal constructor(
             require(cleanTitle.isNotEmpty()) { "请填写教材名称" }
             val cleanContact = contact.trim().take(64)
             require(cleanContact.isNotEmpty()) { "请填写卖家联系方式" }
-            val profile = dao.getStudentProfile()
-            val sellerName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val profile = studentProfileFlow.first()
+            val sellerName = profile?.displayName?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
             val bookId = "mb_${UUID.randomUUID().toString().replace("-", "").take(10)}"
             val localBook = cn.edu.haut.campus.core.model.MomentsTextbookListing(
                 id = bookId,
@@ -2279,8 +2279,8 @@ class CampusRepository internal constructor(
             require(cleanName.isNotEmpty()) { "请填写随身物品名称" }
             val cleanContact = ownerContact.trim().take(64)
             require(cleanContact.isNotEmpty()) { "请填写失主联系方式" }
-            val profile = dao.getStudentProfile()
-            val ownerName = profile?.name?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
+            val profile = studentProfileFlow.first()
+            val ownerName = profile?.displayName?.takeIf { it.isNotBlank() }?.let { "${it.first()}同学" } ?: "河工大同学"
             val effectiveCode = tagCode.trim().uppercase().takeIf {
                 it.matches(Regex("^HAUT-TAG-[A-Z0-9]{4,10}$"))
             } ?: "HAUT-TAG-${UUID.randomUUID().toString().replace("-", "").take(6).uppercase()}"
