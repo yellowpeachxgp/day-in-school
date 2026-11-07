@@ -26,7 +26,7 @@ class CampusServicesUnitTest {
     @Test
     fun explicitLegacyBookingIdsCannotFallBackToAnotherActiveBooking() = kotlinx.coroutines.runBlocking {
         for (id in listOf("haut_2026-11-07_001", "-1", "0", "", "999999999999999999999")) {
-            val result = HautLibrarySeatAuthClient.cancelActiveSeatBooking("synthetic-token", id)
+            val result = HautLibrarySeatAuthClient.cancelActiveSeatBooking("synthetic-token-valid-length", id)
             assertTrue(result.isFailure)
             assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("编号无效"))
         }
