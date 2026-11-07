@@ -52,4 +52,35 @@ class LiquidGlassThemeSdkTest {
         assertNull(PresetThemePalette.fromKey("CUSTOM"))
         assertNull(PresetThemePalette.fromKey("WALLPAPER"))
     }
+
+    @Test
+    fun liquidGlassOpticsPortMatchesGlassHqSpecification() {
+        // 1. optics.ts edgeDisplacement: at boundary (d = 0), displacement is full amount (60);
+        //    at or beyond 20px inward (d <= -20), displacement is 0.
+        assertEquals(60f, LiquidGlassOptics.edgeDisplacement(0f, 60f, 0.05f), 1e-4f)
+        assertEquals(0f, LiquidGlassOptics.edgeDisplacement(-20f, 60f, 0.05f), 1e-4f)
+        val midDisp = LiquidGlassOptics.edgeDisplacement(-5f, 60f, 0.05f)
+        assertTrue(midDisp in 10f..50f)
+
+        // 2. concentric.ts inner radius
+        assertEquals(11f, LiquidGlassOptics.concentricRadius(14f, 3f), 1e-4f)
+        assertEquals(0f, LiquidGlassOptics.concentricRadius(4f, 8f), 1e-4f)
+
+        // 3. material-graph.ts calibrated regular & clear tone curves
+        val regularLightZero = LiquidGlassOptics.evaluateRegularTone(0f, isDark = false)
+        val regularDarkZero = LiquidGlassOptics.evaluateRegularTone(0f, isDark = true)
+        assertEquals(0.80f * 0.36f, regularLightZero, 1e-4f)
+        assertEquals(0.90f * 0.105f, regularDarkZero, 1e-4f)
+
+        val clearLightMid = LiquidGlassOptics.evaluateClearTone(0.5f, isDark = false)
+        val clearDarkMid = LiquidGlassOptics.evaluateClearTone(0.5f, isDark = true, nested = true)
+        assertTrue(clearLightMid in 0.4f..0.7f)
+        assertTrue(clearDarkMid in 0.4f..0.7f)
+
+        // 4. maps.wgsl Plane 1 directional top/bottom specular vs side shade
+        val (topLight, topAlpha) = LiquidGlassOptics.evaluateRimOverlay(dDp = -0.2f, nx = 0f, ny = -1f, isDark = false)
+        val (sideLight, sideAlpha) = LiquidGlassOptics.evaluateRimOverlay(dDp = -0.2f, nx = 1f, ny = 0f, isDark = false)
+        assertTrue("Top edge should have strong specular highlight", topLight > sideLight)
+        assertTrue(topAlpha > 0f && sideAlpha > 0f)
+    }
 }

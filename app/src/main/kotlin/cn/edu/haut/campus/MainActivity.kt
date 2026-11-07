@@ -100,9 +100,11 @@ import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
+import cn.edu.haut.campus.core.designsystem.LiquidGlassMaterial
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
+import cn.edu.haut.campus.core.designsystem.liquidGlassEffect
 import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderNotificationFactory
@@ -981,12 +983,21 @@ private fun XPeachBottomDock(
             modifier = Modifier
                 .widthIn(max = 368.dp)
                 .fillMaxWidth()
-                .height(62.dp),
+                .height(62.dp)
+                .clip(CircleShape)
+                .liquidGlassEffect(
+                    enabled = isLiquid,
+                    isDark = isDark,
+                    cornerRadius = 999.dp,
+                    baseColor = dockSurfaceColor,
+                    material = LiquidGlassMaterial.REGULAR,
+                    nested = false
+                ),
             shape = CircleShape,
-            color = dockSurfaceColor,
+            color = if (isLiquid) Color.Transparent else dockSurfaceColor,
             tonalElevation = 0.dp,
             shadowElevation = if (isLiquid) 22.dp else if (isDark) 14.dp else 10.dp,
-            border = dockBorderStroke
+            border = if (isLiquid) null else dockBorderStroke
         ) {
             BoxWithConstraints(
                 modifier = Modifier
@@ -1053,7 +1064,14 @@ private fun XPeachBottomDock(
                 val tabWidth = maxWidth / tabs.size
                 val indicatorOffset = tabWidth * animatedFraction
 
-                // 动态液态椭圆选中框（支持跟手连续位移 + 速度弹性拉伸 + 高光内描边）
+                // 动态液态椭圆选中框（支持跟手连续位移 + 速度弹性拉伸 + Glass-HQ/liquid-glass 透镜高光描边）
+                val pillBaseColor = if (isDark) {
+                    XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.34f else 0.22f)
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer.copy(
+                        alpha = if (isLiquid || hasBackdrop) (glassAlpha * 0.90f).coerceIn(0.36f, 0.92f) else 0.92f
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .offset(x = indicatorOffset)
@@ -1064,37 +1082,45 @@ private fun XPeachBottomDock(
                             scaleY = pillScaleY
                         }
                         .clip(CircleShape)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = if (isDark) {
-                                    listOf(
-                                        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.28f else 0.22f),
-                                        XPeachTheme.readablePrimary.copy(alpha = if (isLiquid) 0.18f else 0.14f)
-                                    )
-                                } else if (isLiquid || hasBackdrop) {
-                                    val pillTopAlpha = (glassAlpha * 0.90f).coerceIn(0.32f, 0.92f)
-                                    val pillBotAlpha = (glassAlpha * 0.76f).coerceIn(0.24f, 0.80f)
-                                    listOf(
-                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = pillTopAlpha),
-                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = pillBotAlpha)
-                                    )
-                                } else {
-                                    listOf(
-                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
-                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f)
-                                    )
-                                }
-                            )
-                        )
-                        .border(
-                            width = 0.9.dp,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.34f),
-                                    XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.22f else 0.14f)
+                        .then(
+                            if (isLiquid) {
+                                Modifier.liquidGlassEffect(
+                                    enabled = true,
+                                    isDark = isDark,
+                                    cornerRadius = 999.dp,
+                                    baseColor = pillBaseColor,
+                                    material = LiquidGlassMaterial.CLEAR,
+                                    accentTint = XPeachTheme.readablePrimary,
+                                    nested = true
                                 )
-                            ),
-                            shape = CircleShape
+                            } else {
+                                Modifier
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = if (isDark) {
+                                                listOf(
+                                                    XPeachTheme.readablePrimary.copy(alpha = 0.22f),
+                                                    XPeachTheme.readablePrimary.copy(alpha = 0.14f)
+                                                )
+                                            } else {
+                                                listOf(
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f)
+                                                )
+                                            }
+                                        )
+                                    )
+                                    .border(
+                                        width = 0.9.dp,
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(
+                                                XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.48f else 0.34f),
+                                                XPeachTheme.readablePrimary.copy(alpha = if (isDark) 0.22f else 0.14f)
+                                            )
+                                        ),
+                                        shape = CircleShape
+                                    )
+                            }
                         )
                 )
 

@@ -266,14 +266,30 @@ fun XPeachFeedbackBanner(
             rawContainer
         }
         val borderColor = fgColor.copy(alpha = if (isDark) 0.36f else 0.24f)
-        val shape = RoundedCornerShape(if (isLiquid) XPeachTokens.Radius.LiquidWell else XPeachTokens.Radius.Well)
+        val cornerRadius = if (isLiquid) XPeachTokens.Radius.LiquidWell else XPeachTokens.Radius.Well
+        val shape = RoundedCornerShape(cornerRadius)
 
         Row(
             modifier = modifier
                 .fillMaxWidth()
                 .clip(shape)
-                .background(containerColor)
-                .border(XPeachTokens.Border.Subtle, borderColor, shape)
+                .then(
+                    if (isLiquid) {
+                        Modifier.liquidGlassEffect(
+                            enabled = true,
+                            isDark = isDark,
+                            cornerRadius = cornerRadius,
+                            baseColor = containerColor,
+                            material = LiquidGlassMaterial.CLEAR,
+                            accentTint = fgColor,
+                            nested = true
+                        )
+                    } else {
+                        Modifier
+                            .background(containerColor)
+                            .border(XPeachTokens.Border.Subtle, borderColor, shape)
+                    }
+                )
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
