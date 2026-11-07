@@ -642,7 +642,11 @@ fun Modifier.liquidGlassEffect(
             }
         }
         val cachedShaderBrush = remember(cachedAgslShader) {
-            cachedAgslShader?.let { ShaderBrush(it) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && cachedAgslShader != null) {
+                ShaderBrush(cachedAgslShader)
+            } else {
+                null
+            }
         }
 
         val cachedWallpaperShader = remember(wallpaperBitmap, viewportW.toInt(), viewportH.toInt(), nested) {
