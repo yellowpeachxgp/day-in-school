@@ -862,8 +862,8 @@ object CampusDiningRecommender {
 
             // 统计用户对该食堂的打星偏好：4-5 星加分，1-2 星踩雷扣分
             val userCanteenReviews = userReviews.filter { it.canteenBuildingId == profile.buildingId }
-            val userRatingBonus = userCanteenReviews.sumOf { rev ->
-                when (rev.stars) {
+            val userRatingBonus = userCanteenReviews.fold(0) { acc, rev ->
+                acc + when (rev.stars) {
                     5 -> 28
                     4 -> 14
                     2 -> -20
