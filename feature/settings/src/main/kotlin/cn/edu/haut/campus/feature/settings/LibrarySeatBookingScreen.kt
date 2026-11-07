@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
+import cn.edu.haut.campus.core.campusservices.CloudBookingPriceQuote
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.campusservices.DualEngineReservationPlanner
 import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
@@ -1731,6 +1732,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionSnapshot by remember { mutableStateOf(LibrarySeatAlarmSubsystem.inspectPermissions(context)) }
     var showPermissionActivationDialog by remember { mutableStateOf(false) }
+    var pendingCloudPrice by remember { mutableStateOf<CloudBookingPriceQuote?>(null) }
+    var isSavingBookingPlan by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -2693,7 +2696,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             )
 
-            fun saveBookingPlanNow() {
+            fun saveBookingPlanNow(acceptedPrice: CloudBookingPriceQuote? = null) {
+                if (isSavingBookingPlan) return
+                isSavingBookingPlan = true
                 scope.launch {
                     val result = repository.createDualEngineBookingPlan(
                         executionMode = selectedMode,
@@ -2701,8 +2706,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         targetTimeText = targetTimeText,
                         preferredAreaName = roomLabel,
                         preferredSeatLabel = preferredSeatsText,
-                        repeatDays = selectedRepeatDays
+                        repeatDays = selectedRepeatDays,
+                        acceptedCloudPrice = acceptedPrice
                     )
+                    isSavingBookingPlan = false
                     result.fold(
                         onSuccess = { created ->
                             val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
@@ -2716,6 +2723,21 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         }
                     )
                 }
+            }
+
+            pendingCloudPrice?.let { quote ->
+                XPeachAlertDialog(
+                    onDismissRequest = { pendingCloudPrice = null },
+                    title = { Text("确认云端预约费用") },
+                    text = { Text("每次预约成功扣减 ${quote.displayPeach} 🍑，未成功不扣减。连续 $selectedRepeatDays 天，最多 ${java.math.BigDecimal.valueOf(quote.micropeach, 4).multiply(java.math.BigDecimal(selectedRepeatDays)).stripTrailingZeros().toPlainString()} 🍑。\n目标：$targetDate $targetTimeText · $roomLabel · $preferredSeatsText\n价格版本：${quote.version}\n确认后将上传学校登录凭据并授权云端执行所选预约。价格变更时需重新确认。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            pendingCloudPrice = null
+                            saveBookingPlanNow(quote)
+                        }) { Text("同意费用并创建") }
+                    },
+                    dismissButton = { TextButton(onClick = { pendingCloudPrice = null }) { Text("取消") } }
+                )
             }
 
             if (showPermissionActivationDialog) {
@@ -2783,11 +2805,21 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    enabled = computedScheduleResult.isSuccess && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
+                    enabled = !isSavingBookingPlan && computedScheduleResult.isSuccess && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
                         permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
                         if (selectedMode != BookingExecutionMode.CLOUD_HOSTED && !permissionSnapshot.allReady) {
                             showPermissionActivationDialog = true
+                        } else if (selectedMode == BookingExecutionMode.CLOUD_HOSTED) {
+                            isSavingBookingPlan = true
+                            scope.launch {
+                                val quote = withContext(Dispatchers.IO) { runCatching { CampusCloudOidcHelper.fetchCloudBookingPrice() } }
+                                isSavingBookingPlan = false
+                                quote.fold(
+                                    onSuccess = { pendingCloudPrice = it },
+                                    onFailure = { onFeedback(false, it.message ?: "无法获取云端价格") }
+                                )
+                            }
                         } else {
                             saveBookingPlanNow()
                         }
@@ -2795,7 +2827,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("开启定时抢座")
+                    Text(if (isSavingBookingPlan) "正在处理…" else "开启定时抢座")
                 }
 
                 FilledTonalButton(

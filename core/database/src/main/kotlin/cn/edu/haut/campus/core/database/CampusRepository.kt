@@ -2729,7 +2729,9 @@ class CampusRepository internal constructor(
         }
     }
 
-    suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
+    suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() = cloudSyncMutex.withLock {
+        val token = resolveValidCloudAccessToken(forceRefresh = false)
+        withContext(Dispatchers.IO) { CampusCloudOidcHelper.revokeCloudSchoolBindings(token) }
         val now = System.currentTimeMillis()
         cloudTokenMutex.withLock {
             cachedCloudAccessToken = ""
@@ -2744,7 +2746,7 @@ class CampusRepository internal constructor(
         val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in plans) {
             if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED")
+                plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
             ) {
                 cloudAndParcelDao.upsertLibraryBookingPlan(
                     plan.copy(
@@ -2770,14 +2772,17 @@ class CampusRepository internal constructor(
         preferredSeatLabel: String,
         allowAlternativeSeat: Boolean = true,
         repeatDays: Int = 1,
+        acceptedCloudPrice: cn.edu.haut.campus.core.campusservices.CloudBookingPriceQuote? = null,
         nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
+        cloudSyncMutex.withLock {
         val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
             val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 ?: throw IllegalStateException("云端代抢（测试版）需先绑定 XPEACH 内测账号；您也可随时切换为「本机抢座 (测试版)」（无需登录云账号）")
-            if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("内测防滥用积分不足（需 1 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
+            val price = requireNotNull(acceptedCloudPrice) { "请先查看并确认当前云端价格" }
+            if (binding.peachBalanceMicropeach < price.micropeach) {
+                throw IllegalStateException("云端余额不足（每次成功需 ${price.displayPeach} 🍑），请改用本机抢座")
             }
         }
 
@@ -2797,12 +2802,13 @@ class CampusRepository internal constructor(
             else -> "ARMED"
         }
 
-        var remoteCloudJobId: String? = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null
-        var token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken(forceRefresh = false) else ""
-        if (executionMode == BookingExecutionMode.CLOUD_HOSTED && token.isNotBlank()) {
+        var remoteCloudJobId: String? = null
+        val token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken(forceRefresh = false) else ""
+        if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            check(token.isNotBlank()) { "云端会话已过期，请重新登录" }
             val (studentNoBundle, delegatedBundle) = buildDelegatedCredentialBundle()
             val studentNo = studentNoBundle ?: preferencesFlow.first().savedStudentId.orEmpty()
-            var remoteJobOrPlanId = withContext(Dispatchers.IO) {
+            remoteCloudJobId = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.syncCloudHostedReservationPlan(
                     accessToken = token,
                     studentNo = studentNo,
@@ -2812,29 +2818,10 @@ class CampusRepository internal constructor(
                     preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                     preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
                     planIdempotencyKey = planId,
-                    repeatDays = normalizedRepeatDays
+                    repeatDays = normalizedRepeatDays,
+                    acceptedPrice = requireNotNull(acceptedCloudPrice),
+                    allowAlternativeSeat = allowAlternativeSeat
                 )
-            }
-            if (remoteJobOrPlanId.isNullOrBlank()) {
-                token = resolveValidCloudAccessToken(forceRefresh = true)
-                if (token.isNotBlank()) {
-                    remoteJobOrPlanId = withContext(Dispatchers.IO) {
-                        CampusCloudOidcHelper.syncCloudHostedReservationPlan(
-                            accessToken = token,
-                            studentNo = studentNo,
-                            delegatedSecret = delegatedBundle.orEmpty(),
-                            targetDate = targetDate.toString(),
-                            targetExecuteAtIso = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
-                            preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
-                            preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
-                            planIdempotencyKey = planId,
-                            repeatDays = normalizedRepeatDays
-                        )
-                    }
-                }
-            }
-            if (!remoteJobOrPlanId.isNullOrBlank()) {
-                remoteCloudJobId = remoteJobOrPlanId
             }
         }
 
@@ -2863,7 +2850,7 @@ class CampusRepository internal constructor(
             cloudJobId = remoteCloudJobId,
             externalBookingId = null,
             evidenceSha256 = null,
-            priceMicropeach = executionMode.priceMicropeach,
+            priceMicropeach = acceptedCloudPrice?.takeIf { executionMode == BookingExecutionMode.CLOUD_HOSTED }?.micropeach ?: executionMode.priceMicropeach,
             paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
             status = initialStatus,
             stateVersion = 1,
@@ -2884,6 +2871,7 @@ class CampusRepository internal constructor(
         cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
         entity
+        }
     }
 
     suspend fun fetchLibraryStudyRegions(
@@ -2933,6 +2921,12 @@ class CampusRepository internal constructor(
         if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
             return@runCatching current
         }
+        // Cloud jobs are executed only by the server. A client alarm reconciles state;
+        // it must never submit a second school booking after a lost cloud response.
+        if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+            syncWithCampusCloud().getOrThrow()
+            return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
+        }
         val updated = when (stage) {
             TripleScheduleStage.PRECHECK -> {
                 val sessionState = ensureLibrarySeatSession(forceRefresh = false)
@@ -2979,23 +2973,7 @@ class CampusRepository internal constructor(
                         updatedAtEpochMillis = nowEpochMillis
                     )
                 } else {
-                    var cloudResult: AutomatedSeatBookingResult? = null
-                    if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        !current.cloudJobId.isNullOrBlank() &&
-                        !current.cloudJobId.startsWith("cjob_")
-                    ) {
-                        val cloudToken = resolveValidCloudAccessToken()
-                        if (cloudToken.isNotBlank()) {
-                            cloudResult = withContext(Dispatchers.IO) {
-                                CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
-                                    accessToken = cloudToken,
-                                    jobId = current.cloudJobId
-                                )
-                            }
-                        }
-                    }
-
-                    val liveBooking = cloudResult ?: run {
+                    val liveBooking = run {
                         val sessionState = ensureLibrarySeatSession(forceRefresh = false)
                         val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
                             ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
