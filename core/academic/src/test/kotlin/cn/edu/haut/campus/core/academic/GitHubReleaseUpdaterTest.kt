@@ -162,13 +162,17 @@ class GitHubReleaseUpdaterTest {
     }
 
     @Test
-    fun `campus moments catalog computes matched clues and anti-lost qr matrix`() {
+    fun `campus moments catalog defaults to empty and computes anti-lost qr matrix`() {
         val snapshot = cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
-        assertTrue(snapshot.posts.isNotEmpty())
-        assertTrue(snapshot.bookListings.isNotEmpty())
-        assertTrue(snapshot.antiLostTags.isNotEmpty())
+        assertTrue(snapshot.posts.isEmpty())
+        assertTrue(snapshot.bookListings.isEmpty())
+        assertTrue(snapshot.antiLostTags.isEmpty())
 
-        val tag = snapshot.antiLostTags.first()
+        val tag = cn.edu.haut.campus.core.model.AntiLostTagItem(
+            id = "tag_test",
+            tagCode = "HAUT-TAG-7E2A9B",
+            itemName = "测试物品"
+        )
         assertEquals(
             "https://campus.yellowpeachxgp.com/claim/HAUT-TAG-7E2A9B",
             tag.claimWebUrl("https://campus.yellowpeachxgp.com")
@@ -176,7 +180,6 @@ class GitHubReleaseUpdaterTest {
         val matrix = tag.generateVisualMatrix(21)
         assertEquals(21, matrix.size)
         assertEquals(21, matrix[0].size)
-        // Finder pattern top-left corner and center are true
         assertTrue(matrix[0][0])
         assertTrue(matrix[3][3])
     }

@@ -690,8 +690,7 @@ fun ParcelHubScreen(
                     OutlinedTextField(
                         value = smsInput,
                         onValueChange = { smsInput = it },
-                        label = { Text("粘贴取件短信（自动识别取件码与驿站）") },
-                        placeholder = { Text("例如：【菜鸟驿站】请凭取件码 3-2-1048 取件") },
+                        label = { Text("粘贴取件短信") },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )

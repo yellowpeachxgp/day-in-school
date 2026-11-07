@@ -493,7 +493,6 @@ private fun CreateOfflineProfileDialog(
                     onValueChange = { profileLabel = it.take(80) },
                     enabled = !busy,
                     label = { Text("身份名称") },
-                    supportingText = { Text("例如：本科课表、交流学期；不必填写学号") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()

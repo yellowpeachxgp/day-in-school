@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.campusservices.AutomatedSeatBookingResult
 import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.campusservices.CloudSyncSnapshotResult
+import cn.edu.haut.campus.core.campusservices.CloudTokenSecureVault
 import cn.edu.haut.campus.core.campusservices.CloudSyncedParcelDto
 import cn.edu.haut.campus.core.campusservices.DualEngineReservationPlanner
 import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
@@ -189,6 +190,7 @@ class CampusRepository internal constructor(
     private val utilityAccountStore = UtilityAccountSecureStore(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val librarySeatSessionVault = LibrarySeatSessionVault(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val xiaomiAccountVault = XiaomiAccountSecureVault(appContext, scopeId = accountProfile.id)
+    private val cloudTokenVault = CloudTokenSecureVault(appContext, scopeId = accountProfile.id)
     private val academicCredentialVault = createAcademicCredentialVault(appContext)
     private val academicCredentialMutex = Mutex()
     private val librarySeatAuthMutex = Mutex()
@@ -411,6 +413,38 @@ class CampusRepository internal constructor(
                         lastDiagnosticMessage = cleanDiag
                     )
                 )
+            }
+        }
+
+        // Purge any legacy sample plugins or unapproved sample moments records
+        runCatching {
+            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.hello-campus")
+            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.parcel-station")
+        }
+        val legacyMomentsSampleIds = setOf(
+            "mp_found_card_01",
+            "mp_lost_airpods_02",
+            "mp_found_keys_03",
+            "mp_lost_cup_04",
+            "mb_math_01",
+            "mb_ds_02",
+            "mb_circuit_03",
+            "mb_food_04",
+            "tag_default_01"
+        )
+        preferences.edit { prefs ->
+            val rawMoments = prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+            if (!rawMoments.isNullOrBlank()) {
+                val parsed = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(rawMoments)
+                if (parsed != null) {
+                    val cleanedSnap = parsed.copy(
+                        posts = parsed.posts.filterNot { it.id in legacyMomentsSampleIds },
+                        bookListings = parsed.bookListings.filterNot { it.id in legacyMomentsSampleIds },
+                        antiLostTags = parsed.antiLostTags.filterNot { it.id in legacyMomentsSampleIds || it.tagCode == "HAUT-TAG-7E2A9B" }
+                    )
+                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                        CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(cleanedSnap)
+                }
             }
         }
     }
@@ -3059,8 +3093,10 @@ class CampusRepository internal constructor(
                 return@withLock cachedCloudAccessToken
             }
             val prefs = preferences.data.first()
-            val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
-            val storedRt = cachedCloudRefreshToken.ifBlank { prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty() }
+            val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
+            val storedRt = cachedCloudRefreshToken.ifBlank {
+                prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
+            }
             if (!forceRefresh && storedAt.isNotBlank() && isJwtNotExpired(storedAt, nowMs)) {
                 cachedCloudAccessToken = storedAt
                 cachedCloudRefreshToken = storedRt
@@ -3074,8 +3110,8 @@ class CampusRepository internal constructor(
                         cachedCloudRefreshToken = pair.second
                         lastCloudTokenRefreshAtMs = System.currentTimeMillis()
                         preferences.edit {
-                            it[PrefKeys.CLOUD_ACCESS_TOKEN] = pair.first
-                            it[PrefKeys.CLOUD_REFRESH_TOKEN] = pair.second
+                            it[PrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(pair.first)
+                            it[PrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(pair.second)
                         }
                     }
                     pair
@@ -3102,10 +3138,10 @@ class CampusRepository internal constructor(
             if (profile.accessToken.isNotBlank() || profile.refreshToken.isNotBlank()) {
                 preferences.edit {
                     if (profile.accessToken.isNotBlank()) {
-                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = profile.accessToken
+                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(profile.accessToken)
                     }
                     if (profile.refreshToken.isNotBlank()) {
-                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = profile.refreshToken
+                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(profile.refreshToken)
                     }
                 }
             }
@@ -4350,35 +4386,10 @@ class CampusRepository internal constructor(
         cloudAndParcelDao.observeInstalledExtensionPlugins()
 
     suspend fun ensureDefaultReferencePluginsInstalled() {
-        val existing = cloudAndParcelDao.getInstalledExtensionPluginsSnapshot()
-        if (existing.isNotEmpty()) return
-        val now = System.currentTimeMillis()
-        cloudAndParcelDao.upsertInstalledExtensionPlugin(
-            InstalledExtensionPluginEntity(
-                pluginId = "org.example.hello-campus",
-                name = "HAUT 校园生活助手卡片",
-                activeVersion = "1.0.0",
-                previousVersion = null,
-                schemaFormat = "dis-extension/v2",
-                status = "ENABLED",
-                grantedPermissionsJson = """["ui.slot.render","storage.scoped"]""",
-                uiSlotsJson = """[{"slot_id":"campus.services","title":"HAUT 莲花街自习导航","subtitle":"校园自习区域快捷指南"}]""",
-                updatedAtEpochMillis = now
-            )
-        )
-        cloudAndParcelDao.upsertInstalledExtensionPlugin(
-            InstalledExtensionPluginEntity(
-                pluginId = "org.example.parcel-station",
-                name = "校园菜鸟驿站状态插件",
-                activeVersion = "1.0.0",
-                previousVersion = null,
-                schemaFormat = "dis-extension/v2",
-                status = "ENABLED",
-                grantedPermissionsJson = """["ui.slot.render","parcel.read","parcel.write.import"]""",
-                uiSlotsJson = """[{"slot_id":"parcel.cards","title":"莲花街北苑驿站营业状态","subtitle":"08:30 - 21:00 | 当前免排队"}]""",
-                updatedAtEpochMillis = now
-            )
-        )
+        runCatching {
+            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.hello-campus")
+            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.parcel-station")
+        }
     }
 
     suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) {

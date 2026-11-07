@@ -624,8 +624,8 @@ fun XPeachCloudAccountScreen(
     }
 
     if (showInstallPluginDialog) {
-        var pluginIdInput by remember { mutableStateOf("campus.custom.card") }
-        var pluginNameInput by remember { mutableStateOf("自定义校园服务卡片") }
+        var pluginIdInput by remember { mutableStateOf("") }
+        var pluginNameInput by remember { mutableStateOf("") }
         var versionInput by remember { mutableStateOf("1.0.0") }
 
         XPeachAlertDialog(
@@ -873,7 +873,6 @@ private fun XpeachNativeOidcLoginDialog(
                     value = identifierInput,
                     onValueChange = { identifierInput = it },
                     label = { Text("用户名或邮箱") },
-                    placeholder = { Text("例如 yellowpeach 或注册邮箱") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     enabled = !isSubmitting,

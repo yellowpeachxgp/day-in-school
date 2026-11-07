@@ -1712,58 +1712,24 @@ private fun LiquidGlassAmbientBackdrop(
     backdropAlpha: Float,
     blurDp: Float
 ) {
-    val baseColor = if (isDark) Color(0xFF0B111D) else Color(0xFFF1F6FD)
-    val glowAlpha = backdropAlpha.coerceIn(0.22f, 1.0f)
-    val blurSoftening = 1f - (blurDp / 48f).coerceIn(0f, 0.35f)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(baseColor)
-            .drawWithCache {
-                val w = size.width.coerceAtLeast(1f)
-                val h = size.height.coerceAtLeast(1f)
-                val c1 = (if (isDark) primaryColor else lerp(primaryColor, Color.White, 0.16f))
-                    .copy(alpha = (if (isDark) 0.30f else 0.24f) * glowAlpha * blurSoftening)
-                val c2 = (if (isDark) secondaryColor else lerp(secondaryColor, Color.White, 0.20f))
-                    .copy(alpha = (if (isDark) 0.24f else 0.19f) * glowAlpha * blurSoftening)
-                val cMid = lerp(c1, c2, 0.5f)
-                    .copy(alpha = (if (isDark) 0.16f else 0.14f) * glowAlpha * blurSoftening)
-                val silkWhite = Color.White.copy(alpha = (if (isDark) 0.08f else 0.36f) * glowAlpha * blurSoftening)
-
-                val topZenithBloom = Brush.radialGradient(
-                    colors = listOf(c1, Color.Transparent),
-                    center = Offset(w * 0.16f, h * 0.14f),
-                    radius = w * 0.96f
-                )
-                val upperRightBloom = Brush.radialGradient(
-                    colors = listOf(c2, Color.Transparent),
-                    center = Offset(w * 0.86f, h * 0.28f),
-                    radius = w * 0.90f
-                )
-                val midAmbientWash = Brush.radialGradient(
-                    colors = listOf(cMid, Color.Transparent),
-                    center = Offset(w * 0.36f, h * 0.56f),
-                    radius = w * 1.02f
-                )
-                val diagonalSilkRibbon = Brush.linearGradient(
-                    0.0f to Color.Transparent,
-                    0.24f to c1,
-                    0.40f to silkWhite,
-                    0.58f to c2,
-                    0.76f to silkWhite,
-                    1.0f to Color.Transparent,
-                    start = Offset(0f, h * 0.08f),
-                    end = Offset(w, h * 0.72f)
-                )
-                onDrawBehind {
-                    drawRect(brush = topZenithBloom)
-                    drawRect(brush = upperRightBloom)
-                    drawRect(brush = midAmbientWash)
-                    drawRect(brush = diagonalSilkRibbon)
-                }
-            }
-    )
+    val baseColor = if (isDark) Color(0xFF0A101C) else Color(0xFFEEF5FC)
+    val sharedBmp = LocalLiquidGlassWallpaperBitmap.current
+    if (sharedBmp != null) {
+        Image(
+            bitmap = sharedBmp,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .background(baseColor)
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(baseColor)
+        )
+    }
 }
 
 @Composable
@@ -2794,33 +2760,6 @@ fun <T> XPeachSegmentedTabs(
                     )
                 } else {
                     Modifier.background(trackBg)
-                }
-            )
-            .then(
-                if (isLiquid && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    Modifier.graphicsLayer {
-                        val padPx = 3.dp.toPx()
-                        val slotW = ((size.width - padPx * 2f) / count).coerceAtLeast(1f)
-                        val leftPx = padPx + slotW * animatedIndex
-                        val topPx = padPx
-                        val rightPx = leftPx + slotW
-                        val bottomPx = (size.height - padPx).coerceAtLeast(topPx + 1f)
-                        renderEffect = LiquidGlassOptics.buildCapsuleLensRenderEffectOrNull(
-                            widthPx = size.width,
-                            heightPx = size.height,
-                            lensLeftPx = leftPx,
-                            lensTopPx = topPx,
-                            lensRightPx = rightPx,
-                            lensBottomPx = bottomPx,
-                            lensRadiusPx = (bottomPx - topPx) * 0.5f,
-                            dpr = density.density,
-                            isDark = isDark,
-                            refractionPx = 16.dp.toPx(),
-                            pressProgress = pressProgress
-                        )?.asComposeRenderEffect()
-                    }
-                } else {
-                    Modifier
                 }
             )
             .pointerInput(count) {

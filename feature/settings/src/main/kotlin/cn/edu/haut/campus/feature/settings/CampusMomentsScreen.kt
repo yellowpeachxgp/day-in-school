@@ -114,7 +114,6 @@ fun CampusMomentsScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
 
-    // Tab 0: 失物招领筛选状态
     var selectedPostType by rememberSaveable { mutableStateOf<MomentsPostType?>(null) }
     var selectedPostCampus by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPostCategory by rememberSaveable { mutableStateOf<String?>(null) }
@@ -123,7 +122,6 @@ fun CampusMomentsScreen(
     var activePostDetailId by rememberSaveable { mutableStateOf<String?>(null) }
     var showPublishPostDialog by rememberSaveable { mutableStateOf(false) }
 
-    // Tab 1: 二手教材筛选状态
     val inferredTrack = remember(studentProfile?.major) {
         CampusMajorTrack.inferFromMajorText(studentProfile?.major)
     }
@@ -133,12 +131,10 @@ fun CampusMomentsScreen(
     var bookSearchQuery by rememberSaveable { mutableStateOf("") }
     var showPublishBookDialog by rememberSaveable { mutableStateOf(false) }
 
-    // Tab 2: 防丢码弹窗状态
     var showCreateTagDialog by rememberSaveable { mutableStateOf(false) }
     var showReportFoundDialog by rememberSaveable { mutableStateOf(false) }
     var reportTargetTagCode by rememberSaveable { mutableStateOf("") }
 
-    // Tab 3: 我的与线索子标签
     var mySubTab by rememberSaveable { mutableIntStateOf(0) }
 
     LaunchedEffect(repository) {
@@ -157,8 +153,7 @@ fun CampusMomentsScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "失物招领与二手书",
-            subtitle = "河南工业大学 · 寻物招领 · 二手教材 · 防丢码",
+            title = "互助广场",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -168,7 +163,7 @@ fun CampusMomentsScreen(
             },
             actions = {
                 XPeachFilterPill(
-                    label = if (isRefreshing) "同步中…" else "刷新",
+                    label = if (isRefreshing) "刷新中" else "刷新",
                     selected = false,
                     compact = true,
                     onClick = {
@@ -176,11 +171,11 @@ fun CampusMomentsScreen(
                             scope.launch {
                                 isRefreshing = true
                                 repository.refreshCampusMomentsSnapshot()
-                                    .onSuccess { updated ->
-                                        feedbackMessage = "已同步最新动态：招领/寻物 ${updated.posts.size} 条 · 教材 ${updated.bookListings.size} 本"
+                                    .onSuccess {
+                                        feedbackMessage = "已刷新"
                                     }
                                     .onFailure {
-                                        feedbackMessage = "当前显示本地缓存记录"
+                                        feedbackMessage = "刷新失败"
                                     }
                                 isRefreshing = false
                             }
@@ -198,12 +193,7 @@ fun CampusMomentsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             XPeachSegmentedTabs(
-                items = listOf(
-                    "失物招领 (${snapshot.posts.size})",
-                    "二手教材 (${snapshot.bookListings.size})",
-                    "防丢码 (${snapshot.antiLostTags.size})",
-                    "我的/线索"
-                ),
+                items = listOf("失物招领", "二手教材", "防丢码", "我的"),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
             )
@@ -222,18 +212,11 @@ fun CampusMomentsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "校园寻物与失物招领",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "支持按校区与物品类别筛选，自动匹配同校区疑似线索",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = "失物招领",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                             Button(
                                 onClick = { showPublishPostDialog = true },
                                 shape = RoundedCornerShape(12.dp),
@@ -254,7 +237,7 @@ fun CampusMomentsScreen(
                         XPeachSearchField(
                             value = postSearchQuery,
                             onValueChange = { postSearchQuery = it },
-                            placeholder = "搜索物品名称、地点（如图书馆、二餐厅、校园卡）"
+                            placeholder = "搜索物品或地点"
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -266,51 +249,37 @@ fun CampusMomentsScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             XPeachFilterPill(
-                                label = "全部类型",
+                                label = "全部",
                                 selected = selectedPostType == null,
                                 compact = true,
                                 onClick = { selectedPostType = null }
                             )
                             XPeachFilterPill(
-                                label = "失物招领 (${snapshot.posts.count { it.type == MomentsPostType.FOUND }})",
+                                label = "招领",
                                 selected = selectedPostType == MomentsPostType.FOUND,
                                 compact = true,
                                 onClick = { selectedPostType = MomentsPostType.FOUND }
                             )
                             XPeachFilterPill(
-                                label = "寻物启事 (${snapshot.posts.count { it.type == MomentsPostType.LOST }})",
+                                label = "寻物",
                                 selected = selectedPostType == MomentsPostType.LOST,
                                 compact = true,
                                 onClick = { selectedPostType = MomentsPostType.LOST }
                             )
                             XPeachFilterPill(
-                                label = "仅看未找回",
+                                label = "未找回",
                                 selected = onlyOpenPosts,
                                 compact = true,
                                 onClick = { onlyOpenPosts = !onlyOpenPosts }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            XPeachFilterPill(
-                                label = "全部校区",
-                                selected = selectedPostCampus == null,
-                                compact = true,
-                                onClick = { selectedPostCampus = null }
                             )
                             for (campus in PresetCampusMomentsCatalog.CAMPUS_OPTIONS) {
                                 XPeachFilterPill(
                                     label = campus.removeSuffix("校区"),
                                     selected = selectedPostCampus == campus,
                                     compact = true,
-                                    onClick = { selectedPostCampus = campus }
+                                    onClick = {
+                                        selectedPostCampus = if (selectedPostCampus == campus) null else campus
+                                    }
                                 )
                             }
                         }
@@ -365,17 +334,11 @@ fun CampusMomentsScreen(
 
                     if (filteredPosts.isEmpty()) {
                         XPeachEmptyState(
-                            title = "暂无匹配的寻物或招领记录",
-                            subtitle = "可切换筛选条件或点击右上角发布新信息",
+                            title = "暂无记录",
+                            subtitle = "点击发布寻物或招领信息",
                             icon = Icons.Rounded.FindInPage,
-                            actionLabel = "重置筛选",
-                            onAction = {
-                                selectedPostType = null
-                                selectedPostCampus = null
-                                selectedPostCategory = null
-                                onlyOpenPosts = false
-                                postSearchQuery = ""
-                            }
+                            actionLabel = "发布",
+                            onAction = { showPublishPostDialog = true }
                         )
                     } else {
                         for (post in filteredPosts) {
@@ -391,8 +354,8 @@ fun CampusMomentsScreen(
                                 onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
                                 onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                 onCopyContact = {
-                                    copyTextToClipboard(context, "失物招领联系方式", post.contact)
-                                    feedbackMessage = "已复制联系方式：${post.contact}"
+                                    copyTextToClipboard(context, "联系方式", post.contact)
+                                    feedbackMessage = "已复制"
                                 }
                             )
                         }
@@ -406,18 +369,11 @@ fun CampusMomentsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "二手教材与复习资料流转",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "支持从个人课表一键选教材、ISBN 识别与同校区自提",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = "二手教材",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
                             Button(
                                 onClick = { showPublishBookDialog = true },
                                 shape = RoundedCornerShape(12.dp),
@@ -429,7 +385,7 @@ fun CampusMomentsScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("挂单出书", style = MaterialTheme.typography.labelMedium)
+                                Text("发布", style = MaterialTheme.typography.labelMedium)
                             }
                         }
 
@@ -438,7 +394,7 @@ fun CampusMomentsScreen(
                         XPeachSearchField(
                             value = bookSearchQuery,
                             onValueChange = { bookSearchQuery = it },
-                            placeholder = "搜索教材名称、课程名或 ISBN（如高等数学、数据结构）"
+                            placeholder = "搜索书名、课程或 ISBN"
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -457,7 +413,7 @@ fun CampusMomentsScreen(
                             )
                             if (inferredTrack != null && inferredTrack != CampusMajorTrack.ALL_MAJORS) {
                                 XPeachFilterPill(
-                                    label = "本专业 (${inferredTrack.shortLabel})",
+                                    label = inferredTrack.shortLabel,
                                     selected = selectedBookTrack == inferredTrack,
                                     compact = true,
                                     onClick = { selectedBookTrack = inferredTrack }
@@ -482,7 +438,7 @@ fun CampusMomentsScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             XPeachFilterPill(
-                                label = "仅看在售",
+                                label = "仅在售",
                                 selected = onlyAvailableBooks,
                                 compact = true,
                                 onClick = { onlyAvailableBooks = !onlyAvailableBooks }
@@ -529,16 +485,11 @@ fun CampusMomentsScreen(
 
                     if (filteredBooks.isEmpty()) {
                         XPeachEmptyState(
-                            title = "暂无匹配的二手教材",
-                            subtitle = "点击右上角「挂单出书」即可发布闲置课本或复习资料",
+                            title = "暂无教材",
+                            subtitle = "点击发布闲置教材",
                             icon = Icons.Rounded.MenuBook,
-                            actionLabel = "查看全部教材",
-                            onAction = {
-                                selectedBookTrack = null
-                                selectedBookCampus = null
-                                onlyAvailableBooks = false
-                                bookSearchQuery = ""
-                            }
+                            actionLabel = "发布",
+                            onAction = { showPublishBookDialog = true }
                         )
                     } else {
                         for (book in filteredBooks) {
@@ -550,8 +501,8 @@ fun CampusMomentsScreen(
                                 onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
                                 onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
                                 onCopyContact = {
-                                    copyTextToClipboard(context, "卖家联系方式", book.contact)
-                                    feedbackMessage = "已复制卖家联系方式：${book.contact}"
+                                    copyTextToClipboard(context, "联系方式", book.contact)
+                                    feedbackMessage = "已复制"
                                 }
                             )
                         }
@@ -560,18 +511,6 @@ fun CampusMomentsScreen(
 
                 2 -> {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "随身物品防丢码",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "为保温杯、雨伞、校园卡套、耳机仓生成专属防丢码与认领网页（campus.yellowpeachxgp.com/claim/…）。拾得者扫码免安装即可上报位置并通知失主。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -581,7 +520,7 @@ fun CampusMomentsScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("生成我的防丢码")
+                                Text("生成防丢码")
                             }
                             FilledTonalButton(
                                 onClick = {
@@ -591,9 +530,19 @@ fun CampusMomentsScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("输入防丢码上报拾得")
+                                Text("上报拾得")
                             }
                         }
+                    }
+
+                    if (snapshot.antiLostTags.isEmpty()) {
+                        XPeachEmptyState(
+                            title = "暂无防丢码",
+                            subtitle = "可为随身物品生成专属防丢码",
+                            icon = Icons.Rounded.QrCode2,
+                            actionLabel = "生成防丢码",
+                            onAction = { showCreateTagDialog = true }
+                        )
                     }
 
                     for (tag in snapshot.antiLostTags) {
@@ -604,8 +553,8 @@ fun CampusMomentsScreen(
                             tag = tag,
                             claimUrl = claimUrl,
                             onCopyLink = {
-                                copyTextToClipboard(context, "防丢码认领链接", claimUrl)
-                                feedbackMessage = "已复制防丢码认领链接：$claimUrl"
+                                copyTextToClipboard(context, "认领链接", claimUrl)
+                                feedbackMessage = "已复制"
                             },
                             onOpenWebPage = {
                                 runCatching {
@@ -628,11 +577,6 @@ fun CampusMomentsScreen(
                                         returnNote = tag.returnNote,
                                         status = nextStatus
                                     )
-                                    feedbackMessage = if (nextStatus == "LOST") {
-                                        "已将「${tag.itemName}」标记为挂失寻找中"
-                                    } else {
-                                        "已将「${tag.itemName}」恢复为正常随身状态"
-                                    }
                                 }
                             },
                             onReportFound = {
@@ -645,11 +589,7 @@ fun CampusMomentsScreen(
 
                 3 -> {
                     XPeachSegmentedTabs(
-                        items = listOf(
-                            "我的发布 (${snapshot.myPostIds.size + snapshot.myBookIds.size})",
-                            "我的收藏 (${snapshot.favoritePostIds.size + snapshot.favoriteBookIds.size})",
-                            "线索与通知"
-                        ),
+                        items = listOf("发布", "收藏", "通知"),
                         selectedIndex = mySubTab,
                         onSelect = { mySubTab = it }
                     )
@@ -660,14 +600,9 @@ fun CampusMomentsScreen(
                             val myBooks = snapshot.bookListings.filter { it.id in snapshot.myBookIds }
                             if (myPosts.isEmpty() && myBooks.isEmpty()) {
                                 XPeachEmptyState(
-                                    title = "暂未发布寻物或二手教材",
-                                    subtitle = "您发布的寻物招领与二手教材会汇总在此处，方便随时更新状态",
-                                    icon = Icons.Rounded.FindInPage,
-                                    actionLabel = "去发布寻物/招领",
-                                    onAction = {
-                                        selectedTab = 0
-                                        showPublishPostDialog = true
-                                    }
+                                    title = "暂无发布记录",
+                                    subtitle = "发布的内容将显示在此处",
+                                    icon = Icons.Rounded.FindInPage
                                 )
                             }
                             for (post in myPosts) {
@@ -681,7 +616,7 @@ fun CampusMomentsScreen(
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", post.contact)
-                                        feedbackMessage = "已复制：${post.contact}"
+                                        feedbackMessage = "已复制"
                                     }
                                 )
                             }
@@ -695,7 +630,7 @@ fun CampusMomentsScreen(
                                     onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
-                                        feedbackMessage = "已复制：${book.contact}"
+                                        feedbackMessage = "已复制"
                                     }
                                 )
                             }
@@ -706,8 +641,8 @@ fun CampusMomentsScreen(
                             val favBooks = snapshot.bookListings.filter { it.id in snapshot.favoriteBookIds }
                             if (favPosts.isEmpty() && favBooks.isEmpty()) {
                                 XPeachEmptyState(
-                                    title = "暂无收藏内容",
-                                    subtitle = "浏览失物招领或二手教材时点击收藏图标即可保存",
+                                    title = "暂无收藏",
+                                    subtitle = "点击收藏图标即可保存",
                                     icon = Icons.Rounded.BookmarkBorder
                                 )
                             }
@@ -722,7 +657,7 @@ fun CampusMomentsScreen(
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", post.contact)
-                                        feedbackMessage = "已复制：${post.contact}"
+                                        feedbackMessage = "已复制"
                                     }
                                 )
                             }
@@ -736,7 +671,7 @@ fun CampusMomentsScreen(
                                     onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
-                                        feedbackMessage = "已复制：${book.contact}"
+                                        feedbackMessage = "已复制"
                                     }
                                 )
                             }
@@ -749,8 +684,8 @@ fun CampusMomentsScreen(
                             val postsWithComments = snapshot.posts.filter { it.comments.isNotEmpty() }
                             if (allTagReports.isEmpty() && postsWithComments.isEmpty()) {
                                 XPeachEmptyState(
-                                    title = "暂无新线索或拾得通知",
-                                    subtitle = "当有同学通过防丢码上报拾得或在帖子下提供线索时，将在此处展示",
+                                    title = "暂无通知",
+                                    subtitle = "收到线索或拾得上报时在此显示",
                                     icon = Icons.Rounded.QrCode2
                                 )
                             }
@@ -762,7 +697,7 @@ fun CampusMomentsScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "防丢码拾得通知 · ${tag.itemName}",
+                                            text = tag.itemName,
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -774,22 +709,24 @@ fun CampusMomentsScreen(
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "拾得/放置位置：${rep.foundLocation}",
+                                        text = "位置：${rep.foundLocation}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium
                                     )
                                     if (rep.message.isNotBlank()) {
                                         Text(
-                                            text = "补充留言：${rep.message}",
+                                            text = rep.message,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    Text(
-                                        text = "上报人：${rep.finderName}${if (rep.finderContact.isNotBlank()) " · 联系：${rep.finderContact}" else ""} · ${rep.createdAt}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    if (rep.finderContact.isNotBlank()) {
+                                        Text(
+                                            text = "联系：${rep.finderContact}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                             for (post in postsWithComments) {
@@ -817,7 +754,7 @@ fun CampusMomentsScreen(
                                     Spacer(modifier = Modifier.height(4.dp))
                                     val latestComment = post.comments.last()
                                     Text(
-                                        text = "${latestComment.authorName}：${latestComment.content}",
+                                        text = latestComment.content,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -842,7 +779,7 @@ fun CampusMomentsScreen(
             onDismiss = { activePostDetailId = null },
             onCopyContact = { contactText ->
                 copyTextToClipboard(context, "联系方式", contactText)
-                feedbackMessage = "已复制联系方式：$contactText"
+                feedbackMessage = "已复制"
             },
             onJumpToCluePost = { clueId ->
                 activePostDetailId = clueId
@@ -854,14 +791,13 @@ fun CampusMomentsScreen(
                         content = content,
                         contactHint = contactHint
                     ).onSuccess {
-                        feedbackMessage = "已提交线索留言"
+                        feedbackMessage = "已提交"
                     }
                 }
             },
             onToggleResolved = {
                 scope.launch {
                     repository.toggleMomentsPostResolved(activeDetailPost.id)
-                    feedbackMessage = if (activeDetailPost.isResolved) "已重新开启该帖" else "已标记为找回/认领完成"
                 }
             },
             onDelete = {
@@ -869,7 +805,6 @@ fun CampusMomentsScreen(
                     val delId = activeDetailPost.id
                     activePostDetailId = null
                     repository.deleteMomentsPost(delId)
-                    feedbackMessage = "已删除该条记录"
                 }
             }
         )
@@ -889,11 +824,11 @@ fun CampusMomentsScreen(
                         description = desc,
                         contact = contact,
                         rewardNote = reward
-                    ).onSuccess { created ->
+                    ).onSuccess {
                         showPublishPostDialog = false
-                        feedbackMessage = "已发布${created.type.label}：${created.title}"
+                        feedbackMessage = "已发布"
                     }.onFailure { err ->
-                        feedbackMessage = err.message ?: "发布失败，请检查填写内容"
+                        feedbackMessage = err.message ?: "发布失败"
                     }
                 }
             }
@@ -923,11 +858,11 @@ fun CampusMomentsScreen(
                         originalPriceYuan = origPrice,
                         deliveryMode = delivery,
                         contact = contact
-                    ).onSuccess { created ->
+                    ).onSuccess {
                         showPublishBookDialog = false
-                        feedbackMessage = "已挂单二手教材：《${created.title}》（¥${created.priceYuan}）"
+                        feedbackMessage = "已发布"
                     }.onFailure { err ->
-                        feedbackMessage = err.message ?: "发布失败，请检查填写内容"
+                        feedbackMessage = err.message ?: "发布失败"
                     }
                 }
             }
@@ -945,11 +880,11 @@ fun CampusMomentsScreen(
                         campus = campus,
                         ownerContact = contact,
                         returnNote = note
-                    ).onSuccess { tag ->
+                    ).onSuccess {
                         showCreateTagDialog = false
-                        feedbackMessage = "已生成防丢码：${tag.tagCode}（${tag.itemName}）"
+                        feedbackMessage = "已生成"
                     }.onFailure { err ->
-                        feedbackMessage = err.message ?: "生成失败，请检查填写内容"
+                        feedbackMessage = err.message ?: "生成失败"
                     }
                 }
             }
@@ -968,11 +903,11 @@ fun CampusMomentsScreen(
                         foundLocation = location,
                         finderContact = contact,
                         message = message
-                    ).onSuccess { tag ->
+                    ).onSuccess {
                         showReportFoundDialog = false
-                        feedbackMessage = "已上报「${tag.itemName}」拾得位置，感谢热心相助"
+                        feedbackMessage = "已提交"
                     }.onFailure { err ->
-                        feedbackMessage = err.message ?: "提交失败，请检查防丢码与位置"
+                        feedbackMessage = err.message ?: "提交失败"
                     }
                 }
             }
@@ -1026,17 +961,19 @@ private fun MomentsPostCard(
                 )
                 if (matchedCluesCount > 0 && !post.isResolved) {
                     XPeachStatusBadge(
-                        text = "疑似匹配 $matchedCluesCount",
+                        text = "匹配 $matchedCluesCount",
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                     )
                 }
             }
-            Text(
-                text = post.createdAt.ifBlank { "今天" },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (post.createdAt.isNotBlank()) {
+                Text(
+                    text = post.createdAt,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -1077,9 +1014,9 @@ private fun MomentsPostCard(
         ) {
             Text(
                 text = buildString {
-                    append(post.authorName)
+                    if (post.authorName.isNotBlank()) append(post.authorName)
                     if (isMine) append(" (我)")
-                    if (post.comments.isNotEmpty()) append(" · ${post.comments.size} 条线索")
+                    if (post.comments.isNotEmpty()) append(" · ${post.comments.size} 留言")
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1096,7 +1033,7 @@ private fun MomentsPostCard(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.ThumbUpOffAlt,
-                        contentDescription = "点赞",
+                        contentDescription = null,
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
@@ -1109,7 +1046,7 @@ private fun MomentsPostCard(
                 ) {
                     Icon(
                         imageVector = if (isFavorited) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder,
-                        contentDescription = "收藏",
+                        contentDescription = null,
                         tint = if (isFavorited) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(15.dp)
                     )
@@ -1121,7 +1058,7 @@ private fun MomentsPostCard(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Text("复制联系", style = MaterialTheme.typography.labelSmall)
+                        Text("联系", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -1189,7 +1126,7 @@ private fun MomentsTextbookCard(
                 )
                 if (book.originalPriceYuan > book.priceYuan) {
                     Text(
-                        text = "原价 ¥${book.originalPriceYuan}",
+                        text = "¥${book.originalPriceYuan}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textDecoration = TextDecoration.LineThrough
@@ -1198,21 +1135,22 @@ private fun MomentsTextbookCard(
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = buildString {
-                append(book.authorPublisher)
-                if (book.isbn.isNotBlank()) append(" · ISBN ${book.isbn}")
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (book.authorPublisher.isNotBlank() || book.isbn.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = listOfNotNull(
+                    book.authorPublisher.takeIf { it.isNotBlank() },
+                    book.isbn.takeIf { it.isNotBlank() }?.let { "ISBN $it" }
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         Spacer(modifier = Modifier.height(2.dp))
 
         Text(
-            text = "${book.campus} · ${book.deliveryMode} · 卖家：${book.sellerName}",
+            text = "${book.campus} · ${book.deliveryMode}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1237,7 +1175,7 @@ private fun MomentsTextbookCard(
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))
-                    Text(if (isFavorited) "已想买" else "想买", style = MaterialTheme.typography.labelSmall)
+                    Text(if (isFavorited) "已收藏" else "收藏", style = MaterialTheme.typography.labelSmall)
                 }
                 if (isMine) {
                     TextButton(
@@ -1245,7 +1183,7 @@ private fun MomentsTextbookCard(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Text(if (book.isSold) "重新上架" else "标记已出", style = MaterialTheme.typography.labelSmall)
+                        Text(if (book.isSold) "上架" else "已出", style = MaterialTheme.typography.labelSmall)
                     }
                     TextButton(
                         onClick = onDelete,
@@ -1270,7 +1208,7 @@ private fun MomentsTextbookCard(
                         modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("联系卖家", style = MaterialTheme.typography.labelSmall)
+                    Text("联系", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -1297,7 +1235,7 @@ private fun AntiLostTagCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(92.dp)
+                    .size(84.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.White)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
@@ -1332,9 +1270,9 @@ private fun AntiLostTagCard(
                 ) {
                     XPeachStatusBadge(
                         text = when (tag.status) {
-                            "FOUND_REPORTED" -> "有人上报拾得 (${tag.reports.size})"
-                            "LOST" -> "挂失寻找中"
-                            else -> "正常随身"
+                            "FOUND_REPORTED" -> "已上报 (${tag.reports.size})"
+                            "LOST" -> "挂失中"
+                            else -> "正常"
                         },
                         containerColor = when (tag.status) {
                             "FOUND_REPORTED" -> XPeachTheme.successContainer
@@ -1367,29 +1305,15 @@ private fun AntiLostTagCard(
                     fontWeight = FontWeight.Bold,
                     color = primaryColor
                 )
-
-                Text(
-                    text = "${tag.campus} · 失主：${tag.ownerName}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        XPeachWell(modifier = Modifier.fillMaxWidth()) {
+        if (tag.returnNote.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "归还说明：${tag.returnNote}",
+                text = tag.returnNote,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = "扫码认领页：$claimUrl",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -1398,7 +1322,7 @@ private fun AntiLostTagCard(
             for (rep in tag.reports.take(2)) {
                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "📍 拾得上报：${rep.foundLocation}",
+                        text = "位置：${rep.foundLocation}",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = primaryColor
@@ -1410,11 +1334,6 @@ private fun AntiLostTagCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    Text(
-                        text = "${rep.finderName}${if (rep.finderContact.isNotBlank()) " · 联系：${rep.finderContact}" else ""} · ${rep.createdAt}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -1433,7 +1352,7 @@ private fun AntiLostTagCard(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
             ) {
-                Text("复制防丢链接", style = MaterialTheme.typography.labelSmall)
+                Text("复制链接", style = MaterialTheme.typography.labelSmall)
             }
             OutlinedButton(
                 onClick = onOpenWebPage,
@@ -1441,7 +1360,7 @@ private fun AntiLostTagCard(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
             ) {
-                Text("打开认领网页", style = MaterialTheme.typography.labelSmall)
+                Text("认领页", style = MaterialTheme.typography.labelSmall)
             }
             OutlinedButton(
                 onClick = onToggleLostStatus,
@@ -1450,7 +1369,7 @@ private fun AntiLostTagCard(
                 modifier = Modifier.height(30.dp)
             ) {
                 Text(
-                    if (tag.status == "LOST") "取消挂失" else "挂失物品",
+                    if (tag.status == "LOST") "取消挂失" else "挂失",
                     style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -1459,7 +1378,7 @@ private fun AntiLostTagCard(
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
             ) {
-                Text("模拟拾得上报", style = MaterialTheme.typography.labelSmall)
+                Text("上报拾得", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -1484,7 +1403,7 @@ private fun MomentsPostDetailDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "${post.type.label}详情",
+                text = post.title,
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -1492,15 +1411,10 @@ private fun MomentsPostDetailDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp)
+                    .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = post.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
                 Text(
                     text = "${post.campus} · ${post.location} · ${post.category}",
                     style = MaterialTheme.typography.labelMedium,
@@ -1515,7 +1429,7 @@ private fun MomentsPostDetailDialog(
                 }
                 if (post.rewardNote.isNotBlank()) {
                     Text(
-                        text = "认领/酬谢说明：${post.rewardNote}",
+                        text = post.rewardNote,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1527,18 +1441,12 @@ private fun MomentsPostDetailDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "发布者：${post.authorName}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "联系方式：${post.contact}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
+                            Text(
+                                text = post.contact,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
                             FilledTonalButton(
                                 onClick = { onCopyContact(post.contact) },
                                 shape = RoundedCornerShape(8.dp),
@@ -1554,7 +1462,7 @@ private fun MomentsPostDetailDialog(
                 if (matchedClues.isNotEmpty()) {
                     XPeachInsetDivider(verticalPadding = 4.dp)
                     Text(
-                        text = "同校区疑似匹配线索 (${matchedClues.size})",
+                        text = "相关线索 (${matchedClues.size})",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = XPeachTheme.readablePrimary
@@ -1565,25 +1473,13 @@ private fun MomentsPostDetailDialog(
                                 .fillMaxWidth()
                                 .clickable { onJumpToCluePost(clue.id) }
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "${clue.type.badgeLabel} · ${clue.title}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                XPeachStatusBadge(
-                                    text = "匹配度 ${clue.matchScore}%",
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = XPeachTheme.readablePrimary
-                                )
-                            }
                             Text(
-                                text = "地点：${clue.location} · 联系：${clue.contact}",
+                                text = "${clue.type.badgeLabel} · ${clue.title}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${clue.location} · ${clue.contact}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1591,33 +1487,17 @@ private fun MomentsPostDetailDialog(
                     }
                 }
 
-                XPeachInsetDivider(verticalPadding = 4.dp)
-                Text(
-                    text = "线索留言 (${post.comments.size})",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (post.comments.isEmpty()) {
-                    Text(
-                        text = "暂无线索留言，若您看到过该物品可在下方提供位置线索。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
+                if (post.comments.isNotEmpty()) {
+                    XPeachInsetDivider(verticalPadding = 4.dp)
                     for (c in post.comments) {
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "${c.authorName} · ${c.createdAt}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
                             Text(
                                 text = c.content,
                                 style = MaterialTheme.typography.bodySmall
                             )
                             if (c.contactHint.isNotBlank()) {
                                 Text(
-                                    text = "联系方式：${c.contactHint}",
+                                    text = c.contactHint,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = XPeachTheme.readablePrimary
                                 )
@@ -1629,9 +1509,7 @@ private fun MomentsPostDetailDialog(
                 OutlinedTextField(
                     value = commentInput,
                     onValueChange = { commentInput = it },
-                    label = { Text("提供线索或留言") },
-                    placeholder = { Text("例如：已放在三楼服务台 / 我在二餐厅看到过") },
-                    singleLine = false,
+                    label = { Text("留言") },
                     maxLines = 3,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1639,7 +1517,7 @@ private fun MomentsPostDetailDialog(
                 OutlinedTextField(
                     value = contactHintInput,
                     onValueChange = { contactHintInput = it },
-                    label = { Text("您的联系方式（选填）") },
+                    label = { Text("联系方式（选填）") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1662,7 +1540,7 @@ private fun MomentsPostDetailDialog(
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("删除记录", color = MaterialTheme.colorScheme.error)
+                            Text("删除", color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -1678,7 +1556,7 @@ private fun MomentsPostDetailDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("发送线索")
+                Text("发送")
             }
         },
         dismissButton = {
@@ -1715,23 +1593,23 @@ private fun PublishMomentsPostDialog(
 
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("发布寻物 / 失物招领") },
+        title = { Text("发布寻物 / 招领") },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp)
+                    .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     XPeachFilterPill(
-                        label = "我丢了物品 (寻物)",
+                        label = "寻物",
                         selected = postType == MomentsPostType.LOST,
                         onClick = { postType = MomentsPostType.LOST }
                     )
                     XPeachFilterPill(
-                        label = "我捡到物品 (招领)",
+                        label = "招领",
                         selected = postType == MomentsPostType.FOUND,
                         onClick = { postType = MomentsPostType.FOUND }
                     )
@@ -1740,14 +1618,12 @@ private fun PublishMomentsPostDialog(
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("物品名称 / 标题 *") },
-                    placeholder = { Text("例如：拾到校园一卡通 / 寻 AirPods 耳机仓") },
+                    label = { Text("物品名称 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("物品分类", style = MaterialTheme.typography.labelSmall)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1762,7 +1638,6 @@ private fun PublishMomentsPostDialog(
                     }
                 }
 
-                Text("所属校区", style = MaterialTheme.typography.labelSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (cp in PresetCampusMomentsCatalog.CAMPUS_OPTIONS) {
                         XPeachFilterPill(
@@ -1777,8 +1652,7 @@ private fun PublishMomentsPostDialog(
                 OutlinedTextField(
                     value = location,
                     onValueChange = { location = it },
-                    label = { Text("遗失或拾得地点 *") },
-                    placeholder = { Text("例如：图书馆三层西书库 / 二餐厅二楼") },
+                    label = { Text("地点 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1803,8 +1677,7 @@ private fun PublishMomentsPostDialog(
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("特征描述或放置位置") },
-                    placeholder = { Text("描述物品外观特征、卡号尾号或当前存放在哪个服务台") },
+                    label = { Text("描述") },
                     maxLines = 3,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1813,8 +1686,7 @@ private fun PublishMomentsPostDialog(
                 OutlinedTextField(
                     value = contact,
                     onValueChange = { contact = it },
-                    label = { Text("联系方式 (QQ / 微信 / 电话) *") },
-                    placeholder = { Text("例如：QQ: 123456789") },
+                    label = { Text("联系方式 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1823,8 +1695,7 @@ private fun PublishMomentsPostDialog(
                 OutlinedTextField(
                     value = rewardNote,
                     onValueChange = { rewardNote = it },
-                    label = { Text("认领或酬谢备注（选填）") },
-                    placeholder = { Text("例如：凭学号认领 / 奶茶酬谢") },
+                    label = { Text("备注（选填）") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1848,7 +1719,7 @@ private fun PublishMomentsPostDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("确认发布")
+                Text("发布")
             }
         },
         dismissButton = {
@@ -1882,13 +1753,13 @@ private fun PublishMomentsBookDialog(
 ) {
     var title by remember { mutableStateOf("") }
     var isbn by remember { mutableStateOf("") }
-    var publisher by remember { mutableStateOf("高等教育出版社") }
+    var publisher by remember { mutableStateOf("") }
     var courseName by remember { mutableStateOf("") }
     var majorTrack by remember { mutableStateOf(defaultTrack) }
     var campus by remember { mutableStateOf("莲花街校区") }
     var condition by remember { mutableStateOf(PresetCampusMomentsCatalog.BOOK_CONDITIONS[1]) }
-    var priceText by remember { mutableStateOf("15") }
-    var origPriceText by remember { mutableStateOf("55") }
+    var priceText by remember { mutableStateOf("") }
+    var origPriceText by remember { mutableStateOf("") }
     var deliveryMode by remember { mutableStateOf(PresetCampusMomentsCatalog.BOOK_DELIVERY_MODES[0]) }
     var contact by remember { mutableStateOf("") }
 
@@ -1899,16 +1770,11 @@ private fun PublishMomentsBookDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp)
+                    .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (courseNames.isNotEmpty()) {
-                    Text(
-                        text = "从我的课表快速选课填充：",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = XPeachTheme.readablePrimary
-                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1932,13 +1798,22 @@ private fun PublishMomentsBookDialog(
                                         majorTrack = matched.majorTrack
                                         origPriceText = matched.originalPriceYuan.toString()
                                     } else if (title.isBlank()) {
-                                        title = "$cName 教材与复习资料"
+                                        title = cName
                                     }
                                 }
                             )
                         }
                     }
                 }
+
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("书名 *") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 OutlinedTextField(
                     value = isbn,
@@ -1954,18 +1829,7 @@ private fun PublishMomentsBookDialog(
                             origPriceText = matched.originalPriceYuan.toString()
                         }
                     },
-                    label = { Text("ISBN 书号（输入自动匹配教材信息）") },
-                    placeholder = { Text("例如：9787040589818") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("教材名称 *") },
-                    placeholder = { Text("例如：高等数学（同济第八版）") },
+                    label = { Text("ISBN（选填）") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1974,7 +1838,7 @@ private fun PublishMomentsBookDialog(
                 OutlinedTextField(
                     value = publisher,
                     onValueChange = { publisher = it },
-                    label = { Text("作者 / 出版社") },
+                    label = { Text("出版社（选填）") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2001,7 +1865,6 @@ private fun PublishMomentsBookDialog(
                     )
                 }
 
-                Text("品相成色", style = MaterialTheme.typography.labelSmall)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -2016,7 +1879,6 @@ private fun PublishMomentsBookDialog(
                     }
                 }
 
-                Text("交接方式", style = MaterialTheme.typography.labelSmall)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -2034,8 +1896,7 @@ private fun PublishMomentsBookDialog(
                 OutlinedTextField(
                     value = contact,
                     onValueChange = { contact = it },
-                    label = { Text("卖家联系方式 (QQ / 微信) *") },
-                    placeholder = { Text("例如：QQ: 2310406002") },
+                    label = { Text("联系方式 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2047,7 +1908,7 @@ private fun PublishMomentsBookDialog(
                 enabled = title.trim().isNotEmpty() && contact.trim().isNotEmpty(),
                 onClick = {
                     val p = priceText.toIntOrNull() ?: 15
-                    val op = origPriceText.toIntOrNull() ?: (p + 30)
+                    val op = origPriceText.toIntOrNull() ?: p
                     onSubmit(
                         title,
                         isbn,
@@ -2064,7 +1925,7 @@ private fun PublishMomentsBookDialog(
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("确认上架")
+                Text("发布")
             }
         },
         dismissButton = {
@@ -2091,11 +1952,11 @@ private fun CreateAntiLostTagDialog(
     var category by remember { mutableStateOf(MomentsItemCategory.CUP_UMBRELLA.label) }
     var campus by remember { mutableStateOf("莲花街校区") }
     var ownerContact by remember { mutableStateOf("") }
-    var returnNote by remember { mutableStateOf("若拾到请放至就近教学楼/图书馆服务台，或通过本页留言告知位置，万分感谢！") }
+    var returnNote by remember { mutableStateOf("") }
 
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("生成随身物品防丢码") },
+        title = { Text("生成防丢码") },
         text = {
             Column(
                 modifier = Modifier
@@ -2106,14 +1967,12 @@ private fun CreateAntiLostTagDialog(
                 OutlinedTextField(
                     value = itemName,
                     onValueChange = { itemName = it },
-                    label = { Text("随身物品名称 *") },
-                    placeholder = { Text("例如：白色保温杯 / AirPods 耳机仓 / 校园卡套") },
+                    label = { Text("物品名称 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text("物品分类", style = MaterialTheme.typography.labelSmall)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -2131,8 +1990,7 @@ private fun CreateAntiLostTagDialog(
                 OutlinedTextField(
                     value = ownerContact,
                     onValueChange = { ownerContact = it },
-                    label = { Text("失主联系方式 (QQ / 微信 / 电话) *") },
-                    placeholder = { Text("例如：QQ: 310948271") },
+                    label = { Text("联系方式 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2141,7 +1999,7 @@ private fun CreateAntiLostTagDialog(
                 OutlinedTextField(
                     value = returnNote,
                     onValueChange = { returnNote = it },
-                    label = { Text("扫码页面显示的归还说明") },
+                    label = { Text("归还说明（选填）") },
                     maxLines = 3,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2154,7 +2012,7 @@ private fun CreateAntiLostTagDialog(
                 onClick = { onSubmit(itemName, category, campus, ownerContact, returnNote) },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("立即生成")
+                Text("生成")
             }
         },
         dismissButton = {
@@ -2177,7 +2035,7 @@ private fun ReportAntiLostFoundDialog(
         message: String
     ) -> Unit
 ) {
-    var tagCode by remember(initialTagCode) { mutableStateOf(initialTagCode.ifBlank { "HAUT-TAG-7E2A9B" }) }
+    var tagCode by remember(initialTagCode) { mutableStateOf(initialTagCode) }
     var finderName by remember { mutableStateOf("") }
     var foundLocation by remember { mutableStateOf("") }
     var finderContact by remember { mutableStateOf("") }
@@ -2185,7 +2043,7 @@ private fun ReportAntiLostFoundDialog(
 
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("上报拾得防丢码物品") },
+        title = { Text("上报拾得") },
         text = {
             Column(
                 modifier = Modifier
@@ -2196,8 +2054,7 @@ private fun ReportAntiLostFoundDialog(
                 OutlinedTextField(
                     value = tagCode,
                     onValueChange = { tagCode = it.uppercase() },
-                    label = { Text("防丢码编号 *") },
-                    placeholder = { Text("例如：HAUT-TAG-7E2A9B") },
+                    label = { Text("防丢码 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2205,17 +2062,7 @@ private fun ReportAntiLostFoundDialog(
                 OutlinedTextField(
                     value = foundLocation,
                     onValueChange = { foundLocation = it },
-                    label = { Text("拾得或当前放置位置 *") },
-                    placeholder = { Text("例如：已放在图书馆一楼服务台") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = finderName,
-                    onValueChange = { finderName = it },
-                    label = { Text("您的称呼（选填）") },
-                    placeholder = { Text("例如：热心同学") },
+                    label = { Text("放置位置 *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2223,7 +2070,7 @@ private fun ReportAntiLostFoundDialog(
                 OutlinedTextField(
                     value = finderContact,
                     onValueChange = { finderContact = it },
-                    label = { Text("您的联系方式（选填）") },
+                    label = { Text("联系方式（选填）") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2231,7 +2078,7 @@ private fun ReportAntiLostFoundDialog(
                 OutlinedTextField(
                     value = message,
                     onValueChange = { message = it },
-                    label = { Text("补充留言（选填）") },
+                    label = { Text("留言（选填）") },
                     maxLines = 2,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2244,7 +2091,7 @@ private fun ReportAntiLostFoundDialog(
                 onClick = { onSubmit(tagCode, finderName, foundLocation, finderContact, message) },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("通知失主")
+                Text("提交")
             }
         },
         dismissButton = {
