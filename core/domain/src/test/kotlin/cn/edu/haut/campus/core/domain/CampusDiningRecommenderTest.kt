@@ -151,4 +151,59 @@ class CampusDiningRecommenderTest {
         )
         assertNotEquals(rec0.primaryCandidate.profile.buildingId, rec1.primaryCandidate.profile.buildingId)
     }
+
+    @Test
+    fun canteenDishReviews_codecAndRecommendationRespectStarRatings() {
+        val reviews = listOf(
+            CanteenDishReview(
+                id = "b_canteen4:招牌脆皮鸡米饭",
+                canteenBuildingId = "b_canteen4",
+                dishName = "招牌脆皮鸡米饭",
+                stallLocation = "一楼东侧",
+                priceYuan = 12,
+                stars = 1,
+                tags = listOf("避雷"),
+                comment = "今天炸老了",
+                updatedAtEpochMs = 1_762_500_000_000L
+            ),
+            CanteenDishReview(
+                id = "b_canteen4:自选秘制叉烧饭",
+                canteenBuildingId = "b_canteen4",
+                dishName = "自选秘制叉烧饭",
+                stallLocation = "二楼窗口",
+                priceYuan = 13,
+                stars = 5,
+                tags = listOf("分量足", "味道正"),
+                comment = "叉烧入味",
+                updatedAtEpochMs = 1_762_500_100_000L
+            )
+        )
+
+        val encoded = CanteenDishReviewCodec.encodeList(reviews)
+        val decoded = CanteenDishReviewCodec.decodeList(encoded)
+        assertEquals(2, decoded.size)
+        assertEquals(1, decoded[0].stars)
+        assertEquals("自选秘制叉烧饭", decoded[1].dishName)
+
+        val aggregated = CampusDiningRecommender.aggregateDishRatings(decoded, "b_canteen4")
+        val avoided = aggregated.first { it.dishName == "招牌脆皮鸡米饭" }
+        val favorited = aggregated.first { it.dishName == "自选秘制叉烧饭" }
+        assertTrue(avoided.isAvoidedByUser)
+        assertTrue(favorited.isFavoritedByUser)
+
+        val date = LocalDate.of(2026, 11, 7)
+        val nowAt1200 = date.atTime(12, 0).atZone(HAUT_ZONE_ID).toInstant()
+        val rec = CampusDiningRecommender.buildRecommendation(
+            date = date,
+            now = nowAt1200,
+            occurrences = emptyList(),
+            buildings = testBuildings,
+            shuffleOffset = 0,
+            userReviews = decoded
+        )
+        val canteen4Candidate = rec.allCandidates.first { it.profile.buildingId == "b_canteen4" }
+        // 5★ 菜品应优先出现在推荐列表中，1★ 踩雷菜品应被剔除
+        assertTrue(canteen4Candidate.recommendedDishes.any { it.contains("自选秘制叉烧饭") })
+        assertTrue(canteen4Candidate.recommendedDishes.none { it.contains("招牌脆皮鸡米饭") })
+    }
 }

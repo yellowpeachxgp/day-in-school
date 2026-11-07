@@ -49,6 +49,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -85,13 +86,16 @@ import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachIconButton
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
+import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.core.domain.AggregatedDishRating
 import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
+import cn.edu.haut.campus.core.domain.CanteenDishReview
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ClassEndMealRecommendation
 import cn.edu.haut.campus.core.domain.ReminderPlanner
@@ -255,14 +259,16 @@ fun TodayScreen(
         currentNow,
         snapshot.items,
         buildings,
-        diningShuffleOffset
+        diningShuffleOffset,
+        prefs.canteenDishReviews
     ) {
         CampusDiningRecommender.buildRecommendation(
             date = selectedDate,
             now = currentNow.toInstant(),
             occurrences = snapshot.items.map { it.occurrence },
             buildings = buildings,
-            shuffleOffset = diningShuffleOffset
+            shuffleOffset = diningShuffleOffset,
+            userReviews = prefs.canteenDishReviews
         )
     }
 
@@ -670,10 +676,33 @@ fun TodayScreen(
     if (showDiningDialog) {
         CampusDiningRecommendationDialog(
             recommendation = mealRecommendation,
+            userReviews = prefs.canteenDishReviews,
             mealRecommendEnabled = prefs.mealRecommendEnabled,
             onToggleEnabled = { enabled ->
                 scope.launch {
                     repository.setMealRecommendEnabled(enabled)
+                }
+            },
+            onSaveReview = { canteenId, dishName, stallLocation, priceYuan, stars, tags, comment ->
+                scope.launch {
+                    runCatching {
+                        repository.saveCanteenDishReview(
+                            canteenBuildingId = canteenId,
+                            dishName = dishName,
+                            stallLocation = stallLocation,
+                            priceYuan = priceYuan,
+                            stars = stars,
+                            tags = tags,
+                            comment = comment
+                        )
+                    }
+                }
+            },
+            onDeleteReview = { canteenId, dishName ->
+                scope.launch {
+                    runCatching {
+                        repository.deleteCanteenDishReview(canteenId, dishName)
+                    }
                 }
             },
             onShuffle = { diningShuffleOffset += 1 },
@@ -2633,7 +2662,7 @@ private fun TodayDiningRecommendHeroCard(
                     contentColor = MaterialTheme.colorScheme.onPrimary
                 )
                 Text(
-                    text = "下课去 · ${primary.profile.name}",
+                    text = "下课去 · ${primary.profile.name} ★${primary.averageStars}",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -2678,7 +2707,7 @@ private fun TodayDiningRecommendHeroCard(
                     onClick = onShuffle
                 )
                 XPeachFilterPill(
-                    label = "全部食堂",
+                    label = "打星与红黑榜",
                     selected = false,
                     compact = true,
                     onClick = onOpenAllCanteens
@@ -2697,8 +2726,19 @@ private fun TodayDiningRecommendHeroCard(
 @Composable
 private fun CampusDiningRecommendationDialog(
     recommendation: ClassEndMealRecommendation,
+    userReviews: List<CanteenDishReview>,
     mealRecommendEnabled: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
+    onSaveReview: (
+        canteenBuildingId: String,
+        dishName: String,
+        stallLocation: String,
+        priceYuan: Int?,
+        stars: Int,
+        tags: List<String>,
+        comment: String
+    ) -> Unit,
+    onDeleteReview: (canteenBuildingId: String, dishName: String) -> Unit,
     onShuffle: () -> Unit,
     onTestNotification: () -> Unit,
     onNavigateToCanteen: (String) -> Unit,
@@ -2708,6 +2748,18 @@ private fun CampusDiningRecommendationDialog(
     val block = recommendation.block
     val minsLeft = recommendation.minutesUntilClassEnd
 
+    var selectedDialogTab by remember { mutableIntStateOf(0) } // 0: 下课推荐, 1: 饭菜打星与红黑榜
+    var selectedCanteenFilter by remember { mutableStateOf<String?>(null) }
+    var editingDishTarget by remember { mutableStateOf<AggregatedDishRating?>(null) }
+    var showCustomDishEditor by remember { mutableStateOf(false) }
+
+    val aggregatedDishes = remember(userReviews, selectedCanteenFilter) {
+        CampusDiningRecommender.aggregateDishRatings(
+            userReviews = userReviews,
+            canteenBuildingIdFilter = selectedCanteenFilter
+        )
+    }
+
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -2716,13 +2768,22 @@ private fun CampusDiningRecommendationDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("下课食堂推荐")
-                XPeachFilterPill(
-                    label = "换个推荐",
-                    selected = true,
-                    compact = true,
-                    onClick = onShuffle
-                )
+                Text("食堂推荐与饭菜评价")
+                if (selectedDialogTab == 0) {
+                    XPeachFilterPill(
+                        label = "换个推荐",
+                        selected = true,
+                        compact = true,
+                        onClick = onShuffle
+                    )
+                } else {
+                    XPeachFilterPill(
+                        label = "+ 写评价",
+                        selected = true,
+                        compact = true,
+                        onClick = { showCustomDishEditor = true }
+                    )
+                }
             }
         },
         text = {
@@ -2730,167 +2791,568 @@ private fun CampusDiningRecommendationDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // 1. 当前首选推荐卡片
-                XPeachWell {
+                XPeachSegmentedTabs(
+                    items = listOf("下课推荐", "饭菜打星 (${userReviews.size})"),
+                    selectedIndex = selectedDialogTab,
+                    onSelect = { selectedDialogTab = it }
+                )
+
+                if (selectedDialogTab == 0) {
+                    // 1. 当前首选推荐卡片
+                    XPeachWell {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "首选 · ${primary.profile.name} ★${primary.averageStars}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                            XPeachStatusBadge(
+                                text = if (minsLeft != null && minsLeft > 0) "距下课 ${minsLeft}m" else recommendation.mealSlot.label
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (block != null) {
+                            Text(
+                                text = "参考课段：${block.courseTitle}（${block.classroomText} · ${block.endTime.format(TIME_FMT)} 下课）",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                        Text(
+                            text = primary.reasonTag,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "推荐档口：${primary.recommendedDishes.joinToString(" / ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(
+                                onClick = { onNavigateToCanteen(primary.profile.name) },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Navigation,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("导航去${primary.profile.shortName}")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    selectedCanteenFilter = primary.profile.buildingId
+                                    selectedDialogTab = 1
+                                },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("饭菜打星")
+                            }
+                        }
+                    }
+
+                    // 2. 校区全部食堂对比
+                    Text(
+                        text = "全部食堂（按教室距离与你的打星偏好排序）",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    for (cand in recommendation.allCandidates) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .clickable {
+                                    selectedCanteenFilter = cand.profile.buildingId
+                                    selectedDialogTab = 1
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${cand.profile.name} ★${cand.averageStars}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    cand.walkMinutes?.let { wm ->
+                                        Text(
+                                            text = "约 ${wm} 分钟",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = XPeachTheme.readablePrimary
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = cand.profile.areaLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = cand.recommendedDishes.joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "去这里",
+                                selected = cand.profile.buildingId == primary.profile.buildingId,
+                                compact = true,
+                                onClick = { onNavigateToCanteen(cand.profile.name) }
+                            )
+                        }
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 4.dp)
+
+                    // 3. 离下课 1 小时自动通知开关与测试
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "首选 · ${primary.profile.name}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = XPeachTheme.readablePrimary
-                        )
-                        XPeachStatusBadge(
-                            text = if (minsLeft != null && minsLeft > 0) "距下课 ${minsLeft}m" else recommendation.mealSlot.label
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "离下课 1 小时自动通知",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "距连续课段下课 60 分钟时弹窗推荐就近食堂",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = mealRecommendEnabled,
+                            onCheckedChange = onToggleEnabled
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    if (block != null) {
-                        Text(
-                            text = "参考课段：${block.courseTitle}（${block.classroomText} · ${block.endTime.format(TIME_FMT)} 下课）",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                    }
-                    Text(
-                        text = primary.reasonTag,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "推荐档口：${primary.recommendedDishes.joinToString(" / ")}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { onNavigateToCanteen(primary.profile.name) },
+
+                    OutlinedButton(
+                        onClick = onTestNotification,
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Navigation,
+                            imageVector = Icons.Default.NotificationsActive,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("步行导航去${primary.profile.shortName}")
+                        Text("发送测试推荐通知")
                     }
-                }
-
-                // 2. 校区全部食堂对比
-                Text(
-                    text = "全部食堂（按当前教室距离与顺路排序）",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                for (cand in recommendation.allCandidates) {
+                } else {
+                    // Tab 1: 食堂饭菜红黑榜与打星系统
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .clickable { onNavigateToCanteen(cand.profile.name) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
+                        XPeachFilterPill(
+                            label = "全部",
+                            selected = selectedCanteenFilter == null,
+                            compact = true,
+                            onClick = { selectedCanteenFilter = null }
+                        )
+                        for (canteen in CampusDiningRecommender.CANTEENS) {
+                            XPeachFilterPill(
+                                label = canteen.shortName,
+                                selected = selectedCanteenFilter == canteen.buildingId,
+                                compact = true,
+                                onClick = { selectedCanteenFilter = canteen.buildingId }
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = "打 4-5★ 将在下课前优先推荐，打 1-2★ 将自动从你的推荐中剔除",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    for (dish in aggregatedDishes) {
+                        val myStars = dish.myReview?.stars
+                        XPeachWell {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = dish.dishName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        dish.priceYuan?.let { p ->
+                                            Text(
+                                                text = "¥$p",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = XPeachTheme.readablePrimary
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "${dish.canteenShortName} · ${dish.stallLocation} · ${dish.totalReviewCount}人评价",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                XPeachStatusBadge(
+                                    text = "★ ${dish.averageStars}",
+                                    containerColor = if (dish.isAvoidedByUser) {
+                                        XPeachTheme.dangerContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    },
+                                    contentColor = if (dish.isAvoidedByUser) {
+                                        XPeachTheme.onDangerContainer
+                                    } else {
+                                        XPeachTheme.readablePrimary
+                                    }
+                                )
+                            }
+
+                            if (dish.tags.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = cand.profile.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
+                                    text = dish.tags.joinToString(" · ") { "#$it" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                            }
+
+                            if (dish.displayComment.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = dish.displayComment,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                cand.walkMinutes?.let { wm ->
-                                    Text(
-                                        text = "约 ${wm} 分钟",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = XPeachTheme.readablePrimary
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // 快捷 1-5 星打分栏 + 写短评按钮
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    for (star in 1..5) {
+                                        val isSelectedStar = myStars != null && star <= myStars
+                                        Text(
+                                            text = if (isSelectedStar) "★" else "☆",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelectedStar) {
+                                                if (myStars <= 2) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                            },
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .clickable {
+                                                    onSaveReview(
+                                                        dish.canteenBuildingId,
+                                                        dish.dishName,
+                                                        dish.stallLocation,
+                                                        dish.priceYuan,
+                                                        star,
+                                                        dish.myReview?.tags ?: if (star <= 2) listOf("避雷") else listOf("味道正"),
+                                                        dish.myReview?.comment.orEmpty()
+                                                    )
+                                                }
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (myStars != null) {
+                                        Text(
+                                            text = if (myStars <= 2) "${myStars}★ 已避雷" else "我的 ${myStars}★",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (myStars <= 2) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                                        )
+                                    }
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (dish.myReview != null) {
+                                        TextButton(
+                                            onClick = { onDeleteReview(dish.canteenBuildingId, dish.dishName) },
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp)
+                                        ) {
+                                            Text("撤销", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                    XPeachFilterPill(
+                                        label = if (dish.myReview != null) "改评语" else "写评价",
+                                        selected = false,
+                                        compact = true,
+                                        onClick = { editingDishTarget = dish }
                                     )
                                 }
                             }
-                            Text(
-                                text = cand.profile.areaLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = cand.recommendedDishes.joinToString(" · "),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
                         }
-                        XPeachFilterPill(
-                            label = "去这里",
-                            selected = cand.profile.buildingId == primary.profile.buildingId,
-                            compact = true,
-                            onClick = { onNavigateToCanteen(cand.profile.name) }
-                        )
                     }
-                }
-
-                XPeachInsetDivider(verticalPadding = 4.dp)
-
-                // 3. 离下课 1 小时自动通知开关与测试
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "离下课 1 小时自动通知",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "距连续课段下课 60 分钟时弹窗推荐就近食堂",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = mealRecommendEnabled,
-                        onCheckedChange = onToggleEnabled
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onTestNotification,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.NotificationsActive,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("发送测试推荐通知")
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("关闭")
+            }
+        }
+    )
+
+    val targetDish = editingDishTarget
+    if (targetDish != null || showCustomDishEditor) {
+        DishReviewEditorDialog(
+            initialDish = targetDish,
+            defaultCanteenId = selectedCanteenFilter ?: primary.profile.buildingId,
+            onDismiss = {
+                editingDishTarget = null
+                showCustomDishEditor = false
+            },
+            onConfirm = { canteenId, dishName, stall, price, stars, tags, comment ->
+                onSaveReview(canteenId, dishName, stall, price, stars, tags, comment)
+                editingDishTarget = null
+                showCustomDishEditor = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun DishReviewEditorDialog(
+    initialDish: AggregatedDishRating?,
+    defaultCanteenId: String,
+    onDismiss: () -> Unit,
+    onConfirm: (
+        canteenBuildingId: String,
+        dishName: String,
+        stallLocation: String,
+        priceYuan: Int?,
+        stars: Int,
+        tags: List<String>,
+        comment: String
+    ) -> Unit
+) {
+    var canteenId by remember(initialDish, defaultCanteenId) {
+        mutableStateOf(initialDish?.canteenBuildingId ?: defaultCanteenId)
+    }
+    var dishName by remember(initialDish) {
+        mutableStateOf(initialDish?.dishName.orEmpty())
+    }
+    var stallLocation by remember(initialDish) {
+        mutableStateOf(initialDish?.stallLocation.orEmpty())
+    }
+    var priceText by remember(initialDish) {
+        mutableStateOf(initialDish?.priceYuan?.toString().orEmpty())
+    }
+    var stars by remember(initialDish) {
+        mutableIntStateOf(initialDish?.myReview?.stars ?: 5)
+    }
+    var selectedTags by remember(initialDish) {
+        mutableStateOf((initialDish?.myReview?.tags ?: initialDish?.tags.orEmpty()).toSet())
+    }
+    var comment by remember(initialDish) {
+        mutableStateOf(initialDish?.myReview?.comment.orEmpty())
+    }
+
+    val starMeaning = when (stars) {
+        1 -> "1★ 踩雷（下课不再推荐）"
+        2 -> "2★ 一般（下课不再推荐）"
+        3 -> "3★ 还行"
+        4 -> "4★ 推荐（下课优先推荐）"
+        else -> "5★ 强烈推荐（下课优先推荐）"
+    }
+
+    XPeachAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialDish != null) "评价 · ${initialDish.dishName}" else "新增食堂菜品评价") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (initialDish == null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (canteen in CampusDiningRecommender.CANTEENS) {
+                            XPeachFilterPill(
+                                label = canteen.shortName,
+                                selected = canteenId == canteen.buildingId,
+                                compact = true,
+                                onClick = { canteenId = canteen.buildingId }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = dishName,
+                        onValueChange = { dishName = it },
+                        label = { Text("菜品名称（如：二楼黄焖鸡米饭）") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = stallLocation,
+                            onValueChange = { stallLocation = it },
+                            label = { Text("楼层/档口") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = priceText,
+                            onValueChange = { priceText = it },
+                            label = { Text("价格(元)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // 1-5 星选择器
+                XPeachWell {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (s in 1..5) {
+                                Text(
+                                    text = if (s <= stars) "★" else "☆",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = if (s <= stars) {
+                                        if (stars <= 2) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                    },
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { stars = s }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = starMeaning,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (stars <= 2) MaterialTheme.colorScheme.error else XPeachTheme.readablePrimary
+                        )
+                    }
+                }
+
+                // 快捷标签
+                Text(
+                    text = "快捷标签",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    for (tag in CampusDiningRecommender.QUICK_REVIEW_TAGS) {
+                        val isTagSelected = tag in selectedTags
+                        XPeachFilterPill(
+                            label = tag,
+                            selected = isTagSelected,
+                            compact = true,
+                            onClick = {
+                                selectedTags = if (isTagSelected) selectedTags - tag else selectedTags + tag
+                            }
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = { Text("简短评价（选填，如：肉量足、微辣刚好）") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val finalName = dishName.trim()
+                    if (finalName.isNotEmpty()) {
+                        onConfirm(
+                            canteenId,
+                            finalName,
+                            stallLocation.trim(),
+                            priceText.trim().toIntOrNull(),
+                            stars,
+                            selectedTags.toList(),
+                            comment.trim()
+                        )
+                    }
+                }
+            ) {
+                Text("保存评价")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
             }
         }
     )

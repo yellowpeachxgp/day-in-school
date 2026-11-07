@@ -805,10 +805,12 @@ class ReminderCoordinator internal constructor(
                 blk.blockKey != lastNotifiedKey
         }
         if (dueBlock != null) {
+            val userReviews = repository.getCanteenDishReviewsSnapshot()
             val rec = CampusDiningRecommender.buildRecommendationForBlock(
                 block = dueBlock,
                 now = now,
-                buildings = buildings
+                buildings = buildings,
+                userReviews = userReviews
             )
             val posted = ReminderNotificationFactory.postMealRecommendationNotification(
                 context = appContext,
@@ -862,12 +864,14 @@ class ReminderCoordinator internal constructor(
             buildings = scheduleSnapshot.buildings
         )
         val targetBlock = blocks.firstOrNull { now.isBefore(it.endInstant) }
+        val userReviews = repository.getCanteenDishReviewsSnapshot()
         val rec = if (targetBlock != null) {
             CampusDiningRecommender.buildRecommendationForBlock(
                 block = targetBlock,
                 now = now,
                 buildings = scheduleSnapshot.buildings,
-                shuffleOffset = shuffleOffset
+                shuffleOffset = shuffleOffset,
+                userReviews = userReviews
             )
         } else {
             CampusDiningRecommender.buildRecommendation(
@@ -875,7 +879,8 @@ class ReminderCoordinator internal constructor(
                 now = now,
                 occurrences = emptyList(),
                 buildings = scheduleSnapshot.buildings,
-                shuffleOffset = shuffleOffset
+                shuffleOffset = shuffleOffset,
+                userReviews = userReviews
             )
         }
         return ReminderNotificationFactory.postMealRecommendationNotification(

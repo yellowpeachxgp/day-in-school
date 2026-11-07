@@ -168,6 +168,7 @@ data class AppPreferencesState(
     val lastUtilityDailyNotifyDate: String? = null,
     val mealRecommendEnabled: Boolean = true,
     val lastMealRecommendBlockKey: String? = null,
+    val canteenDishReviews: List<cn.edu.haut.campus.core.domain.CanteenDishReview> = emptyList(),
     val selectedFocusMinutes: Int = 25,
     val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
     val selectedCampusId: String = "auto",
@@ -301,6 +302,7 @@ class CampusRepository internal constructor(
         val LAST_UTILITY_DAILY_NOTIFY_DATE = stringPreferencesKey("last_utility_daily_notify_date_v1")
         val MEAL_RECOMMEND_ENABLED = booleanPreferencesKey("meal_recommend_enabled_v1")
         val LAST_MEAL_RECOMMEND_BLOCK_KEY = stringPreferencesKey("last_meal_recommend_block_key_v1")
+        val CANTEEN_DISH_REVIEWS = stringPreferencesKey("canteen_dish_reviews_v1")
         val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
         val THEME_MODE = stringPreferencesKey("theme_mode_v1")
         val UI_DESIGN_STYLE = stringPreferencesKey("ui_design_style_v1")
@@ -517,6 +519,9 @@ class CampusRepository internal constructor(
             lastUtilityDailyNotifyDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
             mealRecommendEnabled = supportsHautServices && (prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] ?: true),
             lastMealRecommendBlockKey = prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY],
+            canteenDishReviews = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
+                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+            ),
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs),
             selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
@@ -2069,6 +2074,62 @@ class CampusRepository internal constructor(
     suspend fun markMealRecommendNotified(blockKey: String) {
         preferences.edit { prefs ->
             prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY] = blockKey
+        }
+    }
+
+    suspend fun getCanteenDishReviewsSnapshot(): List<cn.edu.haut.campus.core.domain.CanteenDishReview> {
+        val raw = preferences.data.first()[PrefKeys.CANTEEN_DISH_REVIEWS]
+        return cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(raw)
+    }
+
+    suspend fun saveCanteenDishReview(
+        canteenBuildingId: String,
+        dishName: String,
+        stallLocation: String = "",
+        priceYuan: Int? = null,
+        stars: Int,
+        tags: List<String> = emptyList(),
+        comment: String = ""
+    ) {
+        val cleanCanteen = canteenBuildingId.trim().ifBlank { "b_canteen1" }
+        val cleanDish = dishName.trim().take(36)
+        require(cleanDish.isNotEmpty()) { "请输入菜品或档口名称" }
+        val safeStars = stars.coerceIn(1, 5)
+        val nowMs = System.currentTimeMillis()
+        preferences.edit { prefs ->
+            val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
+                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+            )
+            val filtered = existing.filterNot {
+                it.canteenBuildingId == cleanCanteen && it.dishName.equals(cleanDish, ignoreCase = true)
+            }
+            val newReview = cn.edu.haut.campus.core.domain.CanteenDishReview(
+                id = "$cleanCanteen:$cleanDish",
+                canteenBuildingId = cleanCanteen,
+                dishName = cleanDish,
+                stallLocation = stallLocation.trim().take(24),
+                priceYuan = priceYuan?.coerceIn(1, 200),
+                stars = safeStars,
+                tags = tags.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(4),
+                comment = comment.trim().take(80),
+                updatedAtEpochMs = nowMs
+            )
+            val updated = listOf(newReview) + filtered
+            prefs[PrefKeys.CANTEEN_DISH_REVIEWS] =
+                cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated.take(120))
+        }
+    }
+
+    suspend fun deleteCanteenDishReview(canteenBuildingId: String, dishName: String) {
+        preferences.edit { prefs ->
+            val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
+                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+            )
+            val updated = existing.filterNot {
+                it.canteenBuildingId == canteenBuildingId && it.dishName.equals(dishName.trim(), ignoreCase = true)
+            }
+            prefs[PrefKeys.CANTEEN_DISH_REVIEWS] =
+                cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated)
         }
     }
 
