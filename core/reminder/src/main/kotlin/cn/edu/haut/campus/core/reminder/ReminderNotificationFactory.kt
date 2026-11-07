@@ -31,6 +31,7 @@ object ReminderNotificationFactory {
     const val CHANNEL_CLASS_REMINDERS = "class_reminders_v1"
     const val CHANNEL_EXAM_REMINDERS = "exam_reminders_v1"
     const val CHANNEL_LIVE_COURSE = "live_course_ongoing_v1"
+    const val CHANNEL_MEAL_RECOMMEND = "meal_recommend_v1"
     const val CHANNEL_REMINDER_STATUS = "reminder_status_v1"
 
     const val EXTRA_REMINDER_NAV_ACTION = "extra_reminder_nav_action"
@@ -45,6 +46,7 @@ object ReminderNotificationFactory {
 
     private const val TEST_NOTIFICATION_ID = 990101
     private const val LIVE_COURSE_NOTIFICATION_ID = 990102
+    private const val MEAL_RECOMMEND_NOTIFICATION_ID = 990103
     private val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
     fun ensureChannels(context: Context) {
@@ -87,8 +89,17 @@ object ReminderNotificationFactory {
             setShowBadge(false)
         }
 
+        val mealRecommendChannel = NotificationChannel(
+            CHANNEL_MEAL_RECOMMEND,
+            "下课就餐推荐",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "距下课一小时自动推荐就近食堂与餐品"
+            enableVibration(true)
+        }
+
         manager.createNotificationChannels(
-            listOf(classChannel, examChannel, liveCourseChannel, statusChannel)
+            listOf(classChannel, examChannel, liveCourseChannel, mealRecommendChannel, statusChannel)
         )
     }
 
@@ -486,6 +497,68 @@ object ReminderNotificationFactory {
     fun cancelLiveCourseNotification(context: Context) {
         runCatching {
             NotificationManagerCompat.from(context).cancel(LIVE_COURSE_NOTIFICATION_ID)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun postMealRecommendationNotification(
+        context: Context,
+        accountScope: AccountBackgroundScope,
+        title: String,
+        body: String,
+        canteenBuildingId: String,
+        canteenName: String
+    ): Boolean {
+        if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
+        ensureChannels(context)
+
+        val contentIntent = buildAppLaunchPendingIntent(
+            context = context,
+            accountScope = accountScope,
+            requestKey = "meal_recommend_tap:$canteenBuildingId",
+            navAction = NAV_ACTION_OPEN_TODAY,
+            taskId = null,
+            eventKey = null,
+            buildingId = canteenBuildingId,
+            roomText = canteenName
+        )
+        val mapIntent = buildAppLaunchPendingIntent(
+            context = context,
+            accountScope = accountScope,
+            requestKey = "meal_recommend_map:$canteenBuildingId",
+            navAction = NAV_ACTION_OPEN_MAP,
+            taskId = null,
+            eventKey = null,
+            buildingId = canteenBuildingId,
+            roomText = canteenName
+        )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_MEAL_RECOMMEND)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+
+        if (contentIntent != null) {
+            builder.setContentIntent(contentIntent)
+        }
+        if (mapIntent != null) {
+            builder.addAction(0, "导航去$canteenName", mapIntent)
+        }
+
+        return runCatching {
+            NotificationManagerCompat.from(context).notify(MEAL_RECOMMEND_NOTIFICATION_ID, builder.build())
+            true
+        }.getOrDefault(false)
+    }
+
+    fun cancelMealRecommendationNotification(context: Context) {
+        runCatching {
+            NotificationManagerCompat.from(context).cancel(MEAL_RECOMMEND_NOTIFICATION_ID)
         }
     }
 

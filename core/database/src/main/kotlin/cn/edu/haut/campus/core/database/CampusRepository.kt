@@ -166,6 +166,8 @@ data class AppPreferencesState(
     val utilityDailyNotifyHour: Int = 20,
     val utilityLowBalanceThreshold: Float = 15f,
     val lastUtilityDailyNotifyDate: String? = null,
+    val mealRecommendEnabled: Boolean = true,
+    val lastMealRecommendBlockKey: String? = null,
     val selectedFocusMinutes: Int = 25,
     val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
     val selectedCampusId: String = "auto",
@@ -248,6 +250,7 @@ class CampusRepository internal constructor(
         val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
         val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
         val GIS_DICTIONARY_SYNCED_V15 = booleanPreferencesKey("official_gis_dictionary_synced_v15")
+        val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
@@ -296,6 +299,8 @@ class CampusRepository internal constructor(
         val UTILITY_DAILY_NOTIFY_HOUR = intPreferencesKey("utility_daily_notify_hour_v1")
         val UTILITY_LOW_BALANCE_THRESHOLD = floatPreferencesKey("utility_low_balance_threshold_v1")
         val LAST_UTILITY_DAILY_NOTIFY_DATE = stringPreferencesKey("last_utility_daily_notify_date_v1")
+        val MEAL_RECOMMEND_ENABLED = booleanPreferencesKey("meal_recommend_enabled_v1")
+        val LAST_MEAL_RECOMMEND_BLOCK_KEY = stringPreferencesKey("last_meal_recommend_block_key_v1")
         val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
         val THEME_MODE = stringPreferencesKey("theme_mode_v1")
         val UI_DESIGN_STYLE = stringPreferencesKey("ui_design_style_v1")
@@ -510,6 +515,8 @@ class CampusRepository internal constructor(
             utilityDailyNotifyHour = (prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23),
             utilityLowBalanceThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).coerceIn(5f, 100f),
             lastUtilityDailyNotifyDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
+            mealRecommendEnabled = supportsHautServices && (prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] ?: true),
+            lastMealRecommendBlockKey = prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY],
             selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs),
             selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
@@ -676,14 +683,16 @@ class CampusRepository internal constructor(
                 it[PrefKeys.SEEDED] = true
                 it[PrefKeys.CLEAN_BASE_V2] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
             }
-        } else if (prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true) {
+        } else if (prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true || prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V16] != true) {
             database.withTransaction {
                 dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
                 dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
             }
             preferences.edit {
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
             }
         }
         if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
@@ -2039,6 +2048,27 @@ class CampusRepository internal constructor(
     suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) {
         preferences.edit { prefs ->
             prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
+        }
+    }
+
+    suspend fun setMealRecommendEnabled(enabled: Boolean) {
+        preferences.edit { prefs ->
+            prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] = enabled
+        }
+        notifyScheduleOrPolicyChanged("MEAL_RECOMMEND_CONFIG_CHANGED")
+    }
+
+    suspend fun isMealRecommendEnabledSnapshot(): Boolean {
+        val prefs = preferences.data.first()
+        return supportsHautServices && (prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] ?: true)
+    }
+
+    suspend fun getLastMealRecommendBlockKeySnapshot(): String? =
+        preferences.data.first()[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY]
+
+    suspend fun markMealRecommendNotified(blockKey: String) {
+        preferences.edit { prefs ->
+            prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY] = blockKey
         }
     }
 

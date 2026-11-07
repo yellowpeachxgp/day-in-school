@@ -153,6 +153,13 @@ enum class HomeCardModule(
         subtitle = "常见学科竞赛与报名信息",
         defaultFullWidth = false,
         defaultVisible = true,
+    ),
+    CAMPUS_DINING(
+        id = "CAMPUS_DINING",
+        title = "食堂推荐",
+        subtitle = "下课就近食堂与餐品推荐",
+        defaultFullWidth = false,
+        defaultVisible = true,
     );
 
     companion object {

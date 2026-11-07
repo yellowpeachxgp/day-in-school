@@ -335,7 +335,40 @@ object HautMockSeedData {
             longitude = 113.548450,
             category = CampusCategory.CANTEEN,
             entrances = listOf("西门主入口", "南门入口"),
-            description = "莲花街校区东北生活区综合学生餐厅",
+            description = "莲花街校区东北生活区综合学生餐厅（1-3层）",
+            verifiedAt = LocalDate.of(2026, 11, 5)
+        ),
+        Building(
+            id = "b_canteen2",
+            name = "第二餐厅",
+            shortName = "二餐厅",
+            latitude = 34.833950,
+            longitude = 113.544600,
+            category = CampusCategory.CANTEEN,
+            entrances = listOf("南侧入口", "东侧入口"),
+            description = "莲花街校区北区中心湖畔学生餐厅，近1/2号教学楼与A/B/G/H公寓",
+            verifiedAt = LocalDate.of(2026, 11, 5)
+        ),
+        Building(
+            id = "b_canteen3",
+            name = "第三餐厅",
+            shortName = "三餐厅",
+            latitude = 34.832950,
+            longitude = 113.539600,
+            category = CampusCategory.CANTEEN,
+            entrances = listOf("南门入口", "东侧门"),
+            description = "莲花街校区西生活区风味与清真餐厅，近K/L/M公寓与体育训练中心",
+            verifiedAt = LocalDate.of(2026, 11, 5)
+        ),
+        Building(
+            id = "b_canteen4",
+            name = "第四餐厅",
+            shortName = "四餐厅",
+            latitude = 34.832260,
+            longitude = 113.541300,
+            category = CampusCategory.CANTEEN,
+            entrances = listOf("南广场主入口", "西侧门"),
+            description = "莲花街校区中西区综合学生餐厅，近工程训练中心与E/F公寓",
             verifiedAt = LocalDate.of(2026, 11, 5)
         ),
         Building(
@@ -346,7 +379,7 @@ object HautMockSeedData {
             longitude = 113.549520,
             category = CampusCategory.CANTEEN,
             entrances = listOf("西侧入口"),
-            description = "东侧教学区旁特色风味就餐点",
+            description = "东侧教学区旁特色风味就餐点，近2/3/4号教学楼",
             verifiedAt = LocalDate.of(2026, 11, 5)
         ),
         Building(
@@ -520,7 +553,21 @@ object HautMockSeedData {
         BuildingAlias("al_14", "b_stadium", "田径场", 0.95f, true),
         BuildingAlias("al_14b", "b_stadium", "莲花操场", 1.0f, true),
         BuildingAlias("al_14c", "b_stadium", "体育训练中心", 1.0f, true),
-        BuildingAlias("al_14d", "b_stadium", "体育馆", 0.95f, true)
+        BuildingAlias("al_14d", "b_stadium", "体育馆", 0.95f, true),
+        BuildingAlias("al_cant1_a", "b_canteen1", "第一餐厅", 1.0f, true),
+        BuildingAlias("al_cant1_b", "b_canteen1", "一餐厅", 1.0f, true),
+        BuildingAlias("al_cant1_c", "b_canteen1", "一餐", 0.96f, true),
+        BuildingAlias("al_cant2_a", "b_canteen2", "第二餐厅", 1.0f, true),
+        BuildingAlias("al_cant2_b", "b_canteen2", "二餐厅", 1.0f, true),
+        BuildingAlias("al_cant2_c", "b_canteen2", "二餐", 0.96f, true),
+        BuildingAlias("al_cant3_a", "b_canteen3", "第三餐厅", 1.0f, true),
+        BuildingAlias("al_cant3_b", "b_canteen3", "三餐厅", 1.0f, true),
+        BuildingAlias("al_cant3_c", "b_canteen3", "三餐", 0.96f, true),
+        BuildingAlias("al_cant4_a", "b_canteen4", "第四餐厅", 1.0f, true),
+        BuildingAlias("al_cant4_b", "b_canteen4", "四餐厅", 1.0f, true),
+        BuildingAlias("al_cant4_c", "b_canteen4", "四餐", 0.96f, true),
+        BuildingAlias("al_cants_a", "b_canteen_small", "小食堂", 1.0f, true),
+        BuildingAlias("al_cants_b", "b_canteen_small", "风味餐厅", 0.96f, true)
     )
 
     val defaultCourses = listOf(

@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.database.ActiveSession
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.toDomain
 import cn.edu.haut.campus.core.database.toEntity
+import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.domain.ReminderPolicyEngine
@@ -209,6 +210,14 @@ class ReminderCoordinator internal constructor(
                 globalConfig = globalConfig
             )
         }
+        runCatching {
+            syncMealRecommendationNotification(
+                now = now,
+                currentEvents = currentEvents,
+                buildings = scheduleSnapshot.buildings,
+                globalConfig = globalConfig
+            )
+        }
 
         ReconcileReport(
             reason = reason,
@@ -232,6 +241,21 @@ class ReminderCoordinator internal constructor(
                 val globalConfig = repository.getReminderConfigSnapshot()
                 val currentEvents = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
                 syncLiveCourseNotification(now, currentEvents, globalConfig)
+            }
+            return
+        }
+        if (taskId == MEAL_RECOMMEND_BOUNDARY_TASK_ID) {
+            runCatching {
+                val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
+                val exams = repository.getExamSchedulesSnapshot()
+                val globalConfig = repository.getReminderConfigSnapshot()
+                val currentEvents = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
+                syncMealRecommendationNotification(
+                    now = now,
+                    currentEvents = currentEvents,
+                    buildings = scheduleSnapshot.buildings,
+                    globalConfig = globalConfig
+                )
             }
             return
         }
@@ -752,6 +776,118 @@ class ReminderCoordinator internal constructor(
         }
     }
 
+    /**
+     * 离下课 1 小时自动推荐就近食堂与餐品：
+     * - 若当前已进入某连续课段下课前 60 分钟窗口（[recommendTriggerInstant, endInstant)），且该课段尚未提醒，自动弹出食堂推荐通知；
+     * - 同时为下一个尚未到达的 `recommendTriggerInstant` 注册闹钟唤醒。
+     */
+    private suspend fun syncMealRecommendationNotification(
+        now: Instant,
+        currentEvents: List<ReminderEvent>,
+        buildings: List<cn.edu.haut.campus.core.model.Building>,
+        globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig
+    ) {
+        val mealEnabled = repository.isMealRecommendEnabledSnapshot()
+        if (!mealEnabled) {
+            alarmScheduler.cancel(MEAL_RECOMMEND_BOUNDARY_TASK_ID, 1)
+            return
+        }
+
+        val blocks = CampusDiningRecommender.resolveClassBlocksFromReminderEvents(
+            events = currentEvents,
+            buildings = buildings
+        )
+        val lastNotifiedKey = repository.getLastMealRecommendBlockKeySnapshot()
+
+        val dueBlock = blocks.firstOrNull { blk ->
+            !now.isBefore(blk.recommendTriggerInstant) &&
+                now.isBefore(blk.endInstant) &&
+                blk.blockKey != lastNotifiedKey
+        }
+        if (dueBlock != null) {
+            val rec = CampusDiningRecommender.buildRecommendationForBlock(
+                block = dueBlock,
+                now = now,
+                buildings = buildings
+            )
+            val posted = ReminderNotificationFactory.postMealRecommendationNotification(
+                context = appContext,
+                accountScope = accountScope,
+                title = rec.notificationTitle,
+                body = rec.notificationBody,
+                canteenBuildingId = rec.primaryCandidate.profile.buildingId,
+                canteenName = rec.primaryCandidate.profile.name
+            )
+            if (posted) {
+                repository.markMealRecommendNotified(dueBlock.blockKey)
+            }
+        }
+
+        val nextTriggerBlock = blocks
+            .filter { it.recommendTriggerInstant.isAfter(now) && it.blockKey != lastNotifiedKey }
+            .minByOrNull { it.recommendTriggerInstant }
+        if (nextTriggerBlock != null) {
+            val mealTask = ReminderTaskDomain(
+                id = MEAL_RECOMMEND_BOUNDARY_TASK_ID,
+                taskKey = MEAL_RECOMMEND_BOUNDARY_TASK_ID,
+                eventKey = nextTriggerBlock.blockKey,
+                eventType = cn.edu.haut.campus.core.model.ReminderEventType.CLASS,
+                reminderKind = ReminderKind.CLASS_BEFORE,
+                eventRevision = "v1",
+                policyRevision = "v1",
+                eventStartAtEpochMs = nextTriggerBlock.startInstant.toEpochMilli(),
+                originalScheduledAtEpochMs = nextTriggerBlock.recommendTriggerInstant.toEpochMilli(),
+                scheduledAtEpochMs = nextTriggerBlock.recommendTriggerInstant.toEpochMilli(),
+                status = ReminderTaskStatus.PENDING,
+                schedulerState = ReminderSchedulerState.NONE,
+                generation = 1,
+                snoozeCount = 0,
+                maxSnoozes = 0,
+                createdAtEpochMs = now.toEpochMilli(),
+                updatedAtEpochMs = now.toEpochMilli()
+            )
+            alarmScheduler.schedule(mealTask, preferExact = globalConfig.preciseReminderPreferred)
+        } else {
+            alarmScheduler.cancel(MEAL_RECOMMEND_BOUNDARY_TASK_ID, 1)
+        }
+    }
+
+    suspend fun triggerTestMealRecommendation(shuffleOffset: Int = 0): Boolean {
+        val now = Instant.now()
+        val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
+        val exams = repository.getExamSchedulesSnapshot()
+        val currentEvents = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
+        val blocks = CampusDiningRecommender.resolveClassBlocksFromReminderEvents(
+            events = currentEvents,
+            buildings = scheduleSnapshot.buildings
+        )
+        val targetBlock = blocks.firstOrNull { now.isBefore(it.endInstant) }
+        val rec = if (targetBlock != null) {
+            CampusDiningRecommender.buildRecommendationForBlock(
+                block = targetBlock,
+                now = now,
+                buildings = scheduleSnapshot.buildings,
+                shuffleOffset = shuffleOffset
+            )
+        } else {
+            CampusDiningRecommender.buildRecommendation(
+                date = now.atZone(HAUT_ZONE_ID).toLocalDate(),
+                now = now,
+                occurrences = emptyList(),
+                buildings = scheduleSnapshot.buildings,
+                shuffleOffset = shuffleOffset
+            )
+        }
+        return ReminderNotificationFactory.postMealRecommendationNotification(
+            context = appContext,
+            accountScope = accountScope,
+            title = rec.notificationTitle,
+            body = rec.notificationBody,
+            canteenBuildingId = rec.primaryCandidate.profile.buildingId,
+            canteenName = rec.primaryCandidate.profile.name
+        )
+    }
+
     suspend fun cancelAllActiveAlarmsAndNotifications() {
         val reminderDao = repository.reminderDao()
         val activeTasks = reminderDao.getAllActiveTasksSnapshot().map { it.toDomain() }
@@ -816,6 +952,7 @@ class ReminderCoordinator internal constructor(
 
     companion object {
         const val LIVE_COURSE_BOUNDARY_TASK_ID = "__live_course_boundary__"
+        const val MEAL_RECOMMEND_BOUNDARY_TASK_ID = "__meal_recommend_boundary__"
         @Volatile private var INSTANCE: ReminderCoordinator? = null
 
         fun bind(context: Context, session: ActiveSession): ReminderCoordinator = synchronized(this) {
