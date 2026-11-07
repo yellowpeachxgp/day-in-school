@@ -77,6 +77,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1694,16 +1695,20 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val recentRecord = remember(seatOverview) {
         seatOverview?.currentBooking ?: seatOverview?.recentHistory?.firstOrNull()
     }
-    var selectedMode by remember { mutableStateOf(BookingExecutionMode.LOCAL_DEVICE) }
-    var useTomorrow by remember {
+    var selectedMode by remember(hasBoundCloudAccount) {
+        mutableStateOf(
+            if (hasBoundCloudAccount) BookingExecutionMode.CLOUD_HOSTED else BookingExecutionMode.LOCAL_DEVICE
+        )
+    }
+    var useTomorrow by rememberSaveable {
         mutableStateOf(
             !java.time.LocalTime.now(ZoneId.of("Asia/Shanghai")).isBefore(java.time.LocalTime.of(7, 0))
         )
     }
-    var selectedHour by remember { mutableIntStateOf(7) }
-    var selectedMinute by remember { mutableIntStateOf(0) }
-    var showMoreTimeSlots by remember { mutableStateOf(false) }
-    var selectedRepeatDays by remember { mutableIntStateOf(1) }
+    var selectedHour by rememberSaveable { mutableIntStateOf(7) }
+    var selectedMinute by rememberSaveable { mutableIntStateOf(0) }
+    var showMoreTimeSlots by rememberSaveable { mutableStateOf(false) }
+    var selectedRepeatDays by rememberSaveable { mutableIntStateOf(1) }
 
     val targetTimeText = remember(selectedHour, selectedMinute) {
         "%02d:%02d".format(selectedHour, selectedMinute)

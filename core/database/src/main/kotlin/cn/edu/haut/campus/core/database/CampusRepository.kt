@@ -2897,14 +2897,23 @@ class CampusRepository internal constructor(
             val localPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
             for (rj in verifiedSnapshot.jobs) {
                 val matchingLocal = localPlans.firstOrNull {
-                    it.cloudJobId == rj.jobId ||
-                        it.id == rj.planId ||
-                        (it.targetLocalDate == rj.targetLocalDate && it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName)
+                    it.cloudJobId == rj.jobId && it.targetLocalDate == rj.targetLocalDate
+                } ?: localPlans.firstOrNull {
+                    it.targetLocalDate == rj.targetLocalDate &&
+                        it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
+                } ?: localPlans.firstOrNull {
+                    it.cloudJobId == rj.jobId &&
+                        it.status !in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
                 }
                 val matchingOrder = verifiedSnapshot.orders.firstOrNull { it.jobId == rj.jobId }
                 val cleanAreaName = (rj.bookedRegionAlias ?: rj.areaName).cleanNullLiteral(
                     matchingLocal?.preferredAreaName.cleanNullLiteral("五层中区")
                 )
+                val candidateSeatsLabel = rj.candidateSeats
+                    .map { it.cleanNullLiteral() }
+                    .filter { it.isNotEmpty() }
+                    .joinToString(", ")
+                    .ifBlank { matchingLocal?.preferredSeatLabel.cleanNullLiteral("01桌 B座") }
                 val primarySeat = rj.bookedSeatAlias?.cleanNullableLiteral()
                     ?: rj.candidateSeats.firstOrNull { it.cleanNullLiteral().isNotEmpty() }
                     ?: matchingLocal?.preferredSeatLabel.cleanNullableLiteral()
@@ -2912,15 +2921,26 @@ class CampusRepository internal constructor(
                 val parsedDate = runCatching { LocalDate.parse(rj.targetLocalDate) }.getOrNull() ?: LocalDate.now().plusDays(1)
                 val parsedTime = runCatching { DualEngineReservationPlanner.parseTargetLocalTime(rj.targetLocalTime) }.getOrNull() ?: LocalTime.of(7, 0)
                 val fireEpochMs = parsedDate.atTime(parsedTime).atZone(DualEngineReservationPlanner.HAUT_ZONE).toInstant().toEpochMilli()
+                val effRepeatDays = rj.repeatDays.coerceAtLeast(matchingLocal?.repeatDays ?: 1)
+                val effRemainingDays = if (rj.state in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
+                    rj.remainingDays.coerceAtLeast(1)
+                } else {
+                    rj.remainingDays
+                }
+                val repeatDiagSuffix = if (effRepeatDays > 1 && effRemainingDays > 0) {
+                    "（连续 $effRepeatDays 天 · 剩余 $effRemainingDays 天）"
+                } else {
+                    ""
+                }
                 val diagText = when (rj.state) {
-                    "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到"
+                    "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到$repeatDiagSuffix"
                     "CANCELLED" -> "该预约计划已取消（未消耗内测配额 🍑）"
-                    "FAILED" -> "目标座位已被抢满，本次未消耗内测配额 🍑"
+                    "FAILED" -> "目标座位已被抢满，本次未消耗内测配额 🍑$repeatDiagSuffix"
                     "EXPIRED" -> "已过开抢有效期窗口（本次未消耗内测配额 🍑）"
-                    else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座"
+                    else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座$repeatDiagSuffix"
                 }
                 val mergedPlan = LibraryBookingPlanEntity(
-                    id = matchingLocal?.id ?: "plan_${rj.planId.replace("-", "").take(14)}",
+                    id = matchingLocal?.id ?: "plan_${rj.jobId.ifBlank { rj.planId }.replace("-", "").take(14)}",
                     schoolId = schoolId,
                     executionMode = BookingExecutionMode.CLOUD_HOSTED.wireName,
                     targetLocalDate = rj.targetLocalDate,
@@ -2933,7 +2953,7 @@ class CampusRepository internal constructor(
                     finalCheckStatus = if (rj.state == "CONFIRMED") "FINAL_CHECK_OK" else (matchingLocal?.finalCheckStatus ?: "ARMED"),
                     fireStatus = if (rj.state == "CONFIRMED") "CONFIRMED" else (matchingLocal?.fireStatus ?: "ARMED"),
                     preferredAreaName = cleanAreaName,
-                    preferredSeatLabel = primarySeat,
+                    preferredSeatLabel = rj.bookedSeatAlias?.cleanNullableLiteral() ?: candidateSeatsLabel,
                     allowAlternativeSeat = rj.candidateSeats.size > 1,
                     cloudJobId = rj.jobId.cleanNullableLiteral(),
                     externalBookingId = rj.externalBookingId.cleanNullableLiteral() ?: matchingLocal?.externalBookingId.cleanNullableLiteral(),
@@ -2946,10 +2966,13 @@ class CampusRepository internal constructor(
                     lastDiagnosticMessage = diagText,
                     createdAtEpochMillis = matchingLocal?.createdAtEpochMillis ?: now,
                     updatedAtEpochMillis = now,
-                    repeatDays = rj.repeatDays.coerceAtLeast(matchingLocal?.repeatDays ?: 1),
-                    remainingDays = rj.remainingDays
+                    repeatDays = effRepeatDays,
+                    remainingDays = effRemainingDays
                 )
                 cloudAndParcelDao.upsertLibraryBookingPlan(mergedPlan)
+                if (mergedPlan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "EXPIRED")) {
+                    LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan)
+                }
             }
 
             val rawCampusContent = verifiedSnapshot.campusContentRawJson
@@ -3334,6 +3357,11 @@ class CampusRepository internal constructor(
                 generation = nextGen,
                 nowEpochMillis = nowEpochMillis
             )
+            val nextCloudJobId = if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                "cjob_${current.id.takeLast(8)}_${nextDate.toString().replace("-", "")}"
+            } else {
+                null
+            }
             val rolledOver = current.copy(
                 targetLocalDate = nextDate.toString(),
                 precheckAtEpochMillis = nextSchedule.precheckAtEpochMillis,
@@ -3343,6 +3371,10 @@ class CampusRepository internal constructor(
                 finalCheckStatus = "ARMED",
                 fireStatus = "ARMED",
                 status = "ARMED",
+                cloudJobId = nextCloudJobId,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                paymentState = if (current.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
                 remainingDays = nextRem,
                 generation = nextGen,
                 stateVersion = updated.stateVersion + 1,

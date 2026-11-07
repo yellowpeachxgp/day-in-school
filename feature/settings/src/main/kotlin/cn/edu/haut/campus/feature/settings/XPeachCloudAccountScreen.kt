@@ -438,8 +438,13 @@ fun XPeachCloudAccountScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    val repeatTag = if (plan.repeatDays > 1) {
+                                        " · 连续${plan.repeatDays}天(剩${plan.remainingDays}天)"
+                                    } else {
+                                        ""
+                                    }
                                     Text(
-                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime}",
+                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime}$repeatTag",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier
