@@ -2530,12 +2530,23 @@ class CampusRepository internal constructor(
                 }
 
                 val existingPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+                val syncNowEpochMillis = System.currentTimeMillis()
                 val hasActiveCloudBookingPlan = existingPlansSnapshot.any {
-                    it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        it.status !in setOf("CANCELLED", "FAILED", "EXPIRED")
+                    CloudCredentialSyncPolicy.requiresCredentials(
+                        executionMode = it.executionMode,
+                        status = it.status,
+                        remainingDays = it.remainingDays,
+                        fireAtEpochMillis = it.fireAtEpochMillis,
+                        cloudJobId = it.cloudJobId,
+                        nowEpochMillis = syncNowEpochMillis
+                    )
                 }
-                val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
-                val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
+                // Do not even open the credential vault for a historical or stopped plan.
+                val (localStudentNo, effectiveDelegatedSecret) = if (hasActiveCloudBookingPlan) {
+                    buildDelegatedCredentialBundle()
+                } else {
+                    preferencesFlow.first().savedStudentId?.takeIf { it.isNotBlank() } to null
+                }
 
                 val localParcels = cloudAndParcelDao.getParcelItemsSnapshot().map { p ->
                     CloudSyncedParcelDto(
