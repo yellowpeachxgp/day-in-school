@@ -645,7 +645,6 @@ object CampusCloudOidcHelper {
             )
             val planData = JSONObject(planRaw).optJSONObject("data")
             planData?.optString("job_id")?.takeIf { it.isNotBlank() }
-                ?: planData?.optString("plan_id")?.takeIf { it.isNotBlank() }
                 ?: error("云端未确认任务创建（可能价格已变更或授权失效），请同步任务列表核对后重试")
         }
     }

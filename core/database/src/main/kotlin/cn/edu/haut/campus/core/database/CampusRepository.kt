@@ -2851,7 +2851,7 @@ class CampusRepository internal constructor(
             externalBookingId = null,
             evidenceSha256 = null,
             priceMicropeach = acceptedCloudPrice?.takeIf { executionMode == BookingExecutionMode.CLOUD_HOSTED }?.micropeach ?: executionMode.priceMicropeach,
-            paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
+            paymentState = if ((acceptedCloudPrice?.takeIf { executionMode == BookingExecutionMode.CLOUD_HOSTED }?.micropeach ?: executionMode.priceMicropeach) == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
             status = initialStatus,
             stateVersion = 1,
             generation = 1,
