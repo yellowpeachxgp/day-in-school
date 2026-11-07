@@ -112,21 +112,22 @@ internal object QzTimetableGrid {
 internal object QzTimetableJson {
 
     fun parse(root: JsonValue): List<RemoteCourse> {
-        val items = root.asArrOrNull?.items ?: root.arr("kbList") ?: root.arr("items").orEmpty()
+        val items = root.asArrOrNull?.items ?: root.arr("kbList") ?: root.arr("items") ?: throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.PAGE_CHANGED, "课表缺少列表结构")
         val accumulator = CourseAccumulator()
         for (item in items) {
-            if (item.asObjOrNull == null) continue
+            if (item.asObjOrNull == null) throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.SOURCE_DATA_INVALID, "课表行缺少有效课程或时段")
             val name = QzJson.text(item, "kcmc", "courseName", "name")?.trim().orEmpty()
-            if (name.isEmpty()) continue
+            if (name.isEmpty()) throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.SOURCE_DATA_INVALID, "课表行缺少有效课程或时段")
             val teacher = QzJson.text(item, "xm", "teacher", "jsxm")?.trim()?.ifEmpty { null }
             val code = QzJson.text(item, "kch", "courseCode", "kcdm")?.trim()?.ifEmpty { null }
             val weekday = QzScheduleText.parseWeekday(QzJson.text(item, "xqj", "weekday", "xingqi"))
                 ?: QzJson.int(item, "xqj", "weekday")
-            if (weekday == null || weekday !in 1..7) continue
+            if (weekday == null || weekday !in 1..7) throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.SOURCE_DATA_INVALID, "课表行缺少有效课程或时段")
             val sections = QzScheduleText.parseSections(QzJson.text(item, "jcs", "jc", "sections"))
                 ?: QzScheduleText.parseSections(QzJson.text(item, "jcor", "jcstr"))
-                ?: continue
+                ?: throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.SOURCE_DATA_INVALID, "课表行缺少有效课程或时段")
             val weeks = QzScheduleText.parseWeeks(QzJson.text(item, "zcd", "weeks", "zhouci"))
+            if (weeks.isEmpty()) throw cn.edu.haut.campus.core.protocol.TransportFailure(cn.edu.haut.campus.core.model.AcademicError.SOURCE_DATA_INVALID, "课表周次无法确认")
             val location = QzJson.text(item, "cdmc", "room", "place")?.trim()?.ifEmpty { null }
             val sourceId = code?.let { "qz:" + it } ?: QzTimetableGrid.courseKey(name, teacher)
             accumulator.add(

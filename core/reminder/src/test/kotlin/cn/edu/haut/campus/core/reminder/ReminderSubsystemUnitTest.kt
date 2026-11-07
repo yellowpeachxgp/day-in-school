@@ -14,6 +14,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReminderSubsystemUnitTest {
+    @Test
+    fun disablingClassChannelDoesNotDisableExamPermission() {
+        val permissions = ReminderPermissionSnapshot(true, true, true, false, true)
+        assertTrue(permissions.canPostNotifications)
+        assertTrue(permissions.examChannelEnabled)
+        assertFalse(permissions.classChannelEnabled)
+    }
+
 
     @Test
     fun `background scope requires both profile and generation to remain current`() {

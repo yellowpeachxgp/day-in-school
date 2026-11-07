@@ -29,7 +29,7 @@ object ImportDiffEngine {
 
         for (candidate in incomingCandidates) {
             fun isSameCourse(course: Course?): Boolean {
-                if (course == null) return false
+                if (course == null || course.source != source) return false
                 if (course.name == candidate.courseName) return true
                 if (!candidate.externalId.isNullOrBlank() && course.externalId == candidate.externalId) return true
                 return false
@@ -114,7 +114,7 @@ object ImportDiffEngine {
             }
         }
 
-        for (unmatchedRule in existingRules.filter { it.termId == termId && it.id !in matchedRuleIds }) {
+        for (unmatchedRule in existingRules.filter { it.termId == termId && it.id !in matchedRuleIds && courseById[it.courseId]?.source == source }) {
             val course = courseById[unmatchedRule.courseId]
             if (course?.source == CourseSource.MANUAL || unmatchedRule.userModified || course?.userModified == true) {
                 entries.add(

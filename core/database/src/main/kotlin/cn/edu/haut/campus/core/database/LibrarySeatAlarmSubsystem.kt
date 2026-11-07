@@ -37,6 +37,8 @@ data class LocalSeatPermissionSnapshot(
 
 object LibrarySeatAlarmSubsystem {
     const val ACTION_EXECUTE_STAGE = "cn.edu.haut.campus.action.LIBRARY_SEAT_ALARM_STAGE"
+    const val EXTRA_PROFILE_ID = "extra_profile_id"
+    const val EXTRA_GENERATION = "extra_generation"
     const val EXTRA_PLAN_ID = "extra_plan_id"
     const val EXTRA_STAGE = "extra_stage"
     const val EXTRA_AREA_NAME = "extra_area_name"
@@ -125,9 +127,9 @@ object LibrarySeatAlarmSubsystem {
         }
     }
 
-    fun schedulePlanAlarms(context: Context, plan: LibraryBookingPlanEntity) {
+    fun schedulePlanAlarms(context: Context, plan: LibraryBookingPlanEntity, profileId: String, generation: Long) {
         val appContext = context.applicationContext
-        if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED")) {
+        if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED", "RESULT_UNKNOWN", "REMINDER_DELIVERED")) {
             cancelPlanAlarms(appContext, plan.id)
             return
         }
@@ -158,7 +160,8 @@ object LibrarySeatAlarmSubsystem {
                 stage = stage,
                 areaName = plan.preferredAreaName,
                 seatLabel = plan.preferredSeatLabel,
-                executionMode = plan.executionMode
+                executionMode = plan.executionMode,
+                profileId = profileId, generation = generation
             )
             runCatching {
                 if (canExact) {
@@ -281,11 +284,14 @@ object LibrarySeatAlarmSubsystem {
         stage: String,
         areaName: String,
         seatLabel: String,
-        executionMode: String
+        executionMode: String,
+        profileId: String, generation: Long
     ): PendingIntent {
         val intent = Intent(context, LibrarySeatAlarmReceiver::class.java).apply {
             action = ACTION_EXECUTE_STAGE
             putExtra(EXTRA_PLAN_ID, planId)
+            putExtra(EXTRA_PROFILE_ID, profileId)
+            putExtra(EXTRA_GENERATION, generation)
             putExtra(EXTRA_STAGE, stage)
             putExtra(EXTRA_AREA_NAME, areaName)
             putExtra(EXTRA_SEAT_LABEL, seatLabel)
@@ -304,89 +310,74 @@ object LibrarySeatAlarmSubsystem {
     }
 }
 
+/** Keep BroadcastReceiver work short; the durable worker owns network calls and cold-start initialization. */
 class LibrarySeatAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != LibrarySeatAlarmSubsystem.ACTION_EXECUTE_STAGE) return
         val planId = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_PLAN_ID).orEmpty()
         val stage = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_STAGE).orEmpty()
-        val areaName = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_AREA_NAME).orEmpty()
-        val seatLabel = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_SEAT_LABEL).orEmpty()
-        val executionMode = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_EXECUTION_MODE).orEmpty()
-        if (planId.isBlank() || stage.isBlank()) return
+        val profileId = intent.getStringExtra(LibrarySeatAlarmSubsystem.EXTRA_PROFILE_ID).orEmpty()
+        val generation = intent.getLongExtra(LibrarySeatAlarmSubsystem.EXTRA_GENERATION, -1L)
+        if (planId.isBlank() || stage.isBlank() || profileId.isBlank() || generation <= 0) return
+        val request = androidx.work.OneTimeWorkRequestBuilder<LibrarySeatStageWorker>()
+            .setInputData(androidx.work.workDataOf("plan" to planId, "stage" to stage,
+                "profile" to profileId, "generation" to generation))
+            .build()
+        androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            "seat:$profileId:$generation:$planId:$stage",
+            androidx.work.ExistingWorkPolicy.KEEP, request
+        )
+    }
+}
 
-        val appContext = context.applicationContext
-        val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val wakeLock = powerManager?.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "dayinschool:seat_booking_wakelock"
-        )?.apply {
-            setReferenceCounted(false)
-            runCatching { acquire(25_000L) }
-        }
-
-        val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                if (executionMode.equals("MANUAL_REMINDER", ignoreCase = true) && stage == "FIRE") {
-                    LibrarySeatAlarmSubsystem.postNotification(
-                        context = appContext,
-                        notificationId = (planId.hashCode() and 0x7FFFFFFF),
-                        title = "⏰ 图书馆抢座时间已到",
-                        body = "目标座位：$areaName · $seatLabel，点击立即打开「日在校园」一键选座！"
-                    )
+class LibrarySeatStageWorker(context: Context, params: androidx.work.WorkerParameters) :
+    androidx.work.CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        return try {
+            val sessions = AccountSessionCoordinator.getInstance(applicationContext)
+            sessions.initialize()
+            if (inputData.getBoolean("restore", false)) {
+                val active = sessions.currentSnapshot() ?: return Result.retry()
+                sessions.withActiveSession(active.profileId, active.generation) {
+                    it.repository.rescheduleActiveLocalBookingPlans()
                 }
-                val parsedStage = runCatching { TripleScheduleStage.valueOf(stage) }.getOrNull() ?: return@launch
-                val repo = CampusRepository.getInstance(appContext)
-                val updated = repo.advanceBookingPlanStage(planId = planId, stage = parsedStage).getOrNull()
-                if (updated != null) {
-                    val (title, body) = when (stage) {
-                        "PRECHECK" -> "图书馆抢座 T-30m 预检完成" to (updated.lastDiagnosticMessage ?: "已验证登录态与选座会话")
-                        "FINAL_CHECK" -> "图书馆抢座 T-5m 临战就绪" to (updated.lastDiagnosticMessage ?: "距离准点抢座还有 5 分钟")
-                        "FIRE" -> if (updated.status == "CONFIRMED") {
-                            "🎉 图书馆自动抢座成功" to (updated.lastDiagnosticMessage ?: "已成功锁定 $areaName · $seatLabel")
-                        } else {
-                            "⚠️ 图书馆抢座结果提醒" to (updated.lastDiagnosticMessage ?: "请打开 App 查看选座详情")
-                        }
-                        else -> "图书馆抢座状态更新" to (updated.lastDiagnosticMessage ?: "")
-                    }
-                    if (body.isNotBlank()) {
-                        LibrarySeatAlarmSubsystem.postNotification(
-                            context = appContext,
-                            notificationId = ((planId + stage).hashCode() and 0x7FFFFFFF),
-                            title = title,
-                            body = body
-                        )
-                    }
-                }
-            } finally {
-                runCatching {
-                    if (wakeLock?.isHeld == true) wakeLock.release()
-                }
-                pendingResult.finish()
+                return Result.success()
             }
+            val profileId = inputData.getString("profile") ?: return Result.failure()
+            val generation = inputData.getLong("generation", -1L)
+            val planId = inputData.getString("plan") ?: return Result.failure()
+            val stage = runCatching { TripleScheduleStage.valueOf(inputData.getString("stage").orEmpty()) }
+                .getOrNull() ?: return Result.failure()
+            sessions.withActiveSession(profileId, generation) { active ->
+                val updated = active.repository.advanceBookingPlanStage(planId, stage).getOrThrow()
+                val title = when (updated.status) {
+                    "CONFIRMED" -> "图书馆预约已确认"
+                    "REMINDER_DELIVERED" -> "选座提醒：尚未预约"
+                    "RESULT_UNKNOWN" -> "预约结果待核实，不会自动重复提交"
+                    else -> "图书馆预约状态更新"
+                }
+                LibrarySeatAlarmSubsystem.postNotification(applicationContext,
+                    ("$planId:$stage".hashCode() and 0x7fffffff), title,
+                    updated.lastDiagnosticMessage ?: "请打开应用查看详情")
+            }
+            Result.success()
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            // The repository persists RESULT_UNKNOWN before any write. A retry only
+            // resumes initialization or reads that terminal state; it cannot replay a write.
+            if (runAttemptCount < 3) Result.retry() else Result.failure()
         }
     }
 }
 
 class LibrarySeatRestoreReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        val action = intent?.action ?: return
-        if (
-            action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_MY_PACKAGE_REPLACED &&
-            action != AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
-        ) {
-            return
-        }
-        val appContext = context.applicationContext
-        val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                val repo = CampusRepository.getInstance(appContext)
-                repo.rescheduleActiveLocalBookingPlans()
-            } finally {
-                pendingResult.finish()
-            }
-        }
+        if (intent?.action !in setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED,
+                AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED)) return
+        val request = androidx.work.OneTimeWorkRequestBuilder<LibrarySeatStageWorker>()
+            .setInputData(androidx.work.workDataOf("restore" to true)).build()
+        androidx.work.WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
+            "seat:restore", androidx.work.ExistingWorkPolicy.KEEP, request
+        )
     }
 }

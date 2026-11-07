@@ -298,11 +298,8 @@ object CustomCampusZoneCodec {
                 val first = m.groupValues[1].toDoubleOrNull()
                 val second = m.groupValues[2].toDoubleOrNull()
                 if (first != null && second != null) {
-                    val (lat, lng) = if (kotlin.math.abs(first) > 90.0 && kotlin.math.abs(second) <= 90.0) {
-                        second to first
-                    } else {
-                        first to second
-                    }
+                    // GeoJSON coordinates are always longitude, latitude.
+                    val (lat, lng) = second to first
                     if (lat in -90.0..90.0 && lng in -180.0..180.0) {
                         vertices.add(GeoPoint(lat, lng))
                     }

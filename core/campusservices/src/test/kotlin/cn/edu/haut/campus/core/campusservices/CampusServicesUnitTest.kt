@@ -13,6 +13,35 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 
 class CampusServicesUnitTest {
+    @Test fun momentsEmptyAndMalformedSnapshotsAreDistinct() {
+        val empty = CampusCloudOidcHelper.parseMomentsSnapshotJsonString("""{"posts":[],"book_listings":[],"anti_lost_tags":[]}""")
+        assertNotNull(empty)
+        assertTrue(empty!!.posts.isEmpty())
+        assertTrue(empty.bookListings.isEmpty())
+        assertTrue(empty.antiLostTags.isEmpty())
+        assertEquals(null, CampusCloudOidcHelper.parseMomentsSnapshotJsonString("{}"))
+        assertEquals(null, CampusCloudOidcHelper.parseMomentsSnapshotJsonString("""{"posts":[{}],"book_listings":[],"anti_lost_tags":[]}"""))
+    }
+
+    @Test
+    fun explicitLegacyBookingIdsCannotFallBackToAnotherActiveBooking() = kotlinx.coroutines.runBlocking {
+        for (id in listOf("haut_2026-11-07_001", "-1", "0", "", "999999999999999999999")) {
+            val result = HautLibrarySeatAuthClient.cancelActiveSeatBooking("synthetic-token", id)
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("编号无效"))
+        }
+    }
+
+    @Test
+    fun failedBookingReadsNeverMeanAnEmptyBooking() {
+        for (body in listOf("{}", "not-json", "{\"code\":500}", "{\"code\":200}")) {
+            assertTrue(runCatching { HautLibrarySeatAuthClient.parseCurrentBookingResponse(body) }.isFailure)
+            assertTrue(runCatching { HautLibrarySeatAuthClient.parseBookingListResponse(body) }.isFailure)
+        }
+        assertEquals(null, HautLibrarySeatAuthClient.parseCurrentBookingResponse("{\"code\":200,\"data\":null}"))
+        assertEquals(emptyList<LibrarySeatBookingRecord>(), HautLibrarySeatAuthClient.parseBookingListResponse("{\"code\":200,\"rows\":[]}"))
+    }
+
 
     @Test
     fun officialServiceRoutePolicy_enforcesHttpsAndDomainWhitelist() {

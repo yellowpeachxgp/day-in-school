@@ -1005,11 +1005,6 @@ private fun XiaomiLoginWebViewDialog(
                         var webViewInstance by remember { mutableStateOf<WebView?>(null) }
                         DisposableEffect(Unit) {
                             onDispose {
-                                runCatching {
-                                    val cm = CookieManager.getInstance()
-                                    cm.removeAllCookies(null)
-                                    cm.flush()
-                                }
                                 webViewInstance?.apply {
                                     stopLoading()
                                     clearHistory()
@@ -1027,8 +1022,7 @@ private fun XiaomiLoginWebViewDialog(
                                         ViewGroup.LayoutParams.MATCH_PARENT
                                     )
                                     val cm = CookieManager.getInstance()
-                                    cm.removeAllCookies(null)
-                                    cm.flush()
+                                    // CookieManager is process-global: preserve unrelated school sessions.
                                     cm.setAcceptCookie(true)
                                     cm.setAcceptThirdPartyCookies(this, false)
 

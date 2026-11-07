@@ -6,6 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CanonicalJsonTest {
+    @Test
+    fun extremeExponentsAreRejectedBeforeExpansion() {
+        assertFails { Json.canonical(Json.parse("1e-100000000")) }
+        assertFails { Json.canonical(Json.parse("1e100000000")) }
+        assertEquals("0.001", Json.canonical(Json.parse("1e-3")))
+    }
+
 
     @Test
     fun 解析基本文档并读取字段() {

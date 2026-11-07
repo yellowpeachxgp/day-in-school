@@ -192,6 +192,9 @@ class CampusRepository internal constructor(
     private val academicCredentialVault = createAcademicCredentialVault(appContext)
     private val academicCredentialMutex = Mutex()
     private val librarySeatAuthMutex = Mutex()
+    private val bookingMutationMutex = Mutex()
+    private val utilityMutationMutex = Mutex()
+    private val momentsMutationMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -217,6 +220,15 @@ class CampusRepository internal constructor(
         activeSessionGeneration = generation
     }
 
+    internal suspend fun awaitSessionOperations() {
+        librarySeatAuthMutex.withLock { academicCredentialMutex.withLock { } }
+        bookingMutationMutex.withLock { }
+        utilityMutationMutex.withLock { }
+        momentsMutationMutex.withLock { }
+        cloudSyncMutex.withLock { }
+        cloudTokenMutex.withLock { }
+    }
+
     internal fun deactivateSession() {
         activeSessionGeneration = null
     }
@@ -225,6 +237,18 @@ class CampusRepository internal constructor(
         database.openHelper.writableDatabase
         migrateLegacyAcademicCredentialsIfNeeded()
         ensureInitialSeedIfNeeded()
+        // Earlier versions used a successful booking state for reminder-only plans.
+        // Correct those persisted records too, without creating or cancelling a school booking.
+        for (plan in cloudAndParcelDao.getLibraryBookingPlansSnapshot()) {
+            if (plan.executionMode == BookingExecutionMode.MANUAL_REMINDER.wireName && plan.status == "CONFIRMED") {
+                cloudAndParcelDao.upsertLibraryBookingPlan(plan.copy(
+                    status = "REMINDER_DELIVERED", fireStatus = "REMINDER_DELIVERED",
+                    externalBookingId = null, evidenceSha256 = null,
+                    lastDiagnosticMessage = "此记录仅为选座提醒，未执行学校预约",
+                    stateVersion = plan.stateVersion + 1
+                ))
+            }
+        }
     }
 
     internal fun databaseForAdoption(): HautDatabase = database
@@ -330,6 +354,7 @@ class CampusRepository internal constructor(
         val PROXY_PORT = intPreferencesKey("network_proxy_port_v1")
         val PROXY_AUTO_FALLBACK = booleanPreferencesKey("network_proxy_auto_fallback_v1")
         val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
+        val CLOUD_TOKEN_ENDPOINT = stringPreferencesKey("cloud_token_endpoint_v1")
         val CLOUD_ACCESS_TOKEN = stringPreferencesKey("cloud_access_token_v1")
         val CLOUD_REFRESH_TOKEN = stringPreferencesKey("cloud_refresh_token_v1")
         val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
@@ -1194,6 +1219,7 @@ class CampusRepository internal constructor(
         requireActiveSession()
         check(supportsHautServices) { "当前学校教务登录尚未适配，可使用离线导入" }
         academicCredentialMutex.withLock {
+            requireActiveSession()
             val previousId = preferences.data.first()[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]
             val accountId = UUID.randomUUID().toString()
             val scope = academicCredentialScope(accountId)
@@ -1232,6 +1258,7 @@ class CampusRepository internal constructor(
             return@withContext
         }
         academicCredentialMutex.withLock {
+            requireActiveSession()
             val original = preferences.data.first()
             if (original[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
                 original[PrefKeys.LEGACY_SAVED_STUDENT_ID] == null
@@ -1350,6 +1377,7 @@ class CampusRepository internal constructor(
         if (!supportsHautServices) return@withContext Result.failure(IllegalStateException("当前学校教务登录尚未适配，可使用离线导入"))
         migrateLegacyAcademicCredentialsIfNeeded()
         academicCredentialMutex.withLock {
+            requireActiveSession()
         val prefs = preferences.data.first()
         val autoEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true
         if (!force && !autoEnabled) return@withLock null
@@ -1430,6 +1458,7 @@ class CampusRepository internal constructor(
         val clean = HautLibrarySeatAuthClient.normalizeRawToken(rawToken)
         if (clean.isBlank()) return@withContext null
         librarySeatAuthMutex.withLock {
+            requireActiveSession()
             val userInfo = HautLibrarySeatAuthClient.validateTokenOnline(clean) ?: return@withLock null
             val casTgc = HautLibrarySeatAuthClient.extractCastgcFromWebView()
                 ?: librarySeatSessionVault.readSnapshot()?.casTgcCookie
@@ -1462,6 +1491,7 @@ class CampusRepository internal constructor(
         }
         migrateLegacyAcademicCredentialsIfNeeded()
         librarySeatAuthMutex.withLock {
+            requireActiveSession()
             val cached = librarySeatSessionVault.readSnapshot()
 
             // Level 1: 校验已持久化的 wslib Token
@@ -1497,6 +1527,7 @@ class CampusRepository internal constructor(
 
             // Level 3: 从加密凭据仓读取用户学号与统一认证密码执行后台自动重登
             val credentialPair: Pair<String, String>? = academicCredentialMutex.withLock {
+            requireActiveSession()
                 val prefs = preferences.data.first()
                 val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
                 val readResult = academicCredentialVault.read(academicCredentialScope(accountId))
@@ -1556,6 +1587,7 @@ class CampusRepository internal constructor(
             xqm = xqm
         )
         librarySeatAuthMutex.withLock {
+            requireActiveSession()
             HautLibrarySeatAuthClient.loginWithCredentials(
                 studentId = cleanId,
                 passwordPlain = passwordPlain
@@ -1869,7 +1901,14 @@ class CampusRepository internal constructor(
         return extractNetworkProxyConfig(prefs)
     }
 
-    suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
+    suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) = cloudTokenMutex.withLock {
+        val currentPrefs = preferences.data.first()
+        val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(currentPrefs[PrefKeys.CLOUD_API_BASE_URL].orEmpty())
+        val newBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+        val boundBase = currentPrefs[PrefKeys.CLOUD_TOKEN_ENDPOINT] ?: NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
+        check(oldBase == newBase || newBase == boundBase || (currentPrefs[PrefKeys.CLOUD_ACCESS_TOKEN].isNullOrBlank() && currentPrefs[PrefKeys.CLOUD_REFRESH_TOKEN].isNullOrBlank())) {
+            "请先在原云端地址解绑登录，再切换服务器；不会转发现有凭据"
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.PROXY_MODE] = config.mode.key
             prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
@@ -1881,7 +1920,13 @@ class CampusRepository internal constructor(
         }
     }
 
-    suspend fun resetNetworkProxyConfig() {
+    suspend fun resetNetworkProxyConfig() = cloudTokenMutex.withLock {
+        val currentPrefs = preferences.data.first()
+        val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(currentPrefs[PrefKeys.CLOUD_API_BASE_URL].orEmpty())
+        val boundBase = currentPrefs[PrefKeys.CLOUD_TOKEN_ENDPOINT] ?: NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
+        check(oldBase == NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL || boundBase == NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL || (currentPrefs[PrefKeys.CLOUD_ACCESS_TOKEN].isNullOrBlank() && currentPrefs[PrefKeys.CLOUD_REFRESH_TOKEN].isNullOrBlank())) {
+            "请先在原云端地址解绑登录，再重置服务器"
+        }
         preferences.edit { prefs ->
             prefs.remove(PrefKeys.PROXY_MODE)
             prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
@@ -1961,18 +2006,19 @@ class CampusRepository internal constructor(
      * 刷新校园互助广场（失物招领、二手教材、随身防丢码）云端快照并与本地草稿/发布记录合并。
      */
     suspend fun refreshCampusMomentsSnapshot(): Result<cn.edu.haut.campus.core.model.CampusMomentsSnapshot> =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
             runCatching {
+                requireActiveSession()
                 val currentPrefs = preferencesFlow.first()
                 val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                     currentPrefs.networkProxyConfig.customCloudApiBaseUrl
                 )
                 val (remoteSnap, _) = CampusCloudOidcHelper.fetchMomentsSnapshot(cloudBaseUrl = baseUrl)
-                    ?: (currentPrefs.campusMomentsSnapshot to "")
+                    ?: error("云端刷新失败，已保留本地缓存")
                 val localSnap = currentPrefs.campusMomentsSnapshot
-                val mergedPosts = (remoteSnap.posts + localSnap.posts.filter { lp -> remoteSnap.posts.none { it.id == lp.id } })
-                val mergedBooks = (remoteSnap.bookListings + localSnap.bookListings.filter { lb -> remoteSnap.bookListings.none { it.id == lb.id } })
-                val mergedTags = (remoteSnap.antiLostTags + localSnap.antiLostTags.filter { lt -> remoteSnap.antiLostTags.none { it.tagCode.equals(lt.tagCode, ignoreCase = true) } })
+                val mergedPosts = (remoteSnap.posts + localSnap.posts.filter { lp -> lp.status == "LOCAL_DRAFT" && remoteSnap.posts.none { it.id == lp.id } })
+                val mergedBooks = (remoteSnap.bookListings + localSnap.bookListings.filter { lb -> lb.status == "LOCAL_DRAFT" && remoteSnap.bookListings.none { it.id == lb.id } })
+                val mergedTags = (remoteSnap.antiLostTags + localSnap.antiLostTags.filter { lt -> lt.status == "LOCAL_DRAFT" && remoteSnap.antiLostTags.none { it.tagCode.equals(lt.tagCode, ignoreCase = true) } })
                 val finalSnap = remoteSnap.copy(
                     posts = mergedPosts,
                     bookListings = mergedBooks,
@@ -1989,7 +2035,7 @@ class CampusRepository internal constructor(
                 }
                 finalSnap
             }
-        }
+        } }
 
     suspend fun publishMomentsPost(
         type: cn.edu.haut.campus.core.model.MomentsPostType,
@@ -2000,8 +2046,9 @@ class CampusRepository internal constructor(
         description: String,
         contact: String,
         rewardNote: String = ""
-    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
+    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
         runCatching {
+                requireActiveSession()
             val cleanTitle = title.trim().take(64)
             require(cleanTitle.isNotEmpty()) { "请填写物品名称或标题" }
             val cleanContact = contact.trim().take(64)
@@ -2030,7 +2077,7 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            val cloudSaved = CampusCloudOidcHelper.publishMomentsPostToCloud(localItem, baseUrl) ?: localItem
+            val cloudSaved = CampusCloudOidcHelper.publishMomentsPostToCloud(localItem, baseUrl) ?: localItem.copy(status = "LOCAL_DRAFT")
             val curSnap = prefsState.campusMomentsSnapshot
             val nextPosts = listOf(cloudSaved) + curSnap.posts.filterNot { it.id == cloudSaved.id }
             val nextMyIds = curSnap.myPostIds + cloudSaved.id
@@ -2042,14 +2089,15 @@ class CampusRepository internal constructor(
             }
             cloudSaved
         }
-    }
+    } }
 
     suspend fun addMomentsComment(
         postId: String,
         content: String,
         contactHint: String = ""
-    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
+    ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
         runCatching {
+                requireActiveSession()
             val cleanContent = content.trim().take(240)
             require(cleanContent.isNotEmpty()) { "请输入线索或留言内容" }
             val profile = studentProfileFlow.first()
@@ -2075,7 +2123,7 @@ class CampusRepository internal constructor(
                 contactHint = contactHint.trim().take(48),
                 createdAt = "刚刚"
             )
-            val updatedPost = cloudUpdated ?: target.copy(comments = target.comments + newComment)
+            val updatedPost = cloudUpdated ?: error("留言未发送成功，请保留内容后重试")
             val nextPosts = curSnap.posts.map { if (it.id == postId) updatedPost else it }
             val nextSnap = curSnap.copy(posts = nextPosts)
             preferences.edit { prefs ->
@@ -2084,39 +2132,44 @@ class CampusRepository internal constructor(
             }
             updatedPost
         }
-    }
+    } }
 
-    suspend fun toggleMomentsPostLike(postId: String) {
+    suspend fun toggleMomentsPostLike(postId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curSnap = prefsState.campusMomentsSnapshot
+        val target = requireNotNull(curSnap.posts.firstOrNull { it.id == postId }) { "未找到记录" }
         val nextPosts = curSnap.posts.map {
             if (it.id == postId) it.copy(likesCount = it.likesCount + 1) else it
         }
         val nextSnap = curSnap.copy(posts = nextPosts)
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsState.networkProxyConfig.customCloudApiBaseUrl)
+        check(target.status != "LOCAL_DRAFT") { "此记录仅在本机保存，尚未发布" }
+        run {
+            check(CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "LIKE", baseUrl)) { "云端未确认操作，本地记录未变更" }
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
         }
-        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            prefsState.networkProxyConfig.customCloudApiBaseUrl
-        )
-        repoScope.launch {
-            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "LIKE", baseUrl)
-        }
-    }
+    } }
 
-    suspend fun toggleMomentsPostFavorite(postId: String) {
+    suspend fun toggleMomentsPostFavorite(postId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curFavs = prefsState.campusMomentsSnapshot.favoritePostIds
         val nextFavs = if (postId in curFavs) curFavs - postId else curFavs + postId
         preferences.edit { prefs ->
             prefs[PrefKeys.MOMENTS_FAVORITE_POST_IDS] = encodeCsvSet(nextFavs)
         }
-    }
+    } }
 
-    suspend fun toggleMomentsPostResolved(postId: String) {
+    suspend fun toggleMomentsPostResolved(postId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curSnap = prefsState.campusMomentsSnapshot
+        require(postId in curSnap.myPostIds) { "只能操作本机拥有的发布记录" }
+        val target = requireNotNull(curSnap.posts.firstOrNull { it.id == postId }) { "未找到记录" }
         var nextAction = "RESOLVE"
         val nextPosts = curSnap.posts.map {
             if (it.id == postId) {
@@ -2126,36 +2179,36 @@ class CampusRepository internal constructor(
             } else it
         }
         val nextSnap = curSnap.copy(posts = nextPosts)
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsState.networkProxyConfig.customCloudApiBaseUrl)
+        check(target.status != "LOCAL_DRAFT") { "此记录仅在本机保存，尚未发布" }
+        run {
+            check(CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, nextAction, baseUrl)) { "云端未确认操作，本地记录未变更" }
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
         }
-        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            prefsState.networkProxyConfig.customCloudApiBaseUrl
-        )
-        repoScope.launch {
-            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, nextAction, baseUrl)
-        }
-    }
+    } }
 
-    suspend fun deleteMomentsPost(postId: String) {
+    suspend fun deleteMomentsPost(postId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curSnap = prefsState.campusMomentsSnapshot
+        require(postId in curSnap.myPostIds) { "只能操作本机拥有的发布记录" }
+        val target = requireNotNull(curSnap.posts.firstOrNull { it.id == postId }) { "未找到记录" }
         val nextPosts = curSnap.posts.filterNot { it.id == postId }
         val nextMyIds = curSnap.myPostIds - postId
         val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsState.networkProxyConfig.customCloudApiBaseUrl)
+        if (target.status != "LOCAL_DRAFT") {
+            check(CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "DELETE", baseUrl)) { "云端未确认操作，本地记录未变更" }
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
         }
-        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            prefsState.networkProxyConfig.customCloudApiBaseUrl
-        )
-        repoScope.launch {
-            CampusCloudOidcHelper.mutateMomentsPostOnCloud(postId, "DELETE", baseUrl)
-        }
-    }
+    } }
 
     suspend fun publishMomentsBookListing(
         title: String,
@@ -2169,8 +2222,9 @@ class CampusRepository internal constructor(
         originalPriceYuan: Int,
         deliveryMode: String,
         contact: String
-    ): Result<cn.edu.haut.campus.core.model.MomentsTextbookListing> = withContext(Dispatchers.IO) {
+    ): Result<cn.edu.haut.campus.core.model.MomentsTextbookListing> = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
         runCatching {
+                requireActiveSession()
             val cleanTitle = title.trim().take(80)
             require(cleanTitle.isNotEmpty()) { "请填写教材名称" }
             val cleanContact = contact.trim().take(64)
@@ -2199,7 +2253,7 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            val cloudSaved = CampusCloudOidcHelper.publishMomentsBookToCloud(localBook, baseUrl) ?: localBook
+            val cloudSaved = CampusCloudOidcHelper.publishMomentsBookToCloud(localBook, baseUrl) ?: localBook.copy(status = "LOCAL_DRAFT")
             val curSnap = prefsState.campusMomentsSnapshot
             val nextBooks = listOf(cloudSaved) + curSnap.bookListings.filterNot { it.id == cloudSaved.id }
             val nextMyBookIds = curSnap.myBookIds + cloudSaved.id
@@ -2211,20 +2265,24 @@ class CampusRepository internal constructor(
             }
             cloudSaved
         }
-    }
+    } }
 
-    suspend fun toggleMomentsBookFavorite(bookId: String) {
+    suspend fun toggleMomentsBookFavorite(bookId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curFavs = prefsState.campusMomentsSnapshot.favoriteBookIds
         val nextFavs = if (bookId in curFavs) curFavs - bookId else curFavs + bookId
         preferences.edit { prefs ->
             prefs[PrefKeys.MOMENTS_FAVORITE_BOOK_IDS] = encodeCsvSet(nextFavs)
         }
-    }
+    } }
 
-    suspend fun toggleMomentsBookSold(bookId: String) {
+    suspend fun toggleMomentsBookSold(bookId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curSnap = prefsState.campusMomentsSnapshot
+        require(bookId in curSnap.myBookIds) { "只能操作本机拥有的发布记录" }
+        val target = requireNotNull(curSnap.bookListings.firstOrNull { it.id == bookId }) { "未找到记录" }
         var nextAction = "MARK_SOLD"
         val nextBooks = curSnap.bookListings.map {
             if (it.id == bookId) {
@@ -2234,36 +2292,36 @@ class CampusRepository internal constructor(
             } else it
         }
         val nextSnap = curSnap.copy(bookListings = nextBooks)
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsState.networkProxyConfig.customCloudApiBaseUrl)
+        check(target.status != "LOCAL_DRAFT") { "此记录仅在本机保存，尚未发布" }
+        run {
+            check(CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, nextAction, baseUrl)) { "云端未确认操作，本地记录未变更" }
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
         }
-        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            prefsState.networkProxyConfig.customCloudApiBaseUrl
-        )
-        repoScope.launch {
-            CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, nextAction, baseUrl)
-        }
-    }
+    } }
 
-    suspend fun deleteMomentsBookListing(bookId: String) {
+    suspend fun deleteMomentsBookListing(bookId: String) = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
+        requireActiveSession()
         val prefsState = preferencesFlow.first()
         val curSnap = prefsState.campusMomentsSnapshot
+        require(bookId in curSnap.myBookIds) { "只能操作本机拥有的发布记录" }
+        val target = requireNotNull(curSnap.bookListings.firstOrNull { it.id == bookId }) { "未找到记录" }
         val nextBooks = curSnap.bookListings.filterNot { it.id == bookId }
         val nextMyBookIds = curSnap.myBookIds - bookId
         val nextSnap = curSnap.copy(bookListings = nextBooks, myBookIds = nextMyBookIds)
+        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsState.networkProxyConfig.customCloudApiBaseUrl)
+        if (target.status != "LOCAL_DRAFT") {
+            check(CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, "DELETE", baseUrl)) { "云端未确认操作，本地记录未变更" }
+        }
         preferences.edit { prefs ->
             prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             prefs[PrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
         }
-        val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            prefsState.networkProxyConfig.customCloudApiBaseUrl
-        )
-        repoScope.launch {
-            CampusCloudOidcHelper.mutateMomentsBookOnCloud(bookId, "DELETE", baseUrl)
-        }
-    }
+    } }
 
     suspend fun upsertAntiLostTag(
         tagCode: String = "",
@@ -2273,8 +2331,9 @@ class CampusRepository internal constructor(
         ownerContact: String,
         returnNote: String,
         status: String = "NORMAL"
-    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) {
+    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
         runCatching {
+                requireActiveSession()
             val cleanName = itemName.trim().take(48)
             require(cleanName.isNotEmpty()) { "请填写随身物品名称" }
             val cleanContact = ownerContact.trim().take(64)
@@ -2287,6 +2346,7 @@ class CampusRepository internal constructor(
             val prefsState = preferencesFlow.first()
             val curSnap = prefsState.campusMomentsSnapshot
             val existing = curSnap.antiLostTags.firstOrNull { it.tagCode.equals(effectiveCode, ignoreCase = true) }
+            require(existing == null || effectiveCode in curSnap.myTagCodes) { "不能修改他人的防丢码" }
             val localTag = cn.edu.haut.campus.core.model.AntiLostTagItem(
                 id = existing?.id ?: "tag_${effectiveCode.takeLast(6)}",
                 tagCode = effectiveCode,
@@ -2303,7 +2363,7 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            val cloudSaved = CampusCloudOidcHelper.upsertAntiLostTagOnCloud(localTag, baseUrl) ?: localTag
+            val cloudSaved = CampusCloudOidcHelper.upsertAntiLostTagOnCloud(localTag, baseUrl) ?: localTag.copy(status = "LOCAL_DRAFT")
             val nextTags = listOf(cloudSaved) + curSnap.antiLostTags.filterNot {
                 it.tagCode.equals(cloudSaved.tagCode, ignoreCase = true)
             }
@@ -2316,7 +2376,7 @@ class CampusRepository internal constructor(
             }
             cloudSaved
         }
-    }
+    } }
 
     suspend fun reportAntiLostTagFound(
         tagCode: String,
@@ -2324,8 +2384,9 @@ class CampusRepository internal constructor(
         foundLocation: String,
         finderContact: String,
         message: String
-    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) {
+    ): Result<cn.edu.haut.campus.core.model.AntiLostTagItem> = withContext(Dispatchers.IO) { momentsMutationMutex.withLock {
         runCatching {
+                requireActiveSession()
             val cleanCode = tagCode.trim().uppercase()
             require(cleanCode.isNotEmpty()) { "请输入防丢码编号（如 HAUT-TAG-7E2A9B）" }
             val cleanLoc = foundLocation.trim().take(80)
@@ -2352,16 +2413,7 @@ class CampusRepository internal constructor(
                 message = message.trim().take(200),
                 createdAt = "刚刚"
             )
-            val finalTag = cloudUpdated ?: (existing?.copy(
-                status = "FOUND_REPORTED",
-                reports = listOf(newReport) + existing.reports
-            ) ?: cn.edu.haut.campus.core.model.AntiLostTagItem(
-                id = "tag_${cleanCode.takeLast(6)}",
-                tagCode = cleanCode,
-                itemName = "防丢码物品 ($cleanCode)",
-                status = "FOUND_REPORTED",
-                reports = listOf(newReport)
-            ))
+            val finalTag = cloudUpdated ?: error("拾得消息未发送成功，请保留内容后重试")
             val nextTags = listOf(finalTag) + curSnap.antiLostTags.filterNot {
                 it.tagCode.equals(cleanCode, ignoreCase = true)
             }
@@ -2372,7 +2424,7 @@ class CampusRepository internal constructor(
             }
             finalTag
         }
-    }
+    } }
 
     private fun encodeKeyValueMap(map: Map<String, String>): String {
         return map.entries.joinToString("\n") { (k, v) ->
@@ -2603,7 +2655,8 @@ class CampusRepository internal constructor(
     suspend fun saveAndRefreshOnlineUtilities(
         rawAccount: String? = null,
         allowUnverified: Boolean = false
-    ): Result<List<OnlineUtilityRoomSnapshot>> = runCatching {
+    ): Result<List<OnlineUtilityRoomSnapshot>> = utilityMutationMutex.withLock { runCatching {
+        requireActiveSession()
         val accountToUse = if (!rawAccount.isNullOrBlank()) {
             val clean = UtilityAccountSecureStore.validateAccountFormat(rawAccount)
             var switched = false
@@ -2677,7 +2730,7 @@ class CampusRepository internal constructor(
         }
         runCatching { notifyDailyUtilitySummaryIfEligible(finishedAtMs) }
         snapshots
-    }
+    } }
 
     /**
      * 供后台周期 Worker 或前台恢复时调用的按需水电采样：
@@ -2811,7 +2864,8 @@ class CampusRepository internal constructor(
         utilityAndFocusDao.updateOnlineRoomCampus(roomId, campusCode)
     }
 
-    suspend fun clearUtilityAccountAndOnlineCache() {
+    suspend fun clearUtilityAccountAndOnlineCache() = utilityMutationMutex.withLock {
+        requireActiveSession()
         runCatching { utilityAccountStore.wipeAll() }
         database.withTransaction {
             utilityAndFocusDao.clearAllOnlineRooms()
@@ -2915,6 +2969,7 @@ class CampusRepository internal constructor(
      */
     suspend fun wipeAllPersonalData() {
         academicCredentialMutex.withLock {
+            requireActiveSession()
             val prefs = preferences.data.first()
             prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
                 withContext(Dispatchers.IO) { academicCredentialVault.delete(academicCredentialScope(accountId)) }
@@ -2968,6 +3023,7 @@ class CampusRepository internal constructor(
                 prefs.remove(PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
                 prefs.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
                 prefs.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
+                prefs.remove(PrefKeys.CLOUD_TOKEN_ENDPOINT)
                 prefs[PrefKeys.SEEDED] = true
                 prefs[PrefKeys.CLEAN_BASE_V2] = true
                 prefs[PrefKeys.ONBOARDING_COMPLETED] = false
@@ -3038,11 +3094,26 @@ class CampusRepository internal constructor(
         }.getOrDefault(false)
     }
 
-    private suspend fun resolveValidCloudAccessToken(
+    private suspend fun resolveBoundCloudEndpoint(): String {
+        val prefs = preferences.data.first()
+        val configured = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL].orEmpty())
+        // Legacy login flows used the default endpoint; never forward their secrets to a newly configured server.
+        val bound = prefs[PrefKeys.CLOUD_TOKEN_ENDPOINT] ?: NetworkProxyConfig.DEFAULT_CLOUD_API_BASE_URL
+        check(configured == bound) { "云端地址与当前登录会话不匹配，请先恢复原地址并解绑，再登录目标服务器" }
+        return bound
+    }
+
+    private data class CloudCredentialSnapshot(val token: String, val endpoint: String)
+
+    private suspend fun resolveCloudSession(
         forceRefresh: Boolean = false,
         failedAccessToken: String? = null
-    ): String =
-        cloudTokenMutex.withLock {
+    ): CloudCredentialSnapshot {
+        var endpoint = ""
+        val resolvedToken = cloudTokenMutex.withLock {
+            requireActiveSession()
+            val boundEndpoint = resolveBoundCloudEndpoint()
+            endpoint = boundEndpoint
             val nowMs = System.currentTimeMillis()
             if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken, nowMs)) {
                 return@withLock cachedCloudAccessToken
@@ -3068,7 +3139,7 @@ class CampusRepository internal constructor(
             }
             if (storedRt.isNotBlank()) {
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
-                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt)
+                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt, cloudBaseUrl = boundEndpoint)
                     if (pair != null) {
                         cachedCloudAccessToken = pair.first
                         cachedCloudRefreshToken = pair.second
@@ -3086,12 +3157,21 @@ class CampusRepository internal constructor(
             }
             return@withLock cachedCloudAccessToken.ifBlank { storedAt }
         }
+        return CloudCredentialSnapshot(resolvedToken, endpoint)
+    }
 
     suspend fun saveVerifiedXpeachCloudAccount(
         profile: cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
     ): CloudIdentityBindingEntity {
         val now = System.currentTimeMillis()
         cloudTokenMutex.withLock {
+            requireActiveSession()
+            val endpoint = NetworkProxyConfig.normalizeCloudApiBaseUrl(profile.cloudApiBaseUrl)
+            check(endpoint == NetworkProxyConfig.normalizeCloudApiBaseUrl(preferences.data.first()[PrefKeys.CLOUD_API_BASE_URL].orEmpty())) {
+                "登录服务与当前配置的云端地址不一致，请恢复对应地址后重试"
+            }
+            preferences.edit { it[PrefKeys.CLOUD_TOKEN_ENDPOINT] = endpoint }
+
             if (profile.accessToken.isNotBlank()) {
                 cachedCloudAccessToken = profile.accessToken
                 lastCloudTokenRefreshAtMs = now
@@ -3134,13 +3214,15 @@ class CampusRepository internal constructor(
             return@withContext syncRes.peachBalance
         }
         val current = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withContext null
-        var token = resolveValidCloudAccessToken(forceRefresh = false)
+        var credentials = resolveCloudSession(forceRefresh = false)
+        var token = credentials.token
         if (token.isBlank()) return@withContext null
-        var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
+        var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token, cloudBaseUrl = credentials.endpoint)
         if (livePeach == null) {
-            token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+            credentials = resolveCloudSession(forceRefresh = true, failedAccessToken = token)
+            token = credentials.token
             if (token.isNotBlank()) {
-                livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
+                livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token, cloudBaseUrl = credentials.endpoint)
             }
         }
         if (livePeach == null) return@withContext null
@@ -3155,6 +3237,7 @@ class CampusRepository internal constructor(
     private suspend fun buildDelegatedCredentialBundle(): Pair<String?, String?> {
         val cachedLibSession = readCachedLibrarySeatSession()
         val credentialPair: Pair<String, String>? = academicCredentialMutex.withLock {
+            requireActiveSession()
             val prefs = preferences.data.first()
             val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
             val readResult = academicCredentialVault.read(academicCredentialScope(accountId))
@@ -3187,44 +3270,35 @@ class CampusRepository internal constructor(
     suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> = withContext(Dispatchers.IO) {
         cloudSyncMutex.withLock {
             runCatching {
+                requireActiveSession()
                 val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                     ?: throw IllegalStateException("尚未连接 XPeach 通行证")
-                var token = resolveValidCloudAccessToken(forceRefresh = false)
+                var credentials = resolveCloudSession(forceRefresh = false)
+                var token = credentials.token
                 if (token.isBlank()) {
                     throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
                 }
 
                 val existingPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-                val activeCloudPlans = existingPlansSnapshot.filter {
-                    it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "CONFIRMED")
-                }
-                val hasActiveCloudBookingPlan = existingPlansSnapshot.any {
-                    it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        it.status !in setOf("CANCELLED", "FAILED", "EXPIRED")
-                }
-                val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
-                val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
-                val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-                )
-
-                val localPlanUpserts = activeCloudPlans.map { plan ->
-                    val seats = plan.preferredSeatLabel
-                        .split(",", "，", "、", "/", "|", ";", "；")
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .ifEmpty { listOf(plan.preferredSeatLabel.trim().ifBlank { "01桌 B座" }) }
-                    cn.edu.haut.campus.core.campusservices.CloudUnsyncedPlanUpsertDto(
-                        planId = plan.id,
-                        targetLocalDate = plan.targetLocalDate,
-                        targetLocalTime = plan.targetLocalTime,
-                        areaName = plan.preferredAreaName.trim().ifBlank { "五层中区" },
-                        candidateSeats = seats,
-                        repeatDays = plan.repeatDays.coerceIn(1, 30),
-                        remainingDays = plan.remainingDays.coerceIn(1, 30),
-                        allowAlternativeSeat = plan.allowAlternativeSeat
+                val syncNowEpochMillis = System.currentTimeMillis()
+                var cloudBaseUrl = credentials.endpoint
+                // Sync is reconciliation, not authority to recreate/replace cancelled jobs or accept a new quote.
+                val localPlanUpserts = emptyList<cn.edu.haut.campus.core.campusservices.CloudUnsyncedPlanUpsertDto>()
+                val hasActiveCloudBookingPlan = cn.edu.haut.campus.core.campusservices.SchoolWriteAuthorization.automaticWritesEnabled && existingPlansSnapshot.any {
+                    CloudCredentialSyncPolicy.requiresCredentials(
+                        executionMode = it.executionMode,
+                        status = it.status,
+                        remainingDays = it.remainingDays,
+                        fireAtEpochMillis = it.fireAtEpochMillis,
+                        cloudJobId = it.cloudJobId,
+                        nowEpochMillis = syncNowEpochMillis
                     )
+                }
+                // Do not even open the credential vault for a historical or stopped plan.
+                val (localStudentNo, effectiveDelegatedSecret) = if (hasActiveCloudBookingPlan) {
+                    buildDelegatedCredentialBundle()
+                } else {
+                    preferencesFlow.first().savedStudentId?.takeIf { it.isNotBlank() } to null
                 }
 
                 val localParcels = cloudAndParcelDao.getParcelItemsSnapshot().map { p ->
@@ -3254,7 +3328,9 @@ class CampusRepository internal constructor(
                     cloudBaseUrl = cloudBaseUrl
                 )
                 if (snapshot == null) {
-                    token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                    credentials = resolveCloudSession(forceRefresh = true, failedAccessToken = token)
+                    token = credentials.token
+                    cloudBaseUrl = credentials.endpoint
                     if (token.isNotBlank()) {
                         snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
                             accessToken = token,
@@ -3341,15 +3417,15 @@ class CampusRepository internal constructor(
             val localPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
             for (rj in verifiedSnapshot.jobs) {
                 val matchingLocal = localPlans.firstOrNull {
-                    it.cloudJobId == rj.jobId && it.targetLocalDate == rj.targetLocalDate
-                } ?: localPlans.firstOrNull {
                     it.targetLocalDate == rj.targetLocalDate &&
-                        it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
-                } ?: localPlans.firstOrNull {
-                    it.cloudJobId == rj.jobId &&
-                        it.status !in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+                        (it.cloudJobId == rj.jobId || (it.id == rj.planId && it.cloudJobId.isNullOrBlank()))
                 }
                 val matchingOrder = verifiedSnapshot.orders.firstOrNull { it.jobId == rj.jobId }
+                val syncedPrice = matchingOrder?.pricePeach?.takeIf { it.isFinite() && it >= 0.0 }?.let {
+                    runCatching { java.math.BigDecimal.valueOf(it).movePointRight(4).longValueExact() }.getOrNull()
+                } ?: matchingLocal?.priceMicropeach ?: -1L // unknown, not an invented free/default quote
+                val syncedPayment = matchingOrder?.paymentState?.takeIf { it.isNotBlank() && it != "UNKNOWN" }
+                    ?: matchingLocal?.paymentState ?: "UNKNOWN"
                 val cleanAreaName = (rj.bookedRegionAlias ?: rj.areaName).cleanNullLiteral(
                     matchingLocal?.preferredAreaName.cleanNullLiteral("五层中区")
                 )
@@ -3377,14 +3453,15 @@ class CampusRepository internal constructor(
                     ""
                 }
                 val diagText = when (rj.state) {
-                    "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到$repeatDiagSuffix"
-                    "CANCELLED" -> "该预约计划已取消（未消耗内测配额 🍑）"
-                    "FAILED" -> "目标座位已被抢满，本次未消耗内测配额 🍑$repeatDiagSuffix"
-                    "EXPIRED" -> "已过开抢有效期窗口（本次未消耗内测配额 🍑）"
-                    else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座$repeatDiagSuffix"
+                    "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到"
+                    "CANCELLED" -> "该预约计划已取消，费用以订单状态为准"
+                    "FAILED" -> "云端预约失败，原因及费用以云端记录为准"
+                    "EXPIRED" -> "已过开抢有效期窗口，费用以订单状态为准"
+                    "RESULT_UNKNOWN" -> "云端预约结果待核实，请查询学校预约；不会在本机重复提交"
+                    else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座"
                 }
                 val mergedPlan = LibraryBookingPlanEntity(
-                    id = matchingLocal?.id ?: "plan_${rj.jobId.ifBlank { rj.planId }.replace("-", "").take(14)}",
+                    id = matchingLocal?.id ?: "plan_cloud_${rj.jobId.ifBlank { rj.planId }}",
                     schoolId = schoolId,
                     executionMode = BookingExecutionMode.CLOUD_HOSTED.wireName,
                     targetLocalDate = rj.targetLocalDate,
@@ -3402,8 +3479,8 @@ class CampusRepository internal constructor(
                     cloudJobId = rj.jobId.cleanNullableLiteral(),
                     externalBookingId = rj.externalBookingId.cleanNullableLiteral() ?: matchingLocal?.externalBookingId.cleanNullableLiteral(),
                     evidenceSha256 = rj.evidenceSha256.cleanNullableLiteral() ?: matchingLocal?.evidenceSha256.cleanNullableLiteral(),
-                    priceMicropeach = 10_000L,
-                    paymentState = matchingOrder?.paymentState ?: (if (rj.state == "CONFIRMED") "PAID" else "DEBIT_PENDING"),
+                    priceMicropeach = syncedPrice,
+                    paymentState = syncedPayment,
                     status = rj.state,
                     stateVersion = (matchingLocal?.stateVersion ?: 0) + 1,
                     generation = matchingLocal?.generation ?: 1,
@@ -3415,7 +3492,7 @@ class CampusRepository internal constructor(
                 )
                 cloudAndParcelDao.upsertLibraryBookingPlan(mergedPlan)
                 if (mergedPlan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "EXPIRED")) {
-                    LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan)
+                    LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan, profileId, checkNotNull(sessionGeneration))
                 }
             }
 
@@ -3435,7 +3512,9 @@ class CampusRepository internal constructor(
         }
     }
 
-    suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
+    suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() = cloudSyncMutex.withLock {
+        val credentials = resolveCloudSession(forceRefresh = false)
+        withContext(Dispatchers.IO) { CampusCloudOidcHelper.revokeCloudSchoolBindings(credentials.token, cloudBaseUrl = credentials.endpoint) }
         val now = System.currentTimeMillis()
         cloudTokenMutex.withLock {
             cachedCloudAccessToken = ""
@@ -3444,13 +3523,14 @@ class CampusRepository internal constructor(
             preferences.edit {
                 it.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
                 it.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
+                it.remove(PrefKeys.CLOUD_TOKEN_ENDPOINT)
             }
         }
         cloudAndParcelDao.clearCloudIdentityBinding()
         val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in plans) {
             if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED")
+                plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
             ) {
                 cloudAndParcelDao.upsertLibraryBookingPlan(
                     plan.copy(
@@ -3476,14 +3556,22 @@ class CampusRepository internal constructor(
         preferredSeatLabel: String,
         allowAlternativeSeat: Boolean = true,
         repeatDays: Int = 1,
+        acceptedCloudPrice: cn.edu.haut.campus.core.campusservices.CloudBookingPriceQuote? = null,
         nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
+        cloudSyncMutex.withLock {
+        requireActiveSession()
+        if (executionMode != BookingExecutionMode.MANUAL_REMINDER) {
+            cn.edu.haut.campus.core.campusservices.SchoolWriteAuthorization.requireVerified()
+            check(supportsHautServices) { "当前学校尚未验证自动预约适配" }
+        }
         val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
             val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 ?: throw IllegalStateException("云端代抢（测试版）需先绑定 XPEACH 内测账号；您也可随时切换为「本机抢座 (测试版)」（无需登录云账号）")
-            if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("内测防滥用积分不足（需 1 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
+            val price = requireNotNull(acceptedCloudPrice) { "请先查看并确认当前云端价格" }
+            if (binding.peachBalanceMicropeach < price.micropeach) {
+                throw IllegalStateException("云端余额不足（每次成功需 ${price.displayPeach} 🍑），请改用本机抢座")
             }
         }
 
@@ -3503,16 +3591,16 @@ class CampusRepository internal constructor(
             else -> "ARMED"
         }
 
-        var remoteCloudJobId: String? = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) "cjob_${planId.takeLast(8)}" else null
-        var token = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveValidCloudAccessToken(forceRefresh = false) else ""
-        if (executionMode == BookingExecutionMode.CLOUD_HOSTED && token.isNotBlank()) {
+        var remoteCloudJobId: String? = null
+        val credentials = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) resolveCloudSession(forceRefresh = false) else null
+        val token = credentials?.token.orEmpty()
+        if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            check(token.isNotBlank()) { "云端会话已过期，请重新登录" }
             val (studentNoBundle, delegatedBundle) = buildDelegatedCredentialBundle()
             val prefsSnap = preferencesFlow.first()
             val studentNo = studentNoBundle ?: prefsSnap.savedStudentId.orEmpty()
-            val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                prefsSnap.networkProxyConfig.customCloudApiBaseUrl
-            )
-            var remoteJobOrPlanId = withContext(Dispatchers.IO) {
+            val cloudBaseUrl = requireNotNull(credentials).endpoint
+            remoteCloudJobId = withContext(Dispatchers.IO) {
                 CampusCloudOidcHelper.syncCloudHostedReservationPlan(
                     accessToken = token,
                     studentNo = studentNo,
@@ -3522,31 +3610,11 @@ class CampusRepository internal constructor(
                     preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
                     preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
                     planIdempotencyKey = planId,
+                    repeatDays = normalizedRepeatDays,
+                    acceptedPrice = requireNotNull(acceptedCloudPrice),
                     cloudBaseUrl = cloudBaseUrl,
-                    repeatDays = normalizedRepeatDays
+                    allowAlternativeSeat = allowAlternativeSeat
                 )
-            }
-            if (remoteJobOrPlanId.isNullOrBlank()) {
-                token = resolveValidCloudAccessToken(forceRefresh = true)
-                if (token.isNotBlank()) {
-                    remoteJobOrPlanId = withContext(Dispatchers.IO) {
-                        CampusCloudOidcHelper.syncCloudHostedReservationPlan(
-                            accessToken = token,
-                            studentNo = studentNo,
-                            delegatedSecret = delegatedBundle.orEmpty(),
-                            targetDate = targetDate.toString(),
-                            targetExecuteAtIso = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime),
-                            preferredAreaName = preferredAreaName.trim().ifBlank { "五层中区" },
-                            preferredSeatLabel = preferredSeatLabel.trim().ifBlank { "01桌 B座" },
-                            planIdempotencyKey = planId,
-                            cloudBaseUrl = cloudBaseUrl,
-                            repeatDays = normalizedRepeatDays
-                        )
-                    }
-                }
-            }
-            if (!remoteJobOrPlanId.isNullOrBlank()) {
-                remoteCloudJobId = remoteJobOrPlanId
             }
         }
 
@@ -3575,8 +3643,8 @@ class CampusRepository internal constructor(
             cloudJobId = remoteCloudJobId,
             externalBookingId = null,
             evidenceSha256 = null,
-            priceMicropeach = executionMode.priceMicropeach,
-            paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
+            priceMicropeach = acceptedCloudPrice?.takeIf { executionMode == BookingExecutionMode.CLOUD_HOSTED }?.micropeach ?: executionMode.priceMicropeach,
+            paymentState = if ((acceptedCloudPrice?.takeIf { executionMode == BookingExecutionMode.CLOUD_HOSTED }?.micropeach ?: executionMode.priceMicropeach) == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
             status = initialStatus,
             stateVersion = 1,
             generation = 1,
@@ -3594,11 +3662,9 @@ class CampusRepository internal constructor(
             remainingDays = normalizedRepeatDays
         )
         cloudAndParcelDao.upsertLibraryBookingPlan(entity)
-        LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
-        if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
-            repoScope.launch { runCatching { syncWithCampusCloud() } }
-        }
+        LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity, profileId, checkNotNull(sessionGeneration))
         entity
+        }
     }
 
     suspend fun fetchLibraryStudyRegions(
@@ -3642,11 +3708,39 @@ class CampusRepository internal constructor(
         planId: String,
         stage: TripleScheduleStage,
         nowEpochMillis: Long = System.currentTimeMillis()
-    ): Result<LibraryBookingPlanEntity> = runCatching {
+    ): Result<LibraryBookingPlanEntity> = withContext(kotlinx.coroutines.NonCancellable) { bookingMutationMutex.withLock { runCatching {
+        requireActiveSession()
         val current = cloudAndParcelDao.getLibraryBookingPlanById(planId)
             ?: throw IllegalArgumentException("未找到预约计划 $planId")
-        if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+        if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED", "RESULT_UNKNOWN", "REMINDER_DELIVERED")) {
             return@runCatching current
+        }
+        val dueAt = when (stage) {
+            TripleScheduleStage.PRECHECK -> current.precheckAtEpochMillis
+            TripleScheduleStage.FINAL_CHECK -> current.finalCheckAtEpochMillis
+            TripleScheduleStage.FIRE -> current.fireAtEpochMillis
+        }
+        // Stale alarms/UI callbacks from a previous recurring day cannot execute the next day early.
+        if (nowEpochMillis < dueAt) return@runCatching current
+        if (stage == TripleScheduleStage.FIRE && current.executionMode != BookingExecutionMode.MANUAL_REMINDER.wireName) {
+            cn.edu.haut.campus.core.campusservices.SchoolWriteAuthorization.requireVerified()
+        }
+        // Cloud jobs are executed only by the server. A client alarm reconciles state;
+        // it must never submit a second school booking after a lost cloud response.
+        if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+            if (stage == TripleScheduleStage.FIRE) {
+                val jobId = requireNotNull(current.cloudJobId?.takeIf { it.isNotBlank() && !it.startsWith("cjob_") }) {
+                    "云端任务尚未登记，不会在本机代替提交"
+                }
+                val credentials = resolveCloudSession()
+                val baseUrl = credentials.endpoint
+                val token = credentials.token
+                check(token.isNotBlank()) { "云端登录已失效" }
+                // Backup wakes the same server job, never a second native school write.
+                CampusCloudOidcHelper.executeCloudHostedReservationJobNow(token, jobId, cloudBaseUrl = baseUrl)
+            }
+            syncWithCampusCloud().getOrThrow()
+            return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
         }
         val updated = when (stage) {
             TripleScheduleStage.PRECHECK -> {
@@ -3687,60 +3781,28 @@ class CampusRepository internal constructor(
                     current.copy(
                         precheckStatus = "PRECHECK_OK",
                         finalCheckStatus = "FINAL_CHECK_OK",
-                        fireStatus = "CONFIRMED",
-                        status = "CONFIRMED",
+                        fireStatus = "REMINDER_DELIVERED",
+                        status = "REMINDER_DELIVERED",
                         stateVersion = current.stateVersion + 1,
                         lastDiagnosticMessage = "已到点发送选座提醒：请点击上方选座面板一键预约 ${current.preferredAreaName} · ${current.preferredSeatLabel}",
                         updatedAtEpochMillis = nowEpochMillis
                     )
                 } else {
-                    var cloudResult: AutomatedSeatBookingResult? = null
-                    if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        !current.cloudJobId.isNullOrBlank() &&
-                        !current.cloudJobId.startsWith("cjob_")
-                    ) {
-                        val cloudToken = resolveValidCloudAccessToken()
-                        if (cloudToken.isNotBlank()) {
-                            cloudResult = withContext(Dispatchers.IO) {
-                                CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
-                                    accessToken = cloudToken,
-                                    jobId = current.cloudJobId
-                                )
-                            }
-                        }
-                    }
-
-                    val liveBooking = cloudResult ?: run {
-                        val sessionState = ensureLibrarySeatSession(forceRefresh = false)
-                        val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                            ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
-                        val firstAttempt = if (token0.isNotBlank()) {
-                            HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
-                                rawToken = token0,
-                                targetDate = current.targetLocalDate,
-                                preferredAreaName = current.preferredAreaName,
-                                preferredSeatLabel = current.preferredSeatLabel
-                            ).getOrNull()
-                        } else {
-                            null
-                        }
-                        if (firstAttempt?.confirmed == true) {
-                            firstAttempt
-                        } else {
-                            val refreshedState = ensureLibrarySeatSession(forceRefresh = true)
-                            val token1 = (refreshedState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
-                            if (token1.isNotBlank()) {
-                                HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
-                                    rawToken = token1,
-                                    targetDate = current.targetLocalDate,
-                                    preferredAreaName = current.preferredAreaName,
-                                    preferredSeatLabel = current.preferredSeatLabel
-                                ).getOrNull() ?: firstAttempt
-                            } else {
-                                firstAttempt
-                            }
-                        }
-                    }
+                    // Persist a write intent before network I/O. A crash or timeout must never re-arm it.
+                    cloudAndParcelDao.upsertLibraryBookingPlan(current.copy(
+                        status = "RESULT_UNKNOWN", fireStatus = "RESULT_UNKNOWN",
+                        lastDiagnosticMessage = "预约执行结果待核实；不会自动重复提交",
+                        stateVersion = current.stateVersion + 1
+                    ))
+                    val session = ensureLibrarySeatSession(forceRefresh = false)
+                    val token = (session as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
+                    val attempt = if (token.isNotBlank()) HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
+                        rawToken = token, targetDate = current.targetLocalDate,
+                        preferredAreaName = current.preferredAreaName,
+                        preferredSeatLabel = current.preferredSeatLabel,
+                        allowAlternativeSeat = current.allowAlternativeSeat
+                    ) else Result.failure(IllegalStateException("请先登录图书馆账号"))
+                    val liveBooking = attempt.getOrNull()
 
                     val isConfirmed = liveBooking?.confirmed == true
                     val extId = liveBooking?.bookingId ?: "haut_${current.targetLocalDate}_${current.preferredSeatLabel}"
@@ -3749,7 +3811,7 @@ class CampusRepository internal constructor(
                     val diagMsg = liveBooking?.diagnosticMessage ?: if (isConfirmed) {
                         "已为您抢到 ${current.preferredAreaName} ${current.preferredSeatLabel}，请按规定时间到馆刷脸签到"
                     } else {
-                        "未能锁定 ${current.preferredAreaName} ${current.preferredSeatLabel}：请先绑定/登录河工大统一身份认证账号"
+                        attempt.exceptionOrNull()?.message ?: "预约结果待核实，请查询当前预约；不会自动重试"
                     }
 
                     val nextPaymentState = if (isConfirmed && current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName && current.priceMicropeach > 0L) {
@@ -3757,7 +3819,7 @@ class CampusRepository internal constructor(
                     } else {
                         current.paymentState
                     }
-                    val finalStatus = if (isConfirmed) "CONFIRMED" else "FAILED"
+                    val finalStatus = if (isConfirmed) "CONFIRMED" else "RESULT_UNKNOWN"
                     current.copy(
                         precheckStatus = "PRECHECK_OK",
                         finalCheckStatus = "FINAL_CHECK_OK",
@@ -3776,6 +3838,7 @@ class CampusRepository internal constructor(
         val finalEntity = if (
             stage == TripleScheduleStage.FIRE &&
             current.remainingDays > 1 &&
+            updated.status != "RESULT_UNKNOWN" &&
             current.status != "CANCELLED"
         ) {
             // 1) 保存当日已完成快照行，方便用户在记录列表中查看当日占座结果
@@ -3801,11 +3864,6 @@ class CampusRepository internal constructor(
                 generation = nextGen,
                 nowEpochMillis = nowEpochMillis
             )
-            val nextCloudJobId = if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                "cjob_${current.id.takeLast(8)}_${nextDate.toString().replace("-", "")}"
-            } else {
-                null
-            }
             val rolledOver = current.copy(
                 targetLocalDate = nextDate.toString(),
                 precheckAtEpochMillis = nextSchedule.precheckAtEpochMillis,
@@ -3815,7 +3873,7 @@ class CampusRepository internal constructor(
                 finalCheckStatus = "ARMED",
                 fireStatus = "ARMED",
                 status = "ARMED",
-                cloudJobId = nextCloudJobId,
+                cloudJobId = null,
                 externalBookingId = null,
                 evidenceSha256 = null,
                 paymentState = if (current.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
@@ -3826,11 +3884,11 @@ class CampusRepository internal constructor(
                 updatedAtEpochMillis = nowEpochMillis
             )
             cloudAndParcelDao.upsertLibraryBookingPlan(rolledOver)
-            LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, rolledOver)
+            LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, rolledOver, profileId, checkNotNull(sessionGeneration))
             rolledOver
         } else {
             cloudAndParcelDao.upsertLibraryBookingPlan(updated)
-            if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+            if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED", "RESULT_UNKNOWN", "REMINDER_DELIVERED")) {
                 LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, updated.id)
             }
             updated
@@ -3839,58 +3897,60 @@ class CampusRepository internal constructor(
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
         finalEntity
-    }
+    } } }
 
-    suspend fun cancelDualEngineBookingPlan(planId: String) {
-        val current = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: return
-        LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, planId)
-        if (!current.externalBookingId.isNullOrBlank() || current.status == "CONFIRMED") {
-            runCatching {
-                cancelActiveLibrarySeatBooking(planId = planId, bookingId = current.externalBookingId)
-            }
-        }
-        cloudAndParcelDao.upsertLibraryBookingPlan(
-            current.copy(
-                status = "CANCELLED",
-                stateVersion = current.stateVersion + 1,
-                lastDiagnosticMessage = "用户已取消该预约计划并释放座位",
+    suspend fun cancelDualEngineBookingPlan(planId: String) = bookingMutationMutex.withLock {
+        requireActiveSession()
+        val current = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: return@withLock
+        if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName ||
+            !current.externalBookingId.isNullOrBlank() || current.status in setOf("CONFIRMED", "RESULT_UNKNOWN")) {
+            cancelActiveLibrarySeatBookingUnlocked(planId = planId, bookingId = current.externalBookingId).getOrThrow()
+        } else {
+            cloudAndParcelDao.upsertLibraryBookingPlan(current.copy(
+                status = "CANCELLED", stateVersion = current.stateVersion + 1,
+                lastDiagnosticMessage = "已取消尚未执行的计划（未声称已释放学校座位）",
                 updatedAtEpochMillis = System.currentTimeMillis()
-            )
-        )
-        repoScope.launch { runCatching { syncWithCampusCloud() } }
+            ))
+        }
+        LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, planId)
     }
 
     suspend fun cancelActiveLibrarySeatBooking(
         planId: String? = null,
         bookingId: String? = null
+    ): Result<String> = bookingMutationMutex.withLock {
+        cancelActiveLibrarySeatBookingUnlocked(planId, bookingId)
+    }
+
+    private suspend fun cancelActiveLibrarySeatBookingUnlocked(
+        planId: String? = null,
+        bookingId: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val plan = planId?.let { cloudAndParcelDao.getLibraryBookingPlanById(it) }
-            if (plan != null && !plan.cloudJobId.isNullOrBlank() && !plan.cloudJobId.startsWith("cjob_")) {
-                val cloudToken = resolveValidCloudAccessToken()
-                if (cloudToken.isNotBlank()) {
-                    val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                        preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-                    )
-                    CampusCloudOidcHelper.cancelCloudHostedReservationSeat(
-                        accessToken = cloudToken,
-                        jobId = plan.cloudJobId,
-                        cloudBaseUrl = cloudBaseUrl
-                    )
-                }
+            requireActiveSession()
+            check(plan?.status != "RESULT_UNKNOWN" || !plan.externalBookingId.isNullOrBlank()) {
+                "预约结果尚未确定，请先在当前预约面板核对编号后退座；不能取消其他预约"
             }
-            val currentToken = readCachedLibrarySeatSession()?.rawToken
-                ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                ?: throw IllegalStateException("请先登录图书馆账号")
-            val targetBookingId = bookingId ?: plan?.externalBookingId
-            val firstRes = HautLibrarySeatAuthClient.cancelActiveSeatBooking(currentToken, targetBookingId)
-            val msg = if (firstRes.isSuccess) {
-                firstRes.getOrThrow()
+            val msg = if (plan?.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                val jobId = requireNotNull(plan.cloudJobId?.takeIf { it.isNotBlank() && !it.startsWith("cjob_") })
+                val credentials = resolveCloudSession()
+                check(CampusCloudOidcHelper.cancelCloudHostedReservationSeat(credentials.token, jobId,
+                    cloudBaseUrl = credentials.endpoint)) {
+                    "云端未确认取消，请保留计划并查询云端状态"
+                }
+                "云端已确认取消请求，请以学校当前预约状态为准"
             } else {
-                val refreshed = ensureLibrarySeatSession(forceRefresh = true)
-                val nextToken = (refreshed as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                    ?: throw (firstRes.exceptionOrNull() ?: IllegalStateException("退座失败"))
-                HautLibrarySeatAuthClient.cancelActiveSeatBooking(nextToken, targetBookingId).getOrThrow()
+                val targetId = bookingId ?: plan?.externalBookingId
+                if (plan != null) {
+                    require(targetId != null && targetId.all(Char::isDigit) && targetId.toLongOrNull()?.let { it > 0L } == true) {
+                        "该计划没有经过确认的学校预约编号（可能为旧版本记录）；未取消任何学校预约，请手动核对"
+                    }
+                }
+                val token = readCachedLibrarySeatSession()?.rawToken
+                    ?: (ensureLibrarySeatSession(false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                    ?: error("请先登录图书馆账号")
+                HautLibrarySeatAuthClient.cancelActiveSeatBooking(token, targetId).getOrThrow()
             }
             if (plan != null) {
                 LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
@@ -3910,8 +3970,9 @@ class CampusRepository internal constructor(
     suspend fun rescheduleActiveLocalBookingPlans() {
         val all = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in all) {
-            if (plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "EXPIRED")) {
-                LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan)
+            if (plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "RESULT_UNKNOWN", "REMINDER_DELIVERED")
+            ) {
+                LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan, profileId, checkNotNull(sessionGeneration))
             }
         }
     }

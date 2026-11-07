@@ -8,7 +8,7 @@ import java.time.LocalTime
  * `星期一 第1-2节 1-16周`，多段用换行或分号分隔。
  *
  * 注意：只有逗号不能当作分隔符——"1-8,10-16周"里的逗号属于同一个周次表达式。
- * 解析不出的段落直接丢弃，不做"默认第一小节"之类的填充。
+ * 任何段落解析失败都会拒绝整组时段，不做"默认第一小节"之类的填充。
  */
 internal object ChaoxingTimeParser {
 
@@ -18,15 +18,15 @@ internal object ChaoxingTimeParser {
         '一' to 1, '二' to 2, '三' to 3, '四' to 4,
         '五' to 5, '六' to 6, '日' to 7, '天' to 7
     )
-    private val WEEK_RANGE = Regex("(\\d{1,2})\\s*(?:-|~|至|—)\\s*(\\d{1,2})")
-    private val WEEK_SINGLE = Regex("\\d{1,2}")
     private val SECTION_RANGE = Regex("(\\d{1,2})\\s*-\\s*(\\d{1,2})")
     private val SECTION_SINGLE = Regex("(\\d{1,2})")
 
     fun slots(raw: String?): List<Slot> {
         val value = raw?.trim().orEmpty()
         if (value.isEmpty()) return emptyList()
-        return value.split('\n', '；', ';').mapNotNull { piece -> slot(piece) }
+        val pieces = value.split('\n', '；', ';').filter { it.isNotBlank() }
+        val parsed = pieces.mapNotNull { slot(it) }
+        return if (parsed.size == pieces.size) parsed else emptyList()
     }
 
     fun slot(raw: String?): Slot? {
@@ -59,28 +59,11 @@ internal object ChaoxingTimeParser {
         return if (single in 1..60) single..single else null
     }
 
-    private val WEEK_CLAUSE = Regex("[0-9\\s,，\\-~至—]+(?=周)")
 
     fun weeks(raw: String?): Set<Int> {
-        val value = raw?.trim().orEmpty()
-        if (value.isEmpty()) return emptySet()
-        // "星期一 第1-2节 9-16周"里的 1-2 是节次不是周次：只取紧邻"周"的那段数字表达式。
-        // 没有"周"标记时无法区分节次与周次，返回空集而不是猜一个范围。
-        if (!value.contains('周')) return emptySet()
-        val scope = WEEK_CLAUSE.find(value)?.value ?: return emptySet()
-        val result = linkedSetOf<Int>()
-        WEEK_RANGE.findAll(scope).forEach { match ->
-            val start = match.groupValues[1].toIntOrNull() ?: return@forEach
-            val end = match.groupValues[2].toIntOrNull() ?: return@forEach
-            if (start < 1 || end > 80 || start > end) return@forEach
-            for (week in start..end) result += week
-        }
-        if (result.isEmpty()) {
-            WEEK_SINGLE.findAll(scope).forEach { match ->
-                match.value.toIntOrNull()?.takeIf { it in 1..80 }?.let { result += it }
-            }
-        }
-        return result
+        if (raw == null || raw.length > 512) return emptySet()
+        val clause = Regex("""[0-9\s,，、\-~～至—]+周(?:\s*[（(]?[单双][)）]?)?""").find(raw)?.value ?: return emptySet()
+        return cn.edu.haut.campus.core.protocol.TeachingWeekParser.parse(clause)
     }
 
     /** 学分/绩点这类小数字段；非法数字返回 null，不降级成 0。 */

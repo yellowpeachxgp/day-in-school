@@ -152,11 +152,12 @@ object WeeksSetParser {
             if (cleaned.isEmpty()) continue
             val rangeParts = cleaned.split("-")
             val candidates = when (rangeParts.size) {
-                1 -> listOfNotNull(rangeParts[0].toIntOrNull())
+                1 -> listOfNotNull(rangeParts[0].toIntOrNull()?.also { require(it in 1..60) { "周次须在 1–60 范围内" } })
                 2 -> {
                     val start = rangeParts[0].toIntOrNull()
                     val end = rangeParts[1].toIntOrNull()
                     if (start != null && end != null && start <= end) {
+                        require(start >= 1 && end <= 60) { "周次须在 1–60 范围内" }
                         (start..end).toList()
                     } else {
                         emptyList()

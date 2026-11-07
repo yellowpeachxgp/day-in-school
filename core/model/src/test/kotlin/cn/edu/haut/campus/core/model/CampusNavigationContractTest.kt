@@ -7,6 +7,15 @@ import org.junit.Test
 import java.time.LocalDate
 
 class CampusNavigationContractTest {
+    @Test
+    fun geoJsonWestOfNinetyDegreesStillUsesLongitudeFirst() {
+        val zone = CustomCampusZoneCodec.decodeSingleOrList(
+            """{"coordinates":[[87.6,43.8],[87.7,43.8],[87.7,43.9]],"campusName":"test"}"""
+        ).single()
+        assertEquals(43.8, zone.polygonVertices.first().latitude, 0.00001)
+        assertEquals(87.6, zone.polygonVertices.first().longitude, 0.00001)
+    }
+
 
     @Test
     fun `bottom tab routes resolve from index and route id`() {

@@ -11,11 +11,9 @@ internal object JinzhiSchedule {
         '一' to 1, '二' to 2, '三' to 3, '四' to 4, '五' to 5, '六' to 6, '日' to 7, '天' to 7
     )
     private val WEEKDAY_TEXT = Regex("""(?:星期|周|礼拜)([一二三四五六日天])""")
-    private val WEEKDAY_DIGIT = Regex("""(?:星期|周)s*([1-7])""")
-    private val SECTION_RANGE = Regex("""(d{1,2})s*[-~～—]s*(d{1,2})s*节""")
-    private val SECTION_SINGLE = Regex("""(d{1,2})s*节""")
-    private val WEEK_RANGE = Regex("""(d{1,2})s*[-~～—]s*(d{1,2})s*周""")
-    private val WEEK_SINGLE = Regex("""(d{1,2})s*周""")
+    private val WEEKDAY_DIGIT = Regex("""(?:星期|周)\s*([1-7])""")
+    private val SECTION_RANGE = Regex("""(\d{1,2})\s*[-~～—]\s*(\d{1,2})\s*节""")
+    private val SECTION_SINGLE = Regex("""(\d{1,2})\s*节""")
 
     class Meeting(val weekday: Int, val startSection: Int, val endSection: Int, val weeks: Set<Int>)
 
@@ -49,32 +47,15 @@ internal object JinzhiSchedule {
     }
 
     fun parseWeeks(text: String): Set<Int> {
-        val odd = "单" in text
-        val even = "双" in text
-        if (odd && even) return emptySet()
-        val weeks = sortedSetOf<Int>()
-        val range = WEEK_RANGE.find(text)
-        if (range != null) {
-            val start = range.groupValues[1].toIntOrNull() ?: return emptySet()
-            val end = range.groupValues[2].toIntOrNull() ?: return emptySet()
-            if (start > end) return emptySet()
-            for (week in start..end) weeks += week
-        } else {
-            val single = WEEK_SINGLE.find(text)?.groupValues?.get(1)?.toIntOrNull() ?: return emptySet()
-            weeks += single
-        }
-        if (weeks.isEmpty() || weeks.any { it !in 1..80 }) return emptySet()
-        return when {
-            odd -> weeks.filter { it % 2 == 1 }.toSortedSet()
-            even -> weeks.filter { it % 2 == 0 }.toSortedSet()
-            else -> weeks
-        }
+        if (text.length > 512) return emptySet()
+        val clause = Regex("""[0-9\s,，、\-~～至—]+周(?:\s*[（(]?[单双][)）]?)?""").find(text)?.value ?: return emptySet()
+        return cn.edu.haut.campus.core.protocol.TeachingWeekParser.parse(clause)
     }
 
     /** "2026-01-12" / "2026年1月12日" → 日期。 */
     fun parseDate(raw: String?): java.time.LocalDate? {
         if (raw.isNullOrBlank()) return null
-        val match = Regex("""(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})""").find(raw) ?: return null
+        val match = Regex("""(\d{4})\\s*[-/.年]\s*(\d{1,2})\\s*[-/.月]\s*(\d{1,2})""").find(raw) ?: return null
         val year = match.groupValues[1].toIntOrNull() ?: return null
         val month = match.groupValues[2].toIntOrNull() ?: return null
         val day = match.groupValues[3].toIntOrNull() ?: return null

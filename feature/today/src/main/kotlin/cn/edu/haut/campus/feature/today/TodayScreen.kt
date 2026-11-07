@@ -1918,7 +1918,7 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查询",
+            subtitle = "个人课表参考，实际教室空闲状态待核实",
             onClick = onNavigateToEmptyClassrooms
         ),
         HomeCardModule.CAMPUS_COMMUNITY.id to HomeModularCardSpec(
@@ -2667,7 +2667,7 @@ private fun TodayDiningRecommendHeroCard(
                     contentColor = MaterialTheme.colorScheme.onPrimary
                 )
                 Text(
-                    text = "下课去 · ${primary.profile.name} ★${primary.averageStars}",
+                    text = "下课去 · ${primary.profile.name} 参考★${primary.averageStars}",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -2691,7 +2691,7 @@ private fun TodayDiningRecommendHeroCard(
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "推荐：${primary.recommendedDishes.joinToString(" · ")}",
+            text = "推荐：${primary.recommendedDishes.joinToString(" · ").ifBlank { "当前无符合偏好的菜品" }}",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface
@@ -2811,7 +2811,7 @@ private fun CampusDiningRecommendationDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "首选 · ${primary.profile.name} ★${primary.averageStars}",
+                                text = "首选 · ${primary.profile.name} 参考★${primary.averageStars}",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = XPeachTheme.readablePrimary
@@ -2836,7 +2836,7 @@ private fun CampusDiningRecommendationDialog(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "推荐档口：${primary.recommendedDishes.joinToString(" / ")}",
+                            text = "推荐档口：${primary.recommendedDishes.joinToString(" / ").ifBlank { "当前无符合偏好的菜品" }}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface
@@ -2901,7 +2901,7 @@ private fun CampusDiningRecommendationDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "${cand.profile.name} ★${cand.averageStars}",
+                                        text = "${cand.profile.name} 参考★${cand.averageStars}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -2920,7 +2920,7 @@ private fun CampusDiningRecommendationDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = cand.recommendedDishes.joinToString(" · "),
+                                    text = cand.recommendedDishes.joinToString(" · ").ifBlank { "当前无符合偏好的菜品" },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -3037,7 +3037,7 @@ private fun CampusDiningRecommendationDialog(
                                         }
                                     }
                                     Text(
-                                        text = "${dish.canteenShortName} · ${dish.stallLocation} · ${dish.totalReviewCount}人评价",
+                                        text = "${dish.canteenShortName} · ${dish.stallLocation} · ${if (dish.hasPresetRating) "预设参考 · " else ""}${dish.totalReviewCount}条个人评价（非公众评分）",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

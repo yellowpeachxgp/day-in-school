@@ -117,7 +117,7 @@ class PackageInstaller(
         consent: PermissionSet?
     ): InstallOutcome.Rejected? {
         if (grants.isRevoked(packageId)) {
-            if (consent == null) {
+            if (consent == null || !consent.covers(required)) {
                 return InstallOutcome.Rejected(
                     PackageError.PERMISSION_REAUTHORIZATION_REQUIRED,
                     "该包权限已被撤销，必须重新授权后才能安装",

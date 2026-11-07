@@ -159,12 +159,12 @@ object GpaCalculator {
 
         val currentTermGpa = if (currentTermId != null) {
             officialSnapshot?.termGpas?.get(currentTermId)?.setScale(DISPLAY_SCALE, RoundingMode.HALF_UP)
-                ?: computeWeightedGpa(selectedForGpa.filter { it.first.termId == currentTermId })
+                ?: if (hasUnresolvedScoredCourses) null else computeWeightedGpa(selectedForGpa.filter { it.first.termId == currentTermId })
         } else null
 
         val currentAcademicYearGpa = if (currentAcademicYear != null) {
             officialSnapshot?.academicYearGpas?.get(currentAcademicYear)?.setScale(DISPLAY_SCALE, RoundingMode.HALF_UP)
-                ?: computeWeightedGpa(selectedForGpa.filter { it.first.academicYear == currentAcademicYear })
+                ?: if (hasUnresolvedScoredCourses) null else computeWeightedGpa(selectedForGpa.filter { it.first.academicYear == currentAcademicYear })
         } else null
 
         // 生成学期趋势点
@@ -177,7 +177,7 @@ object GpaCalculator {
             val label = "${first.academicYear} (${first.termNumber})"
             val termSelected = selectedForGpa.filter { it.first.termId == termId }
             val officialTermGpa = officialSnapshot?.termGpas?.get(termId)?.setScale(DISPLAY_SCALE, RoundingMode.HALF_UP)
-            val termGpa = officialTermGpa ?: computeWeightedGpa(termSelected)
+            val termGpa = officialTermGpa ?: if (hasUnresolvedScoredCourses) null else computeWeightedGpa(termSelected)
             val termSource = when {
                 officialTermGpa != null -> GpaSourceType.OFFICIAL_JW
                 termGpa != null -> GpaSourceType.LOCAL_WEIGHTED_FROM_JW_POINTS

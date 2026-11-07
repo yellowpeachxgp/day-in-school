@@ -18,6 +18,27 @@ import java.time.Instant
 import java.time.LocalDate
 
 class GpaAndBuildingResolverTest {
+    @Test
+    fun numberedBuildingsCannotMatchNumericSuffixes() {
+        val eight = Building("b_t8", name = "8号楼", shortName = "8号楼", latitude = 0.0,
+            longitude = 0.0, category = CampusCategory.TEACHING_BUILDING, entrances = emptyList(),
+            description = "", verifiedAt = LocalDate.of(2026, 1, 1))
+        val eighteen = eight.copy(id = "b_t18", name = "18号楼（艺术楼）", shortName = "艺术楼")
+        val match = ClassroomBuildingResolver.resolve("18号楼18101", listOf(eight, eighteen), emptyList())
+        assertTrue(match.building?.id != "b_t8")
+    }
+
+    @Test
+    fun partialGradePointsDoNotProduceTermOrYearGpa() {
+        val missing = GradeAttempt(id = "a", termId = "t", academicYear = "2026", termNumber = 1,
+            courseKey = "a", name = "A", credits = BigDecimal.ONE, rawGrade = "80",
+            numericScore = BigDecimal("80"), gradePoint = null, syncedAt = Instant.EPOCH)
+        val known = missing.copy(id = "b", courseKey = "b", name = "B", gradePoint = BigDecimal("4"))
+        val report = GpaCalculator.calculateReport(listOf(missing, known), currentTermId = "t", currentAcademicYear = "2026")
+        assertNull(report.currentTermGpa)
+        assertNull(report.currentAcademicYearGpa)
+    }
+
 
     @Test
     fun `GPA calculator computes exact weighted average from JW course grade points and deduplicates retakes`() {

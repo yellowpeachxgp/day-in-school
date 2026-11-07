@@ -507,7 +507,8 @@ object ReminderNotificationFactory {
         title: String,
         body: String,
         canteenBuildingId: String,
-        canteenName: String
+        canteenName: String,
+        lockscreenPrivate: Boolean
     ): Boolean {
         if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
         ensureChannels(context)
@@ -541,8 +542,17 @@ object ReminderNotificationFactory {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setAutoCancel(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(if (lockscreenPrivate) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_PUBLIC)
 
+        if (lockscreenPrivate) {
+            val publicVersion = NotificationCompat.Builder(context, CHANNEL_MEAL_RECOMMEND)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("用餐提醒")
+                .setContentText("解锁后查看推荐详情")
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+            builder.setPublicVersion(publicVersion)
+        }
         if (contentIntent != null) {
             builder.setContentIntent(contentIntent)
         }

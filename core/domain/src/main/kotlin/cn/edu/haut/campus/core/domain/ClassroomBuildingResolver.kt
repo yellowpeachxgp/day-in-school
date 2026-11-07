@@ -200,9 +200,10 @@ object ClassroomBuildingResolver {
         val roomNumberHint = ROOM_NUMBER_REGEX.findAll(trimmed).lastOrNull()?.value
 
         // 1. 直接匹配建筑全称或简称
-        val directBuilding = buildings.firstOrNull { b ->
-            trimmed.contains(b.name, ignoreCase = true) ||
-                (b.shortName.length >= 2 && trimmed.contains(b.shortName, ignoreCase = true))
+        val directBuilding = buildings.sortedByDescending { maxOf(it.name.length, it.shortName.length) }.firstOrNull { b ->
+            listOf(b.name, b.shortName).any { name ->
+                name.length >= 2 && Regex("(?<![0-9])" + Regex.escape(name), RegexOption.IGNORE_CASE).containsMatchIn(trimmed)
+            }
         }
         if (directBuilding != null) {
             return ResolvedClassroomLocation(
@@ -227,7 +228,7 @@ object ClassroomBuildingResolver {
             val matched = if (pattern.startsWith("^")) {
                 Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(trimmed)
             } else {
-                trimmed.contains(pattern, ignoreCase = true)
+                Regex("(?<![0-9])" + Regex.escape(pattern), RegexOption.IGNORE_CASE).containsMatchIn(trimmed)
             }
 
             if (matched) {

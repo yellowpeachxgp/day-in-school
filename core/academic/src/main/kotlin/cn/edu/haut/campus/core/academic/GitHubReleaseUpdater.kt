@@ -272,7 +272,7 @@ object GitHubReleaseUpdater {
                 val conn = openConnectionFollowingRedirects(url, proxyConfig)
                 try {
                     if (conn.responseCode in 200..299) {
-                        conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
+                        conn.inputStream.use { readBoundedReleaseNotes(it) }.trim()
                     } else null
                 } finally {
                     conn.disconnect()
@@ -281,6 +281,18 @@ object GitHubReleaseUpdater {
             if (!text.isNullOrBlank()) return text
         }
         return null
+    }
+
+    internal fun readBoundedReleaseNotes(input: java.io.InputStream): String {
+        val bytes = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        while (true) {
+            val count = input.read(chunk)
+            if (count < 0) break
+            require(bytes.size() + count <= 64 * 1024) { "Release notes exceed 64 KiB" }
+            bytes.write(chunk, 0, count)
+        }
+        return bytes.toString(Charsets.UTF_8.name())
     }
 
     internal fun formatCleanChangelog(rawBody: String): String {

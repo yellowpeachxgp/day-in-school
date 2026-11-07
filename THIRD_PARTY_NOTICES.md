@@ -128,3 +128,9 @@ SOFTWARE.
    - 不复制上游“云雀 / Lark”品牌名称、应用图标或 XML 布局资源；全部使用本项目原生 Jetpack Compose Bento 设计系统独立实现。
    - 详细的逐文件来源映射见 [`docs/provenance/PARCEL_HUB_UPSTREAM.md`](docs/provenance/PARCEL_HUB_UPSTREAM.md)。
 
+
+## ZXing Core
+
+防丢码使用 `com.google.zxing:core:3.5.3` 标准二维码编码。
+上游：https://github.com/zxing/zxing ，许可：Apache License 2.0。
+Copyright ZXing authors; dependency is obtained from Maven Central, not copied source.

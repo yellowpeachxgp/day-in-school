@@ -283,9 +283,9 @@ internal object ZfHtml {
         entity.equals("quot", ignoreCase = true) -> "\""
         entity.equals("apos", ignoreCase = true) -> "'"
         entity.startsWith("#x", ignoreCase = true) ->
-            entity.substring(2).toIntOrNull(16)?.let { codepoint -> Character.toChars(codepoint).concatToString() }
+            entity.substring(2).toIntOrNull(16)?.takeIf { it in 0..0x10ffff && it !in 0xd800..0xdfff }?.let { codepoint -> Character.toChars(codepoint).concatToString() }
         entity.startsWith("#") ->
-            entity.substring(1).toIntOrNull()?.let { codepoint -> Character.toChars(codepoint).concatToString() }
+            entity.substring(1).toIntOrNull()?.takeIf { it in 0..0x10ffff && it !in 0xd800..0xdfff }?.let { codepoint -> Character.toChars(codepoint).concatToString() }
         else -> null
     }
 

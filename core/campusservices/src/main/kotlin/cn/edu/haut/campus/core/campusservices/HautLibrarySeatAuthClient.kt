@@ -551,27 +551,31 @@ object HautLibrarySeatAuthClient {
      * 若 `code == 401` 则抛出 [LibrarySeatSessionExpiredException] 以便调用方触发后台自动重登。
      */
     fun parseCurrentBookingResponse(rawJson: String): LibrarySeatBookingRecord? {
-        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull() ?: return null
+        val root = JSONObject(rawJson.trim())
         val code = root.optInt("code", -1)
         if (code == 401) throw LibrarySeatSessionExpiredException()
-        if (code != 200) return null
-        val data = root.optJSONObject("data") ?: root.optJSONObject("booking") ?: return null
-        return parseBookingRecordObject(data)
+        check(code == 200) { "当前预约查询失败：$code" }
+        check(root.has("data") || root.has("booking")) { "当前预约响应缺少数据字段" }
+        val key = if (root.has("data")) "data" else "booking"
+        if (root.isNull(key)) return null
+        val data = requireNotNull(root.optJSONObject(key)) { "当前预约数据格式无效" }
+        if (data.has("id") && data.isNull("id") && data.isNull("bookingStatus")) return null
+        return requireNotNull(parseBookingRecordObject(data)) { "当前预约格式无效" }
     }
 
     /**
      * 解析 `/spacelink/api/seatbook/user/mybookingInProgress` 或 `/spacelink/api/seatbook/user/mybookinghis` 返回的预约列表。
      */
     fun parseBookingListResponse(rawJson: String): List<LibrarySeatBookingRecord> {
-        val root = runCatching { JSONObject(rawJson.trim()) }.getOrNull() ?: return emptyList()
+        val root = JSONObject(rawJson.trim())
         val code = root.optInt("code", -1)
         if (code == 401) throw LibrarySeatSessionExpiredException()
-        if (code != 200) return emptyList()
-        val rows = root.optJSONArray("rows") ?: return emptyList()
+        check(code == 200) { "预约列表查询失败：$code" }
+        val rows = requireNotNull(root.optJSONArray("rows")) { "预约列表响应缺少 rows" }
         val list = mutableListOf<LibrarySeatBookingRecord>()
         for (i in 0 until rows.length()) {
-            val item = rows.optJSONObject(i) ?: continue
-            parseBookingRecordObject(item)?.let(list::add)
+            val item = requireNotNull(rows.optJSONObject(i)) { "预约列表格式无效" }
+            list.add(requireNotNull(parseBookingRecordObject(item)) { "预约记录格式无效" })
         }
         return list
     }
@@ -705,17 +709,11 @@ object HautLibrarySeatAuthClient {
             )
             val currentRecord = parseCurrentBookingResponse(currentBody)
 
-            val inProgressBody = runCatching {
-                executeAuthenticatedApiGet(
-                    url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=15&pageNum=1",
-                    cleanToken = cleanToken
-                )
-            }.getOrDefault("")
-            val rawInProgressList = if (inProgressBody.isNotBlank()) {
-                parseBookingListResponse(inProgressBody)
-            } else {
-                emptyList()
-            }
+            val inProgressBody = executeAuthenticatedApiGet(
+                url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=15&pageNum=1",
+                cleanToken = cleanToken
+            )
+            val rawInProgressList = parseBookingListResponse(inProgressBody)
 
             val historyBody = runCatching {
                 executeAuthenticatedApiGet(
@@ -724,7 +722,7 @@ object HautLibrarySeatAuthClient {
                 )
             }.getOrDefault("")
             val rawHistoryList = if (historyBody.isNotBlank()) {
-                parseBookingListResponse(historyBody)
+                runCatching { parseBookingListResponse(historyBody) }.getOrDefault(emptyList())
             } else {
                 emptyList()
             }
@@ -773,6 +771,7 @@ object HautLibrarySeatAuthClient {
         bookingId: Long? = null
     ): Result<LibrarySeatActionOutcome> = withContext(Dispatchers.IO) {
         runCatching {
+            SchoolWriteAuthorization.requireVerified()
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
             if (action.requiresBookingId && (bookingId == null || bookingId <= 0L)) {
@@ -821,35 +820,7 @@ object HautLibrarySeatAuthClient {
                     )
                 }
 
-                // 2) 若尚未签到，尝试触发在线签到 + 快速签到后再尝试签退释放
-                val signInUrl = "$WSLIB_API_BASE_URL/seatbook/user/signin?bookingid=$bookingId&channelType=1003&positionType=1"
-                val signInOutcome = runCatching {
-                    parseActionOutcome(
-                        executeAuthenticatedApiGet(url = signInUrl, cleanToken = cleanToken),
-                        LibrarySeatActionType.SIGN_IN
-                    )
-                }.getOrNull()
-                val quickSignInUrl = "$WSLIB_API_BASE_URL/seatbook/user/quickSignIn?channelType=1003&positionType=1&status=1"
-                val quickSignInOutcome = if (signInOutcome?.success != true) {
-                    runCatching {
-                        parseActionOutcome(
-                            executeAuthenticatedApiGet(url = quickSignInUrl, cleanToken = cleanToken),
-                            LibrarySeatActionType.QUICK_SIGN_IN
-                        )
-                    }.getOrNull()
-                } else {
-                    null
-                }
-                if (signInOutcome?.success == true || quickSignInOutcome?.success == true) {
-                    val secondSignOffBody = runCatching {
-                        executeAuthenticatedApiGet(url = signOffUrl, cleanToken = cleanToken)
-                    }.getOrDefault("")
-                    val secondSignOffOutcome = parseActionOutcome(secondSignOffBody, LibrarySeatActionType.SIGN_OUT)
-                    return@runCatching resolveStartedBookingCancelFallback(
-                        cancelOutcome = initialOutcome,
-                        signOffOutcome = secondSignOffOutcome
-                    )
-                }
+                // Cancellation never authorizes signing the user in.
 
                 return@runCatching resolveStartedBookingCancelFallback(
                     cancelOutcome = initialOutcome,
@@ -1130,10 +1101,19 @@ object HautLibrarySeatAuthClient {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
 
-            val resolvedId = bookingId?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
-                ?: fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }?.bookingId?.toString()
-                ?: throw IllegalStateException("当前没有正在生效的图书馆预约座位")
+            val resolvedId = if (bookingId != null) {
+                require(bookingId.toLongOrNull()?.let { it > 0L } == true && bookingId.all(Char::isDigit)) {
+                    "预约编号无效，未取消任何学校预约；请先核对当前预约"
+                }
+                bookingId
+            } else {
+                fetchSeatBookingOverview(cleanToken).getOrThrow().currentBooking
+                    ?.takeIf { it.isActive }?.bookingId?.toString()
+                    ?: throw IllegalStateException("当前没有正在生效的图书馆预约座位")
+            }
 
+
+            SchoolWriteAuthorization.requireVerified()
             val endpoints = listOf(
                 "/seatbook/user/cancel?bookingid=$resolvedId",
                 "/seatbook/user/cancel?id=$resolvedId",
@@ -1152,7 +1132,7 @@ object HautLibrarySeatAuthClient {
                     return@runCatching "已成功取消并释放座位（编号 $resolvedId）"
                 }
             }
-            val afterActive = fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }
+            val afterActive = fetchSeatBookingOverview(cleanToken).getOrThrow().currentBooking?.takeIf { it.isActive }
             if (afterActive == null) {
                 "已成功取消并释放座位"
             } else {
@@ -1174,159 +1154,63 @@ object HautLibrarySeatAuthClient {
         rawToken: String,
         targetDate: String,
         preferredAreaName: String,
-        preferredSeatLabel: String
+        preferredSeatLabel: String,
+        allowAlternativeSeat: Boolean = false
     ): Result<AutomatedSeatBookingResult> = withContext(Dispatchers.IO) {
         runCatching {
+            SchoolWriteAuthorization.requireVerified()
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank()) throw LibrarySeatSessionExpiredException()
-
-            val preOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
-            val existingActive = preOverview?.currentBooking?.takeIf { it.isActive }
-            if (existingActive != null) {
-                val digest = MessageDigest.getInstance("SHA-256")
-                    .digest("haut_active_${existingActive.bookingId}_${existingActive.seatName}".toByteArray(StandardCharsets.UTF_8))
-                    .joinToString("") { "%02x".format(it) }
-                return@runCatching AutomatedSeatBookingResult(
-                    confirmed = true,
-                    bookingId = existingActive.bookingId.toString(),
-                    seatTitle = existingActive.displaySeatTitle,
-                    evidenceSha256 = digest,
-                    diagnosticMessage = "您已有生效中的座位：${existingActive.displaySeatTitle}（时段 ${existingActive.timeWindowText}）"
-                )
+            // A different existing booking is a conflict, never proof of this write.
+            check(fetchSeatBookingOverview(cleanToken).getOrThrow().currentBooking?.isActive != true) {
+                "账号已有有效预约，请先核对该预约；未提交新的选座请求"
             }
-
-            val candidateSeatNames = preferredSeatLabel
-                .split(",", "，", "、", "/", "|", ";", "；")
-                .map { it.trim().removeSuffix("号座").removeSuffix("号") }
-                .filter { it.isNotEmpty() }
-
-            // 1. 尝试从实时区域列表匹配 regionId
-            val regions = fetchLibraryStudyRegions(cleanToken, targetDate).getOrNull().orEmpty()
-            val matchedRegion = regions.firstOrNull {
-                it.regionName.equals(preferredAreaName.trim(), ignoreCase = true) ||
-                    it.regionName.contains(preferredAreaName.trim()) ||
-                    preferredAreaName.trim().contains(it.regionName)
-            } ?: regions.firstOrNull { it.isOpen && it.availableSeats > 0 }
-
-            var apiRawMessage = ""
-            var bookedIdFromApi: Long? = null
-
-            if (matchedRegion != null) {
-                val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, matchedRegion.id, targetDate)
-                val roomSnapshot = fetchLibraryRegionSeats(
-                    rawToken = cleanToken,
-                    regionId = matchedRegion.id,
-                    bookingDate = targetDate
-                ).getOrNull()
-
-                if (roomSnapshot != null && roomSnapshot.seats.isNotEmpty()) {
-                    // 优先按用户点选的首选/备选顺序找座位（即便早高峰跨日快照也能锁定候选 seatId）
-                    val orderedCandidates = mutableListOf<LibrarySeatItem>()
-                    for (wanted in candidateSeatNames) {
-                        val normWanted = wanted.replace(" ", "")
-                        roomSnapshot.seats.firstOrNull { s ->
-                            val normSeat = s.seatName.replace(" ", "")
-                            s.seatName.equals(wanted, ignoreCase = true) ||
-                                normSeat.equals(normWanted, ignoreCase = true) ||
-                                normSeat.trimStart('0').equals(normWanted.trimStart('0'), ignoreCase = true) ||
-                                normSeat.endsWith(normWanted, ignoreCase = true)
-                        }?.let { orderedCandidates.add(it) }
-                    }
-                    roomSnapshot.seats.filter { it.isAvailable }.take(4).forEach { avail ->
-                        if (orderedCandidates.none { it.id == avail.id }) {
-                            orderedCandidates.add(avail)
-                        }
-                    }
-
-                    val candidatePool = orderedCandidates.distinctBy { it.id }.take(5)
-                    val waveDelaysMs = listOf(0L, 200L, 280L, 380L, 500L, 700L, 1000L, 1400L)
-                    for (delayMs in waveDelaysMs) {
-                        if (delayMs > 0L) {
-                             kotlinx.coroutines.delay(delayMs)
-                        }
-                        var needWaitOpening = false
-                        for (seat in candidatePool) {
-                            val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
-                            val respText = runCatching {
-                                executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
-                            }.getOrDefault("")
-                            val respObj = runCatching { JSONObject(respText) }.getOrNull()
-                            val code = respObj?.optInt("code", -1) ?: -1
-                            val rawMsg = respObj?.optString("msg").orEmpty()
-                            apiRawMessage = translateWslibDiagnosticMessage(rawMsg)
-                            if (code == 200) {
-                                bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
-                                break
-                            }
-                            if (isWslibAlreadyBookedMessage(rawMsg) || isWslibAlreadyBookedMessage(apiRawMessage)) {
-                                break
-                            }
-                            if (isWslibNotYetOpenMessage(rawMsg) || isWslibNotYetOpenMessage(apiRawMessage)) {
-                                needWaitOpening = true
-                                break
-                            }
-                        }
-                        if (bookedIdFromApi != null || !needWaitOpening) {
-                            break
-                        }
-                    }
+            val wanted = preferredSeatLabel.split(",", "，", "、", "/", "|", ";", "；")
+                .map { it.trim().removeSuffix("号座").removeSuffix("号") }.filter { it.isNotEmpty() }
+            require(wanted.isNotEmpty()) { "请选择明确的座位" }
+            val region = fetchLibraryStudyRegions(cleanToken, targetDate).getOrThrow()
+                .singleOrNull { it.regionName.equals(preferredAreaName.trim(), ignoreCase = true) }
+                ?: error("未找到唯一匹配的自习室，未提交预约")
+            val snapshot = fetchLibraryRegionSeats(cleanToken, region.id, targetDate).getOrThrow()
+            fun normalized(value: String) = value.replace(" ", "").trimStart('0')
+            val candidates = if (allowAlternativeSeat) wanted else wanted.take(1)
+            val seat = candidates.firstNotNullOfOrNull { name ->
+                snapshot.seats.singleOrNull { it.isAvailable && normalized(it.seatName).equals(normalized(name), true) }
+            } ?: error("所选座位不可用，未尝试其他区域或历史座位")
+            val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, region.id, targetDate)
+            val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
+            // Retry only an explicit opening-window rejection, never a timeout, malformed reply or accepted write.
+            var response: JSONObject? = null
+            for (delayMs in listOf(0L, 200L, 280L, 380L, 500L, 700L, 1000L, 1400L)) {
+                if (delayMs > 0L) kotlinx.coroutines.delay(delayMs)
+                val attempt = JSONObject(executeAuthenticatedApiGet(bookingUrl, cleanToken))
+                response = attempt
+                if (attempt.optInt("code", -1) == 200) break
+                val rawMessage = attempt.optString("msg")
+                if (!isWslibNotYetOpenMessage(rawMessage) ||
+                    (isWslibAlreadyBookedMessage(rawMessage) && !rawMessage.contains("seat.10079", ignoreCase = true))) break
+                // seat.10079 is ambiguous: only a successful read proving no active booking
+                // allows the opening-window wait. A failed read or existing booking stops here.
+                check(fetchSeatBookingOverview(cleanToken).getOrThrow().currentBooking?.isActive != true) {
+                    "已有有效预约，不会重复提交；请查看当前预约"
                 }
             }
-
-            // 2. 若实时列表未能命中（如非开放查询时段），回退使用历史常坐记录的真实 seatId 尝试预约
-            if (bookedIdFromApi == null) {
-                val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
-                    candidateSeatNames.any { cand ->
-                        rec.seatName.equals(cand, ignoreCase = true) ||
-                            rec.seatName.endsWith(cand, ignoreCase = true)
-                    } || (preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim()))
-                } ?: preOverview?.recentHistory?.firstOrNull { it.seatId != null && it.seatId > 0L }
-
-                val targetSeatId = matchedHistorical?.seatId
-                if (targetSeatId != null && targetSeatId > 0L) {
-                    val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode("$targetDate 07:30:00", "UTF-8")}&endtime=${URLEncoder.encode("$targetDate 22:00:00", "UTF-8")}"
-                    val respText = runCatching {
-                        executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
-                    }.getOrDefault("")
-                    val respObj = runCatching { JSONObject(respText) }.getOrNull()
-                    if (apiRawMessage.isBlank()) {
-                        apiRawMessage = translateWslibDiagnosticMessage(respObj?.optString("msg").orEmpty())
-                    }
-                }
+            val confirmedResponse = requireNotNull(response)
+            check(confirmedResponse.optInt("code", -1) == 200) {
+                "预约未获确认：${translateWslibDiagnosticMessage(confirmedResponse.optString("msg"))}"
             }
-
-            // 3. 重新拉取当前预约确认是否成功锁定座位
-            val postOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
-            val confirmedRecord = postOverview?.currentBooking?.takeIf { it.isActive }
-            if (confirmedRecord != null) {
-                val digest = MessageDigest.getInstance("SHA-256")
-                    .digest("haut_confirmed_${confirmedRecord.bookingId}_${confirmedRecord.seatName}".toByteArray(StandardCharsets.UTF_8))
-                    .joinToString("") { "%02x".format(it) }
-                return@runCatching AutomatedSeatBookingResult(
-                    confirmed = true,
-                    bookingId = confirmedRecord.bookingId.toString(),
-                    seatTitle = confirmedRecord.displaySeatTitle,
-                    evidenceSha256 = digest,
-                    diagnosticMessage = "抢座成功！已为您预约 ${confirmedRecord.displaySeatTitle}，请按规定时间刷脸入馆签到"
-                )
+            val id = confirmedResponse.optLong("bookingid", -1L)
+            check(id > 0) { "预约结果待核实，请查询当前预约；不会自动重复提交" }
+            val record = fetchSeatBookingOverview(cleanToken).getOrThrow().currentBooking
+            check(record != null && record.isActive && record.bookingId == id && record.seatId == seat.id &&
+                record.startDate == startFull && record.endDate == endFull) {
+                "预约响应与目标未能核对，请查询当前预约；不会自动重复提交"
             }
-
-            val fallbackId = "haut_${targetDate}_${candidateSeatNames.firstOrNull() ?: preferredSeatLabel}"
             val digest = MessageDigest.getInstance("SHA-256")
-                .digest("$fallbackId|$cleanToken".toByteArray(StandardCharsets.UTF_8))
+                .digest("$id|${seat.id}|$startFull|$endFull".toByteArray(StandardCharsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
-            val detailHint = if (apiRawMessage.isNotBlank()) {
-                "图书馆系统提示：$apiRawMessage"
-            } else {
-                "已提交选座请求（$preferredAreaName ${candidateSeatNames.joinToString("/")}）"
-            }
-            AutomatedSeatBookingResult(
-                confirmed = bookedIdFromApi != null,
-                bookingId = bookedIdFromApi?.toString() ?: fallbackId,
-                seatTitle = "$preferredAreaName · ${candidateSeatNames.firstOrNull() ?: preferredSeatLabel}",
-                evidenceSha256 = digest,
-                diagnosticMessage = detailHint
-            )
+            AutomatedSeatBookingResult(true, id.toString(), record.displaySeatTitle, digest,
+                "已确认预约 ${record.displaySeatTitle}，请按规定时间到馆签到")
         }
     }
 

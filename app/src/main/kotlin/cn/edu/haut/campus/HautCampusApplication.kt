@@ -38,6 +38,7 @@ class HautCampusApplication : Application() {
             },
             afterSwitch = { active ->
                 UtilitySamplingWorker.schedulePeriodicWork(this, active)
+                active.repository.rescheduleActiveLocalBookingPlans()
                 ReminderCoordinator.bind(this, active).initialize()
                 FocusCoordinator.bind(this, active)
                 WidgetRefreshCoordinator.requestImmediateRefreshAll(this)

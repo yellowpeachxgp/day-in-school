@@ -148,6 +148,8 @@ class ChengfangGateway(
         val response = fetchPage(session, url)
         val table = findTable(response.body, config.timetableTableId)
         val courses = groupCourses(table)
+        if (courses.any { it.meetings.isEmpty() || it.meetings.any { meeting -> meeting.weeks.isEmpty() } })
+            throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "课表含无法确认的时段或周次")
         if (courses.isEmpty()) {
             return@guarded AcademicResult.Empty("乘方教务在该学期没有返回课程", authoritative = true)
         }
@@ -181,7 +183,7 @@ class ChengfangGateway(
             )
         }
         val grades = paged.items.mapNotNull { item ->
-            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val name = item.str("课程名称")?.takeIf { it.isNotBlank() } ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = item.str("课程代码")
             val serial = item.str("序号")
             RemoteGrade(
@@ -216,7 +218,7 @@ class ChengfangGateway(
         val response = fetchPage(session, url)
         val table = findTable(response.body, config.examTableId)
         val exams = table.rows.mapNotNull { row ->
-            val name = table.cell(row, "课程名称") ?: return@mapNotNull null
+            val name = table.cell(row, "课程名称") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val time = ChengfangParsers.timeRange(table.cell(row, "考试时间"))
             val code = table.cell(row, "课程代码")
             val serial = table.cell(row, "序号")
@@ -247,10 +249,10 @@ class ChengfangGateway(
         val credits = HashMap<String, java.math.BigDecimal>()
         val teachers = HashMap<String, String>()
         table.rows.forEach { row ->
-            val name = table.cell(row, "课程名称") ?: return@forEach
+            val name = table.cell(row, "课程名称") ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             val code = table.cell(row, "课程代码") ?: name
-            val weekday = ChengfangParsers.weekday(table.cell(row, "星期")) ?: return@forEach
-            val sections = ChengfangParsers.sections(table.cell(row, "节次")) ?: return@forEach
+            val weekday = ChengfangParsers.weekday(table.cell(row, "星期")) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
+            val sections = ChengfangParsers.sections(table.cell(row, "节次")) ?: throw TransportFailure(AcademicError.SOURCE_DATA_INVALID, "数据行缺少有效课程或时段")
             names[code] = name
             ChengfangParsers.decimal(table.cell(row, "学分"))?.let { credits[code] = it }
             table.cell(row, "任课教师")?.let { teachers[code] = it }
@@ -301,9 +303,15 @@ class ChengfangGateway(
 
     private fun findTable(html: String, id: String): ChengfangHtml.Table {
         val tables = ChengfangHtml.tables(html)
-        return tables.firstOrNull { it.id == id }
-            ?: tables.firstOrNull { it.header.isNotEmpty() }
+        val table = tables.firstOrNull { it.id == id }
             ?: throw TransportFailure(AcademicError.PAGE_CHANGED, "乘方页面结构变化：未找到表格 " + id)
+        val required = when (id) {
+            config.termTableId -> listOf("学期代码")
+            config.timetableTableId -> listOf("课程名称", "星期", "节次", "周次")
+            else -> listOf("课程名称")
+        }
+        if (!table.header.containsAll(required)) throw TransportFailure(AcademicError.PAGE_CHANGED, "缺少必需表头")
+        return table
     }
 
     private fun url(session: GatewaySession, path: String, vararg query: Pair<String, String>): String {

@@ -42,6 +42,7 @@ dependencies {
     api(project(":core:academic"))
     api(project(":core:campusservices"))
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
     api(libs.androidx.room.runtime)
     api(libs.androidx.room.ktx)
