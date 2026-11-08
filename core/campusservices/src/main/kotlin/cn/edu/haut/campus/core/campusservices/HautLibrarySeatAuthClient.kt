@@ -1232,21 +1232,69 @@ object HautLibrarySeatAuthClient {
                                 normSeat.endsWith(normWanted, ignoreCase = true)
                         }?.let { orderedCandidates.add(it) }
                     }
-                    roomSnapshot.seats.filter { it.isAvailable }.take(4).forEach { avail ->
-                        if (orderedCandidates.none { it.id == avail.id }) {
+                    // 仅当用户未指定具体候选座位时，才回退取自习室前 3 个空座；严禁在用户已指定首选/备选座位时暗中塞入 01桌 座位
+                    if (orderedCandidates.isEmpty() && candidateSeatNames.isEmpty()) {
+                        roomSnapshot.seats.filter { it.isAvailable }.take(3).forEach { avail ->
                             orderedCandidates.add(avail)
                         }
                     }
 
                     val candidatePool = orderedCandidates.distinctBy { it.id }.take(5)
-                    val waveDelaysMs = listOf(0L, 200L, 280L, 380L, 500L, 700L, 1000L, 1400L)
-                    for (delayMs in waveDelaysMs) {
-                        if (delayMs > 0L) {
-                             kotlinx.coroutines.delay(delayMs)
+                    val encodedStart = URLEncoder.encode(startFull, "UTF-8")
+                    val encodedEnd = URLEncoder.encode(endFull, "UTF-8")
+
+                    // 07:00:00 准点开闸哨兵探针：用虚拟 seatid=999901+ 探测开闸状态，防止学校时钟慢 0.1~1.5s 时首枪触发真实候选座位 3 秒 Redis 锁
+                    val nowLocalTime = java.time.ZonedDateTime.now(ZoneId.of("Asia/Shanghai")).toLocalTime()
+                    if (nowLocalTime.hour == 7 && nowLocalTime.minute == 0 && nowLocalTime.second <= 3) {
+                        for (probeIdx in 0 until 12) {
+                            if (probeIdx > 0) kotlinx.coroutines.delay(110L)
+                            val canaryId = 999901 + probeIdx
+                            val probeUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$canaryId&starttime=$encodedStart&endtime=$encodedEnd"
+                            val probeText = runCatching {
+                                executeAuthenticatedApiGet(url = probeUrl, cleanToken = cleanToken)
+                            }.getOrDefault("")
+                            val probeObj = runCatching { JSONObject(probeText) }.getOrNull()
+                            val probeRawMsg = probeObj?.optString("msg").orEmpty()
+                            val probeMsg = translateWslibDiagnosticMessage(probeRawMsg)
+                            if (!isWslibNotYetOpenMessage(probeRawMsg) && !isWslibNotYetOpenMessage(probeMsg)) {
+                                break
+                            }
+                        }
+                    }
+
+                    val seatLockedUntilMs = mutableMapOf<Long, Long>()
+                    val permanentlyOccupiedIds = mutableSetOf<Long>()
+                    val waveDelaysMs = listOf(0L, 180L, 220L, 260L, 320L, 380L, 460L, 550L, 680L, 800L, 950L, 1000L)
+                    for ((attemptIdx, delayMs) in waveDelaysMs.withIndex()) {
+                        if (attemptIdx > 0) {
+                            val nowMs = System.currentTimeMillis()
+                            val unlockedRemaining = candidatePool.filter { s ->
+                                s.id !in permanentlyOccupiedIds && (seatLockedUntilMs[s.id] ?: 0L) <= nowMs
+                            }
+                            var waitMs = delayMs
+                            if (unlockedRemaining.isEmpty()) {
+                                val earliestUnlock = candidatePool
+                                    .filter { it.id !in permanentlyOccupiedIds }
+                                    .mapNotNull { seatLockedUntilMs[it.id] }
+                                    .filter { it > nowMs }
+                                    .minOrNull()
+                                if (earliestUnlock != null) {
+                                    waitMs = (earliestUnlock - nowMs + 40L).coerceIn(150L, 1200L)
+                                }
+                            }
+                            if (waitMs > 0L) {
+                                kotlinx.coroutines.delay(waitMs)
+                            }
                         }
                         var needWaitOpening = false
+                        var hasLockedCandidate = false
                         for (seat in candidatePool) {
-                            val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=${URLEncoder.encode(startFull, "UTF-8")}&endtime=${URLEncoder.encode(endFull, "UTF-8")}"
+                            if (seat.id in permanentlyOccupiedIds) continue
+                            if ((seatLockedUntilMs[seat.id] ?: 0L) > System.currentTimeMillis()) {
+                                hasLockedCandidate = true
+                                continue
+                            }
+                            val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=$encodedStart&endtime=$encodedEnd"
                             val respText = runCatching {
                                 executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
                             }.getOrDefault("")
@@ -1258,29 +1306,49 @@ object HautLibrarySeatAuthClient {
                                 bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
                                 break
                             }
-                            if (isWslibAlreadyBookedMessage(rawMsg) || isWslibAlreadyBookedMessage(apiRawMessage)) {
-                                break
+                            if (isWslibSeatOccupiedByOthersMessage(rawMsg, code) || isWslibSeatOccupiedByOthersMessage(apiRawMessage, code)) {
+                                permanentlyOccupiedIds.add(seat.id)
+                                continue
                             }
                             if (isWslibNotYetOpenMessage(rawMsg) || isWslibNotYetOpenMessage(apiRawMessage)) {
+                                // 07:00 未开闸时触发了该座位的 3 秒 Redis 锁，记录锁定截止时间并立即跳出内层循环，避免连环锁死备选座位
+                                seatLockedUntilMs[seat.id] = System.currentTimeMillis() + 3_050L
                                 needWaitOpening = true
                                 break
                             }
+                            if (isWslibSeatLockedMessage(rawMsg, code) || isWslibSeatLockedMessage(apiRawMessage, code)) {
+                                if ((seatLockedUntilMs[seat.id] ?: 0L) <= System.currentTimeMillis()) {
+                                    seatLockedUntilMs[seat.id] = System.currentTimeMillis() + 1_050L
+                                }
+                                hasLockedCandidate = true
+                                continue
+                            }
+                            if (isWslibAlreadyBookedMessage(rawMsg) || isWslibAlreadyBookedMessage(apiRawMessage)) {
+                                break
+                            }
                         }
-                        if (bookedIdFromApi != null || !needWaitOpening) {
+                        if (bookedIdFromApi != null ||
+                            permanentlyOccupiedIds.size >= candidatePool.size ||
+                            (!needWaitOpening && !hasLockedCandidate)
+                        ) {
                             break
                         }
                     }
                 }
             }
 
-            // 2. 若实时列表未能命中（如非开放查询时段），回退使用历史常坐记录的真实 seatId 尝试预约
+            // 2. 若实时列表未能命中（如非开放查询时段），仅回退匹配用户所选候选座位的历史真实 seatId
             if (bookedIdFromApi == null) {
                 val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
-                    candidateSeatNames.any { cand ->
-                        rec.seatName.equals(cand, ignoreCase = true) ||
-                            rec.seatName.endsWith(cand, ignoreCase = true)
-                    } || (preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim()))
-                } ?: preOverview?.recentHistory?.firstOrNull { it.seatId != null && it.seatId > 0L }
+                    if (candidateSeatNames.isNotEmpty()) {
+                        candidateSeatNames.any { cand ->
+                            rec.seatName.equals(cand, ignoreCase = true) ||
+                                rec.seatName.endsWith(cand, ignoreCase = true)
+                        }
+                    } else {
+                        preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim())
+                    }
+                }
 
                 val targetSeatId = matchedHistorical?.seatId
                 if (targetSeatId != null && targetSeatId > 0L) {
@@ -1334,6 +1402,7 @@ object HautLibrarySeatAuthClient {
         val text = rawMsg.trim()
         if (text.isEmpty()) return ""
         return when {
+            text.contains("seat.10042", ignoreCase = true) -> "只能预约1天之内的时间(含当天)"
             text.contains("seat.10056", ignoreCase = true) -> "预约开始时间须大于当前时间"
             text.contains("seat.10057", ignoreCase = true) -> "只能预约1天之内的时间(含当天)"
             text.contains("seat.10058", ignoreCase = true) -> "预约时间不在自习室开放时段内"
@@ -1345,13 +1414,28 @@ object HautLibrarySeatAuthClient {
 
     internal fun isWslibNotYetOpenMessage(rawMsg: String): Boolean {
         val text = rawMsg.trim()
-        return Regex("""未到|未开放|不在.*时间|只能预约|尚未开放|seat\.10057|seat\.10058|seat\.10079""", RegexOption.IGNORE_CASE)
+        return Regex("""未到|未开放|不在.*时间|只能预约1天|尚未开放|seat\.10042|seat\.10057|seat\.10058|seat\.10079""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+    }
+
+    internal fun isWslibSeatLockedMessage(rawMsg: String, code: Int = -1): Boolean {
+        if (code == 1122) return true
+        val text = rawMsg.trim()
+        return Regex("""本座位已锁定|已锁定.*稍后再试|seat\.10062""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text)
+    }
+
+    internal fun isWslibSeatOccupiedByOthersMessage(rawMsg: String, code: Int = -1): Boolean {
+        val text = rawMsg.trim()
+        if (code == 404 && (text.contains("该座位") || text.contains("此座位"))) return true
+        return Regex("""该座位已有预约|此座位已有预约|该座位已被预约|座位已被占用""", RegexOption.IGNORE_CASE)
             .containsMatchIn(text)
     }
 
     internal fun isWslibAlreadyBookedMessage(rawMsg: String): Boolean {
         val text = rawMsg.trim()
-        return Regex("""已有.*预约|不能重复|已预约|只能预约一个座位|seat\.10060|seat\.10061|seat\.10079""", RegexOption.IGNORE_CASE)
+        if (isWslibSeatOccupiedByOthersMessage(text)) return false
+        return Regex("""您已有.*预约|不能重复|已有一个.*预约|只能预约一个座位|当前已有预约|seat\.10060|seat\.10061|seat\.10079""", RegexOption.IGNORE_CASE)
             .containsMatchIn(text)
     }
 

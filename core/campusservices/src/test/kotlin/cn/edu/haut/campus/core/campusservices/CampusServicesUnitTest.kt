@@ -868,5 +868,8 @@ class CampusServicesUnitTest {
 
         assertTrue(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage(raw10079))
         assertTrue(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage("每个学生一个时间段只能预约一个座位"))
+        assertFalse(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage("此时间段该座位已有预约"))
+        assertTrue(HautLibrarySeatAuthClient.isWslibSeatOccupiedByOthersMessage("此时间段该座位已有预约", 404))
+        assertTrue(HautLibrarySeatAuthClient.isWslibSeatLockedMessage("本座位已锁定 请稍后再试!", 1122))
     }
 }

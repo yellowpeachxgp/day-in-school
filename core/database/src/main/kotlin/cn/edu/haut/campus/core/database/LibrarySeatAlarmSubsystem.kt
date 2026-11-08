@@ -142,7 +142,7 @@ object LibrarySeatAlarmSubsystem {
         }
 
         val isCloudHosted = plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true)
-        val fireTriggerMs = if (isCloudHosted) plan.fireAtEpochMillis + 2_000L else plan.fireAtEpochMillis
+        val fireTriggerMs = if (isCloudHosted) plan.fireAtEpochMillis + 9_000L else plan.fireAtEpochMillis
         val stages = listOf(
             "PRECHECK" to plan.precheckAtEpochMillis,
             "FINAL_CHECK" to plan.finalCheckAtEpochMillis,
