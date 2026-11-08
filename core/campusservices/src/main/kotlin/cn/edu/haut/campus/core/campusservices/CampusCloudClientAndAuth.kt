@@ -665,7 +665,15 @@ object CampusCloudOidcHelper {
                     "云端抢座（测试版）未锁定座位（状态：${job?.optCleanString("state", "未命中") ?: "未命中"}），未消耗内测配额"
                 }
             )
-        }.getOrNull()
+        }.getOrElse {
+            AutomatedSeatBookingResult(
+                confirmed = false,
+                bookingId = jobId,
+                seatTitle = "",
+                evidenceSha256 = "",
+                diagnosticMessage = "云端抢座执行状态未知，已停止本地重复提交，请稍后刷新查看核验结果"
+            )
+        }
     }
 
     /**

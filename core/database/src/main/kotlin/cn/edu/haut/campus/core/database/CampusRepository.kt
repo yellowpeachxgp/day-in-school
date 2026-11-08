@@ -3750,19 +3750,22 @@ class CampusRepository internal constructor(
                         val sessionState = ensureLibrarySeatSession(forceRefresh = false)
                         val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
                             ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
-                        val firstAttempt = if (token0.isNotBlank()) {
+                        val firstAttemptResult = if (token0.isNotBlank()) {
                             HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
                                 rawToken = token0,
                                 targetDate = current.targetLocalDate,
                                 preferredAreaName = current.preferredAreaName,
                                 preferredSeatLabel = current.preferredSeatLabel
-                            ).getOrNull()
+                            )
                         } else {
                             null
                         }
-                        if (firstAttempt?.confirmed == true) {
+                        val firstAttempt = firstAttemptResult?.getOrNull()
+                        // 仅当未持有 Token 或首轮因 Token 401 过期抛出 LibrarySeatSessionExpiredException 时才重登重试；
+                        // 若首轮已正常执行（含因未知写结果熔断停止），严禁二次调用 executeAutomatedSeatBooking 造成重复写入
+                        if (firstAttempt != null) {
                             firstAttempt
-                        } else {
+                        } else if (token0.isBlank() || firstAttemptResult?.exceptionOrNull() is LibrarySeatSessionExpiredException) {
                             val refreshedState = ensureLibrarySeatSession(forceRefresh = true)
                             val token1 = (refreshedState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
                             if (token1.isNotBlank()) {
@@ -3771,10 +3774,12 @@ class CampusRepository internal constructor(
                                     targetDate = current.targetLocalDate,
                                     preferredAreaName = current.preferredAreaName,
                                     preferredSeatLabel = current.preferredSeatLabel
-                                ).getOrNull() ?: firstAttempt
+                                ).getOrNull()
                             } else {
-                                firstAttempt
+                                null
                             }
+                        } else {
+                            null
                         }
                     }
 
