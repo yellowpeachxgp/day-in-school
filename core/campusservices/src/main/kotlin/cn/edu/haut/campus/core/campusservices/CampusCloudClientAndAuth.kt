@@ -475,6 +475,15 @@ object CampusCloudOidcHelper {
     @Volatile
     private var latestBrowserTxn: MobileAuthTransactionStart? = null
 
+    @Volatile
+    private var lastKnownCloudAuthVersion: Int = 0
+
+    @Volatile
+    private var lastKnownCloudBindingId: String? = null
+
+    @Volatile
+    private var lastKnownCloudConsentId: String? = null
+
     fun getLatestBrowserTxn(): MobileAuthTransactionStart? = latestBrowserTxn
 
     fun clearLatestBrowserTxn() {
@@ -549,12 +558,22 @@ object CampusCloudOidcHelper {
         if (accessToken.isBlank()) return null
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
+            val consentRaw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/me/consents",
+                bodyJson = JSONObject().put("school_id", "haut").toString(),
+                bearerToken = accessToken
+            )
+            val consentData = JSONObject(consentRaw).optJSONObject("data")
+            val consentId = consentData?.optString("id").orEmpty()
+            val consentAuthVer = consentData?.optInt("auth_version", 0) ?: 0
             val bindInitRaw = httpJsonRequest(
                 method = "POST",
                 url = "$cleanBase/api/v1/school-bindings",
                 bodyJson = JSONObject()
                     .put("school_id", "haut")
                     .put("student_no", studentNo.trim())
+                    .put("consent_id", consentId)
                     .toString(),
                 bearerToken = accessToken
             )
@@ -565,18 +584,15 @@ object CampusCloudOidcHelper {
                     url = "$cleanBase/api/v1/school-bindings/$bindId/complete",
                     bodyJson = JSONObject()
                         .put("credential_kind", "DELEGATED_SESSION_BUNDLE")
+                        .put("consent_id", consentId)
                         .put("delegated_secret", delegatedSecret.ifBlank { "delegated_android_session" })
                         .toString(),
                     bearerToken = accessToken
                 )
             }
-            val consentRaw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/me/consents",
-                bodyJson = JSONObject().put("school_id", "haut").toString(),
-                bearerToken = accessToken
-            )
-            val consentId = JSONObject(consentRaw).optJSONObject("data")?.optString("id").orEmpty()
+            if (bindId.isNotEmpty()) lastKnownCloudBindingId = bindId
+            if (consentId.isNotEmpty()) lastKnownCloudConsentId = consentId
+            if (consentAuthVer > 0) lastKnownCloudAuthVersion = consentAuthVer
             val localTime = targetExecuteAtIso.trim().let { raw ->
                 when {
                     raw.matches(Regex("^\\d{2}:\\d{2}:\\d{2}$")) -> raw
@@ -787,10 +803,25 @@ object CampusCloudOidcHelper {
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
             val bodyObj = JSONObject()
+            val knownAuthVer = lastKnownCloudAuthVersion
+            val knownBindId = lastKnownCloudBindingId
+            val knownConsentId = lastKnownCloudConsentId
+            if (knownAuthVer > 0) {
+                bodyObj.put("auth_version", knownAuthVer)
+            }
             if (!studentNo.isNullOrBlank()) {
                 val bindingObj = JSONObject()
                     .put("school_id", "haut")
                     .put("student_no", studentNo.trim())
+                if (!knownBindId.isNullOrBlank()) {
+                    bindingObj.put("binding_id", knownBindId)
+                }
+                if (!knownConsentId.isNullOrBlank()) {
+                    bindingObj.put("consent_id", knownConsentId)
+                }
+                if (knownAuthVer > 0) {
+                    bindingObj.put("auth_version", knownAuthVer)
+                }
                 if (!delegatedSecret.isNullOrBlank()) {
                     bindingObj.put("delegated_secret", delegatedSecret)
                 }
@@ -835,18 +866,26 @@ object CampusCloudOidcHelper {
                 for (lp in localActiveCloudPlans) {
                     val seatsArr = JSONArray()
                     lp.candidateSeats.forEach { seatsArr.put(it) }
-                    planUpsertsArr.put(
-                        JSONObject()
-                            .put("plan_id", lp.planId)
-                            .put("target_local_date", lp.targetLocalDate)
-                            .put("target_local_time", lp.targetLocalTime)
-                            .put("area_code", lp.areaName)
-                            .put("area_name", lp.areaName)
-                            .put("candidate_seats", seatsArr)
-                            .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
-                            .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
-                            .put("allow_alternative_seat", lp.allowAlternativeSeat)
-                    )
+                    val planItemObj = JSONObject()
+                        .put("plan_id", lp.planId)
+                        .put("target_local_date", lp.targetLocalDate)
+                        .put("target_local_time", lp.targetLocalTime)
+                        .put("area_code", lp.areaName)
+                        .put("area_name", lp.areaName)
+                        .put("candidate_seats", seatsArr)
+                        .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
+                        .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
+                        .put("allow_alternative_seat", lp.allowAlternativeSeat)
+                    if (!knownBindId.isNullOrBlank()) {
+                        planItemObj.put("school_binding_id", knownBindId)
+                    }
+                    if (!knownConsentId.isNullOrBlank()) {
+                        planItemObj.put("consent_id", knownConsentId)
+                    }
+                    if (knownAuthVer > 0) {
+                        planItemObj.put("auth_version", knownAuthVer)
+                    }
+                    planUpsertsArr.put(planItemObj)
                 }
                 bodyObj.put("reservation_plan_upserts", planUpsertsArr)
             }
@@ -863,9 +902,27 @@ object CampusCloudOidcHelper {
             val userObj = data.optJSONObject("user") ?: JSONObject()
             val walletObj = data.optJSONObject("wallet") ?: JSONObject()
             val bindingsArr = data.optJSONArray("school_bindings") ?: JSONArray()
+            val consentsArr = data.optJSONArray("consents") ?: JSONArray()
             val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()
             val ordersArr = data.optJSONArray("orders") ?: JSONArray()
             val parcelsArr = data.optJSONArray("parcels") ?: JSONArray()
+
+            val serverAuthVer = data.optInt("auth_version", 0)
+            if (serverAuthVer > 0) {
+                lastKnownCloudAuthVersion = serverAuthVer
+            }
+            if (bindingsArr.length() > 0) {
+                val latestBind = bindingsArr.optJSONObject(bindingsArr.length() - 1)
+                val bId = latestBind?.optCleanString("id").orEmpty()
+                if (bId.isNotEmpty()) lastKnownCloudBindingId = bId
+                val cId = latestBind?.optCleanString("consent_id").orEmpty()
+                if (cId.isNotEmpty()) lastKnownCloudConsentId = cId
+            }
+            if (consentsArr.length() > 0) {
+                val latestCon = consentsArr.optJSONObject(consentsArr.length() - 1)
+                val cId = latestCon?.optCleanString("id").orEmpty()
+                if (cId.isNotEmpty()) lastKnownCloudConsentId = cId
+            }
 
             val boundStudentNo = if (bindingsArr.length() > 0) {
                 val b0 = bindingsArr.optJSONObject(0)
