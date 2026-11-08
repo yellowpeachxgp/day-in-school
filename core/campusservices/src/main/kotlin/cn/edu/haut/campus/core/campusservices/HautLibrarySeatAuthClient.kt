@@ -1210,6 +1210,7 @@ object HautLibrarySeatAuthClient {
 
             var apiRawMessage = ""
             var bookedIdFromApi: Long? = null
+            var attemptedLiveCandidatePool = false
 
             if (matchedRegion != null) {
                 val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, matchedRegion.id, targetDate)
@@ -1240,21 +1241,23 @@ object HautLibrarySeatAuthClient {
                     }
 
                     val candidatePool = orderedCandidates.distinctBy { it.id }.take(5)
+                    if (candidatePool.isNotEmpty()) {
+                        attemptedLiveCandidatePool = true
+                    }
                     val encodedStart = URLEncoder.encode(startFull, "UTF-8")
                     val encodedEnd = URLEncoder.encode(endFull, "UTF-8")
 
-                    // 07:00:00 准点开闸哨兵探针：用虚拟 seatid=999901+ 探测开闸状态，防止学校时钟慢 0.1~1.5s 时首枪触发真实候选座位 3 秒 Redis 锁
+                    // 07:00:00 准点开闸只读探测：使用只读接口 /seatbook/layout/query 校验开闸状态，绝不调用写接口或触碰非用户候选座位
                     val nowLocalTime = java.time.ZonedDateTime.now(ZoneId.of("Asia/Shanghai")).toLocalTime()
                     if (nowLocalTime.hour == 7 && nowLocalTime.minute == 0 && nowLocalTime.second <= 3) {
                         for (probeIdx in 0 until 12) {
                             if (probeIdx > 0) kotlinx.coroutines.delay(110L)
-                            val canaryId = 999901 + probeIdx
-                            val probeUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$canaryId&starttime=$encodedStart&endtime=$encodedEnd"
+                            val probeUrl = "$WSLIB_API_BASE_URL/seatbook/layout/query?starttime=$encodedStart&endtime=$encodedEnd&regionid=${matchedRegion.id}"
                             val probeText = runCatching {
                                 executeAuthenticatedApiGet(url = probeUrl, cleanToken = cleanToken)
                             }.getOrDefault("")
-                            val probeObj = runCatching { JSONObject(probeText) }.getOrNull()
-                            val probeRawMsg = probeObj?.optString("msg").orEmpty()
+                            val probeObj = runCatching { JSONObject(probeText) }.getOrNull() ?: break
+                            val probeRawMsg = probeObj.optString("msg")
                             val probeMsg = translateWslibDiagnosticMessage(probeRawMsg)
                             if (!isWslibNotYetOpenMessage(probeRawMsg) && !isWslibNotYetOpenMessage(probeMsg)) {
                                 break
@@ -1299,8 +1302,17 @@ object HautLibrarySeatAuthClient {
                                 executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
                             }.getOrDefault("")
                             val respObj = runCatching { JSONObject(respText) }.getOrNull()
-                            val code = respObj?.optInt("code", -1) ?: -1
-                            val rawMsg = respObj?.optString("msg").orEmpty()
+                            if (respObj == null) {
+                                // 若写请求发生网络超时或响应异常，先只读回查当前预约，防止服务端已落库后继续提交备选座位造成重复写入
+                                val readbackActive = fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }
+                                if (readbackActive != null) {
+                                    bookedIdFromApi = readbackActive.bookingId
+                                    break
+                                }
+                                continue
+                            }
+                            val code = respObj.optInt("code", -1)
+                            val rawMsg = respObj.optString("msg")
                             apiRawMessage = translateWslibDiagnosticMessage(rawMsg)
                             if (code == 200) {
                                 bookedIdFromApi = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
@@ -1337,8 +1349,8 @@ object HautLibrarySeatAuthClient {
                 }
             }
 
-            // 2. 若实时列表未能命中（如非开放查询时段），仅回退匹配用户所选候选座位的历史真实 seatId
-            if (bookedIdFromApi == null) {
+            // 2. 若实时列表未能拉取或未能命中候选座位 ID，才回退匹配用户所选候选座位的历史真实 seatId
+            if (bookedIdFromApi == null && !attemptedLiveCandidatePool) {
                 val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
                     if (candidateSeatNames.isNotEmpty()) {
                         candidateSeatNames.any { cand ->
