@@ -871,5 +871,64 @@ class CampusServicesUnitTest {
         assertFalse(HautLibrarySeatAuthClient.isWslibAlreadyBookedMessage("此时间段该座位已有预约"))
         assertTrue(HautLibrarySeatAuthClient.isWslibSeatOccupiedByOthersMessage("此时间段该座位已有预约", 404))
         assertTrue(HautLibrarySeatAuthClient.isWslibSeatLockedMessage("本座位已锁定 请稍后再试!", 1122))
+
+        val targetCand5A = LibrarySeatItem(id = 618L, seatName = "05桌 A座", seatStatus = 2)
+        val validRecord = LibrarySeatBookingRecord(
+            bookingId = 9140001L,
+            seatId = 618L,
+            seatName = "四层西书库北区 05桌 A座",
+            regionName = "四层西书库北区",
+            buildingLayerRegionId = 13L,
+            startDate = "2026-11-08 07:30:00",
+            endDate = "2026-11-08 22:00:00",
+            status = LibrarySeatBookingStatus.BOOKED,
+            createTime = "2026-11-08 07:00:01",
+            signInTime = null,
+            signOutTime = null,
+            shotLeaveTime = null,
+            longShortLeave = null,
+            description = null
+        )
+        assertTrue(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = validRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座", "06桌 F座", "08桌 A座"),
+                candidatePoolIds = setOf(618L, 659L, 621L),
+                specificSeat = targetCand5A,
+                expectedBookingId = 9140001L
+            )
+        )
+
+        // Wrong seat (01桌 B座 seatId=610) must never match
+        val wrongSeatRecord = validRecord.copy(
+            bookingId = 9140049L,
+            seatId = 610L,
+            seatName = "四层西书库北区 01桌 B座"
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = wrongSeatRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座", "06桌 F座", "08桌 A座"),
+                candidatePoolIds = setOf(618L, 659L, 621L)
+            )
+        )
+
+        // Wrong date (2026-11-07) must never match
+        val wrongDateRecord = validRecord.copy(
+            startDate = "2026-11-07 07:30:00",
+            endDate = "2026-11-07 22:00:00"
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = wrongDateRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座", "06桌 F座", "08桌 A座")
+            )
+        )
     }
 }
