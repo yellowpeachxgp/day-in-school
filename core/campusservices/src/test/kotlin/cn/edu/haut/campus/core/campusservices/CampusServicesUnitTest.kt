@@ -1008,5 +1008,66 @@ class CampusServicesUnitTest {
                 fallbackEndFull = "2026-11-08 22:00:00"
             )
         )
+
+        // Scoped cloud auth metadata cache isolates by server URL, JWT account sub, and studentNo
+        CampusCloudOidcHelper.clearScopedAuthMetadataForTest()
+        val jwtUserA = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLWEifQ.sigA"
+        val jwtUserB = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLWIifQ.sigB"
+        CampusCloudOidcHelper.recordScopedAuthMetadata(
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com",
+            accessToken = jwtUserA,
+            schoolId = "haut",
+            studentNo = "231040100111",
+            authVersion = 2,
+            bindingId = "bind-a-111",
+            consentId = "con-a-1"
+        )
+        CampusCloudOidcHelper.recordScopedAuthMetadata(
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com",
+            accessToken = jwtUserA,
+            schoolId = "haut",
+            studentNo = "231040100222",
+            authVersion = 2,
+            bindingId = "bind-a-222",
+            consentId = "con-a-1"
+        )
+        assertEquals(
+            "bind-a-111",
+            CampusCloudOidcHelper.resolveScopedAuthMetadata(
+                "https://campus.yellowpeachxgp.com",
+                jwtUserA,
+                "haut",
+                "231040100111"
+            )?.bindingId
+        )
+        assertEquals(
+            "bind-a-222",
+            CampusCloudOidcHelper.resolveScopedAuthMetadata(
+                "https://campus.yellowpeachxgp.com",
+                jwtUserA,
+                "haut",
+                "231040100222"
+            )?.bindingId
+        )
+        // Wildcard lookup when multiple bindings exist under the same user+school must not guess bindingId
+        assertEquals(
+            null,
+            CampusCloudOidcHelper.resolveScopedAuthMetadata(
+                "https://campus.yellowpeachxgp.com",
+                jwtUserA,
+                "haut",
+                null
+            )?.bindingId
+        )
+        // Different user on the same server is completely isolated
+        assertEquals(
+            null,
+            CampusCloudOidcHelper.resolveScopedAuthMetadata(
+                "https://campus.yellowpeachxgp.com",
+                jwtUserB,
+                "haut",
+                "231040100111"
+            )
+        )
     }
 }

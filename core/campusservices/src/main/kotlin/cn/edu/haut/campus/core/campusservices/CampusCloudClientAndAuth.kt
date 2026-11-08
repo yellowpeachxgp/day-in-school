@@ -469,20 +469,175 @@ object CampusCloudOidcHelper {
         }.getOrNull()
     }
 
+    internal data class ScopedCloudAuthMetadata(
+        val authVersion: Int,
+        val bindingId: String?,
+        val consentId: String?
+    )
+
     @Volatile
     private var latestDeepLinkCallbackPair: Pair<String, String>? = null
 
     @Volatile
     private var latestBrowserTxn: MobileAuthTransactionStart? = null
 
-    @Volatile
-    private var lastKnownCloudAuthVersion: Int = 0
+    private val scopedAuthMetadataCache =
+        java.util.concurrent.ConcurrentHashMap<String, ScopedCloudAuthMetadata>()
 
-    @Volatile
-    private var lastKnownCloudBindingId: String? = null
+    internal fun extractTokenAccountScope(accessToken: String): String {
+        val clean = accessToken.trim()
+        if (clean.isEmpty()) return "anon"
+        val parts = clean.split('.')
+        if (parts.size >= 2) {
+            val payloadJson = runCatching {
+                String(java.util.Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8)
+            }.getOrNull()
+            val sub = payloadJson?.let { runCatching { JSONObject(it).optCleanString("sub") }.getOrNull() }
+            if (!sub.isNullOrBlank()) return "sub:$sub"
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(clean.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+            .take(16)
+        return "tok:$digest"
+    }
 
-    @Volatile
-    private var lastKnownCloudConsentId: String? = null
+    internal fun buildAuthScopeKey(
+        cloudBaseUrl: String,
+        accessToken: String,
+        schoolId: String = "haut",
+        studentNo: String? = null
+    ): String {
+        val cleanBase = cloudBaseUrl.trim().trimEnd('/').lowercase()
+        val accountScope = extractTokenAccountScope(accessToken)
+        val cleanSchool = schoolId.trim().lowercase().ifEmpty { "haut" }
+        val cleanSno = studentNo?.trim().orEmpty().ifEmpty { "*" }
+        return "$cleanBase|$accountScope|$cleanSchool|$cleanSno"
+    }
+
+    internal fun recordScopedAuthMetadata(
+        cloudBaseUrl: String,
+        accessToken: String,
+        schoolId: String = "haut",
+        studentNo: String?,
+        authVersion: Int,
+        bindingId: String?,
+        consentId: String?
+    ) {
+        if (accessToken.isBlank()) return
+        val cleanSno = studentNo?.trim().orEmpty()
+        val meta = ScopedCloudAuthMetadata(
+            authVersion = authVersion.coerceAtLeast(0),
+            bindingId = bindingId?.trim()?.takeIf { it.isNotEmpty() },
+            consentId = consentId?.trim()?.takeIf { it.isNotEmpty() }
+        )
+        if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
+            scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)] = meta
+        }
+        val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)
+        val existingWildcard = scopedAuthMetadataCache[wildcardKey]
+        if (existingWildcard == null || cleanSno.isEmpty()) {
+            scopedAuthMetadataCache[wildcardKey] = meta
+        } else if (existingWildcard.bindingId != null && existingWildcard.bindingId != meta.bindingId) {
+            // Multiple bindings under the same account+school: do not guess bindingId in wildcard entry
+            scopedAuthMetadataCache[wildcardKey] = ScopedCloudAuthMetadata(
+                authVersion = maxOf(existingWildcard.authVersion, meta.authVersion),
+                bindingId = null,
+                consentId = meta.consentId ?: existingWildcard.consentId
+            )
+        } else {
+            scopedAuthMetadataCache[wildcardKey] = meta
+        }
+    }
+
+    internal fun resolveScopedAuthMetadata(
+        cloudBaseUrl: String,
+        accessToken: String,
+        schoolId: String = "haut",
+        studentNo: String? = null
+    ): ScopedCloudAuthMetadata? {
+        if (accessToken.isBlank()) return null
+        val cleanSno = studentNo?.trim().orEmpty()
+        if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
+            return scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)]
+        }
+        return scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)]
+    }
+
+    internal fun clearScopedAuthMetadataForTest() {
+        scopedAuthMetadataCache.clear()
+    }
+
+    private fun updateScopedAuthMetadataFromSnapshotData(
+        cloudBaseUrl: String,
+        accessToken: String,
+        data: JSONObject?
+    ) {
+        if (data == null || accessToken.isBlank()) return
+        val serverAuthVer = data.optInt("auth_version", 0)
+        val consentsArr = data.optJSONArray("consents") ?: JSONArray()
+        val latestConsentBySchool = mutableMapOf<String, String>()
+        for (i in 0 until consentsArr.length()) {
+            val c = consentsArr.optJSONObject(i) ?: continue
+            if (!c.optCleanString("withdrawn_at").isEmpty()) continue
+            val sId = c.optCleanString("school_id", "haut").lowercase()
+            val cId = c.optCleanString("id")
+            if (cId.isNotEmpty()) {
+                latestConsentBySchool[sId] = cId
+            }
+        }
+        val bindingsArr = data.optJSONArray("school_bindings") ?: JSONArray()
+        val activeBindingsBySchool = mutableMapOf<String, MutableList<ScopedCloudAuthMetadata>>()
+        for (i in 0 until bindingsArr.length()) {
+            val b = bindingsArr.optJSONObject(i) ?: continue
+            val sId = b.optCleanString("school_id", "haut").lowercase()
+            val bId = b.optCleanString("id")
+            val sno = b.optCleanString("student_no")
+            val cId = b.optCleanString("consent_id").ifEmpty { latestConsentBySchool[sId].orEmpty() }
+            val bVer = b.optInt("auth_version", serverAuthVer).coerceAtLeast(serverAuthVer)
+            val meta = ScopedCloudAuthMetadata(
+                authVersion = bVer,
+                bindingId = bId.takeIf { it.isNotEmpty() },
+                consentId = cId.takeIf { it.isNotEmpty() }
+            )
+            if (sno.isNotEmpty() && !sno.contains("***")) {
+                scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, sId, sno)] = meta
+            }
+            activeBindingsBySchool.getOrPut(sId) { mutableListOf() }.add(meta)
+        }
+        for ((sId, list) in activeBindingsBySchool) {
+            val distinctBindIds = list.mapNotNull { it.bindingId }.distinct()
+            val wildcardMeta = if (distinctBindIds.size == 1) {
+                list.last()
+            } else {
+                ScopedCloudAuthMetadata(
+                    authVersion = serverAuthVer,
+                    bindingId = null,
+                    consentId = latestConsentBySchool[sId]
+                )
+            }
+            scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, sId, null)] = wildcardMeta
+        }
+    }
+
+    private fun prefetchScopedAuthMetadata(
+        cloudBaseUrl: String,
+        accessToken: String
+    ) {
+        runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/sync/snapshot",
+                bodyJson = null,
+                bearerToken = accessToken
+            )
+            val root = JSONObject(raw)
+            if (root.optBoolean("ok", false)) {
+                updateScopedAuthMetadataFromSnapshotData(cleanBase, accessToken, root.optJSONObject("data"))
+            }
+        }
+    }
 
     fun getLatestBrowserTxn(): MobileAuthTransactionStart? = latestBrowserTxn
 
@@ -590,9 +745,15 @@ object CampusCloudOidcHelper {
                     bearerToken = accessToken
                 )
             }
-            if (bindId.isNotEmpty()) lastKnownCloudBindingId = bindId
-            if (consentId.isNotEmpty()) lastKnownCloudConsentId = consentId
-            if (consentAuthVer > 0) lastKnownCloudAuthVersion = consentAuthVer
+            recordScopedAuthMetadata(
+                cloudBaseUrl = cleanBase,
+                accessToken = accessToken,
+                schoolId = "haut",
+                studentNo = studentNo,
+                authVersion = consentAuthVer,
+                bindingId = bindId,
+                consentId = consentId
+            )
             val localTime = targetExecuteAtIso.trim().let { raw ->
                 when {
                     raw.matches(Regex("^\\d{2}:\\d{2}:\\d{2}$")) -> raw
@@ -802,127 +963,142 @@ object CampusCloudOidcHelper {
         if (accessToken.isBlank()) return null
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val bodyObj = JSONObject()
-            val knownAuthVer = lastKnownCloudAuthVersion
-            val knownBindId = lastKnownCloudBindingId
-            val knownConsentId = lastKnownCloudConsentId
-            if (knownAuthVer > 0) {
-                bodyObj.put("auth_version", knownAuthVer)
-            }
-            if (!studentNo.isNullOrBlank()) {
-                val bindingObj = JSONObject()
-                    .put("school_id", "haut")
-                    .put("student_no", studentNo.trim())
-                if (!knownBindId.isNullOrBlank()) {
-                    bindingObj.put("binding_id", knownBindId)
-                }
-                if (!knownConsentId.isNullOrBlank()) {
-                    bindingObj.put("consent_id", knownConsentId)
-                }
-                if (knownAuthVer > 0) {
-                    bindingObj.put("auth_version", knownAuthVer)
-                }
-                if (!delegatedSecret.isNullOrBlank()) {
-                    bindingObj.put("delegated_secret", delegatedSecret)
-                }
-                bodyObj.put(
-                    "school_binding_upserts",
-                    JSONArray().put(bindingObj)
-                )
-            }
-            val parcelUpserts = JSONArray()
-            val parcelStatusUpdates = JSONArray()
-            for (p in localParcels) {
-                val cleanTracking = p.trackingNumber.cleanNullLiteral()
-                if (cleanTracking.isBlank()) continue
-                parcelUpserts.put(
-                    JSONObject()
-                        .put("tracking_number", cleanTracking)
-                        .put("carrier_code", p.carrierCode.cleanNullLiteral("cainiao"))
-                        .put("carrier_name", p.carrierName.cleanNullLiteral("校园快递"))
-                        .put("status", p.status.cleanNullLiteral("IN_TRANSIT"))
-                        .put("pickup_code", p.pickupCode.cleanNullLiteral(""))
-                        .put("station_name", p.stationName.cleanNullLiteral(""))
-                        .put("item_title", p.itemTitle.cleanNullLiteral(""))
-                        .put("raw_notification_text", p.rawNotificationText.cleanNullLiteral(""))
-                )
-                if (p.status == "PICKED_UP") {
-                    parcelStatusUpdates.put(
-                        JSONObject()
-                            .put("tracking_number", cleanTracking)
-                            .put("status", "PICKED_UP")
-                    )
-                }
-            }
-            bodyObj.put("parcel_upserts", parcelUpserts)
-            bodyObj.put("parcel_status_updates", parcelStatusUpdates)
-            if (cancelledJobOrPlanIds.isNotEmpty()) {
-                val cancelArr = JSONArray()
-                cancelledJobOrPlanIds.forEach { cancelArr.put(it) }
-                bodyObj.put("reservation_cancellations", cancelArr)
-            }
-            if (localActiveCloudPlans.isNotEmpty()) {
-                val planUpsertsArr = JSONArray()
-                for (lp in localActiveCloudPlans) {
-                    val seatsArr = JSONArray()
-                    lp.candidateSeats.forEach { seatsArr.put(it) }
-                    val planItemObj = JSONObject()
-                        .put("plan_id", lp.planId)
-                        .put("target_local_date", lp.targetLocalDate)
-                        .put("target_local_time", lp.targetLocalTime)
-                        .put("area_code", lp.areaName)
-                        .put("area_name", lp.areaName)
-                        .put("candidate_seats", seatsArr)
-                        .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
-                        .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
-                        .put("allow_alternative_seat", lp.allowAlternativeSeat)
-                    if (!knownBindId.isNullOrBlank()) {
-                        planItemObj.put("school_binding_id", knownBindId)
-                    }
-                    if (!knownConsentId.isNullOrBlank()) {
-                        planItemObj.put("consent_id", knownConsentId)
-                    }
-                    if (knownAuthVer > 0) {
-                        planItemObj.put("auth_version", knownAuthVer)
-                    }
-                    planUpsertsArr.put(planItemObj)
-                }
-                bodyObj.put("reservation_plan_upserts", planUpsertsArr)
+            val hasBindingOrPlanPush = !studentNo.isNullOrBlank() || localActiveCloudPlans.isNotEmpty()
+            var scopedMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", studentNo)
+            if (hasBindingOrPlanPush &&
+                (scopedMeta == null || scopedMeta.authVersion <= 0 || scopedMeta.bindingId.isNullOrBlank() || scopedMeta.consentId.isNullOrBlank())
+            ) {
+                // 冷启动或本地尚未缓存该账号+学号+服务器对应的授权版本/绑定/同意 ID 时，先通过只读 GET 快照安全拉取最新授权元数据
+                prefetchScopedAuthMetadata(cleanBase, accessToken)
+                scopedMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", studentNo)
             }
 
-            val raw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/sync/snapshot",
-                bodyJson = bodyObj.toString(),
-                bearerToken = accessToken
-            )
+            fun buildSyncRequestBody(meta: ScopedCloudAuthMetadata?): String {
+                val bodyObj = JSONObject()
+                val knownAuthVer = meta?.authVersion ?: 0
+                val knownBindId = meta?.bindingId
+                val knownConsentId = meta?.consentId
+                if (knownAuthVer > 0) {
+                    bodyObj.put("auth_version", knownAuthVer)
+                }
+                if (!studentNo.isNullOrBlank()) {
+                    val bindingObj = JSONObject()
+                        .put("school_id", "haut")
+                        .put("student_no", studentNo.trim())
+                    if (!knownBindId.isNullOrBlank()) {
+                        bindingObj.put("binding_id", knownBindId)
+                    }
+                    if (!knownConsentId.isNullOrBlank()) {
+                        bindingObj.put("consent_id", knownConsentId)
+                    }
+                    if (knownAuthVer > 0) {
+                        bindingObj.put("auth_version", knownAuthVer)
+                    }
+                    if (!delegatedSecret.isNullOrBlank()) {
+                        bindingObj.put("delegated_secret", delegatedSecret)
+                    }
+                    bodyObj.put(
+                        "school_binding_upserts",
+                        JSONArray().put(bindingObj)
+                    )
+                }
+                val parcelUpserts = JSONArray()
+                val parcelStatusUpdates = JSONArray()
+                for (p in localParcels) {
+                    val cleanTracking = p.trackingNumber.cleanNullLiteral()
+                    if (cleanTracking.isBlank()) continue
+                    parcelUpserts.put(
+                        JSONObject()
+                            .put("tracking_number", cleanTracking)
+                            .put("carrier_code", p.carrierCode.cleanNullLiteral("cainiao"))
+                            .put("carrier_name", p.carrierName.cleanNullLiteral("校园快递"))
+                            .put("status", p.status.cleanNullLiteral("IN_TRANSIT"))
+                            .put("pickup_code", p.pickupCode.cleanNullLiteral(""))
+                            .put("station_name", p.stationName.cleanNullLiteral(""))
+                            .put("item_title", p.itemTitle.cleanNullLiteral(""))
+                            .put("raw_notification_text", p.rawNotificationText.cleanNullLiteral(""))
+                    )
+                    if (p.status == "PICKED_UP") {
+                        parcelStatusUpdates.put(
+                            JSONObject()
+                                .put("tracking_number", cleanTracking)
+                                .put("status", "PICKED_UP")
+                        )
+                    }
+                }
+                bodyObj.put("parcel_upserts", parcelUpserts)
+                bodyObj.put("parcel_status_updates", parcelStatusUpdates)
+                if (cancelledJobOrPlanIds.isNotEmpty()) {
+                    val cancelArr = JSONArray()
+                    cancelledJobOrPlanIds.forEach { cancelArr.put(it) }
+                    bodyObj.put("reservation_cancellations", cancelArr)
+                }
+                if (localActiveCloudPlans.isNotEmpty()) {
+                    val planUpsertsArr = JSONArray()
+                    for (lp in localActiveCloudPlans) {
+                        val seatsArr = JSONArray()
+                        lp.candidateSeats.forEach { seatsArr.put(it) }
+                        val planItemObj = JSONObject()
+                            .put("plan_id", lp.planId)
+                            .put("target_local_date", lp.targetLocalDate)
+                            .put("target_local_time", lp.targetLocalTime)
+                            .put("area_code", lp.areaName)
+                            .put("area_name", lp.areaName)
+                            .put("candidate_seats", seatsArr)
+                            .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
+                            .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
+                            .put("allow_alternative_seat", lp.allowAlternativeSeat)
+                        if (!knownBindId.isNullOrBlank()) {
+                            planItemObj.put("school_binding_id", knownBindId)
+                        }
+                        if (!knownConsentId.isNullOrBlank()) {
+                            planItemObj.put("consent_id", knownConsentId)
+                        }
+                        if (knownAuthVer > 0) {
+                            planItemObj.put("auth_version", knownAuthVer)
+                        }
+                        planUpsertsArr.put(planItemObj)
+                    }
+                    bodyObj.put("reservation_plan_upserts", planUpsertsArr)
+                }
+                return bodyObj.toString()
+            }
+
+            val raw = try {
+                httpJsonRequest(
+                    method = "POST",
+                    url = "$cleanBase/api/v1/sync/snapshot",
+                    bodyJson = buildSyncRequestBody(scopedMeta),
+                    bearerToken = accessToken
+                )
+            } catch (firstErr: Exception) {
+                if (hasBindingOrPlanPush) {
+                    prefetchScopedAuthMetadata(cleanBase, accessToken)
+                    val refreshedMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", studentNo)
+                    if (refreshedMeta != null && refreshedMeta != scopedMeta) {
+                        httpJsonRequest(
+                            method = "POST",
+                            url = "$cleanBase/api/v1/sync/snapshot",
+                            bodyJson = buildSyncRequestBody(refreshedMeta),
+                            bearerToken = accessToken
+                        )
+                    } else {
+                        throw firstErr
+                    }
+                } else {
+                    throw firstErr
+                }
+            }
             val root = JSONObject(raw)
             if (!root.optBoolean("ok", false)) return null
             val data = root.getJSONObject("data")
+            updateScopedAuthMetadataFromSnapshotData(cleanBase, accessToken, data)
             val userObj = data.optJSONObject("user") ?: JSONObject()
             val walletObj = data.optJSONObject("wallet") ?: JSONObject()
             val bindingsArr = data.optJSONArray("school_bindings") ?: JSONArray()
-            val consentsArr = data.optJSONArray("consents") ?: JSONArray()
             val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()
             val ordersArr = data.optJSONArray("orders") ?: JSONArray()
             val parcelsArr = data.optJSONArray("parcels") ?: JSONArray()
-
-            val serverAuthVer = data.optInt("auth_version", 0)
-            if (serverAuthVer > 0) {
-                lastKnownCloudAuthVersion = serverAuthVer
-            }
-            if (bindingsArr.length() > 0) {
-                val latestBind = bindingsArr.optJSONObject(bindingsArr.length() - 1)
-                val bId = latestBind?.optCleanString("id").orEmpty()
-                if (bId.isNotEmpty()) lastKnownCloudBindingId = bId
-                val cId = latestBind?.optCleanString("consent_id").orEmpty()
-                if (cId.isNotEmpty()) lastKnownCloudConsentId = cId
-            }
-            if (consentsArr.length() > 0) {
-                val latestCon = consentsArr.optJSONObject(consentsArr.length() - 1)
-                val cId = latestCon?.optCleanString("id").orEmpty()
-                if (cId.isNotEmpty()) lastKnownCloudConsentId = cId
-            }
 
             val boundStudentNo = if (bindingsArr.length() > 0) {
                 val b0 = bindingsArr.optJSONObject(0)
