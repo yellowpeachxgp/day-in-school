@@ -111,7 +111,13 @@ data class CloudSyncedReservationJobDto(
     val bookedRegionAlias: String? = null,
     val repeatDays: Int = 1,
     val remainingDays: Int = 1,
-    val endLocalDate: String = targetLocalDate
+    val endLocalDate: String = targetLocalDate,
+    val userIntentState: String = "ACTIVE",
+    val externalExecutionState: String = "NOT_DISPATCHED",
+    val schoolCancellationState: String = "NOT_REQUESTED",
+    val displayStatus: String = state,
+    val statusLabel: String = "",
+    val billingState: String = "NOT_BILLED"
 )
 
 data class CloudSyncedOrderDto(
@@ -131,7 +137,18 @@ data class CloudUnsyncedPlanUpsertDto(
     val candidateSeats: List<String>,
     val repeatDays: Int = 1,
     val remainingDays: Int = 1,
-    val allowAlternativeSeat: Boolean = true
+    val allowAlternativeSeat: Boolean = true,
+    val studentNo: String? = null,
+    val boundBindingId: String? = null,
+    val boundConsentId: String? = null,
+    val createdAuthVersion: Int = 0
+)
+
+data class CloudSyncItemOutcome(
+    val itemType: String,
+    val itemId: String,
+    val status: String,
+    val reason: String? = null
 )
 
 data class CloudSyncSnapshotResult(
@@ -147,7 +164,13 @@ data class CloudSyncSnapshotResult(
     val orders: List<CloudSyncedOrderDto>,
     val parcels: List<CloudSyncedParcelDto>,
     val campusContent: CampusCommunityCloudCatalog? = null,
-    val campusContentRawJson: String? = null
+    val campusContentRawJson: String? = null,
+    val authVersion: Int = 1,
+    val syncStatus: String = "FULLY_SYNCED",
+    val syncSummaryMessage: String = "云端数据已完整同步",
+    val needsReconfirmationBindingStudentNos: List<String> = emptyList(),
+    val needsReconfirmationPlanIds: List<String> = emptyList(),
+    val itemOutcomes: List<CloudSyncItemOutcome> = emptyList()
 )
 
 data class PkcePair(
@@ -476,6 +499,14 @@ object CampusCloudOidcHelper {
         val confirmedByClientAction: Boolean = false
     )
 
+    internal data class ScopedCloudPlanProvenance(
+        val planId: String,
+        val studentNo: String,
+        val authVersion: Int,
+        val bindingId: String,
+        val consentId: String
+    )
+
     @Volatile
     private var latestDeepLinkCallbackPair: Pair<String, String>? = null
 
@@ -484,6 +515,111 @@ object CampusCloudOidcHelper {
 
     private val scopedAuthMetadataCache =
         java.util.concurrent.ConcurrentHashMap<String, ScopedCloudAuthMetadata>()
+
+    private val confirmedAuthMetadataStore =
+        java.util.concurrent.ConcurrentHashMap<String, ScopedCloudAuthMetadata>()
+
+    private val confirmedPlanProvenanceStore =
+        java.util.concurrent.ConcurrentHashMap<String, ScopedCloudPlanProvenance>()
+
+    @Volatile
+    private var persistentAuthStoreFile: java.io.File =
+        java.io.File(System.getProperty("java.io.tmpdir"), "haut_campus_cloud_auth_confirmations_v1.json")
+
+    @Volatile
+    private var persistentStoreLoaded = false
+
+    private val persistenceLock = Any()
+
+    internal fun ensurePersistentAuthStoreLoaded() {
+        if (persistentStoreLoaded) return
+        synchronized(persistenceLock) {
+            if (persistentStoreLoaded) return
+            reloadPersistedAuthStoreLocked()
+            persistentStoreLoaded = true
+        }
+    }
+
+    private fun reloadPersistedAuthStoreLocked() {
+        runCatching {
+            val file = persistentAuthStoreFile
+            if (!file.exists()) return
+            val raw = file.readText(StandardCharsets.UTF_8)
+            if (raw.isBlank()) return
+            val root = JSONObject(raw)
+            val confirmedObj = root.optJSONObject("confirmed_auth")
+            if (confirmedObj != null) {
+                val keys = confirmedObj.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val v = confirmedObj.optJSONObject(k) ?: continue
+                    val meta = ScopedCloudAuthMetadata(
+                        authVersion = v.optInt("authVersion", 0),
+                        bindingId = v.optCleanString("bindingId").ifBlank { null },
+                        consentId = v.optCleanString("consentId").ifBlank { null },
+                        confirmedByClientAction = v.optBoolean("confirmedByClientAction", true)
+                    )
+                    confirmedAuthMetadataStore[k] = meta
+                    if (!scopedAuthMetadataCache.containsKey(k)) {
+                        scopedAuthMetadataCache[k] = meta
+                    }
+                }
+            }
+            val plansObj = root.optJSONObject("confirmed_plans")
+            if (plansObj != null) {
+                val pKeys = plansObj.keys()
+                while (pKeys.hasNext()) {
+                    val k = pKeys.next()
+                    val v = plansObj.optJSONObject(k) ?: continue
+                    val prov = ScopedCloudPlanProvenance(
+                        planId = v.optCleanString("planId"),
+                        studentNo = v.optCleanString("studentNo"),
+                        authVersion = v.optInt("authVersion", 0),
+                        bindingId = v.optCleanString("bindingId"),
+                        consentId = v.optCleanString("consentId")
+                    )
+                    if (prov.planId.isNotEmpty()) {
+                        confirmedPlanProvenanceStore[k] = prov
+                    }
+                }
+            }
+        }
+    }
+
+    private fun flushPersistedAuthStore() {
+        synchronized(persistenceLock) {
+            runCatching {
+                val confirmedObj = JSONObject()
+                for ((k, v) in confirmedAuthMetadataStore) {
+                    confirmedObj.put(
+                        k,
+                        JSONObject()
+                            .put("authVersion", v.authVersion)
+                            .put("bindingId", v.bindingId.orEmpty())
+                            .put("consentId", v.consentId.orEmpty())
+                            .put("confirmedByClientAction", v.confirmedByClientAction)
+                    )
+                }
+                val plansObj = JSONObject()
+                for ((k, v) in confirmedPlanProvenanceStore) {
+                    plansObj.put(
+                        k,
+                        JSONObject()
+                            .put("planId", v.planId)
+                            .put("studentNo", v.studentNo)
+                            .put("authVersion", v.authVersion)
+                            .put("bindingId", v.bindingId)
+                            .put("consentId", v.consentId)
+                    )
+                }
+                val root = JSONObject()
+                    .put("confirmed_auth", confirmedObj)
+                    .put("confirmed_plans", plansObj)
+                persistentAuthStoreFile.parentFile?.mkdirs()
+                persistentAuthStoreFile.writeText(root.toString(), StandardCharsets.UTF_8)
+            }
+        }
+    }
 
     internal fun extractTokenAccountScope(accessToken: String): String {
         val clean = accessToken.trim()
@@ -516,6 +652,51 @@ object CampusCloudOidcHelper {
         return "$cleanBase|$accountScope|$cleanSchool|$cleanSno"
     }
 
+    internal fun buildPlanProvenanceKey(
+        cloudBaseUrl: String,
+        accessToken: String,
+        planId: String
+    ): String {
+        val cleanBase = cloudBaseUrl.trim().trimEnd('/').lowercase()
+        val accountScope = extractTokenAccountScope(accessToken)
+        return "$cleanBase|$accountScope|plan:${planId.trim()}"
+    }
+
+    internal fun recordScopedPlanProvenance(
+        cloudBaseUrl: String,
+        accessToken: String,
+        planId: String,
+        studentNo: String,
+        authVersion: Int,
+        bindingId: String?,
+        consentId: String?
+    ) {
+        if (accessToken.isBlank() || planId.isBlank()) return
+        ensurePersistentAuthStoreLoaded()
+        val cleanBind = bindingId?.trim().orEmpty()
+        val cleanConsent = consentId?.trim().orEmpty()
+        if (cleanBind.isEmpty() || cleanConsent.isEmpty() || authVersion <= 0) return
+        val key = buildPlanProvenanceKey(cloudBaseUrl, accessToken, planId)
+        confirmedPlanProvenanceStore[key] = ScopedCloudPlanProvenance(
+            planId = planId.trim(),
+            studentNo = studentNo.trim(),
+            authVersion = authVersion,
+            bindingId = cleanBind,
+            consentId = cleanConsent
+        )
+        flushPersistedAuthStore()
+    }
+
+    internal fun resolveScopedPlanProvenance(
+        cloudBaseUrl: String,
+        accessToken: String,
+        planId: String
+    ): ScopedCloudPlanProvenance? {
+        if (accessToken.isBlank() || planId.isBlank()) return null
+        ensurePersistentAuthStoreLoaded()
+        return confirmedPlanProvenanceStore[buildPlanProvenanceKey(cloudBaseUrl, accessToken, planId)]
+    }
+
     internal fun recordScopedAuthMetadata(
         cloudBaseUrl: String,
         accessToken: String,
@@ -527,6 +708,7 @@ object CampusCloudOidcHelper {
         confirmedByClientAction: Boolean = true
     ) {
         if (accessToken.isBlank()) return
+        ensurePersistentAuthStoreLoaded()
         val cleanSno = studentNo?.trim().orEmpty()
         val meta = ScopedCloudAuthMetadata(
             authVersion = authVersion.coerceAtLeast(0),
@@ -535,22 +717,37 @@ object CampusCloudOidcHelper {
             confirmedByClientAction = confirmedByClientAction
         )
         if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
-            scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)] = meta
+            val snoKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)
+            scopedAuthMetadataCache[snoKey] = meta
+            if (confirmedByClientAction && meta.authVersion > 0 && meta.bindingId != null && meta.consentId != null) {
+                confirmedAuthMetadataStore[snoKey] = meta
+            }
         }
         val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)
         val existingWildcard = scopedAuthMetadataCache[wildcardKey]
         if (existingWildcard == null || cleanSno.isEmpty()) {
             scopedAuthMetadataCache[wildcardKey] = meta
+            if (confirmedByClientAction && meta.authVersion > 0 && meta.bindingId != null && meta.consentId != null) {
+                confirmedAuthMetadataStore[wildcardKey] = meta
+            }
         } else if (existingWildcard.bindingId != null && existingWildcard.bindingId != meta.bindingId) {
             // Multiple bindings under the same account+school: do not guess bindingId in wildcard entry
-            scopedAuthMetadataCache[wildcardKey] = ScopedCloudAuthMetadata(
+            val multiWildcard = ScopedCloudAuthMetadata(
                 authVersion = maxOf(existingWildcard.authVersion, meta.authVersion),
                 bindingId = null,
                 consentId = meta.consentId ?: existingWildcard.consentId,
                 confirmedByClientAction = false
             )
+            scopedAuthMetadataCache[wildcardKey] = multiWildcard
+            confirmedAuthMetadataStore.remove(wildcardKey)
         } else {
             scopedAuthMetadataCache[wildcardKey] = meta
+            if (confirmedByClientAction && meta.authVersion > 0 && meta.bindingId != null && meta.consentId != null) {
+                confirmedAuthMetadataStore[wildcardKey] = meta
+            }
+        }
+        if (confirmedByClientAction) {
+            flushPersistedAuthStore()
         }
     }
 
@@ -561,15 +758,35 @@ object CampusCloudOidcHelper {
         studentNo: String? = null
     ): ScopedCloudAuthMetadata? {
         if (accessToken.isBlank()) return null
+        ensurePersistentAuthStoreLoaded()
         val cleanSno = studentNo?.trim().orEmpty()
         if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
-            return scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)]
+            val key = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)
+            return scopedAuthMetadataCache[key] ?: confirmedAuthMetadataStore[key]
         }
-        return scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)]
+        val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)
+        return scopedAuthMetadataCache[wildcardKey] ?: confirmedAuthMetadataStore[wildcardKey]
+    }
+
+    internal fun simulateAppRestartKeepPersistedAuthForTest() {
+        synchronized(persistenceLock) {
+            scopedAuthMetadataCache.clear()
+            confirmedAuthMetadataStore.clear()
+            confirmedPlanProvenanceStore.clear()
+            persistentStoreLoaded = false
+            reloadPersistedAuthStoreLocked()
+            persistentStoreLoaded = true
+        }
     }
 
     internal fun clearScopedAuthMetadataForTest() {
-        scopedAuthMetadataCache.clear()
+        synchronized(persistenceLock) {
+            scopedAuthMetadataCache.clear()
+            confirmedAuthMetadataStore.clear()
+            confirmedPlanProvenanceStore.clear()
+            runCatching { if (persistentAuthStoreFile.exists()) persistentAuthStoreFile.delete() }
+            persistentStoreLoaded = true
+        }
     }
 
     private fun updateScopedAuthMetadataFromSnapshotData(
@@ -578,6 +795,7 @@ object CampusCloudOidcHelper {
         data: JSONObject?
     ) {
         if (data == null || accessToken.isBlank()) return
+        ensurePersistentAuthStoreLoaded()
         val serverAuthVer = data.optInt("auth_version", 0)
         val consentsArr = data.optJSONArray("consents") ?: JSONArray()
         val latestConsentBySchool = mutableMapOf<String, String>()
@@ -604,7 +822,7 @@ object CampusCloudOidcHelper {
             } else {
                 null
             }
-            val prevMeta = bindKey?.let { scopedAuthMetadataCache[it] }
+            val prevMeta = bindKey?.let { confirmedAuthMetadataStore[it] ?: scopedAuthMetadataCache[it] }
             val keepConfirmed = prevMeta != null &&
                 prevMeta.confirmedByClientAction &&
                 prevMeta.authVersion == bVer &&
@@ -634,6 +852,15 @@ object CampusCloudOidcHelper {
                 )
             }
             scopedAuthMetadataCache[buildAuthScopeKey(cloudBaseUrl, accessToken, sId, null)] = wildcardMeta
+        }
+        if (activeBindingsBySchool.isEmpty() && serverAuthVer > 0) {
+            val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, "haut", null)
+            scopedAuthMetadataCache[wildcardKey] = ScopedCloudAuthMetadata(
+                authVersion = serverAuthVer,
+                bindingId = null,
+                consentId = latestConsentBySchool["haut"],
+                confirmedByClientAction = false
+            )
         }
     }
 
@@ -769,6 +996,16 @@ object CampusCloudOidcHelper {
                 studentNo = studentNo,
                 authVersion = consentAuthVer,
                 bindingId = bindId,
+                consentId = consentId,
+                confirmedByClientAction = true
+            )
+            recordScopedPlanProvenance(
+                cloudBaseUrl = cleanBase,
+                accessToken = accessToken,
+                planId = planIdempotencyKey,
+                studentNo = studentNo,
+                authVersion = consentAuthVer.coerceAtLeast(1),
+                bindingId = bindId,
                 consentId = consentId
             )
             val localTime = targetExecuteAtIso.trim().let { raw ->
@@ -823,6 +1060,80 @@ object CampusCloudOidcHelper {
     }
 
     /**
+     * 显式重新确认学校绑定与待恢复的云端预约计划，生成新授权世代确认记录并恢复同步（保留旧记录审计，不自动篡改旧快照）
+     */
+    fun reconfirmSchoolBindingAndPlans(
+        accessToken: String,
+        studentNo: String,
+        delegatedSecret: String,
+        plansToReconfirm: List<CloudUnsyncedPlanUpsertDto> = emptyList(),
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Boolean {
+        if (accessToken.isBlank() || studentNo.isBlank()) return false
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val consentRaw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/me/consents",
+                bodyJson = JSONObject().put("school_id", "haut").toString(),
+                bearerToken = accessToken
+            )
+            val consentData = JSONObject(consentRaw).optJSONObject("data") ?: return false
+            val consentId = consentData.optString("id").trim()
+            val consentAuthVer = consentData.optInt("auth_version", 1).coerceAtLeast(1)
+            if (consentId.isEmpty()) return false
+
+            val bindInitRaw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/school-bindings",
+                bodyJson = JSONObject()
+                    .put("school_id", "haut")
+                    .put("student_no", studentNo.trim())
+                    .put("consent_id", consentId)
+                    .toString(),
+                bearerToken = accessToken
+            )
+            val bindId = JSONObject(bindInitRaw).optJSONObject("data")?.optString("id")?.trim().orEmpty()
+            if (bindId.isEmpty()) return false
+
+            httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/school-bindings/$bindId/complete",
+                bodyJson = JSONObject()
+                    .put("credential_kind", "DELEGATED_SESSION_BUNDLE")
+                    .put("consent_id", consentId)
+                    .put("delegated_secret", delegatedSecret.ifBlank { "delegated_android_session" })
+                    .toString(),
+                bearerToken = accessToken
+            )
+
+            recordScopedAuthMetadata(
+                cloudBaseUrl = cleanBase,
+                accessToken = accessToken,
+                schoolId = "haut",
+                studentNo = studentNo.trim(),
+                authVersion = consentAuthVer,
+                bindingId = bindId,
+                consentId = consentId,
+                confirmedByClientAction = true
+            )
+
+            for (p in plansToReconfirm) {
+                recordScopedPlanProvenance(
+                    cloudBaseUrl = cleanBase,
+                    accessToken = accessToken,
+                    planId = p.planId,
+                    studentNo = (p.studentNo ?: studentNo).trim(),
+                    authVersion = consentAuthVer,
+                    bindingId = bindId,
+                    consentId = consentId
+                )
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
      * 立即在云端执行指定预约任务 (`/api/v1/reservation-jobs/{jobId}/execute-now`)
      */
     fun executeCloudHostedReservationJobNow(
@@ -873,20 +1184,31 @@ object CampusCloudOidcHelper {
             }
             val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
             val rawState = job.optCleanString("state", "RESULT_UNKNOWN")
-            val rawBookingId = sr?.optCleanString("external_booking_id").orEmpty()
-            val seatAlias = sr?.optCleanString("seat_alias").orEmpty()
-            val regionAlias = sr?.optCleanString("region_alias").orEmpty()
+            val displayStatus = job.optCleanString("display_status", rawState)
+            val rawBookingId = sr?.optCleanString("external_booking_id")
+                ?.ifBlank { job.optCleanString("external_booking_id") }
+                .orEmpty()
+            val seatAlias = sr?.optCleanString("seat_alias")
+                ?.ifBlank { job.optCleanString("confirmed_seat_name") }
+                .orEmpty()
+            val regionAlias = sr?.optCleanString("region_alias")
+                ?.ifBlank { job.optCleanString("confirmed_region_name") }
+                .orEmpty()
             val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
+            val isDelegationStoppedConfirmed =
+                rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+                    displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
             val hasCompleteConfirmedData =
-                rawState == "CONFIRMED" &&
+                (rawState == "CONFIRMED" || isDelegationStoppedConfirmed) &&
                     sr != null &&
                     rawBookingId.isNotBlank() &&
                     seatAlias.isNotBlank() &&
                     regionAlias.isNotBlank()
             val outcomeState = when {
+                isDelegationStoppedConfirmed && hasCompleteConfirmedData -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
                 hasCompleteConfirmedData -> "CONFIRMED"
-                rawState == "CONFIRMED" -> "RESULT_UNKNOWN"
-                rawState in setOf("FAILED", "CANCELLED", "EXPIRED") -> "FAILED"
+                rawState == "CONFIRMED" || isDelegationStoppedConfirmed -> "RESULT_UNKNOWN"
+                rawState in setOf("FAILED", "CANCELLED", "EXPIRED", "SCHOOL_CANCELLED") -> "FAILED"
                 else -> "RESULT_UNKNOWN"
             }
             val extId = rawBookingId.ifBlank { jobId }
@@ -896,10 +1218,14 @@ object CampusCloudOidcHelper {
                 seatTitle = seatAlias,
                 evidenceSha256 = evidenceHash,
                 diagnosticMessage = when {
+                    isDelegationStoppedConfirmed && hasCompleteConfirmedData ->
+                        "委托已停止，但学校预约已成功（座位：$regionAlias $seatAlias，预约号：$extId）。系统未自动扣费且已停止后续计划，请核对或按需退座"
                     hasCompleteConfirmedData ->
                         "云端抢座（测试版）成功！已锁定 $seatAlias（预约号 $extId），已消耗 1 🍑 内测防滥用配额"
                     rawState == "CONFIRMED" ->
                         "云端返回已确认但缺少完整座位核验凭据，状态未知，已停止重试"
+                    displayStatus == "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
+                        "委托已停止，但此前已发出的请求结果待核对（禁止盲目重试）"
                     else ->
                         "云端抢座（测试版）未锁定座位（状态：$rawState），未消耗内测配额"
                 },
@@ -979,36 +1305,128 @@ object CampusCloudOidcHelper {
     ): CloudSyncSnapshotResult? {
         if (accessToken.isBlank()) return null
         return runCatching {
+            ensurePersistentAuthStoreLoaded()
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val hasBindingOrPlanPush = !studentNo.isNullOrBlank() || localActiveCloudPlans.isNotEmpty()
-            val priorLocalMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", studentNo)
+            val cleanStudentNo = studentNo?.trim().orEmpty()
+            val hasBindingOrPlanPush = cleanStudentNo.isNotEmpty() || localActiveCloudPlans.isNotEmpty()
+            val priorLocalMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", cleanStudentNo.ifEmpty { null })
             if (hasBindingOrPlanPush &&
                 (priorLocalMeta == null || priorLocalMeta.authVersion <= 0 || priorLocalMeta.bindingId.isNullOrBlank() || priorLocalMeta.consentId.isNullOrBlank())
             ) {
                 prefetchScopedAuthMetadata(cleanBase, accessToken)
             }
-            val currentMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", studentNo)
+            val currentMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", cleanStudentNo.ifEmpty { null })
             val knownAuthVer = currentMeta?.authVersion ?: 0
             val knownBindId = currentMeta?.bindingId
             val knownConsentId = currentMeta?.consentId
 
-            // 严禁将未经新授权世代确认的旧凭据或旧计划自动升级到新的 auth_version（authVersion > 1 时必须由客户端显式确认授权后才可上推绑定与计划）
-            val canPushBindingAndPlans = when {
-                !hasBindingOrPlanPush -> false
+            val itemOutcomes = mutableListOf<CloudSyncItemOutcome>()
+            val needsReconfirmationBindings = mutableListOf<String>()
+            val needsReconfirmationPlans = mutableListOf<String>()
+
+            // 1. 判定当前学号绑定是否具备当前授权世代的显式确认
+            val canPushBinding = when {
+                cleanStudentNo.isEmpty() -> false
                 knownAuthVer <= 1 -> true
                 else -> currentMeta?.confirmedByClientAction == true &&
                     !knownBindId.isNullOrBlank() &&
                     !knownConsentId.isNullOrBlank()
             }
+            if (cleanStudentNo.isNotEmpty()) {
+                if (canPushBinding) {
+                    itemOutcomes.add(
+                        CloudSyncItemOutcome(
+                            itemType = "BINDING",
+                            itemId = cleanStudentNo,
+                            status = "SYNCED"
+                        )
+                    )
+                } else {
+                    needsReconfirmationBindings.add(cleanStudentNo)
+                    itemOutcomes.add(
+                        CloudSyncItemOutcome(
+                            itemType = "BINDING",
+                            itemId = cleanStudentNo,
+                            status = "NEEDS_RECONFIRMATION",
+                            reason = "学校账号授权世代已更新（当前 v$knownAuthVer），需重新确认授权后方可同步凭据"
+                        )
+                    )
+                }
+            }
+
+            // 2. 逐笔校验本地待上推预约计划的授权版本、binding_id 与 consent_id 对应关系
+            val eligiblePlanUpserts = mutableListOf<Pair<CloudUnsyncedPlanUpsertDto, ScopedCloudAuthMetadata>>()
+            for (lp in localActiveCloudPlans) {
+                val planSno = lp.studentNo?.trim()?.takeIf { it.isNotEmpty() } ?: cleanStudentNo
+                val planScopeMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", planSno.ifEmpty { null })
+                    ?: currentMeta
+                val serverVer = planScopeMeta?.authVersion ?: knownAuthVer
+                val serverBindId = planScopeMeta?.bindingId
+                val serverConsentId = planScopeMeta?.consentId
+
+                val persistedProv = resolveScopedPlanProvenance(cleanBase, accessToken, lp.planId)
+                val recordedAuthVer = if (lp.createdAuthVersion > 0) lp.createdAuthVersion else (persistedProv?.authVersion ?: 0)
+                val recordedBindId = lp.boundBindingId?.trim()?.takeIf { it.isNotEmpty() } ?: persistedProv?.bindingId
+                val recordedConsentId = lp.boundConsentId?.trim()?.takeIf { it.isNotEmpty() } ?: persistedProv?.consentId
+
+                val isEligible = when {
+                    serverVer <= 1 ->
+                        recordedAuthVer <= 1 &&
+                            (recordedBindId == null || serverBindId == null || recordedBindId == serverBindId) &&
+                            (recordedConsentId == null || serverConsentId == null || recordedConsentId == serverConsentId)
+                    // 严禁把旧授权版本下创建的计划自动贴上新 auth_version 重放
+                    recordedAuthVer in 1 until serverVer -> false
+                    recordedBindId != null && serverBindId != null && recordedBindId != serverBindId -> false
+                    recordedConsentId != null && serverConsentId != null && recordedConsentId != serverConsentId -> false
+                    recordedAuthVer == serverVer && !serverBindId.isNullOrBlank() && !serverConsentId.isNullOrBlank() -> true
+                    recordedAuthVer == 0 &&
+                        planScopeMeta?.confirmedByClientAction == true &&
+                        !serverBindId.isNullOrBlank() &&
+                        !serverConsentId.isNullOrBlank() -> true
+                    else -> false
+                }
+
+                if (isEligible) {
+                    val effectiveMeta = ScopedCloudAuthMetadata(
+                        authVersion = serverVer.coerceAtLeast(1),
+                        bindingId = serverBindId ?: recordedBindId,
+                        consentId = serverConsentId ?: recordedConsentId,
+                        confirmedByClientAction = true
+                    )
+                    eligiblePlanUpserts.add(lp to effectiveMeta)
+                    itemOutcomes.add(
+                        CloudSyncItemOutcome(
+                            itemType = "PLAN",
+                            itemId = lp.planId,
+                            status = "SYNCED"
+                        )
+                    )
+                } else {
+                    needsReconfirmationPlans.add(lp.planId)
+                    itemOutcomes.add(
+                        CloudSyncItemOutcome(
+                            itemType = "PLAN",
+                            itemId = lp.planId,
+                            status = "NEEDS_RECONFIRMATION",
+                            reason = "预约计划未经当前授权世代（v${serverVer.coerceAtLeast(1)}）确认或关联绑定已变更，需重新确认后恢复同步"
+                        )
+                    )
+                }
+            }
 
             val bodyObj = JSONObject()
-            if (canPushBindingAndPlans && knownAuthVer > 0) {
-                bodyObj.put("auth_version", knownAuthVer)
+            val effectiveTopAuthVer = when {
+                canPushBinding && knownAuthVer > 0 -> knownAuthVer
+                eligiblePlanUpserts.isNotEmpty() -> eligiblePlanUpserts.first().second.authVersion
+                else -> 0
             }
-            if (canPushBindingAndPlans && !studentNo.isNullOrBlank()) {
+            if (effectiveTopAuthVer > 0) {
+                bodyObj.put("auth_version", effectiveTopAuthVer)
+            }
+            if (canPushBinding && cleanStudentNo.isNotEmpty()) {
                 val bindingObj = JSONObject()
                     .put("school_id", "haut")
-                    .put("student_no", studentNo.trim())
+                    .put("student_no", cleanStudentNo)
                 if (!knownBindId.isNullOrBlank()) {
                     bindingObj.put("binding_id", knownBindId)
                 }
@@ -1057,9 +1475,9 @@ object CampusCloudOidcHelper {
                 cancelledJobOrPlanIds.forEach { cancelArr.put(it) }
                 bodyObj.put("reservation_cancellations", cancelArr)
             }
-            if (canPushBindingAndPlans && localActiveCloudPlans.isNotEmpty()) {
+            if (eligiblePlanUpserts.isNotEmpty()) {
                 val planUpsertsArr = JSONArray()
-                for (lp in localActiveCloudPlans) {
+                for ((lp, pMeta) in eligiblePlanUpserts) {
                     val seatsArr = JSONArray()
                     lp.candidateSeats.forEach { seatsArr.put(it) }
                     val planItemObj = JSONObject()
@@ -1072,14 +1490,14 @@ object CampusCloudOidcHelper {
                         .put("repeat_days", lp.repeatDays.coerceIn(1, 30))
                         .put("remaining_days", lp.remainingDays.coerceIn(1, 30))
                         .put("allow_alternative_seat", lp.allowAlternativeSeat)
-                    if (!knownBindId.isNullOrBlank()) {
-                        planItemObj.put("school_binding_id", knownBindId)
+                    if (!pMeta.bindingId.isNullOrBlank()) {
+                        planItemObj.put("school_binding_id", pMeta.bindingId)
                     }
-                    if (!knownConsentId.isNullOrBlank()) {
-                        planItemObj.put("consent_id", knownConsentId)
+                    if (!pMeta.consentId.isNullOrBlank()) {
+                        planItemObj.put("consent_id", pMeta.consentId)
                     }
-                    if (knownAuthVer > 0) {
-                        planItemObj.put("auth_version", knownAuthVer)
+                    if (pMeta.authVersion > 0) {
+                        planItemObj.put("auth_version", pMeta.authVersion)
                     }
                     planUpsertsArr.put(planItemObj)
                 }
@@ -1102,6 +1520,7 @@ object CampusCloudOidcHelper {
             val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()
             val ordersArr = data.optJSONArray("orders") ?: JSONArray()
             val parcelsArr = data.optJSONArray("parcels") ?: JSONArray()
+            val syncReportObj = data.optJSONObject("sync_report")
 
             val boundStudentNo = if (bindingsArr.length() > 0) {
                 val b0 = bindingsArr.optJSONObject(0)
@@ -1122,6 +1541,7 @@ object CampusCloudOidcHelper {
                     val bookingDate = j.optCleanString("booking_local_date")
                     val repDays = j.optInt("repeat_days", 1).coerceIn(1, 30)
                     val remDays = j.optInt("remaining_days", repDays).coerceIn(0, 30)
+                    val rawState = j.optCleanString("state", "ARMED")
                     add(
                         CloudSyncedReservationJobDto(
                             jobId = j.optCleanString("id"),
@@ -1132,14 +1552,23 @@ object CampusCloudOidcHelper {
                             slotWindow = j.optCleanString("slot_window", "08:00-22:00"),
                             targetLocalDate = bookingDate,
                             targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
-                            state = j.optCleanString("state", "ARMED"),
-                            externalBookingId = sr?.optNullableCleanString("external_booking_id"),
+                            state = rawState,
+                            externalBookingId = sr?.optNullableCleanString("external_booking_id")
+                                ?: j.optNullableCleanString("external_booking_id"),
                             evidenceSha256 = sr?.optNullableCleanString("evidence_sha256"),
-                            bookedSeatAlias = sr?.optNullableCleanString("seat_alias"),
-                            bookedRegionAlias = sr?.optNullableCleanString("region_alias"),
+                            bookedSeatAlias = sr?.optNullableCleanString("seat_alias")
+                                ?: j.optNullableCleanString("confirmed_seat_name"),
+                            bookedRegionAlias = sr?.optNullableCleanString("region_alias")
+                                ?: j.optNullableCleanString("confirmed_region_name"),
                             repeatDays = repDays,
                             remainingDays = remDays,
-                            endLocalDate = j.optCleanString("end_local_date", bookingDate).ifBlank { bookingDate }
+                            endLocalDate = j.optCleanString("end_local_date", bookingDate).ifBlank { bookingDate },
+                            userIntentState = j.optCleanString("user_intent_state", "ACTIVE"),
+                            externalExecutionState = j.optCleanString("external_execution_state", "NOT_DISPATCHED"),
+                            schoolCancellationState = j.optCleanString("school_cancellation_state", "NOT_REQUESTED"),
+                            displayStatus = j.optCleanString("display_status", rawState),
+                            statusLabel = j.optCleanString("status_label", ""),
+                            billingState = j.optCleanString("billing_state", "NOT_BILLED")
                         )
                     )
                 }
@@ -1184,6 +1613,19 @@ object CampusCloudOidcHelper {
 
             val campusContentObj = data.optJSONObject("campus_content")
             val parsedCampusContent = campusContentObj?.let { parseCampusContentJson(it) }
+            val serverReconfirmCount = syncReportObj?.optInt("plans_needing_reconfirmation_count", 0) ?: 0
+            val totalReconfirmCount = needsReconfirmationPlans.size + needsReconfirmationBindings.size + serverReconfirmCount
+            val syncStatus = if (totalReconfirmCount > 0) "PARTIAL_NEEDS_RECONFIRMATION" else "FULLY_SYNCED"
+            val syncSummaryMessage = when {
+                needsReconfirmationPlans.isNotEmpty() ->
+                    "余额已更新，${needsReconfirmationPlans.size} 个预约计划需要重新确认授权"
+                needsReconfirmationBindings.isNotEmpty() ->
+                    "余额已更新，学校绑定（${needsReconfirmationBindings.joinToString(", ")}）需要重新确认授权"
+                serverReconfirmCount > 0 ->
+                    syncReportObj?.optCleanString("summary_message")?.ifBlank { null }
+                        ?: "余额已更新，${serverReconfirmCount} 个预约计划需要重新确认授权"
+                else -> "云端数据已完整同步"
+            }
 
             CloudSyncSnapshotResult(
                 cloudUserId = userObj.optCleanString("cloud_user_id"),
@@ -1198,7 +1640,13 @@ object CampusCloudOidcHelper {
                 orders = orders,
                 parcels = parcels,
                 campusContent = parsedCampusContent,
-                campusContentRawJson = campusContentObj?.toString()
+                campusContentRawJson = campusContentObj?.toString(),
+                authVersion = data.optInt("auth_version", 1).coerceAtLeast(1),
+                syncStatus = syncStatus,
+                syncSummaryMessage = syncSummaryMessage,
+                needsReconfirmationBindingStudentNos = needsReconfirmationBindings.distinct(),
+                needsReconfirmationPlanIds = needsReconfirmationPlans.distinct(),
+                itemOutcomes = itemOutcomes
             )
         }.getOrNull()
     }

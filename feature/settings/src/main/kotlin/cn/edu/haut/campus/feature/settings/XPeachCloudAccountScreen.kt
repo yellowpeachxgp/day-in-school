@@ -315,7 +315,8 @@ fun XPeachCloudAccountScreen(
                                     isSyncingSnapshot = false
                                     if (snap != null || refreshed != null) {
                                         val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
-                                        feedbackBanner = "已完成云端同步（内测配额 %.2f 🍑）".format(bal)
+                                        val summary = snap?.syncSummaryMessage?.takeIf { it.isNotBlank() } ?: "已完成云端同步"
+                                        feedbackBanner = "$summary（内测配额 %.2f 🍑）".format(bal)
                                     } else {
                                         feedbackBanner = "云端繁忙，已保留本地数据（内测配额 %.2f 🍑）".format(
                                             binding.peachBalanceMicropeach / 10_000.0
@@ -388,6 +389,7 @@ fun XPeachCloudAccountScreen(
                 }
 
                 val cloudPlans = bookingPlans.filter { it.executionMode == "CLOUD_HOSTED" }
+                val hasNeedsReconfirmation = cloudPlans.any { it.status == "NEEDS_RECONFIRMATION" }
                 if (cloudPlans.isNotEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
@@ -395,6 +397,32 @@ fun XPeachCloudAccountScreen(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (hasNeedsReconfirmation) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            FilledTonalButton(
+                                enabled = !isSyncingSnapshot,
+                                onClick = {
+                                    scope.launch {
+                                        isSyncingSnapshot = true
+                                        val res = repository.reconfirmAndRestoreCloudBookingPlans()
+                                        isSyncingSnapshot = false
+                                        feedbackBanner = res.fold(
+                                            onSuccess = { snap ->
+                                                "已重新确认学校授权并恢复云端同步（内测配额 %.2f 🍑）".format(snap.peachBalance)
+                                            },
+                                            onFailure = { err ->
+                                                err.message ?: "重新确认授权失败，请稍后重试"
+                                            }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("重新确认授权并恢复云端同步")
+                            }
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         cloudPlans.forEachIndexed { idx, plan ->
                             if (idx > 0) {
@@ -404,14 +432,21 @@ fun XPeachCloudAccountScreen(
                             }
                             val friendlyStatus = when (plan.status) {
                                 "CONFIRMED" -> "抢座成功"
+                                "DELEGATION_STOPPED_SCHOOL_CONFIRMED" -> "委托已停止，但学校预约已成功（请核对或按需退座）"
+                                "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "委托已停止，结果待核对"
+                                "RESULT_UNKNOWN" -> "结果待核对（核实前不重试、不扣费）"
+                                "SCHOOL_CANCELLED" -> "学校端已确认取消预约"
+                                "CANCEL_RESULT_UNKNOWN" -> "退座结果待核对"
+                                "NEEDS_RECONFIRMATION" -> "需要重新确认授权（点击上方按钮恢复同步）"
                                 "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
                                 "PRECHECK_OK" -> "已完成登录保活，等待开抢"
                                 "ARMED" -> "定时任务待命（未命中不消耗配额）"
-                                "CANCELLED" -> "已取消（未消耗配额）"
+                                "CANCELLED" -> "已停止委托（未消耗配额）"
                                 else -> plan.lastDiagnosticMessage ?: "处理中"
                             }
                             val payLabel = when (plan.paymentState) {
                                 "PAID" -> "已消耗配额 (${plan.priceMicropeach / 10_000.0} 🍑)"
+                                "HELD_PENDING_REVIEW" -> "未自动扣费（待核对）"
                                 "REFUNDED" -> "已退回配额 🍑"
                                 "DEBIT_PENDING" -> "命中后消耗 1 🍑 测试配额"
                                 "PAYMENT_DUE" -> "内测配额不足"
@@ -425,7 +460,12 @@ fun XPeachCloudAccountScreen(
                             } ?: "自动优选"
                             val dotColor = when (plan.status) {
                                 "CONFIRMED" -> MaterialTheme.colorScheme.tertiary
-                                "CANCELLED" -> MaterialTheme.colorScheme.outline
+                                "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                                "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                                "RESULT_UNKNOWN",
+                                "CANCEL_RESULT_UNKNOWN",
+                                "NEEDS_RECONFIRMATION" -> MaterialTheme.colorScheme.error
+                                "CANCELLED", "SCHOOL_CANCELLED" -> MaterialTheme.colorScheme.outline
                                 else -> XPeachTheme.readablePrimary
                             }
 

@@ -1070,4 +1070,56 @@ class CampusServicesUnitTest {
             )
         )
     }
+
+    @Test
+    fun `persistedAuthConfirmation survives app restart for reauthorized v2 binding and plan`() {
+        CampusCloudOidcHelper.clearScopedAuthMetadataForTest()
+        val payloadA = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"sub":"user_restart_v2"}""".toByteArray())
+        val jwtUser = "eyJhbGciOiJIUzI1NiJ9.$payloadA.sig"
+        val baseUrl = "https://campus.yellowpeachxgp.com"
+
+        CampusCloudOidcHelper.recordScopedAuthMetadata(
+            cloudBaseUrl = baseUrl,
+            accessToken = jwtUser,
+            schoolId = "haut",
+            studentNo = "231040100111",
+            authVersion = 2,
+            bindingId = "bind_reauth_v2",
+            consentId = "consent_reauth_v2",
+            confirmedByClientAction = true
+        )
+        CampusCloudOidcHelper.recordScopedPlanProvenance(
+            cloudBaseUrl = baseUrl,
+            accessToken = jwtUser,
+            planId = "plan_reauth_v2",
+            studentNo = "231040100111",
+            authVersion = 2,
+            bindingId = "bind_reauth_v2",
+            consentId = "consent_reauth_v2"
+        )
+
+        // Simulate app restart: clear in-memory caches and reload from persisted store
+        CampusCloudOidcHelper.simulateAppRestartKeepPersistedAuthForTest()
+
+        val restoredMeta = CampusCloudOidcHelper.resolveScopedAuthMetadata(
+            cloudBaseUrl = baseUrl,
+            accessToken = jwtUser,
+            schoolId = "haut",
+            studentNo = "231040100111"
+        )
+        assertTrue(restoredMeta != null && restoredMeta.confirmedByClientAction)
+        assertEquals(2, restoredMeta?.authVersion)
+        assertEquals("bind_reauth_v2", restoredMeta?.bindingId)
+        assertEquals("consent_reauth_v2", restoredMeta?.consentId)
+
+        val restoredPlanProv = CampusCloudOidcHelper.resolveScopedPlanProvenance(
+            cloudBaseUrl = baseUrl,
+            accessToken = jwtUser,
+            planId = "plan_reauth_v2"
+        )
+        assertEquals(2, restoredPlanProv?.authVersion)
+        assertEquals("bind_reauth_v2", restoredPlanProv?.bindingId)
+        assertEquals("consent_reauth_v2", restoredPlanProv?.consentId)
+    }
 }
