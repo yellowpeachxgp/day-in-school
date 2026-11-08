@@ -452,8 +452,7 @@ class LibrarySeatSessionVault(
         val encrypted = try {
             encryptBytes(payload)
         } catch (_: Exception) {
-            resetCorruptedStorage()
-            encryptBytes(payload)
+            return
         } finally {
             payload.fill(0)
         }
@@ -1178,7 +1177,8 @@ object HautLibrarySeatAuthClient {
         rawToken: String,
         targetDate: String,
         preferredAreaName: String,
-        preferredSeatLabel: String
+        preferredSeatLabel: String,
+        preferredSlotWindow: String = "07:30-22:00"
     ): Result<AutomatedSeatBookingResult> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanToken = normalizeRawToken(rawToken)
@@ -1189,6 +1189,27 @@ object HautLibrarySeatAuthClient {
                 .map { it.trim().removeSuffix("号座").removeSuffix("号") }
                 .filter { it.isNotEmpty() }
 
+            // 1. 先解析实时区域列表与期望预约起止时段（用户计划时段优先于学校默认开放时段），供预检、写后核验与历史回退统一约束
+            val regions = fetchLibraryStudyRegions(cleanToken, targetDate).getOrNull().orEmpty()
+            val matchedRegion = regions.firstOrNull {
+                it.regionName.equals(preferredAreaName.trim(), ignoreCase = true) ||
+                    it.regionName.contains(preferredAreaName.trim()) ||
+                    preferredAreaName.trim().contains(it.regionName)
+            } ?: if (candidateSeatNames.isEmpty()) regions.firstOrNull { it.isOpen && it.availableSeats > 0 } else null
+
+            val defaultWindowPair = if (matchedRegion != null) {
+                val (s, e, _) = resolveDefaultTimeWindow(cleanToken, matchedRegion.id, targetDate)
+                s to e
+            } else {
+                "$targetDate 07:30:00" to "$targetDate 22:00:00"
+            }
+            val (expectedStartFull, expectedEndFull) = resolveTargetSlotWindowBounds(
+                targetDate = targetDate,
+                slotWindow = preferredSlotWindow,
+                fallbackStartFull = defaultWindowPair.first,
+                fallbackEndFull = defaultWindowPair.second
+            )
+
             val preOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
             val preActiveList = (listOfNotNull(preOverview?.currentBooking) + preOverview?.inProgressBookings.orEmpty())
                 .filter { it.isActive }
@@ -1197,8 +1218,11 @@ object HautLibrarySeatAuthClient {
                 isBookingRecordMatchingTarget(
                     record = it,
                     targetDate = targetDate,
-                    preferredAreaName = preferredAreaName,
-                    candidateSeatNames = candidateSeatNames
+                    preferredAreaName = matchedRegion?.regionName?.ifBlank { preferredAreaName } ?: preferredAreaName,
+                    candidateSeatNames = candidateSeatNames,
+                    expectedStartFull = expectedStartFull,
+                    expectedEndFull = expectedEndFull,
+                    expectedRegionId = matchedRegion?.id
                 )
             }
             if (matchingPreActive != null) {
@@ -1210,7 +1234,8 @@ object HautLibrarySeatAuthClient {
                     bookingId = matchingPreActive.bookingId.toString(),
                     seatTitle = matchingPreActive.displaySeatTitle,
                     evidenceSha256 = digest,
-                    diagnosticMessage = "您已有生效中的目标座位：${matchingPreActive.displaySeatTitle}（时段 ${matchingPreActive.timeWindowText}）"
+                    diagnosticMessage = "您已有生效中的目标座位：${matchingPreActive.displaySeatTitle}（时段 ${matchingPreActive.timeWindowText}）",
+                    outcomeState = "CONFIRMED"
                 )
             }
             val sameDayUnrelatedPreActive = preActiveList.firstOrNull {
@@ -1225,17 +1250,10 @@ object HautLibrarySeatAuthClient {
                     bookingId = sameDayUnrelatedPreActive.bookingId.toString(),
                     seatTitle = sameDayUnrelatedPreActive.displaySeatTitle,
                     evidenceSha256 = digest,
-                    diagnosticMessage = "当前账号在该日期已有其他非目标座位预约（${sameDayUnrelatedPreActive.displaySeatTitle}），已停止抢座"
+                    diagnosticMessage = "当前账号在该日期已有其他非目标座位预约（${sameDayUnrelatedPreActive.displaySeatTitle}），已停止抢座",
+                    outcomeState = "FAILED"
                 )
             }
-
-            // 1. 尝试从实时区域列表匹配 regionId
-            val regions = fetchLibraryStudyRegions(cleanToken, targetDate).getOrNull().orEmpty()
-            val matchedRegion = regions.firstOrNull {
-                it.regionName.equals(preferredAreaName.trim(), ignoreCase = true) ||
-                    it.regionName.contains(preferredAreaName.trim()) ||
-                    preferredAreaName.trim().contains(it.regionName)
-            } ?: if (candidateSeatNames.isEmpty()) regions.firstOrNull { it.isOpen && it.availableSeats > 0 } else null
 
             var apiRawMessage = ""
             var bookedIdFromApi: Long? = null
@@ -1245,7 +1263,8 @@ object HautLibrarySeatAuthClient {
             var resultIsUnknown = false
 
             if (matchedRegion != null) {
-                val (startFull, endFull, _) = resolveDefaultTimeWindow(cleanToken, matchedRegion.id, targetDate)
+                val startFull = expectedStartFull
+                val endFull = expectedEndFull
                 val roomSnapshot = fetchLibraryRegionSeats(
                     rawToken = cleanToken,
                     regionId = matchedRegion.id,
@@ -1483,23 +1502,21 @@ object HautLibrarySeatAuthClient {
                 }
             }
 
-            // 2. 若实时列表未能拉取且未发生未知写状态，才回退匹配用户所选候选座位的历史真实 seatId
+            // 2. 若实时列表未能拉取且未发生未知写状态，才回退匹配用户所选候选座位的历史真实 seatId（必须先严格约束目标区域）
             if (matchedConfirmedRecord == null && !attemptedLiveCandidatePool && !unknownWriteStopped) {
                 val matchedHistorical = preOverview?.recentHistory?.firstOrNull { rec ->
-                    if (candidateSeatNames.isNotEmpty()) {
-                        candidateSeatNames.any { cand ->
-                            normalizeSeatComparisonToken(rec.seatName, preferredAreaName) ==
-                                normalizeSeatComparisonToken(cand, preferredAreaName)
-                        }
-                    } else {
-                        preferredAreaName.isNotBlank() && rec.regionName.contains(preferredAreaName.trim())
-                    }
+                    isHistoricalRecordMatchingCandidate(
+                        record = rec,
+                        preferredAreaName = matchedRegion?.regionName?.ifBlank { preferredAreaName } ?: preferredAreaName,
+                        candidateSeatNames = candidateSeatNames,
+                        expectedRegionId = matchedRegion?.id
+                    )
                 }
 
                 val targetSeatId = matchedHistorical?.seatId
                 if (targetSeatId != null && targetSeatId > 0L) {
-                    val fallbackStartFull = "$targetDate 07:30:00"
-                    val fallbackEndFull = "$targetDate 22:00:00"
+                    val fallbackStartFull = expectedStartFull
+                    val fallbackEndFull = expectedEndFull
                     val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode(fallbackStartFull, "UTF-8")}&endtime=${URLEncoder.encode(fallbackEndFull, "UTF-8")}"
                     val respText = runCatching {
                         executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
@@ -1517,12 +1534,13 @@ object HautLibrarySeatAuthClient {
                         isBookingRecordMatchingTarget(
                             record = it,
                             targetDate = targetDate,
-                            preferredAreaName = preferredAreaName,
+                            preferredAreaName = matchedRegion?.regionName?.ifBlank { preferredAreaName } ?: preferredAreaName,
                             candidateSeatNames = candidateSeatNames,
                             candidatePoolIds = setOf(targetSeatId),
                             expectedBookingId = returnedId,
                             expectedStartFull = fallbackStartFull,
-                            expectedEndFull = fallbackEndFull
+                            expectedEndFull = fallbackEndFull,
+                            expectedRegionId = matchedRegion?.id
                         )
                     }
                     if (matchedConfirmedRecord == null && (respObj == null || !respObj.has("code") || respObj.optInt("code", -1) == 200)) {
@@ -1587,6 +1605,55 @@ object HautLibrarySeatAuthClient {
         val m = Regex("""^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2})?$""").matchEntire(text)
             ?: return null
         return m.groupValues[1] to m.groupValues[2]
+    }
+
+    internal fun resolveTargetSlotWindowBounds(
+        targetDate: String,
+        slotWindow: String?,
+        fallbackStartFull: String? = null,
+        fallbackEndFull: String? = null
+    ): Pair<String, String> {
+        val cleanDate = targetDate.trim()
+        val sw = slotWindow?.trim().orEmpty()
+        val m = Regex("""^(\d{2}:\d{2})(?::(\d{2}))?\s*-\s*(\d{2}:\d{2})(?::(\d{2}))?$""").matchEntire(sw)
+        if (m != null && cleanDate.isNotEmpty()) {
+            val sSec = m.groupValues[2].ifEmpty { "00" }
+            val eSec = m.groupValues[4].ifEmpty { "00" }
+            return "$cleanDate ${m.groupValues[1]}:$sSec" to "$cleanDate ${m.groupValues[3]}:$eSec"
+        }
+        return (fallbackStartFull ?: "$cleanDate 07:30:00") to (fallbackEndFull ?: "$cleanDate 22:00:00")
+    }
+
+    internal fun isHistoricalRecordMatchingCandidate(
+        record: LibrarySeatBookingRecord?,
+        preferredAreaName: String,
+        candidateSeatNames: List<String>,
+        expectedRegionId: Long? = null
+    ): Boolean {
+        if (record == null || record.seatId == null || record.seatId <= 0L) return false
+        if (expectedRegionId != null && record.buildingLayerRegionId != null && record.buildingLayerRegionId != expectedRegionId) {
+            return false
+        }
+        val cleanArea = preferredAreaName.trim()
+        val recRegion = record.regionName.trim()
+        val recSeat = record.seatName.trim()
+        if (cleanArea.isNotEmpty()) {
+            if (recRegion.isNotEmpty()) {
+                if (!recRegion.equals(cleanArea, ignoreCase = true)) return false
+            } else if (!recSeat.startsWith(cleanArea)) {
+                return false
+            }
+        } else if (expectedRegionId == null || record.buildingLayerRegionId != expectedRegionId) {
+            return false
+        }
+        if (candidateSeatNames.isEmpty()) return true
+        val normRec = normalizeSeatComparisonToken(recSeat, cleanArea.ifEmpty { recRegion })
+        if (normRec.isEmpty()) return false
+        return candidateSeatNames.any { cand ->
+            val cleanCand = cand.trim()
+            (cleanCand.all(Char::isDigit) && record.seatId.toString() == cleanCand) ||
+                normRec == normalizeSeatComparisonToken(cleanCand, cleanArea.ifEmpty { recRegion })
+        }
     }
 
     internal fun isBookingRecordMatchingTarget(

@@ -3109,9 +3109,13 @@ class CampusRepository internal constructor(
                         cachedCloudAccessToken = pair.first
                         cachedCloudRefreshToken = pair.second
                         lastCloudTokenRefreshAtMs = System.currentTimeMillis()
-                        preferences.edit {
-                            it[PrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(pair.first)
-                            it[PrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(pair.second)
+                        val sealedAt = runCatching { cloudTokenVault.seal(pair.first) }.getOrNull()
+                        val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
+                        if (sealedAt != null && sealedRt != null) {
+                            preferences.edit {
+                                it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
+                                it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                            }
                         }
                     }
                     pair
@@ -3136,12 +3140,22 @@ class CampusRepository internal constructor(
                 cachedCloudRefreshToken = profile.refreshToken
             }
             if (profile.accessToken.isNotBlank() || profile.refreshToken.isNotBlank()) {
+                val sealedAt = if (profile.accessToken.isNotBlank()) {
+                    cloudTokenVault.seal(profile.accessToken)
+                } else {
+                    null
+                }
+                val sealedRt = if (profile.refreshToken.isNotBlank()) {
+                    cloudTokenVault.seal(profile.refreshToken)
+                } else {
+                    null
+                }
                 preferences.edit {
-                    if (profile.accessToken.isNotBlank()) {
-                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(profile.accessToken)
+                    if (sealedAt != null) {
+                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
                     }
-                    if (profile.refreshToken.isNotBlank()) {
-                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(profile.refreshToken)
+                    if (sealedRt != null) {
+                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
                     }
                 }
             }

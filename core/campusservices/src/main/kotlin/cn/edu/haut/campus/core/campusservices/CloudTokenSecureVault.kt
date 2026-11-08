@@ -75,22 +75,50 @@ class CloudTokenSecureVault(
         prefs.edit().clear().commit()
     }
 
-    /** 加密明文令牌，返回带 [SEALED_PREFIX] 前缀的 Base64 密文；失败回退原文。 */
-    fun seal(plain: String): String {
-        if (plain.isBlank() || plain.startsWith(SEALED_PREFIX)) return plain
-        return runCatching {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-            val iv = cipher.iv
-            check(iv != null && iv.size == GCM_IV_LENGTH_BYTES) { "GCM IV 长度异常" }
-            val ct = cipher.doFinal(plain.toByteArray(StandardCharsets.UTF_8))
+    /**
+     * 加密明文令牌，返回带 [SEALED_PREFIX] 前缀的 Base64 密文；
+     * 严禁在加密失败时回退返回明文（Fail-Closed），若传入自定义 [encryptor] 便于单测验证失败闭合行为。
+     */
+    fun seal(
+        plain: String,
+        encryptor: ((ByteArray) -> Pair<ByteArray, ByteArray>)? = null
+    ): String {
+        require(plain.isNotBlank()) { "待加密令牌不能为空" }
+        if (plain.startsWith(SEALED_PREFIX)) return plain
+        return try {
+            val plainBytes = plain.toByteArray(StandardCharsets.UTF_8)
+            val (iv, ct) = if (encryptor != null) {
+                encryptor(plainBytes)
+            } else {
+                val cipher = Cipher.getInstance(TRANSFORMATION)
+                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+                val rawIv = cipher.iv
+                check(rawIv != null && rawIv.size == GCM_IV_LENGTH_BYTES) { "GCM IV 长度异常" }
+                rawIv to cipher.doFinal(plainBytes)
+            }
+            check(iv.size == GCM_IV_LENGTH_BYTES) { "GCM IV 长度异常" }
             SEALED_PREFIX + Base64.encodeToString(iv + ct, Base64.NO_WRAP)
-        }.getOrElse { plain }
+        } catch (e: Exception) {
+            throw GeneralSecurityException("云端令牌加密失败，已拒绝回退明文保存", e)
+        }
     }
 
-    /** 解密密文；兼容历史明文数据（无前缀时原样返回）。 */
+    /**
+     * 尝试加密新令牌；若加密失败则失败闭合，保留 [existingCiphertext] 原有密文（且绝不返回未加密明文）。
+     */
+    fun sealOrPreserveExisting(
+        plain: String,
+        existingCiphertext: String?,
+        encryptor: ((ByteArray) -> Pair<ByteArray, ByteArray>)? = null
+    ): String? {
+        return runCatching { seal(plain, encryptor) }.getOrElse {
+            existingCiphertext?.takeIf { it.startsWith(SEALED_PREFIX) }
+        }
+    }
+
+    /** 解密密文；拒绝返回无 [SEALED_PREFIX] 前缀的明文数据，解密失败时保留密钥并返回空串。 */
     fun unseal(stored: String): String {
-        if (stored.isBlank() || !stored.startsWith(SEALED_PREFIX)) return stored
+        if (stored.isBlank() || !stored.startsWith(SEALED_PREFIX)) return ""
         return runCatching {
             val rawBytes = Base64.decode(stored.removePrefix(SEALED_PREFIX), Base64.NO_WRAP)
             require(rawBytes.size > GCM_IV_LENGTH_BYTES + 16) { "密文长度非法" }
@@ -99,10 +127,7 @@ class CloudTokenSecureVault(
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
             cipher.doFinal(ct).toString(StandardCharsets.UTF_8)
-        }.getOrElse {
-            if (it is GeneralSecurityException) healCorruptedKeyAndStorage()
-            ""
-        }
+        }.getOrDefault("")
     }
 
     fun wipe() {

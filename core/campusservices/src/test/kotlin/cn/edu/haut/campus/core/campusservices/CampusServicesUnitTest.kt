@@ -974,5 +974,39 @@ class CampusServicesUnitTest {
                 candidateSeatNames = listOf("05桌 A座")
             )
         )
+
+        // Historical candidate filter must constrain region first and reject same-named seat from another floor
+        assertTrue(
+            HautLibrarySeatAuthClient.isHistoricalRecordMatchingCandidate(
+                record = validRecord,
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座"),
+                expectedRegionId = 13L
+            )
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isHistoricalRecordMatchingCandidate(
+                record = validRecord.copy(
+                    seatId = 351L,
+                    seatName = "三层西书库北区 05桌 A座",
+                    regionName = "三层西书库北区",
+                    buildingLayerRegionId = 9L
+                ),
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座"),
+                expectedRegionId = 13L
+            )
+        )
+
+        // Slot window resolution prioritizes explicit user slotWindow (14:00-18:00) over school open hours (07:30-22:00)
+        assertEquals(
+            "2026-11-08 14:00:00" to "2026-11-08 18:00:00",
+            HautLibrarySeatAuthClient.resolveTargetSlotWindowBounds(
+                targetDate = "2026-11-08",
+                slotWindow = "14:00-18:00",
+                fallbackStartFull = "2026-11-08 07:30:00",
+                fallbackEndFull = "2026-11-08 22:00:00"
+            )
+        )
     }
 }
