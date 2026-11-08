@@ -1121,5 +1121,75 @@ class CampusServicesUnitTest {
         assertEquals(2, restoredPlanProv?.authVersion)
         assertEquals("bind_reauth_v2", restoredPlanProv?.bindingId)
         assertEquals("consent_reauth_v2", restoredPlanProv?.consentId)
+
+        // Legacy plan without its own provenance must NOT inherit binding-level confirmation
+        val unconfirmedLegacyPlanProv = CampusCloudOidcHelper.resolveScopedPlanProvenance(
+            cloudBaseUrl = baseUrl,
+            accessToken = jwtUser,
+            planId = "plan_legacy_no_prov"
+        )
+        assertEquals(null, unconfirmedLegacyPlanProv)
+    }
+
+    @Test
+    fun `threeAxisResult separates delegationStoppedSchoolConfirmed from active confirmed and fails closed on persistence error`() {
+        val stoppedConfirmed = AutomatedSeatBookingResult(
+            confirmed = false,
+            bookingId = "99887766",
+            seatTitle = "05桌 A座",
+            evidenceSha256 = "sha_evidence_99887766",
+            diagnosticMessage = "委托已停止，但学校预约已成功",
+            outcomeState = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+            userIntentState = "REVOKED",
+            externalExecutionState = "SCHOOL_CONFIRMED",
+            schoolCancellationState = "MANUAL_ACTION_REQUIRED",
+            billingState = "HELD_PENDING_REVIEW"
+        )
+        assertEquals(false, stoppedConfirmed.confirmed)
+        assertEquals(true, stoppedConfirmed.isSchoolConfirmed)
+        assertEquals(true, stoppedConfirmed.isDelegationStopped)
+        assertEquals(false, stoppedConfirmed.isResultUnknown)
+        assertEquals("HELD_PENDING_REVIEW", stoppedConfirmed.billingState)
+        assertEquals("MANUAL_ACTION_REQUIRED", stoppedConfirmed.schoolCancellationState)
+
+        // Fail-closed persistence check: if disk write fails, in-memory confirmation must be rolled back
+        val tmpDir = java.nio.file.Files.createTempDirectory("auth_store_fail_closed").toFile()
+        val blockerFile = java.io.File(tmpDir, "not_a_directory")
+        blockerFile.writeText("x")
+        CampusCloudOidcHelper.configurePersistentAuthStoreFileForTest(
+            java.io.File(blockerFile, "impossible_store.json")
+        )
+        val payloadB = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"sub":"user_fail_closed"}""".toByteArray())
+        val jwtFailUser = "eyJhbGciOiJIUzI1NiJ9.$payloadB.sig"
+        var threwOnPersistFail = false
+        try {
+            CampusCloudOidcHelper.recordScopedAuthMetadata(
+                cloudBaseUrl = "https://campus.yellowpeachxgp.com",
+                accessToken = jwtFailUser,
+                schoolId = "haut",
+                studentNo = "231040100999",
+                authVersion = 2,
+                bindingId = "bind_fail",
+                consentId = "consent_fail",
+                confirmedByClientAction = true
+            )
+        } catch (_: IllegalStateException) {
+            threwOnPersistFail = true
+        } finally {
+            CampusCloudOidcHelper.configurePersistentAuthStorageDir(
+                java.nio.file.Files.createTempDirectory("auth_store_restored").toFile()
+            )
+        }
+        assertTrue(threwOnPersistFail)
+        assertEquals(
+            null,
+            CampusCloudOidcHelper.resolveScopedAuthMetadata(
+                cloudBaseUrl = "https://campus.yellowpeachxgp.com",
+                accessToken = jwtFailUser,
+                schoolId = "haut",
+                studentNo = "231040100999"
+            )
+        )
     }
 }

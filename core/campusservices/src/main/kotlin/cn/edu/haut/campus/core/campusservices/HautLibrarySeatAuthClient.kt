@@ -275,10 +275,40 @@ data class AutomatedSeatBookingResult(
     val seatTitle: String,
     val evidenceSha256: String,
     val diagnosticMessage: String,
-    val outcomeState: String = if (confirmed) "CONFIRMED" else "FAILED"
+    val outcomeState: String = if (confirmed) "CONFIRMED" else "FAILED",
+    val userIntentState: String = "ACTIVE",
+    val externalExecutionState: String = when {
+        outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" || confirmed -> "SCHOOL_CONFIRMED"
+        outcomeState in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") -> "RESULT_UNKNOWN"
+        else -> "SCHOOL_REJECTED"
+    },
+    val schoolCancellationState: String = if (outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
+        "MANUAL_ACTION_REQUIRED"
+    } else {
+        "NOT_REQUESTED"
+    },
+    val billingState: String = when {
+        outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" -> "HELD_PENDING_REVIEW"
+        confirmed -> "PAID"
+        else -> "NOT_BILLED"
+    }
 ) {
     val isResultUnknown: Boolean
-        get() = !confirmed && outcomeState == "RESULT_UNKNOWN"
+        get() = externalExecutionState == "RESULT_UNKNOWN" ||
+            outcomeState in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN")
+
+    val isSchoolConfirmed: Boolean
+        get() = externalExecutionState == "SCHOOL_CONFIRMED" ||
+            outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+            confirmed
+
+    val isDelegationStopped: Boolean
+        get() = userIntentState in setOf("REVOKED", "STOP_REQUESTED") ||
+            outcomeState in setOf(
+                "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                "DELEGATION_STOPPED"
+            )
 }
 
 data class LibraryStudyRegionItem(

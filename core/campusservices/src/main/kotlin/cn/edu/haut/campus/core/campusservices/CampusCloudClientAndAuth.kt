@@ -524,12 +524,40 @@ object CampusCloudOidcHelper {
 
     @Volatile
     private var persistentAuthStoreFile: java.io.File =
-        java.io.File(System.getProperty("java.io.tmpdir"), "haut_campus_cloud_auth_confirmations_v1.json")
+        java.io.File(
+            java.io.File(System.getProperty("user.dir", "."), ".haut_cloud_auth_store"),
+            "haut_campus_cloud_auth_confirmations_v1.json"
+        )
 
     @Volatile
     private var persistentStoreLoaded = false
 
     private val persistenceLock = Any()
+
+    fun configurePersistentAuthStorageDir(storageDir: java.io.File) {
+        synchronized(persistenceLock) {
+            val targetFile = java.io.File(storageDir, "haut_campus_cloud_auth_confirmations_v1.json")
+            if (persistentAuthStoreFile.absolutePath != targetFile.absolutePath) {
+                persistentAuthStoreFile = targetFile
+                persistentStoreLoaded = false
+                reloadPersistedAuthStoreLocked()
+                persistentStoreLoaded = true
+            }
+        }
+    }
+
+    internal fun configurePersistentAuthStoreFileForTest(targetFile: java.io.File) {
+        synchronized(persistenceLock) {
+            persistentAuthStoreFile = targetFile
+            persistentStoreLoaded = false
+        }
+    }
+
+    private fun computeStorePayloadSha256(confirmedJson: String, plansJson: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("$confirmedJson|$plansJson".toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
 
     internal fun ensurePersistentAuthStoreLoaded() {
         if (persistentStoreLoaded) return
@@ -541,56 +569,66 @@ object CampusCloudOidcHelper {
     }
 
     private fun reloadPersistedAuthStoreLocked() {
-        runCatching {
+        try {
             val file = persistentAuthStoreFile
             if (!file.exists()) return
             val raw = file.readText(StandardCharsets.UTF_8)
             if (raw.isBlank()) return
             val root = JSONObject(raw)
-            val confirmedObj = root.optJSONObject("confirmed_auth")
-            if (confirmedObj != null) {
-                val keys = confirmedObj.keys()
-                while (keys.hasNext()) {
-                    val k = keys.next()
-                    val v = confirmedObj.optJSONObject(k) ?: continue
-                    val meta = ScopedCloudAuthMetadata(
-                        authVersion = v.optInt("authVersion", 0),
-                        bindingId = v.optCleanString("bindingId").ifBlank { null },
-                        consentId = v.optCleanString("consentId").ifBlank { null },
-                        confirmedByClientAction = v.optBoolean("confirmedByClientAction", true)
-                    )
-                    confirmedAuthMetadataStore[k] = meta
-                    if (!scopedAuthMetadataCache.containsKey(k)) {
-                        scopedAuthMetadataCache[k] = meta
-                    }
+            val confirmedObj = root.optJSONObject("confirmed_auth") ?: JSONObject()
+            val plansObj = root.optJSONObject("confirmed_plans") ?: JSONObject()
+            val recordedSha = root.optCleanString("sha256")
+            if (recordedSha.isNotEmpty()) {
+                val expectedSha = computeStorePayloadSha256(confirmedObj.toString(), plansObj.toString())
+                if (recordedSha != expectedSha) {
+                    // Corrupted or tampered persistence file -> fail-closed!
+                    confirmedAuthMetadataStore.clear()
+                    confirmedPlanProvenanceStore.clear()
+                    return
                 }
             }
-            val plansObj = root.optJSONObject("confirmed_plans")
-            if (plansObj != null) {
-                val pKeys = plansObj.keys()
-                while (pKeys.hasNext()) {
-                    val k = pKeys.next()
-                    val v = plansObj.optJSONObject(k) ?: continue
-                    val prov = ScopedCloudPlanProvenance(
-                        planId = v.optCleanString("planId"),
-                        studentNo = v.optCleanString("studentNo"),
-                        authVersion = v.optInt("authVersion", 0),
-                        bindingId = v.optCleanString("bindingId"),
-                        consentId = v.optCleanString("consentId")
-                    )
-                    if (prov.planId.isNotEmpty()) {
-                        confirmedPlanProvenanceStore[k] = prov
-                    }
+            val keys = confirmedObj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = confirmedObj.optJSONObject(k) ?: continue
+                val meta = ScopedCloudAuthMetadata(
+                    authVersion = v.optInt("authVersion", 0),
+                    bindingId = v.optCleanString("bindingId").ifBlank { null },
+                    consentId = v.optCleanString("consentId").ifBlank { null },
+                    confirmedByClientAction = v.optBoolean("confirmedByClientAction", true)
+                )
+                confirmedAuthMetadataStore[k] = meta
+                if (!scopedAuthMetadataCache.containsKey(k)) {
+                    scopedAuthMetadataCache[k] = meta
                 }
             }
+            val pKeys = plansObj.keys()
+            while (pKeys.hasNext()) {
+                val k = pKeys.next()
+                val v = plansObj.optJSONObject(k) ?: continue
+                val prov = ScopedCloudPlanProvenance(
+                    planId = v.optCleanString("planId"),
+                    studentNo = v.optCleanString("studentNo"),
+                    authVersion = v.optInt("authVersion", 0),
+                    bindingId = v.optCleanString("bindingId"),
+                    consentId = v.optCleanString("consentId")
+                )
+                if (prov.planId.isNotEmpty()) {
+                    confirmedPlanProvenanceStore[k] = prov
+                }
+            }
+        } catch (_: Exception) {
+            // Corrupted JSON -> fail-closed: clear unverified confirmations
+            confirmedAuthMetadataStore.clear()
+            confirmedPlanProvenanceStore.clear()
         }
     }
 
-    private fun flushPersistedAuthStore() {
+    private fun flushPersistedAuthStoreStrict() {
         synchronized(persistenceLock) {
-            runCatching {
+            try {
                 val confirmedObj = JSONObject()
-                for ((k, v) in confirmedAuthMetadataStore) {
+                for ((k, v) in confirmedAuthMetadataStore.entries.sortedBy { it.key }) {
                     confirmedObj.put(
                         k,
                         JSONObject()
@@ -601,7 +639,7 @@ object CampusCloudOidcHelper {
                     )
                 }
                 val plansObj = JSONObject()
-                for ((k, v) in confirmedPlanProvenanceStore) {
+                for ((k, v) in confirmedPlanProvenanceStore.entries.sortedBy { it.key }) {
                     plansObj.put(
                         k,
                         JSONObject()
@@ -612,11 +650,37 @@ object CampusCloudOidcHelper {
                             .put("consentId", v.consentId)
                     )
                 }
+                val sha256 = computeStorePayloadSha256(confirmedObj.toString(), plansObj.toString())
                 val root = JSONObject()
                     .put("confirmed_auth", confirmedObj)
                     .put("confirmed_plans", plansObj)
-                persistentAuthStoreFile.parentFile?.mkdirs()
-                persistentAuthStoreFile.writeText(root.toString(), StandardCharsets.UTF_8)
+                    .put("sha256", sha256)
+                val targetFile = persistentAuthStoreFile
+                val parentDir = targetFile.parentFile
+                if (parentDir != null && !parentDir.exists() && !parentDir.mkdirs()) {
+                    throw java.io.IOException("无法创建授权确认存储目录: ${parentDir.absolutePath}")
+                }
+                val tmpFile = java.io.File(targetFile.parentFile, "${targetFile.name}.tmp")
+                val bytes = root.toString().toByteArray(StandardCharsets.UTF_8)
+                java.io.FileOutputStream(tmpFile).use { fos ->
+                    fos.write(bytes)
+                    fos.flush()
+                    fos.fd.sync()
+                }
+                try {
+                    java.nio.file.Files.move(
+                        tmpFile.toPath(),
+                        targetFile.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                    )
+                } catch (_: Exception) {
+                    if (!tmpFile.renameTo(targetFile)) {
+                        throw java.io.IOException("原子重命名授权确认存储文件失败: ${targetFile.absolutePath}")
+                    }
+                }
+            } catch (e: Exception) {
+                throw IllegalStateException("授权确认信息持久化落盘失败，已拒绝生效", e)
             }
         }
     }
@@ -677,6 +741,7 @@ object CampusCloudOidcHelper {
         val cleanConsent = consentId?.trim().orEmpty()
         if (cleanBind.isEmpty() || cleanConsent.isEmpty() || authVersion <= 0) return
         val key = buildPlanProvenanceKey(cloudBaseUrl, accessToken, planId)
+        val prev = confirmedPlanProvenanceStore[key]
         confirmedPlanProvenanceStore[key] = ScopedCloudPlanProvenance(
             planId = planId.trim(),
             studentNo = studentNo.trim(),
@@ -684,7 +749,16 @@ object CampusCloudOidcHelper {
             bindingId = cleanBind,
             consentId = cleanConsent
         )
-        flushPersistedAuthStore()
+        try {
+            flushPersistedAuthStoreStrict()
+        } catch (e: Exception) {
+            if (prev != null) {
+                confirmedPlanProvenanceStore[key] = prev
+            } else {
+                confirmedPlanProvenanceStore.remove(key)
+            }
+            throw e
+        }
     }
 
     internal fun resolveScopedPlanProvenance(
@@ -716,15 +790,24 @@ object CampusCloudOidcHelper {
             consentId = consentId?.trim()?.takeIf { it.isNotEmpty() },
             confirmedByClientAction = confirmedByClientAction
         )
-        if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
-            val snoKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)
+        val snoKey = if (cleanSno.isNotEmpty() && !cleanSno.contains("***")) {
+            buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, cleanSno)
+        } else {
+            null
+        }
+        val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)
+        val prevSnoCache = snoKey?.let { scopedAuthMetadataCache[it] }
+        val prevSnoConfirmed = snoKey?.let { confirmedAuthMetadataStore[it] }
+        val prevWildcardCache = scopedAuthMetadataCache[wildcardKey]
+        val prevWildcardConfirmed = confirmedAuthMetadataStore[wildcardKey]
+
+        if (snoKey != null) {
             scopedAuthMetadataCache[snoKey] = meta
             if (confirmedByClientAction && meta.authVersion > 0 && meta.bindingId != null && meta.consentId != null) {
                 confirmedAuthMetadataStore[snoKey] = meta
             }
         }
-        val wildcardKey = buildAuthScopeKey(cloudBaseUrl, accessToken, schoolId, null)
-        val existingWildcard = scopedAuthMetadataCache[wildcardKey]
+        val existingWildcard = prevWildcardCache
         if (existingWildcard == null || cleanSno.isEmpty()) {
             scopedAuthMetadataCache[wildcardKey] = meta
             if (confirmedByClientAction && meta.authVersion > 0 && meta.bindingId != null && meta.consentId != null) {
@@ -747,7 +830,18 @@ object CampusCloudOidcHelper {
             }
         }
         if (confirmedByClientAction) {
-            flushPersistedAuthStore()
+            try {
+                flushPersistedAuthStoreStrict()
+            } catch (e: Exception) {
+                // Fail-closed: rollback in-memory confirmed state if disk write fails!
+                if (snoKey != null) {
+                    if (prevSnoCache != null) scopedAuthMetadataCache[snoKey] = prevSnoCache else scopedAuthMetadataCache.remove(snoKey)
+                    if (prevSnoConfirmed != null) confirmedAuthMetadataStore[snoKey] = prevSnoConfirmed else confirmedAuthMetadataStore.remove(snoKey)
+                }
+                if (prevWildcardCache != null) scopedAuthMetadataCache[wildcardKey] = prevWildcardCache else scopedAuthMetadataCache.remove(wildcardKey)
+                if (prevWildcardConfirmed != null) confirmedAuthMetadataStore[wildcardKey] = prevWildcardConfirmed else confirmedAuthMetadataStore.remove(wildcardKey)
+                throw e
+            }
         }
     }
 
@@ -1183,8 +1277,29 @@ object CampusCloudOidcHelper {
                 )
             }
             val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
+            val orderObj = data.optJSONObject("order")
             val rawState = job.optCleanString("state", "RESULT_UNKNOWN")
             val displayStatus = job.optCleanString("display_status", rawState)
+            val userIntentState = job.optCleanString(
+                "user_intent_state",
+                if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" || displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
+                    "REVOKED"
+                } else {
+                    "ACTIVE"
+                }
+            )
+            val externalExecState = job.optCleanString(
+                "external_execution_state",
+                when {
+                    rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") -> "SCHOOL_CONFIRMED"
+                    rawState in setOf("FAILED", "CANCELLED", "EXPIRED") -> "SCHOOL_REJECTED"
+                    else -> "RESULT_UNKNOWN"
+                }
+            )
+            val schoolCancelState = job.optCleanString(
+                "school_cancellation_state",
+                if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") "MANUAL_ACTION_REQUIRED" else "NOT_REQUESTED"
+            )
             val rawBookingId = sr?.optCleanString("external_booking_id")
                 ?.ifBlank { job.optCleanString("external_booking_id") }
                 .orEmpty()
@@ -1197,23 +1312,36 @@ object CampusCloudOidcHelper {
             val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
             val isDelegationStoppedConfirmed =
                 rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
-                    displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
+                    displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+                    (externalExecState == "SCHOOL_CONFIRMED" && userIntentState in setOf("REVOKED", "STOP_REQUESTED"))
             val hasCompleteConfirmedData =
-                (rawState == "CONFIRMED" || isDelegationStoppedConfirmed) &&
+                (rawState == "CONFIRMED" || isDelegationStoppedConfirmed || externalExecState == "SCHOOL_CONFIRMED") &&
                     sr != null &&
                     rawBookingId.isNotBlank() &&
                     seatAlias.isNotBlank() &&
                     regionAlias.isNotBlank()
+            val billingState = orderObj?.optCleanString("payment_state")?.takeIf { it.isNotBlank() }
+                ?: job.optCleanString(
+                    "billing_state",
+                    when {
+                        isDelegationStoppedConfirmed -> "HELD_PENDING_REVIEW"
+                        hasCompleteConfirmedData -> "PAID"
+                        else -> "NOT_BILLED"
+                    }
+                )
             val outcomeState = when {
                 isDelegationStoppedConfirmed && hasCompleteConfirmedData -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
                 hasCompleteConfirmedData -> "CONFIRMED"
                 rawState == "CONFIRMED" || isDelegationStoppedConfirmed -> "RESULT_UNKNOWN"
+                displayStatus == "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "DELEGATION_STOPPED_RESULT_UNKNOWN"
                 rawState in setOf("FAILED", "CANCELLED", "EXPIRED", "SCHOOL_CANCELLED") -> "FAILED"
                 else -> "RESULT_UNKNOWN"
             }
             val extId = rawBookingId.ifBlank { jobId }
             AutomatedSeatBookingResult(
-                confirmed = hasCompleteConfirmedData,
+                // confirmed 仅在学校确认成功且用户委托仍处于有效（未停止/未撤回）时为 true；
+                // 委托已停止但学校已成功的特殊结果由 externalExecutionState="SCHOOL_CONFIRMED" + outcomeState="DELEGATION_STOPPED_SCHOOL_CONFIRMED" 独立承载
+                confirmed = hasCompleteConfirmedData && !isDelegationStoppedConfirmed && userIntentState == "ACTIVE",
                 bookingId = extId,
                 seatTitle = seatAlias,
                 evidenceSha256 = evidenceHash,
@@ -1229,7 +1357,11 @@ object CampusCloudOidcHelper {
                     else ->
                         "云端抢座（测试版）未锁定座位（状态：$rawState），未消耗内测配额"
                 },
-                outcomeState = outcomeState
+                outcomeState = outcomeState,
+                userIntentState = userIntentState,
+                externalExecutionState = if (hasCompleteConfirmedData) "SCHOOL_CONFIRMED" else externalExecState,
+                schoolCancellationState = schoolCancelState,
+                billingState = billingState
             )
         }.getOrElse {
             AutomatedSeatBookingResult(
@@ -1240,6 +1372,94 @@ object CampusCloudOidcHelper {
                 diagnosticMessage = "云端抢座执行状态未知，已停止本地重复提交，请稍后刷新查看核验结果",
                 outcomeState = "RESULT_UNKNOWN"
             )
+        }
+    }
+
+    enum class EngineSwitchCloudCheckOutcome {
+        SAFE_TO_SWITCH_STOPPED,
+        BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN,
+        BLOCKED_ALREADY_CONFIRMED,
+        BLOCKED_OFFLINE_UNCOORDINATED
+    }
+
+    /**
+     * 在从云端抢座切换为本机抢座前，先向云端停止旧计划/任务并核实是否已有在途或已完成的学校预约请求。
+     * 若离线无法与云端协调，或云端任务已进入派发/待核对/已确认状态，则拒绝切换以防止本机与云端重复预约。
+     */
+    fun coordinateStopCloudJobBeforeEngineSwitch(
+        accessToken: String,
+        cloudJobId: String?,
+        planId: String,
+        targetLocalDate: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Pair<EngineSwitchCloudCheckOutcome, String> {
+        if (accessToken.isBlank()) {
+            return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
+                "当前未连接云端会话，无法核实并停止已排队的云端任务；为避免本机与云端重复预约，已阻止自动切换，请联网核实后再操作"
+        }
+        return try {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val cleanJobId = cloudJobId?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("cjob_") }
+            if (cleanJobId != null) {
+                runCatching {
+                    httpJsonRequest(
+                        method = "POST",
+                        url = "$cleanBase/api/v1/reservation-jobs/$cleanJobId/cancel",
+                        bodyJson = "{}",
+                        bearerToken = accessToken
+                    )
+                }
+            }
+            if (planId.isNotBlank()) {
+                runCatching {
+                    httpJsonRequest(
+                        method = "DELETE",
+                        url = "$cleanBase/api/v1/reservation-plans/${planId.removePrefix("plan_")}",
+                        bodyJson = null,
+                        bearerToken = accessToken
+                    )
+                }
+            }
+            val snapRaw = httpJsonRequest(
+                method = "GET",
+                url = "$cleanBase/api/v1/sync/snapshot",
+                bodyJson = null,
+                bearerToken = accessToken
+            )
+            val root = JSONObject(snapRaw)
+            if (!root.optBoolean("ok", false)) {
+                return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
+                    "无法从云端核实当前任务状态，不能确保云端未发起预约，已阻止切换为本机抢座"
+            }
+            val data = root.optJSONObject("data") ?: JSONObject()
+            val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()
+            for (i in 0 until jobsArr.length()) {
+                val j = jobsArr.optJSONObject(i) ?: continue
+                val jId = j.optCleanString("id")
+                val jDate = j.optCleanString("booking_local_date")
+                if ((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate) {
+                    val st = j.optCleanString("state", "ARMED")
+                    val extExec = j.optCleanString("external_execution_state", "NOT_DISPATCHED")
+                    if (extExec == "SCHOOL_CONFIRMED" || st in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")) {
+                        return EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED to
+                            "云端或另一台设备已完成该日期的学校座位预约，无需再切换为本机重复预约"
+                    }
+                    if (extExec in setOf("DISPATCH_INTENT", "RESULT_UNKNOWN") ||
+                        st in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN")
+                    ) {
+                        return EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN to
+                            "云端抢座请求已发出或结果待核对，为避免本机与云端重复预约，已阻止切换至本机引擎"
+                    }
+                    if (st !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")) {
+                        return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
+                            "云端排队任务尚未确认停止（状态：$st），已阻止切换以避免重复预约"
+                    }
+                }
+            }
+            EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED to "已停止云端排队任务并核实无在途请求"
+        } catch (_: Exception) {
+            EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
+                "当前网络离线或无法与云端协调停止旧任务，不能承诺避免重复预约，已阻止自动切换；请联网核实后再操作"
         }
     }
 
@@ -1354,7 +1574,7 @@ object CampusCloudOidcHelper {
                 }
             }
 
-            // 2. 逐笔校验本地待上推预约计划的授权版本、binding_id 与 consent_id 对应关系
+            // 2. 逐笔校验本地待上推预约计划的授权版本、binding_id 与 consent_id 对应关系（严禁无来源旧计划借绑定级确认通过！）
             val eligiblePlanUpserts = mutableListOf<Pair<CloudUnsyncedPlanUpsertDto, ScopedCloudAuthMetadata>>()
             for (lp in localActiveCloudPlans) {
                 val planSno = lp.studentNo?.trim()?.takeIf { it.isNotEmpty() } ?: cleanStudentNo
@@ -1370,19 +1590,19 @@ object CampusCloudOidcHelper {
                 val recordedConsentId = lp.boundConsentId?.trim()?.takeIf { it.isNotEmpty() } ?: persistedProv?.consentId
 
                 val isEligible = when {
+                    // 无可验证授权来源（recordedAuthVer <= 0 或缺少明确 binding/consent 归属）的计划：
+                    // 一旦服务端已存在绑定或处于重授权世代（serverVer > 1），一律禁止借绑定级确认通过，必须显式重新确认该计划！
+                    recordedAuthVer <= 0 ->
+                        serverVer <= 1 && serverBindId.isNullOrBlank() && serverConsentId.isNullOrBlank()
                     serverVer <= 1 ->
-                        recordedAuthVer <= 1 &&
-                            (recordedBindId == null || serverBindId == null || recordedBindId == serverBindId) &&
-                            (recordedConsentId == null || serverConsentId == null || recordedConsentId == serverConsentId)
+                        recordedAuthVer == 1 &&
+                            (serverBindId == null || recordedBindId == serverBindId) &&
+                            (serverConsentId == null || recordedConsentId == serverConsentId)
                     // 严禁把旧授权版本下创建的计划自动贴上新 auth_version 重放
-                    recordedAuthVer in 1 until serverVer -> false
-                    recordedBindId != null && serverBindId != null && recordedBindId != serverBindId -> false
-                    recordedConsentId != null && serverConsentId != null && recordedConsentId != serverConsentId -> false
-                    recordedAuthVer == serverVer && !serverBindId.isNullOrBlank() && !serverConsentId.isNullOrBlank() -> true
-                    recordedAuthVer == 0 &&
-                        planScopeMeta?.confirmedByClientAction == true &&
-                        !serverBindId.isNullOrBlank() &&
-                        !serverConsentId.isNullOrBlank() -> true
+                    recordedAuthVer != serverVer -> false
+                    recordedBindId.isNullOrBlank() || serverBindId.isNullOrBlank() || recordedBindId != serverBindId -> false
+                    recordedConsentId.isNullOrBlank() || serverConsentId.isNullOrBlank() || recordedConsentId != serverConsentId -> false
+                    planScopeMeta?.confirmedByClientAction == true -> true
                     else -> false
                 }
 
@@ -1408,7 +1628,7 @@ object CampusCloudOidcHelper {
                             itemType = "PLAN",
                             itemId = lp.planId,
                             status = "NEEDS_RECONFIRMATION",
-                            reason = "预约计划未经当前授权世代（v${serverVer.coerceAtLeast(1)}）确认或关联绑定已变更，需重新确认后恢复同步"
+                            reason = "预约计划缺少可验证的授权版本来源或未经当前授权世代（v${serverVer.coerceAtLeast(1)}）确认，需重新确认后恢复同步"
                         )
                     )
                 }
