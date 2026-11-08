@@ -881,7 +881,7 @@ class CampusServicesUnitTest {
             buildingLayerRegionId = 13L,
             startDate = "2026-11-08 07:30:00",
             endDate = "2026-11-08 22:00:00",
-            status = LibrarySeatBookingStatus.BOOKED,
+            status = LibrarySeatBookingStatus.FULFILLED,
             createTime = "2026-11-08 07:00:01",
             signInTime = null,
             signOutTime = null,
