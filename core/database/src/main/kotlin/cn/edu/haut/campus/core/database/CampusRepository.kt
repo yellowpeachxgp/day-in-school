@@ -3681,7 +3681,7 @@ class CampusRepository internal constructor(
     ): Result<LibraryBookingPlanEntity> = runCatching {
         val current = cloudAndParcelDao.getLibraryBookingPlanById(planId)
             ?: throw IllegalArgumentException("未找到预约计划 $planId")
-        if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+        if (current.status in setOf("CONFIRMED", "FAILED", "CANCELLED", "RESULT_UNKNOWN")) {
             return@runCatching current
         }
         val updated = when (stage) {
@@ -3730,58 +3730,64 @@ class CampusRepository internal constructor(
                         updatedAtEpochMillis = nowEpochMillis
                     )
                 } else {
-                    var cloudResult: AutomatedSeatBookingResult? = null
-                    if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                        !current.cloudJobId.isNullOrBlank() &&
-                        !current.cloudJobId.startsWith("cjob_")
-                    ) {
-                        val cloudToken = resolveValidCloudAccessToken()
-                        if (cloudToken.isNotBlank()) {
-                            cloudResult = withContext(Dispatchers.IO) {
-                                CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
-                                    accessToken = cloudToken,
-                                    jobId = current.cloudJobId
+                    val liveBooking: AutomatedSeatBookingResult? =
+                        if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                            // 云端托管计划严格只走云端执行与核验，严禁在云端返回失败、缺数据或未知状态时退回本机发起预约
+                            val validCloudJobId = current.cloudJobId?.takeIf { it.isNotBlank() && !it.startsWith("cjob_") }
+                            val cloudToken = if (validCloudJobId != null) resolveValidCloudAccessToken() else ""
+                            if (validCloudJobId != null && cloudToken.isNotBlank()) {
+                                withContext(Dispatchers.IO) {
+                                    CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
+                                        accessToken = cloudToken,
+                                        jobId = validCloudJobId
+                                    )
+                                }
+                            } else {
+                                AutomatedSeatBookingResult(
+                                    confirmed = false,
+                                    bookingId = current.cloudJobId.orEmpty(),
+                                    seatTitle = "",
+                                    evidenceSha256 = "",
+                                    diagnosticMessage = "云端任务状态未知或凭证未就绪，已停止执行以避免本机重复写入",
+                                    outcomeState = "RESULT_UNKNOWN"
                                 )
                             }
-                        }
-                    }
-
-                    val liveBooking = cloudResult ?: run {
-                        val sessionState = ensureLibrarySeatSession(forceRefresh = false)
-                        val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                            ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
-                        val firstAttemptResult = if (token0.isNotBlank()) {
-                            HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
-                                rawToken = token0,
-                                targetDate = current.targetLocalDate,
-                                preferredAreaName = current.preferredAreaName,
-                                preferredSeatLabel = current.preferredSeatLabel
-                            )
                         } else {
-                            null
-                        }
-                        val firstAttempt = firstAttemptResult?.getOrNull()
-                        // 仅当未持有 Token 或首轮因 Token 401 过期抛出 LibrarySeatSessionExpiredException 时才重登重试；
-                        // 若首轮已正常执行（含因未知写结果熔断停止），严禁二次调用 executeAutomatedSeatBooking 造成重复写入
-                        if (firstAttempt != null) {
-                            firstAttempt
-                        } else if (token0.isBlank() || firstAttemptResult?.exceptionOrNull() is LibrarySeatSessionExpiredException) {
-                            val refreshedState = ensureLibrarySeatSession(forceRefresh = true)
-                            val token1 = (refreshedState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
-                            if (token1.isNotBlank()) {
+                            val sessionState = ensureLibrarySeatSession(forceRefresh = false)
+                            val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                                ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
+                            val firstAttemptResult = if (token0.isNotBlank()) {
                                 HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
-                                    rawToken = token1,
+                                    rawToken = token0,
                                     targetDate = current.targetLocalDate,
                                     preferredAreaName = current.preferredAreaName,
                                     preferredSeatLabel = current.preferredSeatLabel
-                                ).getOrNull()
+                                )
                             } else {
                                 null
                             }
-                        } else {
-                            null
+                            val firstAttempt = firstAttemptResult?.getOrNull()
+                            // 仅当未持有 Token 或首轮因 Token 401 过期抛出 LibrarySeatSessionExpiredException 时才重登重试；
+                            // 若首轮已正常执行（含因未知写结果熔断停止），严禁二次调用 executeAutomatedSeatBooking 造成重复写入
+                            if (firstAttempt != null) {
+                                firstAttempt
+                            } else if (token0.isBlank() || firstAttemptResult?.exceptionOrNull() is LibrarySeatSessionExpiredException) {
+                                val refreshedState = ensureLibrarySeatSession(forceRefresh = true)
+                                val token1 = (refreshedState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
+                                if (token1.isNotBlank()) {
+                                    HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
+                                        rawToken = token1,
+                                        targetDate = current.targetLocalDate,
+                                        preferredAreaName = current.preferredAreaName,
+                                        preferredSeatLabel = current.preferredSeatLabel
+                                    ).getOrNull()
+                                } else {
+                                    null
+                                }
+                            } else {
+                                null
+                            }
                         }
-                    }
 
                     val isConfirmed = liveBooking?.confirmed == true
                     val extId = liveBooking?.bookingId ?: "haut_${current.targetLocalDate}_${current.preferredSeatLabel}"
@@ -3798,7 +3804,12 @@ class CampusRepository internal constructor(
                     } else {
                         current.paymentState
                     }
-                    val finalStatus = if (isConfirmed) "CONFIRMED" else "FAILED"
+                    val finalStatus = when {
+                        isConfirmed -> "CONFIRMED"
+                        liveBooking != null && liveBooking.outcomeState == "RESULT_UNKNOWN" -> "RESULT_UNKNOWN"
+                        liveBooking == null && current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName -> "RESULT_UNKNOWN"
+                        else -> "FAILED"
+                    }
                     current.copy(
                         precheckStatus = "PRECHECK_OK",
                         finalCheckStatus = "FINAL_CHECK_OK",
@@ -3816,6 +3827,7 @@ class CampusRepository internal constructor(
         }
         val finalEntity = if (
             stage == TripleScheduleStage.FIRE &&
+            updated.status != "RESULT_UNKNOWN" &&
             current.remainingDays > 1 &&
             current.status != "CANCELLED"
         ) {
@@ -3871,7 +3883,7 @@ class CampusRepository internal constructor(
             rolledOver
         } else {
             cloudAndParcelDao.upsertLibraryBookingPlan(updated)
-            if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED")) {
+            if (updated.status in setOf("CONFIRMED", "FAILED", "CANCELLED", "RESULT_UNKNOWN")) {
                 LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, updated.id)
             }
             updated

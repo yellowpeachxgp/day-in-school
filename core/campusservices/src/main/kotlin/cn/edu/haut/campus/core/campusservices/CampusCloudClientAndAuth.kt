@@ -635,8 +635,17 @@ object CampusCloudOidcHelper {
         accessToken: String,
         jobId: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
-    ): AutomatedSeatBookingResult? {
-        if (accessToken.isBlank() || jobId.isBlank()) return null
+    ): AutomatedSeatBookingResult {
+        if (accessToken.isBlank() || jobId.isBlank()) {
+            return AutomatedSeatBookingResult(
+                confirmed = false,
+                bookingId = jobId,
+                seatTitle = "",
+                evidenceSha256 = "",
+                diagnosticMessage = "云端抢座凭证或任务号缺失，状态未知，已停止执行",
+                outcomeState = "RESULT_UNKNOWN"
+            )
+        }
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
             val raw = httpJsonRequest(
@@ -646,24 +655,61 @@ object CampusCloudOidcHelper {
                 bearerToken = accessToken
             )
             val root = JSONObject(raw)
-            if (!root.optBoolean("ok", false)) return null
-            val data = root.optJSONObject("data") ?: return null
-            val job = data.optJSONObject("job")
+            if (!root.optBoolean("ok", false)) {
+                return@runCatching AutomatedSeatBookingResult(
+                    confirmed = false,
+                    bookingId = jobId,
+                    seatTitle = "",
+                    evidenceSha256 = "",
+                    diagnosticMessage = "云端抢座返回异常响应，状态未知，已停止重试",
+                    outcomeState = "RESULT_UNKNOWN"
+                )
+            }
+            val data = root.optJSONObject("data")
+            val job = data?.optJSONObject("job")
+            if (data == null || job == null) {
+                return@runCatching AutomatedSeatBookingResult(
+                    confirmed = false,
+                    bookingId = jobId,
+                    seatTitle = "",
+                    evidenceSha256 = "",
+                    diagnosticMessage = "云端抢座响应数据缺失，状态未知，已停止重试",
+                    outcomeState = "RESULT_UNKNOWN"
+                )
+            }
             val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
-            val confirmed = job?.optCleanString("state") == "CONFIRMED"
-            val extId = sr?.optCleanString("external_booking_id").orEmpty().ifBlank { jobId }
+            val rawState = job.optCleanString("state", "RESULT_UNKNOWN")
+            val rawBookingId = sr?.optCleanString("external_booking_id").orEmpty()
             val seatAlias = sr?.optCleanString("seat_alias").orEmpty()
+            val regionAlias = sr?.optCleanString("region_alias").orEmpty()
             val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
+            val hasCompleteConfirmedData =
+                rawState == "CONFIRMED" &&
+                    sr != null &&
+                    rawBookingId.isNotBlank() &&
+                    seatAlias.isNotBlank() &&
+                    regionAlias.isNotBlank()
+            val outcomeState = when {
+                hasCompleteConfirmedData -> "CONFIRMED"
+                rawState == "CONFIRMED" -> "RESULT_UNKNOWN"
+                rawState in setOf("FAILED", "CANCELLED", "EXPIRED") -> "FAILED"
+                else -> "RESULT_UNKNOWN"
+            }
+            val extId = rawBookingId.ifBlank { jobId }
             AutomatedSeatBookingResult(
-                confirmed = confirmed,
+                confirmed = hasCompleteConfirmedData,
                 bookingId = extId,
                 seatTitle = seatAlias,
                 evidenceSha256 = evidenceHash,
-                diagnosticMessage = if (confirmed) {
-                    "云端抢座（测试版）成功！已锁定 ${seatAlias.ifBlank { "所选座位" }}（预约号 $extId），已消耗 1 🍑 内测防滥用配额"
-                } else {
-                    "云端抢座（测试版）未锁定座位（状态：${job?.optCleanString("state", "未命中") ?: "未命中"}），未消耗内测配额"
-                }
+                diagnosticMessage = when {
+                    hasCompleteConfirmedData ->
+                        "云端抢座（测试版）成功！已锁定 $seatAlias（预约号 $extId），已消耗 1 🍑 内测防滥用配额"
+                    rawState == "CONFIRMED" ->
+                        "云端返回已确认但缺少完整座位核验凭据，状态未知，已停止重试"
+                    else ->
+                        "云端抢座（测试版）未锁定座位（状态：$rawState），未消耗内测配额"
+                },
+                outcomeState = outcomeState
             )
         }.getOrElse {
             AutomatedSeatBookingResult(
@@ -671,7 +717,8 @@ object CampusCloudOidcHelper {
                 bookingId = jobId,
                 seatTitle = "",
                 evidenceSha256 = "",
-                diagnosticMessage = "云端抢座执行状态未知，已停止本地重复提交，请稍后刷新查看核验结果"
+                diagnosticMessage = "云端抢座执行状态未知，已停止本地重复提交，请稍后刷新查看核验结果",
+                outcomeState = "RESULT_UNKNOWN"
             )
         }
     }

@@ -930,5 +930,49 @@ class CampusServicesUnitTest {
                 candidateSeatNames = listOf("05桌 A座", "06桌 F座", "08桌 A座")
             )
         )
+
+        // Same date and same seat, but different time slot (14:00-18:00 vs 07:30-22:00) must never match
+        val wrongTimeSlotRecord = validRecord.copy(
+            startDate = "2026-11-08 14:00:00",
+            endDate = "2026-11-08 18:00:00"
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = wrongTimeSlotRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座"),
+                expectedStartFull = "2026-11-08 07:30:00",
+                expectedEndFull = "2026-11-08 22:00:00"
+            )
+        )
+
+        // Missing region info with same-named seat (05桌 A座) or different region prefix (三层) must never match
+        val missingRegionRecord = validRecord.copy(
+            seatName = "05桌 A座",
+            regionName = "",
+            buildingLayerRegionId = null
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = missingRegionRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座")
+            )
+        )
+        val otherFloorSeatRecord = validRecord.copy(
+            seatName = "三层西书库北区 05桌 A座",
+            regionName = "",
+            buildingLayerRegionId = null
+        )
+        assertFalse(
+            HautLibrarySeatAuthClient.isBookingRecordMatchingTarget(
+                record = otherFloorSeatRecord,
+                targetDate = "2026-11-08",
+                preferredAreaName = "四层西书库北区",
+                candidateSeatNames = listOf("05桌 A座")
+            )
+        )
     }
 }
