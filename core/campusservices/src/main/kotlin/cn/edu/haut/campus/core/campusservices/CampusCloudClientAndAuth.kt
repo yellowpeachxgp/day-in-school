@@ -1241,11 +1241,12 @@ object CampusCloudOidcHelper {
         if (accessToken.isBlank() || jobId.isBlank()) {
             return AutomatedSeatBookingResult(
                 confirmed = false,
-                bookingId = jobId,
+                bookingId = "",
                 seatTitle = "",
                 evidenceSha256 = "",
                 diagnosticMessage = "云端抢座凭证或任务号缺失，状态未知，已停止执行",
-                outcomeState = "RESULT_UNKNOWN"
+                outcomeState = "RESULT_UNKNOWN",
+                externalExecutionState = "RESULT_UNKNOWN"
             )
         }
         return runCatching {
@@ -1256,126 +1257,227 @@ object CampusCloudOidcHelper {
                 bodyJson = "{}",
                 bearerToken = accessToken
             )
-            val root = JSONObject(raw)
-            if (!root.optBoolean("ok", false)) {
-                return@runCatching AutomatedSeatBookingResult(
-                    confirmed = false,
-                    bookingId = jobId,
-                    seatTitle = "",
-                    evidenceSha256 = "",
-                    diagnosticMessage = "云端抢座返回异常响应，状态未知，已停止重试",
-                    outcomeState = "RESULT_UNKNOWN"
-                )
-            }
-            val data = root.optJSONObject("data")
-            val job = data?.optJSONObject("job")
-            if (data == null || job == null) {
-                return@runCatching AutomatedSeatBookingResult(
-                    confirmed = false,
-                    bookingId = jobId,
-                    seatTitle = "",
-                    evidenceSha256 = "",
-                    diagnosticMessage = "云端抢座响应数据缺失，状态未知，已停止重试",
-                    outcomeState = "RESULT_UNKNOWN"
-                )
-            }
-            val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
-            val orderObj = data.optJSONObject("order")
-            val rawState = job.optCleanString("state", "RESULT_UNKNOWN")
-            val displayStatus = job.optCleanString("display_status", rawState)
-            val userIntentState = job.optCleanString(
-                "user_intent_state",
-                if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" || displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
-                    "REVOKED"
-                } else {
-                    "ACTIVE"
-                }
-            )
-            val externalExecState = job.optCleanString(
-                "external_execution_state",
-                when {
-                    rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") -> "SCHOOL_CONFIRMED"
-                    rawState in setOf("FAILED", "CANCELLED", "EXPIRED") -> "SCHOOL_REJECTED"
-                    else -> "RESULT_UNKNOWN"
-                }
-            )
-            val schoolCancelState = job.optCleanString(
-                "school_cancellation_state",
-                if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") "MANUAL_ACTION_REQUIRED" else "NOT_REQUESTED"
-            )
-            val rawBookingId = sr?.optCleanString("external_booking_id")
-                ?.ifBlank { job.optCleanString("external_booking_id") }
-                .orEmpty()
-            val seatAlias = sr?.optCleanString("seat_alias")
-                ?.ifBlank { job.optCleanString("confirmed_seat_name") }
-                .orEmpty()
-            val regionAlias = sr?.optCleanString("region_alias")
-                ?.ifBlank { job.optCleanString("confirmed_region_name") }
-                .orEmpty()
-            val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
-            val isDelegationStoppedConfirmed =
-                rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
-                    displayStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
-                    (externalExecState == "SCHOOL_CONFIRMED" && userIntentState in setOf("REVOKED", "STOP_REQUESTED"))
-            val hasCompleteConfirmedData =
-                (rawState == "CONFIRMED" || isDelegationStoppedConfirmed || externalExecState == "SCHOOL_CONFIRMED") &&
-                    sr != null &&
-                    rawBookingId.isNotBlank() &&
-                    seatAlias.isNotBlank() &&
-                    regionAlias.isNotBlank()
-            val billingState = orderObj?.optCleanString("payment_state")?.takeIf { it.isNotBlank() }
-                ?: job.optCleanString(
-                    "billing_state",
-                    when {
-                        isDelegationStoppedConfirmed -> "HELD_PENDING_REVIEW"
-                        hasCompleteConfirmedData -> "PAID"
-                        else -> "NOT_BILLED"
-                    }
-                )
-            val outcomeState = when {
-                isDelegationStoppedConfirmed && hasCompleteConfirmedData -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
-                hasCompleteConfirmedData -> "CONFIRMED"
-                rawState == "CONFIRMED" || isDelegationStoppedConfirmed -> "RESULT_UNKNOWN"
-                displayStatus == "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "DELEGATION_STOPPED_RESULT_UNKNOWN"
-                rawState in setOf("FAILED", "CANCELLED", "EXPIRED", "SCHOOL_CANCELLED") -> "FAILED"
-                else -> "RESULT_UNKNOWN"
-            }
-            val extId = rawBookingId.ifBlank { jobId }
-            AutomatedSeatBookingResult(
-                // confirmed 仅在学校确认成功且用户委托仍处于有效（未停止/未撤回）时为 true；
-                // 委托已停止但学校已成功的特殊结果由 externalExecutionState="SCHOOL_CONFIRMED" + outcomeState="DELEGATION_STOPPED_SCHOOL_CONFIRMED" 独立承载
-                confirmed = hasCompleteConfirmedData && !isDelegationStoppedConfirmed && userIntentState == "ACTIVE",
-                bookingId = extId,
-                seatTitle = seatAlias,
-                evidenceSha256 = evidenceHash,
-                diagnosticMessage = when {
-                    isDelegationStoppedConfirmed && hasCompleteConfirmedData ->
-                        "委托已停止，但学校预约已成功（座位：$regionAlias $seatAlias，预约号：$extId）。系统未自动扣费且已停止后续计划，请核对或按需退座"
-                    hasCompleteConfirmedData ->
-                        "云端抢座（测试版）成功！已锁定 $seatAlias（预约号 $extId），已消耗 1 🍑 内测防滥用配额"
-                    rawState == "CONFIRMED" ->
-                        "云端返回已确认但缺少完整座位核验凭据，状态未知，已停止重试"
-                    displayStatus == "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
-                        "委托已停止，但此前已发出的请求结果待核对（禁止盲目重试）"
-                    else ->
-                        "云端抢座（测试版）未锁定座位（状态：$rawState），未消耗内测配额"
-                },
-                outcomeState = outcomeState,
-                userIntentState = userIntentState,
-                externalExecutionState = if (hasCompleteConfirmedData) "SCHOOL_CONFIRMED" else externalExecState,
-                schoolCancellationState = schoolCancelState,
-                billingState = billingState
-            )
+            parseExecuteNowBookingResult(jobId = jobId, raw = raw)
         }.getOrElse {
             AutomatedSeatBookingResult(
                 confirmed = false,
-                bookingId = jobId,
+                bookingId = "",
                 seatTitle = "",
                 evidenceSha256 = "",
                 diagnosticMessage = "云端抢座执行状态未知，已停止本地重复提交，请稍后刷新查看核验结果",
-                outcomeState = "RESULT_UNKNOWN"
+                outcomeState = "RESULT_UNKNOWN",
+                externalExecutionState = "RESULT_UNKNOWN"
             )
         }
+    }
+
+    internal data class NormalizedCloudJobConfirmation(
+        val state: String,
+        val displayStatus: String,
+        val userIntentState: String,
+        val externalExecutionState: String,
+        val schoolCancellationState: String,
+        val billingState: String,
+        val hasCompleteConfirmedData: Boolean,
+        val isDelegationStopped: Boolean,
+        val verifiedBookingId: String,
+        val seatAlias: String,
+        val regionAlias: String,
+        val evidenceSha256: String
+    )
+
+    internal fun normalizeCloudJobConfirmation(
+        jobId: String,
+        job: JSONObject,
+        sr: JSONObject?,
+        orderObj: JSONObject? = null,
+        defaultStateWhenMissing: String = "RESULT_UNKNOWN"
+    ): NormalizedCloudJobConfirmation {
+        val rawState = job.optCleanString("state", defaultStateWhenMissing)
+        val rawDisplay = job.optCleanString("display_status", rawState)
+        val userIntentState = job.optCleanString(
+            "user_intent_state",
+            if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" || rawDisplay == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
+                "REVOKED"
+            } else {
+                "ACTIVE"
+            }
+        )
+        val rawExternalExecState = job.optCleanString(
+            "external_execution_state",
+            when {
+                rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") -> "SCHOOL_CONFIRMED"
+                rawState in setOf("FAILED", "EXPIRED") -> "SCHOOL_REJECTED"
+                rawState in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CANCELLED", "NEEDS_RECONFIRMATION") -> "NOT_DISPATCHED"
+                else -> "RESULT_UNKNOWN"
+            }
+        )
+        val schoolCancelState = job.optCleanString(
+            "school_cancellation_state",
+            if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") "MANUAL_ACTION_REQUIRED" else "NOT_REQUESTED"
+        )
+        val rawBookingId = sr?.optCleanString("external_booking_id")
+            ?.ifBlank { job.optCleanString("external_booking_id") }
+            .orEmpty()
+        val seatAlias = sr?.optCleanString("seat_alias")
+            ?.ifBlank { job.optCleanString("confirmed_seat_name") }
+            .orEmpty()
+        val regionAlias = sr?.optCleanString("region_alias")
+            ?.ifBlank { job.optCleanString("confirmed_region_name") }
+            .orEmpty()
+        val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
+
+        val isRealBookingId = rawBookingId.isNotBlank() &&
+            rawBookingId != jobId &&
+            !rawBookingId.startsWith("cjob_") &&
+            !rawBookingId.startsWith("plan_") &&
+            !Regex("""^haut_\d{4}-\d{2}-\d{2}_""").containsMatchIn(rawBookingId)
+
+        val claimsConfirmed =
+            rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                rawDisplay in setOf("CONFIRMED", "SCHOOL_CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                rawExternalExecState == "SCHOOL_CONFIRMED"
+
+        val isDelegationStopped =
+            userIntentState in setOf("REVOKED", "STOP_REQUESTED") ||
+                rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+                rawDisplay in setOf("DELEGATION_STOPPED_SCHOOL_CONFIRMED", "DELEGATION_STOPPED_RESULT_UNKNOWN")
+
+        val hasCompleteConfirmedData =
+            claimsConfirmed &&
+                sr != null &&
+                isRealBookingId &&
+                seatAlias.isNotBlank() &&
+                regionAlias.isNotBlank() &&
+                evidenceHash.isNotBlank()
+
+        val safeState = when {
+            claimsConfirmed && !hasCompleteConfirmedData ->
+                if (isDelegationStopped) "DELEGATION_STOPPED_RESULT_UNKNOWN" else "RESULT_UNKNOWN"
+            hasCompleteConfirmedData && isDelegationStopped -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
+            hasCompleteConfirmedData -> "CONFIRMED"
+            else -> rawState
+        }
+        val safeDisplayStatus = if (claimsConfirmed && !hasCompleteConfirmedData) {
+            safeState
+        } else {
+            rawDisplay
+        }
+        val safeExecState = when {
+            hasCompleteConfirmedData -> "SCHOOL_CONFIRMED"
+            claimsConfirmed && !hasCompleteConfirmedData -> "RESULT_UNKNOWN"
+            else -> rawExternalExecState
+        }
+        val safeBillingState = when {
+            claimsConfirmed && !hasCompleteConfirmedData -> "HELD_PENDING_REVIEW"
+            orderObj?.optCleanString("payment_state")?.isNotBlank() == true ->
+                orderObj.optCleanString("payment_state")
+            else -> job.optCleanString(
+                "billing_state",
+                when {
+                    hasCompleteConfirmedData && isDelegationStopped -> "HELD_PENDING_REVIEW"
+                    hasCompleteConfirmedData -> "PAID"
+                    else -> "NOT_BILLED"
+                }
+            )
+        }
+        return NormalizedCloudJobConfirmation(
+            state = safeState,
+            displayStatus = safeDisplayStatus,
+            userIntentState = userIntentState,
+            externalExecutionState = safeExecState,
+            schoolCancellationState = schoolCancelState,
+            billingState = safeBillingState,
+            hasCompleteConfirmedData = hasCompleteConfirmedData,
+            isDelegationStopped = isDelegationStopped,
+            verifiedBookingId = if (hasCompleteConfirmedData) rawBookingId else "",
+            seatAlias = if (hasCompleteConfirmedData) seatAlias else "",
+            regionAlias = if (hasCompleteConfirmedData) regionAlias else "",
+            evidenceSha256 = if (hasCompleteConfirmedData) evidenceHash else ""
+        )
+    }
+
+    internal fun parseExecuteNowBookingResult(
+        jobId: String,
+        raw: String
+    ): AutomatedSeatBookingResult {
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) {
+            val errObj = root.optJSONObject("error")
+            val errCode = errObj?.optCleanString("code").orEmpty()
+            val msg = errObj?.optCleanString("message")?.ifBlank { "云端抢座请求失败" } ?: "云端抢座请求失败"
+            val isExplicitPreDispatchReject = errCode in setOf(
+                "BAD_REQUEST",
+                "UNPROCESSABLE_ENTITY",
+                "CAMPUS_BINDING_REQUIRED",
+                "CONSENT_REQUIRED",
+                "FORBIDDEN",
+                "NOT_FOUND"
+            )
+            return AutomatedSeatBookingResult(
+                confirmed = false,
+                bookingId = "",
+                seatTitle = "",
+                evidenceSha256 = "",
+                diagnosticMessage = msg,
+                outcomeState = if (isExplicitPreDispatchReject) "FAILED" else "RESULT_UNKNOWN",
+                externalExecutionState = if (isExplicitPreDispatchReject) "SCHOOL_REJECTED" else "RESULT_UNKNOWN"
+            )
+        }
+        val data = root.optJSONObject("data")
+        val job = data?.optJSONObject("job")
+        if (data == null || job == null) {
+            return AutomatedSeatBookingResult(
+                confirmed = false,
+                bookingId = "",
+                seatTitle = "",
+                evidenceSha256 = "",
+                diagnosticMessage = "云端抢座响应数据缺失，状态未知，已停止重试",
+                outcomeState = "RESULT_UNKNOWN",
+                externalExecutionState = "RESULT_UNKNOWN"
+            )
+        }
+        val sr = data.optJSONObject("schoolReservation") ?: data.optJSONObject("school_reservation")
+        val orderObj = data.optJSONObject("order")
+        val norm = normalizeCloudJobConfirmation(
+            jobId = jobId,
+            job = job,
+            sr = sr,
+            orderObj = orderObj,
+            defaultStateWhenMissing = "RESULT_UNKNOWN"
+        )
+        val outcomeState = when {
+            norm.hasCompleteConfirmedData && norm.isDelegationStopped -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
+            norm.hasCompleteConfirmedData -> "CONFIRMED"
+            norm.state == "DELEGATION_STOPPED_RESULT_UNKNOWN" || norm.displayStatus == "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
+                "DELEGATION_STOPPED_RESULT_UNKNOWN"
+            norm.state == "RESULT_UNKNOWN" -> "RESULT_UNKNOWN"
+            norm.state in setOf("FAILED", "CANCELLED", "EXPIRED", "SCHOOL_CANCELLED") -> "FAILED"
+            else -> "RESULT_UNKNOWN"
+        }
+        return AutomatedSeatBookingResult(
+            confirmed = norm.hasCompleteConfirmedData && !norm.isDelegationStopped && norm.userIntentState == "ACTIVE",
+            bookingId = norm.verifiedBookingId,
+            seatTitle = norm.seatAlias,
+            evidenceSha256 = norm.evidenceSha256,
+            diagnosticMessage = when {
+                norm.hasCompleteConfirmedData && norm.isDelegationStopped ->
+                    "委托已停止，但学校预约已成功（座位：${norm.regionAlias} ${norm.seatAlias}，预约号：${norm.verifiedBookingId}）。系统未自动扣费且已停止后续计划，请核对或按需退座"
+                norm.hasCompleteConfirmedData ->
+                    "云端抢座（测试版）成功！已锁定 ${norm.seatAlias}（预约号 ${norm.verifiedBookingId}），已消耗 1 🍑 内测防滥用配额"
+                outcomeState == "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
+                    "委托已停止，但此前已发出的请求或确认凭据不完整，结果待核对（禁止盲目重试）"
+                outcomeState == "RESULT_UNKNOWN" ->
+                    "云端返回结果待核对或缺少完整学校预约核验凭据，状态未知，已停止重试"
+                else ->
+                    "云端抢座（测试版）未锁定座位（状态：${norm.state}），未消耗内测配额"
+            },
+            outcomeState = outcomeState,
+            userIntentState = norm.userIntentState,
+            externalExecutionState = norm.externalExecutionState,
+            schoolCancellationState = norm.schoolCancellationState,
+            billingState = norm.billingState
+        )
     }
 
     enum class EngineSwitchCloudCheckOutcome {
@@ -1466,6 +1568,32 @@ object CampusCloudOidcHelper {
         }
     }
 
+    internal fun isCloudSeatCancelConfirmed(raw: String): Boolean {
+        return runCatching {
+            val root = JSONObject(raw)
+            if (!root.optBoolean("ok", false)) return false
+            val data = root.optJSONObject("data") ?: return false
+            val liveCancel = data.optJSONObject("live_cancel")
+            val jobObj = data.optJSONObject("job")
+            if (liveCancel == null && jobObj == null) return false
+
+            val liveConfirmed = liveCancel != null &&
+                liveCancel.optBoolean("cancelled", false) &&
+                liveCancel.optCleanString("outcome", "SCHOOL_CANCELLED") == "SCHOOL_CANCELLED" &&
+                liveCancel.optCleanString("school_cancellation_state", "SCHOOL_CANCELLED") == "SCHOOL_CANCELLED"
+
+            // 严禁把 job.state == "CANCELLED"（仅代表停止云端委托、未曾发起预约）当作学校端退座成功！
+            val jobConfirmed = jobObj != null &&
+                jobObj.optCleanString("school_cancellation_state") == "SCHOOL_CANCELLED"
+
+            if (liveCancel != null && jobObj != null) {
+                liveConfirmed && jobConfirmed
+            } else {
+                liveConfirmed || jobConfirmed
+            }
+        }.getOrDefault(false)
+    }
+
     /**
      * 在云端取消并释放已占座位 (`/api/v1/reservation-jobs/{jobId}/cancel-seat`)
      */
@@ -1483,14 +1611,7 @@ object CampusCloudOidcHelper {
                 bodyJson = "{}",
                 bearerToken = accessToken
             )
-            val root = JSONObject(raw)
-            if (!root.optBoolean("ok", false)) return@runCatching false
-            val data = root.optJSONObject("data") ?: return@runCatching false
-            val liveCancel = data.optJSONObject("live_cancel")
-            val jobObj = data.optJSONObject("job")
-            liveCancel?.optBoolean("cancelled", false) == true ||
-                jobObj?.optCleanString("school_cancellation_state") == "SCHOOL_CANCELLED" ||
-                jobObj?.optCleanString("state") == "CANCELLED"
+            isCloudSeatCancelConfirmed(raw)
         }.getOrDefault(false)
     }
 
@@ -1762,49 +1883,31 @@ object CampusCloudOidcHelper {
                             if (s.isNotEmpty()) add(s)
                         }
                     }
-                    val sr = j.optJSONObject("school_reservation")
+                    val jId = j.optCleanString("id")
+                    val sr = j.optJSONObject("school_reservation") ?: j.optJSONObject("schoolReservation")
                     val bookingDate = j.optCleanString("booking_local_date")
                     val repDays = j.optInt("repeat_days", 1).coerceIn(1, 30)
                     val remDays = j.optInt("remaining_days", repDays).coerceIn(0, 30)
-                    val rawState = j.optCleanString("state", "ARMED")
-                    val rawDisplay = j.optCleanString("display_status", rawState)
-                    val userIntent = j.optCleanString("user_intent_state", "ACTIVE")
-                    val extBookingId = sr?.optNullableCleanString("external_booking_id")
-                        ?: j.optNullableCleanString("external_booking_id")
-                    val bookedSeat = sr?.optNullableCleanString("seat_alias")
-                        ?: j.optNullableCleanString("confirmed_seat_name")
-                    val bookedRegion = sr?.optNullableCleanString("region_alias")
-                        ?: j.optNullableCleanString("confirmed_region_name")
-                    val hasCompleteSchoolConfirmation =
-                        !extBookingId.isNullOrBlank() &&
-                            !bookedSeat.isNullOrBlank() &&
-                            !bookedRegion.isNullOrBlank()
-                    val claimsConfirmed =
-                        rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
-                            rawDisplay in setOf("CONFIRMED", "SCHOOL_CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
-                            j.optCleanString("external_execution_state") == "SCHOOL_CONFIRMED"
-                    val safeState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
-                        if (userIntent in setOf("REVOKED", "STOP_REQUESTED") || rawDisplay == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
-                            "DELEGATION_STOPPED_RESULT_UNKNOWN"
-                        } else {
-                            "RESULT_UNKNOWN"
-                        }
+                    val norm = normalizeCloudJobConfirmation(
+                        jobId = jId,
+                        job = j,
+                        sr = sr,
+                        orderObj = null,
+                        defaultStateWhenMissing = "ARMED"
+                    )
+                    val preservePendingCancelBookingId = if (
+                        norm.state == "CANCEL_RESULT_UNKNOWN" ||
+                        norm.schoolCancellationState == "CANCEL_RESULT_UNKNOWN" ||
+                        norm.schoolCancellationState == "MANUAL_ACTION_REQUIRED"
+                    ) {
+                        sr?.optNullableCleanString("external_booking_id")
+                            ?: j.optNullableCleanString("external_booking_id")
                     } else {
-                        rawState
-                    }
-                    val safeDisplayStatus = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
-                        safeState
-                    } else {
-                        rawDisplay
-                    }
-                    val safeExecState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
-                        "RESULT_UNKNOWN"
-                    } else {
-                        j.optCleanString("external_execution_state", "NOT_DISPATCHED")
+                        null
                     }
                     add(
                         CloudSyncedReservationJobDto(
-                            jobId = j.optCleanString("id"),
+                            jobId = jId,
                             planId = j.optCleanString("plan_id"),
                             areaCode = j.optCleanString("area_code", "4F_NORTH"),
                             areaName = j.optCleanString("area_name", "4楼北自习区"),
@@ -1812,24 +1915,20 @@ object CampusCloudOidcHelper {
                             slotWindow = j.optCleanString("slot_window", "08:00-22:00"),
                             targetLocalDate = bookingDate,
                             targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
-                            state = safeState,
-                            externalBookingId = extBookingId,
-                            evidenceSha256 = sr?.optNullableCleanString("evidence_sha256"),
-                            bookedSeatAlias = bookedSeat,
-                            bookedRegionAlias = bookedRegion,
+                            state = norm.state,
+                            externalBookingId = norm.verifiedBookingId.takeIf { it.isNotBlank() } ?: preservePendingCancelBookingId,
+                            evidenceSha256 = norm.evidenceSha256.takeIf { it.isNotBlank() },
+                            bookedSeatAlias = norm.seatAlias.takeIf { it.isNotBlank() },
+                            bookedRegionAlias = norm.regionAlias.takeIf { it.isNotBlank() },
                             repeatDays = repDays,
                             remainingDays = remDays,
                             endLocalDate = j.optCleanString("end_local_date", bookingDate).ifBlank { bookingDate },
-                            userIntentState = userIntent,
-                            externalExecutionState = safeExecState,
-                            schoolCancellationState = j.optCleanString("school_cancellation_state", "NOT_REQUESTED"),
-                            displayStatus = safeDisplayStatus,
+                            userIntentState = norm.userIntentState,
+                            externalExecutionState = norm.externalExecutionState,
+                            schoolCancellationState = norm.schoolCancellationState,
+                            displayStatus = norm.displayStatus,
                             statusLabel = j.optCleanString("status_label", ""),
-                            billingState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
-                                "HELD_PENDING_REVIEW"
-                            } else {
-                                j.optCleanString("billing_state", "NOT_BILLED")
-                            }
+                            billingState = norm.billingState
                         )
                     )
                 }
@@ -2376,12 +2475,42 @@ object CampusCloudOidcHelper {
         )
     }.getOrNull()
 
-    fun fetchMomentsContactRequestsFromCloud(
+    data class MomentsContactRequestsListResult(
+        val isOwner: Boolean = false,
+        val canManage: Boolean = false,
+        val isLegacyUnowned: Boolean = false,
+        val requests: List<MomentsContactRequestDto> = emptyList()
+    )
+
+    fun claimLegacyMomentsPostOnCloud(
+        postId: String,
+        claimToken: String,
+        bearerToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsPostItem? = runCatching {
+        val cleanToken = claimToken.trim()
+        if (bearerToken.isBlank() || cleanToken.length < 32) return null
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val bodyObj = JSONObject()
+            .put("action", "CLAIM_OWNERSHIP")
+            .put("claim_token", cleanToken)
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/action",
+            bodyJson = bodyObj.toString(),
+            bearerToken = bearerToken
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        parseMomentsPostJson(root.optJSONObject("data") ?: return null)
+    }.getOrNull()
+
+    fun fetchMomentsContactRequestsResultFromCloud(
         postId: String,
         bearerToken: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
-    ): List<MomentsContactRequestDto> = runCatching {
-        if (bearerToken.isBlank()) return emptyList()
+    ): MomentsContactRequestsListResult = runCatching {
+        if (bearerToken.isBlank()) return MomentsContactRequestsListResult()
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val raw = httpJsonRequest(
             method = "GET",
@@ -2390,9 +2519,13 @@ object CampusCloudOidcHelper {
             bearerToken = bearerToken
         )
         val root = JSONObject(raw)
-        if (!root.optBoolean("ok", false)) return emptyList()
-        val arr = root.optJSONObject("data")?.optJSONArray("requests") ?: return emptyList()
-        buildList {
+        if (!root.optBoolean("ok", false)) return MomentsContactRequestsListResult()
+        val dataObj = root.optJSONObject("data") ?: return MomentsContactRequestsListResult()
+        val isOwner = dataObj.optBoolean("is_owner", false)
+        val canManage = dataObj.optBoolean("can_manage", isOwner)
+        val isLegacyUnowned = dataObj.optBoolean("is_legacy_unowned", false)
+        val arr = dataObj.optJSONArray("requests") ?: JSONArray()
+        val requests = buildList {
             for (i in 0 until arr.length()) {
                 val d = arr.optJSONObject(i) ?: continue
                 add(
@@ -2411,7 +2544,20 @@ object CampusCloudOidcHelper {
                 )
             }
         }
-    }.getOrDefault(emptyList())
+        MomentsContactRequestsListResult(
+            isOwner = isOwner,
+            canManage = canManage,
+            isLegacyUnowned = isLegacyUnowned,
+            requests = requests
+        )
+    }.getOrDefault(MomentsContactRequestsListResult())
+
+    fun fetchMomentsContactRequestsFromCloud(
+        postId: String,
+        bearerToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): List<MomentsContactRequestDto> =
+        fetchMomentsContactRequestsResultFromCloud(postId, bearerToken, cloudBaseUrl).requests
 
     fun handleMomentsContactRequestActionOnCloud(
         postId: String,
@@ -2553,6 +2699,41 @@ object CampusCloudOidcHelper {
         return runCatching { parseMomentsSnapshotJson(JSONObject(rawJson)) }.getOrNull()
     }
 
+    internal fun isLegacyPrivateMomentsCommentContent(rawContent: String): Boolean =
+        rawContent.trim().startsWith("【私密联系发起人】")
+
+    /**
+     * 在账号退出、切换云端账号或处于未登录游客态读取缓存时，强制脱敏并清除一切与上一登录身份绑定的受限字段：
+     * 1. 所有 `contact_visibility == "ON_REQUEST"` 或标记受保护的帖子重新遮罩 `contact = "需发起联系/认领申请后查看"`、`hasProtectedContact = true`；
+     * 2. 清除私密前缀留言及身份权限位 (`isOwner = false`, `canManage = false`, `canClaimLegacy = false`, `viewerRole = "GUEST"`)；
+     * 3. 清空本机关联的 `myPostIds`，杜绝退出或切到账号 B 后在断网状态下仍可读/可复制账号 A 曾获批的受限联系方式。
+     */
+    fun sanitizeMomentsSnapshotForViewerReset(snapshot: CampusMomentsSnapshot): CampusMomentsSnapshot {
+        val scrubbedPosts = snapshot.posts.map { post ->
+            val isProtectedContact =
+                post.contactVisibility.equals("ON_REQUEST", ignoreCase = true) || post.hasProtectedContact
+            val safeContact = if (isProtectedContact) {
+                cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT
+            } else {
+                post.contact
+            }
+            val safeComments = post.comments.filterNot { isLegacyPrivateMomentsCommentContent(it.content) }
+            post.copy(
+                contact = safeContact,
+                hasProtectedContact = isProtectedContact,
+                comments = safeComments,
+                isOwner = false,
+                canManage = false,
+                canClaimLegacy = false,
+                viewerRole = "GUEST"
+            )
+        }
+        return snapshot.copy(
+            posts = scrubbedPosts,
+            myPostIds = emptySet()
+        )
+    }
+
     fun encodeMomentsSnapshotJsonString(snapshot: CampusMomentsSnapshot): String {
         val root = JSONObject()
         root.put("updated_at", snapshot.updatedAt)
@@ -2560,6 +2741,8 @@ object CampusCloudOidcHelper {
         for (p in snapshot.posts) {
             val commentsArr = JSONArray()
             for (c in p.comments) {
+                // 清理旧版客户端本地缓存中的「【私密联系发起人】」前缀评论，防止历史私密信息残留于本地公开缓存
+                if (isLegacyPrivateMomentsCommentContent(c.content)) continue
                 commentsArr.put(
                     JSONObject()
                         .put("id", c.id)
@@ -2583,6 +2766,13 @@ object CampusCloudOidcHelper {
                     .put("status", p.status)
                     .put("author_name", p.authorName)
                     .put("author_student_no_masked", p.authorStudentNoMasked)
+                    .put("contact_visibility", p.contactVisibility)
+                    .put("has_protected_contact", p.hasProtectedContact)
+                    .put("is_owner", p.isOwner)
+                    .put("can_manage", p.canManage)
+                    .put("is_legacy_unowned", p.isLegacyUnowned)
+                    .put("can_claim_legacy", p.canClaimLegacy)
+                    .put("viewer_role", p.viewerRole)
                     .put("likes_count", p.likesCount)
                     .put("favorites_count", p.favoritesCount)
                     .put("comments", commentsArr)
@@ -2650,10 +2840,26 @@ object CampusCloudOidcHelper {
         return root.toString()
     }
 
-    private fun parseMomentsPostJson(obj: JSONObject): MomentsPostItem? {
+    internal fun parseMomentsPostJson(obj: JSONObject): MomentsPostItem? {
         val id = obj.optCleanString("id")
         val title = obj.optCleanString("title")
         if (id.isEmpty() || title.isEmpty()) return null
+        val isOwner = obj.optBoolean("is_owner", false)
+        val canManage = obj.optBoolean("can_manage", isOwner)
+        val isLegacyUnowned = if (obj.has("is_legacy_unowned")) {
+            obj.optBoolean("is_legacy_unowned", false)
+        } else {
+            obj.optCleanString("owner_cloud_user_id").isEmpty()
+        }
+        val canClaimLegacy = obj.optBoolean("can_claim_legacy", false)
+        val viewerRole = obj.optCleanString(
+            "viewer_role",
+            when {
+                isOwner -> "OWNER"
+                canManage -> "ADMIN"
+                else -> "GUEST"
+            }
+        )
         val commentsArr = obj.optJSONArray("comments")
         val comments = buildList {
             if (commentsArr != null) {
@@ -2661,6 +2867,11 @@ object CampusCloudOidcHelper {
                     val c = commentsArr.optJSONObject(i) ?: continue
                     val content = c.optCleanString("content")
                     if (content.isEmpty()) continue
+                    val isPrivateComment =
+                        c.optBoolean("is_private_to_initiator", false) ||
+                            isLegacyPrivateMomentsCommentContent(content)
+                    // 过滤旧客户端本地缓存或未登录投影中的历史「【私密联系发起人】」前缀评论，杜绝作为普通公开留言展示
+                    if (isPrivateComment) continue
                     add(
                         MomentsPostComment(
                             id = c.optCleanString("id", "mc_$i"),
@@ -2712,7 +2923,17 @@ object CampusCloudOidcHelper {
             comments = comments,
             matchedClues = matchedClues,
             createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" },
-            updatedAt = obj.optCleanString("updated_at")
+            updatedAt = obj.optCleanString("updated_at"),
+            contactVisibility = obj.optCleanString("contact_visibility", "PUBLIC"),
+            hasProtectedContact = obj.optBoolean(
+                "has_protected_contact",
+                obj.optCleanString("contact") == cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT
+            ),
+            isOwner = isOwner,
+            canManage = canManage,
+            isLegacyUnowned = isLegacyUnowned,
+            canClaimLegacy = canClaimLegacy,
+            viewerRole = viewerRole
         )
     }
 

@@ -51,6 +51,8 @@ data class MomentsPostComment(
     val createdAt: String = ""
 )
 
+const val MASKED_ON_REQUEST_MOMENTS_CONTACT = "需发起联系/认领申请后查看"
+
 data class MomentsPostItem(
     val id: String,
     val type: MomentsPostType,
@@ -69,10 +71,28 @@ data class MomentsPostItem(
     val comments: List<MomentsPostComment> = emptyList(),
     val matchedClues: List<MomentsMatchedClue> = emptyList(),
     val createdAt: String = "",
-    val updatedAt: String = ""
+    val updatedAt: String = "",
+    val contactVisibility: String = "PUBLIC",
+    val hasProtectedContact: Boolean = false,
+    val isOwner: Boolean = false,
+    val canManage: Boolean = false,
+    val isLegacyUnowned: Boolean = false,
+    val canClaimLegacy: Boolean = false,
+    val viewerRole: String = "GUEST"
 ) {
     val isResolved: Boolean
         get() = status.equals("RESOLVED", ignoreCase = true)
+
+    val isContactRedactedOrProtectedPlaceholder: Boolean
+        get() = hasProtectedContact ||
+            contact.isBlank() ||
+            contact == MASKED_ON_REQUEST_MOMENTS_CONTACT ||
+            contact == "需申请查看" ||
+            (contactVisibility.equals("ON_REQUEST", ignoreCase = true) &&
+                (contact.contains("需发起") || contact.contains("需申请")))
+
+    val canViewerReadRealContact: Boolean
+        get() = contact.isNotBlank() && !isContactRedactedOrProtectedPlaceholder
 }
 
 data class MomentsTextbookListing(

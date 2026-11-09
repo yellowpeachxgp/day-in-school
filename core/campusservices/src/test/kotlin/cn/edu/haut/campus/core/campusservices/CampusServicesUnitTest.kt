@@ -1192,4 +1192,318 @@ class CampusServicesUnitTest {
             )
         )
     }
+
+    @Test
+    fun `executeNow normalization downgrades incomplete confirmations to RESULT_UNKNOWN and cancel check rejects delegation-only CANCELLED`() {
+        // 1. Incomplete execute-now payload (state=CONFIRMED, external_execution_state=SCHOOL_CONFIRMED, but missing school_reservation / booking_id / evidence)
+        val incompleteActiveRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_incomplete_01",
+                  "state": "CONFIRMED",
+                  "display_status": "SCHOOL_CONFIRMED",
+                  "user_intent_state": "ACTIVE",
+                  "external_execution_state": "SCHOOL_CONFIRMED"
+                }
+              }
+            }
+        """.trimIndent()
+        val incompleteRes = CampusCloudOidcHelper.parseExecuteNowBookingResult("job_incomplete_01", incompleteActiveRaw)
+        assertFalse("Incomplete confirmation must never be confirmed", incompleteRes.confirmed)
+        assertFalse("Incomplete confirmation must never be isSchoolConfirmed", incompleteRes.isSchoolConfirmed)
+        assertTrue("Incomplete confirmation must be isResultUnknown", incompleteRes.isResultUnknown)
+        assertEquals("RESULT_UNKNOWN", incompleteRes.outcomeState)
+        assertEquals("RESULT_UNKNOWN", incompleteRes.externalExecutionState)
+        assertEquals("HELD_PENDING_REVIEW", incompleteRes.billingState)
+        assertEquals("", incompleteRes.bookingId)
+
+        // 2. Incomplete post-revocation payload (DELEGATION_STOPPED_SCHOOL_CONFIRMED without real booking_id/evidence)
+        val incompleteStoppedRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_incomplete_02",
+                  "state": "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                  "user_intent_state": "REVOKED",
+                  "external_execution_state": "SCHOOL_CONFIRMED"
+                },
+                "school_reservation": {
+                  "external_booking_id": "",
+                  "seat_alias": "05桌 A座",
+                  "region_alias": "五层中区"
+                }
+              }
+            }
+        """.trimIndent()
+        val incompleteStoppedRes = CampusCloudOidcHelper.parseExecuteNowBookingResult("job_incomplete_02", incompleteStoppedRaw)
+        assertFalse(incompleteStoppedRes.isSchoolConfirmed)
+        assertTrue(incompleteStoppedRes.isResultUnknown)
+        assertTrue(incompleteStoppedRes.isDelegationStopped)
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", incompleteStoppedRes.outcomeState)
+        assertEquals("RESULT_UNKNOWN", incompleteStoppedRes.externalExecutionState)
+
+        // 3. Complete execute-now confirmation succeeds cleanly
+        val completeRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_complete_03",
+                  "state": "CONFIRMED",
+                  "user_intent_state": "ACTIVE",
+                  "external_execution_state": "SCHOOL_CONFIRMED"
+                },
+                "school_reservation": {
+                  "external_booking_id": "88776655",
+                  "seat_alias": "05桌 A座",
+                  "region_alias": "五层中区",
+                  "evidence_sha256": "deadbeef1234567890"
+                }
+              }
+            }
+        """.trimIndent()
+        val completeRes = CampusCloudOidcHelper.parseExecuteNowBookingResult("job_complete_03", completeRaw)
+        assertTrue(completeRes.confirmed)
+        assertTrue(completeRes.isSchoolConfirmed)
+        assertFalse(completeRes.isResultUnknown)
+        assertEquals("CONFIRMED", completeRes.outcomeState)
+        assertEquals("88776655", completeRes.bookingId)
+
+        // 4. Seat cancellation must NEVER treat delegation-only state="CANCELLED" as school seat cancelled!
+        val delegationOnlyCancelRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_delegation_stopped",
+                  "state": "CANCELLED",
+                  "school_cancellation_state": "NOT_REQUESTED"
+                },
+                "live_cancel": null
+              }
+            }
+        """.trimIndent()
+        assertFalse(CampusCloudOidcHelper.isCloudSeatCancelConfirmed(delegationOnlyCancelRaw))
+
+        val unknownCancelRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_cancel_unknown",
+                  "state": "CANCEL_RESULT_UNKNOWN",
+                  "school_cancellation_state": "CANCEL_RESULT_UNKNOWN"
+                },
+                "live_cancel": {
+                  "cancelled": false,
+                  "outcome": "CANCEL_RESULT_UNKNOWN",
+                  "school_cancellation_state": "CANCEL_RESULT_UNKNOWN"
+                }
+              }
+            }
+        """.trimIndent()
+        assertFalse(CampusCloudOidcHelper.isCloudSeatCancelConfirmed(unknownCancelRaw))
+
+        val verifiedSchoolCancelRaw = """
+            {
+              "ok": true,
+              "data": {
+                "job": {
+                  "id": "job_cancel_verified",
+                  "state": "SCHOOL_CANCELLED",
+                  "school_cancellation_state": "SCHOOL_CANCELLED"
+                },
+                "live_cancel": {
+                  "cancelled": true,
+                  "outcome": "SCHOOL_CANCELLED",
+                  "school_cancellation_state": "SCHOOL_CANCELLED"
+                }
+              }
+            }
+        """.trimIndent()
+        assertTrue(CampusCloudOidcHelper.isCloudSeatCancelConfirmed(verifiedSchoolCancelRaw))
+    }
+
+    @Test
+    fun `moments snapshot parser preserves server owner role across devices and scrubs legacy private-prefix cached comments`() {
+        val legacyCachedJson = """
+            {
+              "updated_at": "2026-11-10T00:00:00Z",
+              "posts": [
+                {
+                  "id": "mp_cross_device_owner",
+                  "type": "LOST",
+                  "title": "遗失黑色充电宝",
+                  "category": "数码",
+                  "campus": "莲花街校区",
+                  "location": "图书馆五楼",
+                  "description": "Anker 磁吸款",
+                  "contact": "wx_owner_01",
+                  "contact_visibility": "ON_REQUEST",
+                  "is_owner": true,
+                  "can_manage": true,
+                  "is_legacy_unowned": false,
+                  "viewer_role": "OWNER",
+                  "comments": [
+                    {
+                      "id": "mc_legacy_priv",
+                      "author_name": "旧客户端",
+                      "content": "【私密联系发起人】我的手机号 13800001111",
+                      "contact_hint": "13800001111"
+                    },
+                    {
+                      "id": "mc_public_ok",
+                      "author_name": "热心同学",
+                      "content": "已送到五楼服务台",
+                      "contact_hint": ""
+                    }
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        val snap = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(legacyCachedJson)
+        assertNotNull(snap)
+        val post = snap!!.posts.single()
+        assertTrue(post.isOwner)
+        assertTrue(post.canManage)
+        assertFalse(post.isLegacyUnowned)
+        assertEquals("OWNER", post.viewerRole)
+        assertEquals(1, post.comments.size)
+        assertEquals("已送到五楼服务台", post.comments.single().content)
+
+        val reencoded = CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(snap)
+        assertFalse(reencoded.contains("【私密联系发起人】"))
+        assertFalse(reencoded.contains("13800001111"))
+    }
+
+    @Test
+    fun `seat cancellation readback requires explicit CANCELLED or SIGNED_OUT terminal for exact bookingId and rejects UNKNOWN DEFAULTED intermediate or other IDs`() {
+        val emptyCur = """{"code":200,"data":null}"""
+        val emptyInProg = """{"code":200,"total":0,"rows":[]}"""
+
+        // 1. UNKNOWN (0 / "" / 99), DEFAULTED (7), intermediate ("取消处理中"), failure ("取消失败"), contradictions MUST ALL throw
+        val rejectedRows = listOf(
+            """{"id":"99887766","bookingStatus":0,"bookingStatusName":"未知状态"}""",
+            """{"id":"99887766","bookingStatus":"","bookingStatusName":"已取消"}""",
+            """{"id":"99887766","bookingStatus":7,"bookingStatusName":"已违约"}""",
+            """{"id":"99887766","bookingStatus":5,"bookingStatusName":"取消处理中"}""",
+            """{"id":"99887766","bookingStatus":5,"bookingStatusName":"取消失败"}""",
+            """{"id":"99887766","bookingStatus":6,"bookingStatusName":"签退处理中"}""",
+            """{"id":"99887766","bookingStatus":5,"bookingStatusName":"已签退"}""",
+            """{"id":"99887766","bookingStatus":1,"bookingStatusName":"已取消"}""",
+            """{"id":"99887766","bookingStatus":99,"bookingStatusName":""}"""
+        )
+        for (badRow in rejectedRows) {
+            val hist = """{"code":200,"total":1,"rows":[$badRow]}"""
+            val res = runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadback(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg,
+                    histBody = hist,
+                    lastMsg = "测试"
+                )
+            }
+            assertTrue("Must reject non-terminal/contradictory row: $badRow", res.isFailure)
+        }
+
+        // 2. Another booking ID cancelled (11112222) while target 99887766 is absent MUST throw
+        val otherBookingHist = """{"code":200,"total":1,"rows":[{"id":"11112222","bookingStatus":5,"bookingStatusName":"已取消"}]}"""
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadback(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg,
+                    histBody = otherBookingHist
+                )
+            }.isFailure
+        )
+
+        // 3. Explicit CANCELLED (5) and SIGNED_OUT (6) for exact 99887766 succeed
+        val confirmedCancelledHist = """{"code":200,"total":1,"rows":[{"id":"99887766","bookingStatus":5,"bookingStatusName":"已取消"}]}"""
+        val msgCancel = HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadback(
+            resolvedId = "99887766",
+            curBody = emptyCur,
+            inProgBody = """{"code":200,"total":1,"rows":[{"id":"99887766","bookingStatus":5,"bookingStatusName":"已取消"}]}""",
+            histBody = confirmedCancelledHist
+        )
+        assertTrue(msgCancel.contains("99887766"))
+
+        val confirmedSignedOutHist = """{"code":200,"total":1,"rows":[{"id":"99887766","bookingStatus":6,"bookingStatusName":"已签退"}]}"""
+        val msgSignOut = HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadback(
+            resolvedId = "99887766",
+            curBody = emptyCur,
+            inProgBody = emptyInProg,
+            histBody = confirmedSignedOutHist
+        )
+        assertTrue(msgSignOut.contains("99887766"))
+    }
+
+    @Test
+    fun `viewer reset sanitization re-masks unlocked ON_REQUEST contacts while keeping truly public contacts`() {
+        val accountASnapJson = """
+            {
+              "updated_at": "2026-11-10T01:00:00Z",
+              "posts": [
+                {
+                  "id": "mp_protected_unlocked_for_a",
+                  "type": "LOST",
+                  "title": "受保护联系方式失物帖",
+                  "category": "证件",
+                  "campus": "莲花街校区",
+                  "location": "图书馆三楼",
+                  "description": "卡套内有饭卡",
+                  "contact": "微信: secret_approved_for_A",
+                  "contact_visibility": "ON_REQUEST",
+                  "has_protected_contact": false,
+                  "is_owner": false,
+                  "can_manage": false,
+                  "viewer_role": "AUTHENTICATED",
+                  "comments": []
+                },
+                {
+                  "id": "mp_public_normal",
+                  "type": "FOUND",
+                  "title": "公开联系方式招领帖",
+                  "category": "水杯雨伞",
+                  "campus": "莲花街校区",
+                  "location": "一餐",
+                  "description": "黑色保温杯",
+                  "contact": "QQ: 88889999",
+                  "contact_visibility": "PUBLIC",
+                  "has_protected_contact": false,
+                  "is_owner": true,
+                  "can_manage": true,
+                  "viewer_role": "OWNER",
+                  "comments": []
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedForA = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(accountASnapJson)!!
+        assertTrue(parsedForA.posts[0].canViewerReadRealContact)
+        assertEquals("微信: secret_approved_for_A", parsedForA.posts[0].contact)
+
+        val scrubbed = CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(parsedForA)
+        val protectedAfterReset = scrubbed.posts.first { it.id == "mp_protected_unlocked_for_a" }
+        val publicAfterReset = scrubbed.posts.first { it.id == "mp_public_normal" }
+
+        assertEquals("需发起联系/认领申请后查看", protectedAfterReset.contact)
+        assertTrue(protectedAfterReset.hasProtectedContact)
+        assertFalse(protectedAfterReset.canViewerReadRealContact)
+
+        assertEquals("QQ: 88889999", publicAfterReset.contact)
+        assertTrue(publicAfterReset.canViewerReadRealContact)
+        assertFalse(publicAfterReset.isOwner)
+        assertFalse(publicAfterReset.canManage)
+        assertEquals("GUEST", publicAfterReset.viewerRole)
+
+        val persistedJson = CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(scrubbed)
+        assertFalse(persistedJson.contains("secret_approved_for_A"))
+    }
 }

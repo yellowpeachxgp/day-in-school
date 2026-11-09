@@ -293,14 +293,27 @@ data class AutomatedSeatBookingResult(
         else -> "NOT_BILLED"
     }
 ) {
+    val hasCompleteConfirmationCredentials: Boolean
+        get() = bookingId.isNotBlank() &&
+            !bookingId.startsWith("cjob_") &&
+            !bookingId.startsWith("plan_") &&
+            !Regex("""^haut_\d{4}-\d{2}-\d{2}_""").containsMatchIn(bookingId) &&
+            seatTitle.isNotBlank() &&
+            evidenceSha256.isNotBlank()
+
     val isResultUnknown: Boolean
         get() = externalExecutionState == "RESULT_UNKNOWN" ||
-            outcomeState in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN")
+            outcomeState in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") ||
+            ((externalExecutionState == "SCHOOL_CONFIRMED" ||
+                outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+                confirmed) && !hasCompleteConfirmationCredentials)
 
     val isSchoolConfirmed: Boolean
-        get() = externalExecutionState == "SCHOOL_CONFIRMED" ||
-            outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
-            confirmed
+        get() = hasCompleteConfirmationCredentials && (
+            externalExecutionState == "SCHOOL_CONFIRMED" ||
+                outcomeState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ||
+                confirmed
+        )
 
     val isDelegationStopped: Boolean
         get() = userIntentState in setOf("REVOKED", "STOP_REQUESTED") ||
@@ -1182,16 +1195,159 @@ object HautLibrarySeatAuthClient {
                 val msg = obj.optString("msg").ifBlank { obj.optString("message") }
                 if (msg.isNotBlank()) lastMsg = msg
                 if (obj.optInt("code", -1) == 200) {
-                    return@runCatching "已成功取消并释放座位（编号 $resolvedId）"
+                    break
                 }
             }
-            val afterActive = fetchSeatBookingOverview(cleanToken).getOrNull()?.currentBooking?.takeIf { it.isActive }
-            if (afterActive == null) {
-                "已成功取消并释放座位"
+
+            // 严格凭学校端明确退座终态白名单（5=已取消、6=已签退）及精确预约号核验，拒绝 UNKNOWN / DEFAULTED / 中间态 / 字段矛盾 / 其他预约号
+            val curBody = executeAuthenticatedApiGet(url = WSLIB_CURRENT_BOOKING_URL, cleanToken = cleanToken)
+            val inProgBody = executeAuthenticatedApiGet(
+                url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=50&pageNum=1",
+                cleanToken = cleanToken
+            )
+            val histBody = executeAuthenticatedApiGet(
+                url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=20&pageNum=1",
+                cleanToken = cleanToken
+            )
+            verifyAuthoritativeSeatCancellationReadback(
+                resolvedId = resolvedId,
+                curBody = curBody,
+                inProgBody = inProgBody,
+                histBody = histBody,
+                lastMsg = lastMsg
+            )
+        }
+    }
+
+    /**
+     * 判断单条学校预约 JSON 记录是否属于有文档依据的明确退座/签退终态（`5 = 已取消`，`6 = 已签退`）。
+     * `UNKNOWN (0)`、`DEFAULTED (7 = 已违约)`、未知状态码、`取消处理中`/`取消失败` 等中间或失败文案、以及状态码与文案矛盾均返回 `false`。
+     */
+    internal fun isConfirmedSeatCancelTerminalJsonObject(obj: JSONObject?): Boolean {
+        if (obj == null) return false
+        val codeText = obj.optCleanString("bookingStatus").trim()
+        if (codeText != "5" && codeText != "6") return false
+        val rawLabel = obj.optCleanString("bookingStatusName")
+            .ifBlank { obj.optCleanString("statusName") }
+            .trim()
+        if (rawLabel.isNotEmpty()) {
+            val allowedLabels = if (codeText == "5") {
+                setOf("已取消", "CANCELLED")
             } else {
-                throw IllegalStateException("退座未生效：$lastMsg")
+                setOf("已签退", "SIGNED_OUT")
+            }
+            if (rawLabel !in allowedLabels) return false
+        }
+        return true
+    }
+
+    internal fun verifyAuthoritativeSeatCancellationReadback(
+        resolvedId: String,
+        curBody: String,
+        inProgBody: String,
+        histBody: String,
+        lastMsg: String = ""
+    ): String {
+        val exactId = resolvedId.trim()
+        if (exactId.isEmpty() || !exactId.all(Char::isDigit)) {
+            throw IllegalStateException("退座结果待核对：缺少合法精确预约编号")
+        }
+
+        val curRoot = runCatching { JSONObject(curBody.trim()) }.getOrNull()
+        if (curRoot == null ||
+            curRoot.opt("code") !is Number ||
+            curRoot.optInt("code", -1) != 200 ||
+            (!curRoot.has("data") && !curRoot.has("booking"))
+        ) {
+            throw IllegalStateException("退座结果待核对：无法校验当前生效预约响应（$lastMsg）")
+        }
+        if (curRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+
+        var confirmedMatchCount = 0
+        val curDataRaw = if (curRoot.has("data") && !curRoot.isNull("data")) {
+            curRoot.opt("data")
+        } else if (curRoot.has("booking") && !curRoot.isNull("booking")) {
+            curRoot.opt("booking")
+        } else {
+            null
+        }
+        if (curDataRaw != null) {
+            val curObj = curDataRaw as? JSONObject
+                ?: throw IllegalStateException("退座结果待核对：当前预约结构异常（$lastMsg）")
+            val curId = curObj.optCleanString("id").trim()
+            if (curId.isEmpty() || !curId.all(Char::isDigit)) {
+                throw IllegalStateException("退座结果待核对：当前预约记录缺少有效编号（$lastMsg）")
+            }
+            if (curId == exactId) {
+                if (isConfirmedSeatCancelTerminalJsonObject(curObj)) {
+                    confirmedMatchCount++
+                } else {
+                    throw IllegalStateException("退座未确认完成：当前预约回查状态非明确已取消/已签退终态（$lastMsg）")
+                }
             }
         }
+
+        val inProgRoot = runCatching { JSONObject(inProgBody.trim()) }.getOrNull()
+        val inProgRows = inProgRoot?.optJSONArray("rows") ?: inProgRoot?.optJSONObject("data")?.optJSONArray("rows")
+        val inProgTotalObj = inProgRoot?.opt("total") ?: inProgRoot?.optJSONObject("data")?.opt("total")
+        if (inProgRoot == null ||
+            inProgRoot.opt("code") !is Number ||
+            inProgRoot.optInt("code", -1) != 200 ||
+            inProgRows == null ||
+            inProgTotalObj !is Number ||
+            inProgTotalObj.toInt() < 0 ||
+            inProgTotalObj.toInt() > inProgRows.length()
+        ) {
+            throw IllegalStateException("退座结果待核对：进行中预约列表响应不完整（$lastMsg）")
+        }
+        for (i in 0 until inProgRows.length()) {
+            val rowObj = inProgRows.optJSONObject(i)
+                ?: throw IllegalStateException("退座结果待核对：进行中预约列表包含空记录（$lastMsg）")
+            val rowId = rowObj.optCleanString("id").trim()
+            if (rowId.isEmpty() || !rowId.all(Char::isDigit)) {
+                throw IllegalStateException("退座结果待核对：进行中预约记录缺少有效编号（$lastMsg）")
+            }
+            if (rowId == exactId) {
+                if (isConfirmedSeatCancelTerminalJsonObject(rowObj)) {
+                    confirmedMatchCount++
+                } else {
+                    throw IllegalStateException("退座结果待核对：进行中记录编号 $exactId 尚未进入明确已取消/已签退终态（$lastMsg）")
+                }
+            }
+        }
+
+        val histRoot = runCatching { JSONObject(histBody.trim()) }.getOrNull()
+        val histRows = histRoot?.optJSONArray("rows") ?: histRoot?.optJSONObject("data")?.optJSONArray("rows")
+        val histTotalObj = histRoot?.opt("total") ?: histRoot?.optJSONObject("data")?.opt("total")
+        if (histRoot == null ||
+            histRoot.opt("code") !is Number ||
+            histRoot.optInt("code", -1) != 200 ||
+            histRows == null ||
+            (histTotalObj != null && histTotalObj !== JSONObject.NULL &&
+                (histTotalObj !is Number || histTotalObj.toInt() < 0 || histTotalObj.toInt() > histRows.length()))
+        ) {
+            throw IllegalStateException("退座结果待核对：历史预约列表响应不完整（$lastMsg）")
+        }
+        for (i in 0 until histRows.length()) {
+            val rowObj = histRows.optJSONObject(i)
+                ?: throw IllegalStateException("退座结果待核对：历史预约列表包含空记录（$lastMsg）")
+            val rowId = rowObj.optCleanString("id").trim()
+            if (rowId.isEmpty() || !rowId.all(Char::isDigit)) {
+                throw IllegalStateException("退座结果待核对：历史预约记录缺少有效编号（$lastMsg）")
+            }
+            if (rowId == exactId) {
+                if (isConfirmedSeatCancelTerminalJsonObject(rowObj)) {
+                    confirmedMatchCount++
+                } else {
+                    throw IllegalStateException("退座结果待核对：历史记录编号 $exactId 状态为非取消终态或字段矛盾（$lastMsg）")
+                }
+            }
+        }
+
+        if (confirmedMatchCount <= 0) {
+            throw IllegalStateException("退座结果待核对：尚未在学校预约记录中查到精确预约编号 $exactId 的明确已取消/已签退终态凭据（$lastMsg）")
+        }
+        return "已成功取消并释放座位（编号 $exactId）"
     }
 
     /**

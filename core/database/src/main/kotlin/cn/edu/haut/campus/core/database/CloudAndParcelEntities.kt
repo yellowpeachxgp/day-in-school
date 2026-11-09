@@ -186,20 +186,62 @@ interface CloudAndParcelDao {
         """
         UPDATE library_booking_plans
         SET status = 'EXECUTING',
-            fireStatus = 'DISPATCH_INTENT',
+            fireStatus = 'DISPATCH_INTENT:' || :attemptId,
             stateVersion = stateVersion + 1,
             updatedAtEpochMillis = :nowEpochMillis
         WHERE id = :planId
+          AND LENGTH(TRIM(:attemptId)) > 0
           AND executionMode = :expectedExecutionMode
           AND generation = :expectedGeneration
-          AND status IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK', 'EXECUTING')
+          AND status IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
+          AND fireStatus NOT LIKE 'DISPATCH_INTENT%'
         """
     )
     suspend fun claimBookingPlanForDispatch(
         planId: String,
         expectedExecutionMode: String,
         expectedGeneration: Int,
+        attemptId: String,
         nowEpochMillis: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE library_booking_plans
+        SET stateVersion = stateVersion + 1,
+            updatedAtEpochMillis = :nowEpochMillis
+        WHERE id = :planId
+          AND LENGTH(TRIM(:attemptId)) > 0
+          AND executionMode = :expectedExecutionMode
+          AND generation = :expectedGeneration
+          AND status = 'EXECUTING'
+          AND fireStatus = 'DISPATCH_INTENT:' || :attemptId
+        """
+    )
+    suspend fun retryBookingPlanDispatchForAttempt(
+        planId: String,
+        expectedExecutionMode: String,
+        expectedGeneration: Int,
+        attemptId: String,
+        nowEpochMillis: Long
+    ): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM library_booking_plans
+        WHERE id = :planId
+          AND LENGTH(TRIM(:attemptId)) > 0
+          AND executionMode = :expectedExecutionMode
+          AND generation = :expectedGeneration
+          AND status = 'EXECUTING'
+          AND fireStatus = 'DISPATCH_INTENT:' || :attemptId
+        """
+    )
+    suspend fun isBookingPlanOwnedByAttempt(
+        planId: String,
+        expectedExecutionMode: String,
+        expectedGeneration: Int,
+        attemptId: String
     ): Int
 
     @Query(
@@ -214,7 +256,7 @@ interface CloudAndParcelDao {
             updatedAtEpochMillis = :nowEpochMillis
         WHERE id = :planId
           AND status IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
-          AND fireStatus != 'DISPATCH_INTENT'
+          AND fireStatus NOT LIKE 'DISPATCH_INTENT%'
         """
     )
     suspend fun cancelQueuedBookingPlanAtomically(

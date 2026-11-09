@@ -108,6 +108,7 @@ fun CampusMomentsScreen(
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val studentProfile by repository.studentProfileFlow.collectAsState(initial = null)
+    val cloudBinding by repository.cloudIdentityBindingFlow.collectAsState(initial = null)
     val snapshot = prefs.campusMomentsSnapshot
 
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 3)) }
@@ -349,13 +350,17 @@ fun CampusMomentsScreen(
                                 post = post,
                                 matchedCluesCount = matchedClues.size,
                                 isFavorited = post.id in snapshot.favoritePostIds,
-                                isMine = post.id in snapshot.myPostIds,
+                                isMine = post.isOwner || post.canManage,
                                 onOpenDetail = { activePostDetailId = post.id },
                                 onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
                                 onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                 onCopyContact = {
-                                    copyTextToClipboard(context, "联系方式", post.contact)
-                                    feedbackMessage = "已复制"
+                                    if (post.canViewerReadRealContact) {
+                                        copyTextToClipboard(context, "联系方式", post.contact)
+                                        feedbackMessage = "已复制"
+                                    } else {
+                                        feedbackMessage = "该联系方式受保护，请先登录并发起联系申请"
+                                    }
                                 }
                             )
                         }
@@ -596,7 +601,7 @@ fun CampusMomentsScreen(
 
                     when (mySubTab) {
                         0 -> {
-                            val myPosts = snapshot.posts.filter { it.id in snapshot.myPostIds }
+                            val myPosts = snapshot.posts.filter { it.isOwner || it.canManage }
                             val myBooks = snapshot.bookListings.filter { it.id in snapshot.myBookIds }
                             if (myPosts.isEmpty() && myBooks.isEmpty()) {
                                 XPeachEmptyState(
@@ -615,8 +620,12 @@ fun CampusMomentsScreen(
                                     onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
-                                        copyTextToClipboard(context, "联系方式", post.contact)
-                                        feedbackMessage = "已复制"
+                                        if (post.canViewerReadRealContact) {
+                                            copyTextToClipboard(context, "联系方式", post.contact)
+                                            feedbackMessage = "已复制"
+                                        } else {
+                                            feedbackMessage = "该联系方式受保护，请先登录并发起联系申请"
+                                        }
                                     }
                                 )
                             }
@@ -651,13 +660,17 @@ fun CampusMomentsScreen(
                                     post = post,
                                     matchedCluesCount = PresetCampusMomentsCatalog.computeLocalMatches(post, snapshot.posts).size,
                                     isFavorited = true,
-                                    isMine = post.id in snapshot.myPostIds,
+                                    isMine = post.isOwner || post.canManage,
                                     onOpenDetail = { activePostDetailId = post.id },
                                     onLike = { scope.launch { repository.toggleMomentsPostLike(post.id) } },
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsPostFavorite(post.id) } },
                                     onCopyContact = {
-                                        copyTextToClipboard(context, "联系方式", post.contact)
-                                        feedbackMessage = "已复制"
+                                        if (post.canViewerReadRealContact) {
+                                            copyTextToClipboard(context, "联系方式", post.contact)
+                                            feedbackMessage = "已复制"
+                                        } else {
+                                            feedbackMessage = "该联系方式受保护，请先登录并发起联系申请"
+                                        }
                                     }
                                 )
                             }
@@ -772,22 +785,38 @@ fun CampusMomentsScreen(
         val matchedClues = remember(activeDetailPost, snapshot.posts) {
             PresetCampusMomentsCatalog.computeLocalMatches(activeDetailPost, snapshot.posts)
         }
-        var contactRequests by remember(activeDetailPost.id) {
-            mutableStateOf<List<cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.MomentsContactRequestDto>>(emptyList())
+        val activeViewerCloudUserId = cloudBinding?.cloudUserId.orEmpty()
+        var contactRequestsResult by remember(activeDetailPost.id, activeViewerCloudUserId) {
+            mutableStateOf(cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.MomentsContactRequestsListResult())
         }
         var contactRequestsTrigger by remember { mutableIntStateOf(0) }
-        LaunchedEffect(activeDetailPost.id, contactRequestsTrigger) {
-            contactRequests = repository.fetchMomentsContactRequests(activeDetailPost.id)
+        LaunchedEffect(activeDetailPost.id, contactRequestsTrigger, activeViewerCloudUserId) {
+            contactRequestsResult = if (activeViewerCloudUserId.isNotBlank()) {
+                repository.fetchMomentsContactRequestsResult(activeDetailPost.id)
+            } else {
+                cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.MomentsContactRequestsListResult()
+            }
         }
+        val canManageActivePost =
+            activeViewerCloudUserId.isNotBlank() && (
+                activeDetailPost.isOwner ||
+                    activeDetailPost.canManage ||
+                    contactRequestsResult.isOwner ||
+                    contactRequestsResult.canManage
+            )
         MomentsPostDetailDialog(
             post = activeDetailPost,
             matchedClues = matchedClues,
-            contactRequests = contactRequests,
-            isMine = activeDetailPost.id in snapshot.myPostIds,
+            contactRequests = contactRequestsResult.requests,
+            isMine = canManageActivePost,
             onDismiss = { activePostDetailId = null },
             onCopyContact = { contactText ->
-                copyTextToClipboard(context, "联系方式", contactText)
-                feedbackMessage = "已复制"
+                if (contactText.isNotBlank() && contactText != cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT) {
+                    copyTextToClipboard(context, "联系方式", contactText)
+                    feedbackMessage = "已复制"
+                } else {
+                    feedbackMessage = "该联系方式受保护，请先登录并发起联系申请"
+                }
             },
             onJumpToCluePost = { clueId ->
                 activePostDetailId = clueId
@@ -822,6 +851,19 @@ fun CampusMomentsScreen(
                         contactRequestsTrigger++
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "操作失败，请检查网络连接"
+                    }
+                }
+            },
+            onClaimLegacyOwnership = { claimToken ->
+                scope.launch {
+                    repository.claimLegacyMomentsPostOwnership(
+                        postId = activeDetailPost.id,
+                        claimToken = claimToken
+                    ).onSuccess {
+                        feedbackMessage = "已通过高熵所有权凭证核验并绑定当前云端账号管理权"
+                        contactRequestsTrigger++
+                    }.onFailure { err ->
+                        feedbackMessage = err.message ?: "旧帖所有权凭证核验未通过"
                     }
                 }
             },
@@ -879,8 +921,9 @@ fun CampusMomentsScreen(
 
     if (showPublishPostDialog) {
         PublishMomentsPostDialog(
+            isCloudSignedIn = cloudBinding != null,
             onDismiss = { showPublishPostDialog = false },
-            onSubmit = { type, title, category, campus, location, desc, contact, reward ->
+            onSubmit = { type, title, category, campus, location, desc, contact, reward, contactVisibility ->
                 scope.launch {
                     repository.publishMomentsPost(
                         type = type,
@@ -890,7 +933,8 @@ fun CampusMomentsScreen(
                         location = location,
                         description = desc,
                         contact = contact,
-                        rewardNote = reward
+                        rewardNote = reward,
+                        contactVisibility = contactVisibility
                     ).onSuccess {
                         showPublishPostDialog = false
                         feedbackMessage = "已发布"
@@ -1126,7 +1170,7 @@ private fun MomentsPostCard(
                 ) {
                     Text("向发起人发消息", style = MaterialTheme.typography.labelSmall)
                 }
-                if (post.contact.isNotBlank()) {
+                if (post.canViewerReadRealContact) {
                     OutlinedButton(
                         onClick = onCopyContact,
                         shape = RoundedCornerShape(8.dp),
@@ -1470,6 +1514,7 @@ private fun MomentsPostDetailDialog(
     onJumpToCluePost: (String) -> Unit,
     onSubmitContactRequest: (message: String, contactInfo: String) -> Unit = { _, _ -> },
     onHandleContactRequestAction: (requestId: String, action: String) -> Unit = { _, _ -> },
+    onClaimLegacyOwnership: (contactProof: String) -> Unit = {},
     onSubmitComment: (content: String, contactHint: String) -> Unit,
     onReportPost: () -> Unit = {},
     onToggleResolved: () -> Unit,
@@ -1478,6 +1523,8 @@ private fun MomentsPostDetailDialog(
     val context = LocalContext.current
     var commentInput by remember { mutableStateOf("") }
     var contactHintInput by remember { mutableStateOf("") }
+    var legacyProofInput by remember { mutableStateOf("") }
+    var showLegacyClaimBox by remember { mutableStateOf(false) }
     var messageModeIndex by remember { mutableIntStateOf(0) } // 0: 私密联系申请(需云端鉴权), 1: 公开线索留言(所有人可见)
 
     XPeachAlertDialog(
@@ -1528,13 +1575,15 @@ private fun MomentsPostDetailDialog(
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f)
                             )
-                            FilledTonalButton(
-                                onClick = { onCopyContact(post.contact) },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Text("复制", style = MaterialTheme.typography.labelSmall)
+                            if (post.canViewerReadRealContact) {
+                                FilledTonalButton(
+                                    onClick = { onCopyContact(post.contact) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("复制", style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
@@ -1806,8 +1855,9 @@ private fun MomentsPostDetailDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                val extractedDigits = remember(post.contact) {
-                    Regex("""\d{5,11}""").find(post.contact)?.value
+                val extractedDigits = remember(post.contact, post.canViewerReadRealContact) {
+                    if (!post.canViewerReadRealContact) null
+                    else Regex("""\d{5,11}""").find(post.contact)?.value
                 }
                 if (extractedDigits != null) {
                     Row(
@@ -1853,6 +1903,54 @@ private fun MomentsPostDetailDialog(
                     }
                 }
 
+                if (!isMine && post.isLegacyUnowned) {
+                    XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = if (post.canClaimLegacy) {
+                                "该帖支持凭发帖时签发的原始高熵所有权凭证（32位以上）认领管理权；为防止冒领，已关闭基于联系方式或脱敏学号的自助认领。"
+                            } else {
+                                "该帖为历史无主发布记录，为防冒领已关闭自助认领；如需结案、删除或核验处理，请点击下方提交由管理员人工核查。"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (post.canClaimLegacy) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (!showLegacyClaimBox) {
+                                OutlinedButton(
+                                    onClick = { showLegacyClaimBox = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("凭原始高熵所有权凭证认领旧帖", style = MaterialTheme.typography.labelSmall)
+                                }
+                            } else {
+                                OutlinedTextField(
+                                    value = legacyProofInput,
+                                    onValueChange = { legacyProofInput = it },
+                                    label = { Text("输入 32 位以上原始所有权凭证 (claim_token)") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Button(
+                                    enabled = legacyProofInput.trim().length >= 32,
+                                    onClick = {
+                                        onClaimLegacyOwnership(legacyProofInput.trim())
+                                        legacyProofInput = ""
+                                        showLegacyClaimBox = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("提交所有权凭证核验", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1878,7 +1976,7 @@ private fun MomentsPostDetailDialog(
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("举报不良或虚假信息")
+                            Text(if (post.isLegacyUnowned) "举报 / 申请管理员结案处理" else "举报不良或虚假信息")
                         }
                     }
                 }
@@ -1913,6 +2011,7 @@ private fun MomentsPostDetailDialog(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PublishMomentsPostDialog(
+    isCloudSignedIn: Boolean = true,
     onDismiss: () -> Unit,
     onSubmit: (
         type: MomentsPostType,
@@ -1922,7 +2021,8 @@ private fun PublishMomentsPostDialog(
         location: String,
         description: String,
         contact: String,
-        rewardNote: String
+        rewardNote: String,
+        contactVisibility: String
     ) -> Unit
 ) {
     var postType by remember { mutableStateOf(MomentsPostType.LOST) }
@@ -1932,6 +2032,7 @@ private fun PublishMomentsPostDialog(
     var location by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var contact by remember { mutableStateOf("") }
+    var contactVisibility by remember { mutableStateOf("ON_REQUEST") }
     var rewardNote by remember { mutableStateOf("") }
 
     XPeachAlertDialog(
@@ -1945,6 +2046,22 @@ private fun PublishMomentsPostDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = if (isCloudSignedIn) {
+                            "当前已登录云端账号：发布后绑定您的云端身份，换机重装后仍可结案、删除及审批联系申请。"
+                        } else {
+                            "身份要求：发布寻物或招领信息需先在「我的 → 云端账号」登录账号，以保障跨设备结案、删除与隐私审批权限。"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isCloudSignedIn) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
+                    )
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     XPeachFilterPill(
                         label = "寻物",
@@ -2035,6 +2152,21 @@ private fun PublishMomentsPostDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    XPeachFilterPill(
+                        label = "仅申请通过后可见（推荐）",
+                        selected = contactVisibility == "ON_REQUEST",
+                        compact = true,
+                        onClick = { contactVisibility = "ON_REQUEST" }
+                    )
+                    XPeachFilterPill(
+                        label = "直接公开",
+                        selected = contactVisibility == "PUBLIC",
+                        compact = true,
+                        onClick = { contactVisibility = "PUBLIC" }
+                    )
+                }
+
                 OutlinedTextField(
                     value = rewardNote,
                     onValueChange = { rewardNote = it },
@@ -2047,7 +2179,7 @@ private fun PublishMomentsPostDialog(
         },
         confirmButton = {
             Button(
-                enabled = title.trim().isNotEmpty() && contact.trim().isNotEmpty(),
+                enabled = isCloudSignedIn && title.trim().isNotEmpty() && contact.trim().isNotEmpty(),
                 onClick = {
                     onSubmit(
                         postType,
@@ -2057,7 +2189,8 @@ private fun PublishMomentsPostDialog(
                         location.ifBlank { "校内" },
                         description,
                         contact,
-                        rewardNote
+                        rewardNote,
+                        contactVisibility
                     )
                 },
                 shape = RoundedCornerShape(12.dp)
