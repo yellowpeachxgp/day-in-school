@@ -100,10 +100,10 @@ object CampusMapNavigator {
     const val CAMPUS_CENTER_LNG = 113.544200
     private const val CAMPUS_GEOFENCE_RADIUS_METERS = 3000
 
-    // 河南工业大学嵩山路校区真实中心点（WGS-84，郑州市二七区嵩山南路140号）
-    const val SONGSHANLU_CENTER_LAT = 34.737500
-    const val SONGSHANLU_CENTER_LNG = 113.619500
-    private const val SONGSHANLU_GEOFENCE_RADIUS_METERS = 2000
+    // 河南工业大学嵩山路校区真实中心点（WGS-84，对应郑州市中原区嵩山南路140号 / 伊河路南侧 GCJ-02 34.740717,113.626113）
+    const val SONGSHANLU_CENTER_LAT = 34.741905
+    const val SONGSHANLU_CENTER_LNG = 113.620066
+    private const val SONGSHANLU_GEOFENCE_RADIUS_METERS = 750
 
     private const val EARTH_RADIUS_M = 6378245.0
     private const val EE = 0.00669342162296594323
@@ -141,11 +141,11 @@ object CampusMapNavigator {
         CampusRoadNode("r_m_eng_s", "实训中心南路口", 34.83060, 113.54230),
         CampusRoadNode("r_m_t1_n", "1教北侧林荫道", 34.83060, 113.54420),
         CampusRoadNode("r_m_axis", "教学区中轴十字", 34.83060, 113.54532),
-        CampusRoadNode("r_m_t2_s", "2教南路口", 34.83060, 113.54642),
+        CampusRoadNode("r_m_t2_s", "32号楼南路口", 34.83060, 113.54642),
         CampusRoadNode("r_m_t3_n", "3教北路口", 34.83060, 113.54785),
 
         // 校区中轴景观道与图书馆/实训/西门沿线 (lat ≈ 34.8312 ~ 34.8322)
-        CampusRoadNode("r_t2_gate", "2号教学楼入口", 34.83124, 113.54615),
+        CampusRoadNode("r_t2_gate", "32号楼（土建楼）入口", 34.83124, 113.54615),
         CampusRoadNode("r_eng_gate", "实训中心入口", 34.83123, 113.54230),
         CampusRoadNode("r_c_west_gate", "长椿路西门广场", 34.83185, 113.53675),
         CampusRoadNode("r_c_dorm_m", "公寓区中路路口", 34.83185, 113.53880),
@@ -153,7 +153,7 @@ object CampusMapNavigator {
         CampusRoadNode("r_c_eng_n", "实训中心北路口", 34.83185, 113.54230),
         CampusRoadNode("r_c_lib_w", "图书馆西侧步道", 34.83185, 113.54420),
         CampusRoadNode("r_c_lib_s", "图书馆南广场", 34.83185, 113.54565),
-        CampusRoadNode("r_c_t2_n", "2教北侧路口", 34.83185, 113.54642),
+        CampusRoadNode("r_c_t2_n", "32号楼北侧路口", 34.83185, 113.54642),
         CampusRoadNode("r_c_east", "东环中路路口", 34.83185, 113.54785),
         CampusRoadNode("r_lib_gate", "图书馆主入口", 34.83210, 113.54570),
         CampusRoadNode("r_cant_door", "第四学生餐厅入口", 34.83226, 113.54130),
@@ -198,15 +198,15 @@ object CampusMapNavigator {
         CampusRoadEdge("r_m_axis", "r_m_t2_s", "教学区中路"),
         CampusRoadEdge("r_m_t2_s", "r_m_t3_n", "教学区中路"),
 
-        // 2教与实训中心竖向连道
+        // 32号楼与实训中心竖向连道
         CampusRoadEdge("r_s_west", "r_m_eng_s", "实训西路"),
         CampusRoadEdge("r_m_eng_s", "r_eng_gate", "实训西路"),
         CampusRoadEdge("r_eng_gate", "r_c_eng_n", "实训西路"),
         CampusRoadEdge("r_s_t1_w", "r_m_t1_n", "1教西侧林荫道"),
         CampusRoadEdge("r_m_t1_n", "r_c_lib_w", "图书馆西路"),
         CampusRoadEdge("r_m_axis", "r_c_lib_s", "校园中轴大道"),
-        CampusRoadEdge("r_m_t2_s", "r_t2_gate", "2教步行道"),
-        CampusRoadEdge("r_t2_gate", "r_c_t2_n", "2教步行道"),
+        CampusRoadEdge("r_m_t2_s", "r_t2_gate", "32号楼步行道"),
+        CampusRoadEdge("r_t2_gate", "r_c_t2_n", "32号楼步行道"),
         CampusRoadEdge("r_m_t3_n", "r_c_east", "东环路"),
 
         // 中心景观大道 (lat ≈ 34.83185)

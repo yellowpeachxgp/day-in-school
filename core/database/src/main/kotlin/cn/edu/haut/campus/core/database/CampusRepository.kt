@@ -122,7 +122,7 @@ data class AppPreferencesState(
     val themeMode: String = "SYSTEM",
     val uiDesignStyle: String = "FLUTTER_M3",
     val themePaletteKey: String = "HAUT_BLUE",
-    val customThemeSeedArgb: Long = 0xFF0066CC,
+    val customThemeSeedArgb: Long = 0xFF053968,
     val customWallpaperPath: String? = null,
     val wallpaperAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA,
     val wallpaperBlurDp: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP,
@@ -255,6 +255,7 @@ class CampusRepository internal constructor(
         val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
         val GIS_DICTIONARY_SYNCED_V15 = booleanPreferencesKey("official_gis_dictionary_synced_v15")
         val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
+        val GIS_DICTIONARY_SYNCED_V17 = booleanPreferencesKey("official_gis_dictionary_synced_v17")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
@@ -488,8 +489,16 @@ class CampusRepository internal constructor(
             themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
             uiDesignStyle = prefs[PrefKeys.UI_DESIGN_STYLE]
                 ?: if (prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FRESH_BREEZE",
-            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "MINT_BREEZE",
-            customThemeSeedArgb = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF10B981,
+            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
+            customThemeSeedArgb = run {
+                val paletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
+                val storedSeed = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB]
+                when {
+                    paletteKey == "HAUT_BLUE" && (storedSeed == null || storedSeed == 0xFF0066CCL) -> 0xFF053968L
+                    storedSeed != null -> storedSeed
+                    else -> 0xFF053968L
+                }
+            },
             customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
             wallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(
                 prefs[PrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
@@ -742,15 +751,22 @@ class CampusRepository internal constructor(
                 it[PrefKeys.CLEAN_BASE_V2] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
             }
-        } else if (prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true || prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V16] != true) {
+        } else if (
+            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true ||
+            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V16] != true ||
+            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V17] != true
+        ) {
             database.withTransaction {
-                dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+                dao.deleteBuildingAliasesByIds(listOf("al_4", "al_4b", "al_4c", "al_5"))
+                dao.upsertBuildings(HautMockSeedData.defaultBuildings.map { it.toEntity() })
                 dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
             }
             preferences.edit {
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
             }
         }
         if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {

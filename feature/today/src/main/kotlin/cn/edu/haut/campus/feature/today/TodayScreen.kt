@@ -2033,7 +2033,7 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            subtitle = if (rules.isNotEmpty()) "当前 $freeRoomsCount 间教室空闲" else "按教学楼与节次查询",
+            subtitle = if (rules.isNotEmpty()) "名录 $freeRoomsCount 间个人无冲突 · 双校区参考" else "双校区自习教室目录与无课参考",
             onClick = onNavigateToEmptyClassrooms
         ),
         HomeCardModule.CAMPUS_COMMUNITY.id to HomeModularCardSpec(

@@ -178,8 +178,8 @@ val LocalGlassCardAlpha = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT
 val LocalGlassBlurDp = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP }
 val LocalBackdropAlpha = staticCompositionLocalOf { ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA }
 
-val XPeachBrandLight = Color(0xFF0066CC)
-val XPeachBrandHoverLight = Color(0xFF0052A3)
+val XPeachBrandLight = Color(0xFF053968)
+val XPeachBrandHoverLight = Color(0xFF042D52)
 val XPeachBrandSoftLight = Color(0xFFEAF3FF)
 val XPeachBrandBorderLight = Color(0xFFC2DDFB)
 
@@ -810,7 +810,7 @@ enum class PresetThemePalette(
     LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "淡雅浅紫", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
     POMELO_SUN("POMELO_SUN", "西柚暖阳", "温暖珊瑚橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
     LIQUID_GLASS("LIQUID_GLASS", "Liquid Glass", "液态透镜折射", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
-    HAUT_BLUE("HAUT_BLUE", "工大蓝", "标准深蓝", 0xFF0066CC, recommendedStyle = UiDesignStyle.FLUTTER_M3),
+    HAUT_BLUE("HAUT_BLUE", "工大蓝", "工大深蓝 (#053968)", 0xFF053968, recommendedStyle = UiDesignStyle.FLUTTER_M3),
     PINE_TEAL("PINE_TEAL", "松石青", "沉稳青绿", 0xFF0D9488),
     JADE_GREEN("JADE_GREEN", "翡翠绿", "自然深绿", 0xFF16A34A),
     AMBER_GOLD("AMBER_GOLD", "琥珀金", "温暖琥珀色", 0xFFD97706),
@@ -1280,11 +1280,15 @@ fun buildSeedColorScheme(
     return if (!darkTheme) {
         val isCream = uiDesignStyle == UiDesignStyle.CREAM_PASTEL
         val isFresh = uiDesignStyle == UiDesignStyle.FRESH_BREEZE
-        val primary = hsvColor(
-            hue,
-            if (isFresh || isCream) sat.coerceIn(0.28f, 0.78f) else sat.coerceAtLeast(0.22f),
-            if (isFresh || isCream) value.coerceIn(0.48f, 0.80f) else value.coerceIn(0.42f, 0.82f)
-        )
+        val primary = if (!isFresh && !isCream && (seedArgb and 0xFFFFFFL) == 0x053968L) {
+            Color(0xFF053968)
+        } else {
+            hsvColor(
+                hue,
+                if (isFresh || isCream) sat.coerceIn(0.28f, 0.78f) else sat.coerceAtLeast(0.22f),
+                if (isFresh || isCream) value.coerceIn(0.48f, 0.80f) else value.coerceIn(0.38f, 0.82f)
+            )
+        }
         val primaryContainer = hsvColor(
             hue,
             if (isCream) (sat * 0.20f).coerceIn(0.07f, 0.22f) else (sat * 0.24f).coerceIn(0.08f, 0.26f),

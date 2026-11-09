@@ -34,7 +34,8 @@ data class CampusCanteenProfile(
     val nearbyBuildingIds: Set<String>,
     val brunchDishes: List<String>,
     val lunchDinnerDishes: List<String>,
-    val lateDishes: List<String>
+    val lateDishes: List<String>,
+    val isOperating: Boolean = true
 )
 
 /**
@@ -221,28 +222,30 @@ object CampusDiningRecommender {
         CampusCanteenProfile(
             buildingId = "b_canteen2",
             campusId = "lianhuajie",
-            name = "第二餐厅",
-            shortName = "二餐厅",
-            areaLabel = "北区中心湖畔 · 近1/2教与图书馆",
+            name = "原第二餐厅（已停业）",
+            shortName = "原二餐厅(停业)",
+            areaLabel = "北区中心湖畔 · 现已停业",
             latitude = 34.833950,
             longitude = 113.544600,
             nearbyBuildingIds = setOf("b_t1", "b_t2", "b_library", "b_dorm_ab", "b_dorm_gh", "b_admin"),
             brunchDishes = listOf("八宝粥配小笼包", "山东杂粮煎饼", "潼关肉夹馍"),
             lunchDinnerDishes = listOf("两荤一素自选菜", "广式脆皮烧鸭饭", "卤香猪脚饭", "老坛酸菜鱼米饭", "滇味过桥米线"),
-            lateDishes = listOf("川味冒菜", "鲜肉馄饨", "炸串卷饼")
+            lateDishes = listOf("川味冒菜", "鲜肉馄饨", "炸串卷饼"),
+            isOperating = false
         ),
         CampusCanteenProfile(
             buildingId = "b_canteen3",
             campusId = "lianhuajie",
-            name = "第三餐厅",
-            shortName = "三餐厅",
-            areaLabel = "西生活区 · 近5/6/8号楼与K/L/M公寓",
+            name = "原第三餐厅（已停业）",
+            shortName = "原三餐厅(停业)",
+            areaLabel = "西生活区 · 现已停业",
             latitude = 34.832950,
             longitude = 113.539600,
             nearbyBuildingIds = setOf("b_t5", "b_t6", "b_t7", "b_t8", "b_t9", "b_t25", "b_stadium", "b_dorm_klm"),
             brunchDishes = listOf("清真牛肉包配油茶", "豆腐脑配油条", "东北烤冷面"),
             lunchDinnerDishes = listOf("新疆大盘鸡拌面", "兰州牛肉拉面", "牛羊肉泡馍", "韩式石锅拌饭", "孜然烤肉拌饭"),
-            lateDishes = listOf("烤肉筋配热馕", "牛肉炒刀削", "鸡蛋炒米粉")
+            lateDishes = listOf("烤肉筋配热馕", "牛肉炒刀削", "鸡蛋炒米粉"),
+            isOperating = false
         ),
         CampusCanteenProfile(
             buildingId = "b_canteen4",
@@ -252,7 +255,7 @@ object CampusDiningRecommender {
             areaLabel = "中西区 · 近实训中心与实验楼群",
             latitude = 34.832260,
             longitude = 113.541300,
-            nearbyBuildingIds = setOf("b_eng", "b_t34", "b_t38", "b_t40", "b_t8", "b_t18", "b_dorm_ef"),
+            nearbyBuildingIds = setOf("b_eng", "b_t34", "b_t38", "b_t40", "b_t5", "b_t6", "b_t7", "b_t8", "b_t9", "b_t18", "b_dorm_ef"),
             brunchDishes = listOf("现磨豆浆配掉渣饼", "鲜虾蒸饺", "皮蛋瘦肉粥"),
             lunchDinnerDishes = listOf("招牌脆皮鸡米饭", "锡纸花甲粉", "番茄肥牛米线", "咖喱滑蛋猪排饭", "低脂鸡胸肉轻食碗"),
             lateDishes = listOf("铁板烤冷面", "关东煮拼盘", "老麻抄手")
@@ -262,7 +265,7 @@ object CampusDiningRecommender {
             campusId = "lianhuajie",
             name = "小食堂（风味餐厅）",
             shortName = "小食堂",
-            areaLabel = "东侧教学区旁 · 近2/3/4号教学楼",
+            areaLabel = "东侧教学区旁 · 近3/4号教学楼",
             latitude = 34.830570,
             longitude = 113.549520,
             nearbyBuildingIds = setOf("b_t2", "b_t3", "b_t4", "b_t1", "b_hospital"),
@@ -276,14 +279,16 @@ object CampusDiningRecommender {
             name = "嵩山路学生餐厅",
             shortName = "嵩山餐厅",
             areaLabel = "嵩山路生活区 · 近1/2号教学楼",
-            latitude = 34.736950,
-            longitude = 113.618100,
+            latitude = 34.741150,
+            longitude = 113.620850,
             nearbyBuildingIds = setOf("b_ss_t1", "b_ss_t2", "b_ss_lab", "b_ss_lib", "b_ss_dorm"),
             brunchDishes = listOf("胡辣汤配油条", "鲜肉包配小米粥", "鸡蛋灌饼"),
             lunchDinnerDishes = listOf("一楼自选快餐", "河南羊肉烩面", "黑椒牛柳盖浇饭", "骨汤麻辣烫"),
             lateDishes = listOf("砂锅米线", "鸡蛋炒饭")
         )
     )
+
+    val OPERATING_CANTEENS: List<CampusCanteenProfile> = CANTEENS.filter { it.isOperating }
 
     val DEFAULT_DISH_CATALOG: List<CampusDishCatalogItem> = listOf(
         // 一餐厅
@@ -535,6 +540,8 @@ object CampusDiningRecommender {
         val results = mutableListOf<AggregatedDishRating>()
 
         for (item in DEFAULT_DISH_CATALOG) {
+            val canteenProfile = canteenMap[item.canteenBuildingId]
+            if (canteenBuildingIdFilter == null && canteenProfile?.isOperating == false) continue
             if (canteenBuildingIdFilter != null && item.canteenBuildingId != canteenBuildingIdFilter) continue
             val key = "${item.canteenBuildingId}:${item.dishName}"
             handledKeys += key
@@ -838,7 +845,7 @@ object CampusDiningRecommender {
             classroomText.contains("嵩山") -> "songshanlu"
             else -> "lianhuajie"
         }
-        val pool = CANTEENS.filter { it.campusId == campusId }.ifEmpty { CANTEENS }
+        val pool = OPERATING_CANTEENS.filter { it.campusId == campusId }.ifEmpty { OPERATING_CANTEENS }
         val allAggregated = aggregateDishRatings(userReviews)
 
         data class ScoredCanteen(

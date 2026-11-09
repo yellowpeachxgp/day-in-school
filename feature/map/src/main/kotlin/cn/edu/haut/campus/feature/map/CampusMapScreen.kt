@@ -98,6 +98,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -1012,13 +1013,27 @@ fun CampusMapScreen(
                 }
             )
 
+            var isPreviewMapTouching by remember { mutableStateOf(false) }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(rememberScrollState(), enabled = !isPreviewMapTouching)
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (detectedCampus.isLowAccuracyGps) {
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "当前定位精度较低 (±${detectedCampus.gpsAccuracyMeters?.roundToInt() ?: 100}m)，电子围栏自动识别存在不确定性，可在下方手动切换校区。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 // 0. 统一教室/实验室/楼宇搜索与校区切换卡片（与全屏地图无缝共享状态）
                 XPeachCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -1266,9 +1281,11 @@ fun CampusMapScreen(
                                         append("步行约 ${navigationPlan.estimatedWalkMinutes} 分钟 (${navigationPlan.estimatedWalkDistanceMeters}m)")
                                         if (selectedIndoorRoom != null) {
                                             append(" · ${selectedIndoorRoom!!.floorLabel} ${selectedIndoorRoom!!.name}")
+                                        } else if (!resolution?.roomNumberHint.isNullOrBlank()) {
+                                            append(" · 房间 ${resolution!!.roomNumberHint}（已定位至楼栋）")
                                         }
                                     } else {
-                                        append("点击建筑查看路线与室内平面图")
+                                        append("双指缩放/拖拽或点击右侧按钮调整视野")
                                     }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
@@ -1336,16 +1353,17 @@ fun CampusMapScreen(
                             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
-                            zoom = mapZoom.coerceIn(15.6f, 18.0f),
+                            zoom = mapZoom.coerceIn(13.8f, 18.8f),
                             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
                             gisDataset = if (isLianhuajieActive) gisDataset else null,
                             activeBuildingFootprint = activeBuildingFootprint,
                             selectedIndoorRoom = selectedIndoorRoom,
                             campusPolygonVertices = activeCampusPolygon,
+                            onTouchActiveChange = { isPreviewMapTouching = it },
                             onViewportChange = { newLat, newLon, newZoom ->
                                 mapCenterLatGcj = newLat
                                 mapCenterLonGcj = newLon
-                                mapZoom = newZoom
+                                mapZoom = newZoom.coerceIn(13.8f, 18.8f)
                             },
                             onSelectBuilding = { clicked ->
                                 selectedBuilding = clicked
@@ -1353,6 +1371,23 @@ fun CampusMapScreen(
                                 isFullScreenMap = true
                             }
                         )
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            XPeachIconButton(
+                                icon = Icons.Default.Add,
+                                contentDescription = "放大地图",
+                                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(13.8f, 18.8f) }
+                            )
+                            XPeachIconButton(
+                                icon = Icons.Default.Remove,
+                                contentDescription = "缩小地图",
+                                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(13.8f, 18.8f) }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -2169,12 +2204,12 @@ fun CampusMapScreen(
             XPeachIconButton(
                 icon = Icons.Default.Add,
                 contentDescription = "放大地图",
-                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(14.5f, 18.8f) }
+                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(13.8f, 18.8f) }
             )
             XPeachIconButton(
                 icon = Icons.Default.Remove,
                 contentDescription = "缩小地图",
-                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(14.5f, 18.8f) }
+                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(13.8f, 18.8f) }
             )
             XPeachIconButton(
                 icon = Icons.Default.ZoomOutMap,
@@ -2192,11 +2227,11 @@ fun CampusMapScreen(
                         )
                         mapCenterLatGcj = (origLat + destLat) / 2.0
                         mapCenterLonGcj = (origLon + destLon) / 2.0
-                        mapZoom = 16.0f
+                        mapZoom = 15.4f
                     } else {
                         mapCenterLatGcj = defaultCenterGcj.first
                         mapCenterLonGcj = defaultCenterGcj.second
-                        mapZoom = 16.3f
+                        mapZoom = 15.6f
                     }
                 }
             )
@@ -2681,6 +2716,9 @@ private fun OfficialGisWebViewDialog(
                             settings.setGeolocationEnabled(true)
                             settings.loadWithOverviewMode = true
                             settings.useWideViewPort = true
+                            settings.setSupportZoom(true)
+                            settings.builtInZoomControls = true
+                            settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             webChromeClient = object : WebChromeClient() {
                                 override fun onGeolocationPermissionsShowPrompt(
@@ -2754,6 +2792,7 @@ private fun RealCampusTileMap(
     campusPolygonVertices: List<GeoPoint> = emptyList(),
     drawingPolygonVertices: List<GeoPoint> = emptyList(),
     isDrawingZoneMode: Boolean = false,
+    onTouchActiveChange: (Boolean) -> Unit = {},
     onTapMapWgs84: ((Double, Double) -> Unit)? = null,
     onViewportChange: (Double, Double, Float) -> Unit,
     onSelectBuilding: (Building) -> Unit
@@ -2765,7 +2804,11 @@ private fun RealCampusTileMap(
     var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
     var canvasHeightPx by remember { mutableFloatStateOf(1920f) }
 
-    val tileZ = zoom.roundToInt().coerceIn(15, 18)
+    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) {
+        zoom.roundToInt().coerceIn(16, 18)
+    } else {
+        zoom.roundToInt().coerceIn(14, 18)
+    }
     val scaleFactor = 2.0.pow((zoom - tileZ).toDouble()).toFloat()
     val baseTileRenderPx = 256f * context.resources.displayMetrics.density * 0.90f * scaleFactor
 
@@ -2799,6 +2842,7 @@ private fun RealCampusTileMap(
     val currentGisDataset by rememberUpdatedState(gisDataset)
     val currentIsDrawingMode by rememberUpdatedState(isDrawingZoneMode)
     val currentOnTapMapWgs84 by rememberUpdatedState(onTapMapWgs84)
+    val currentOnTouchActiveChange by rememberUpdatedState(onTouchActiveChange)
     val currentOnViewportChange by rememberUpdatedState(onViewportChange)
     val currentOnSelectBuilding by rememberUpdatedState(onSelectBuilding)
 
@@ -2869,6 +2913,15 @@ private fun RealCampusTileMap(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val anyPressed = event.changes.any { it.pressed }
+                        currentOnTouchActiveChange(anyPressed)
+                    }
+                }
+            }
+            .pointerInput(Unit) {
                 detectTapGestures { tapOffset ->
                     if (currentIsDrawingMode && currentOnTapMapWgs84 != null) {
                         val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, currentTileZ)
@@ -2918,14 +2971,19 @@ private fun RealCampusTileMap(
                 }
             }
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, gestureZoom, _ ->
+                detectTransformGestures { centroid, pan, gestureZoom, _ ->
                     val zNow = currentTileZ
                     val tilePxNow = currentBaseTilePx
                     val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, zNow)
                     val newZoom = (currentZoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
-                        .coerceIn(13.5f, 18.8f)
-                    val dTileX = -pan.x / tilePxNow
-                    val dTileY = -pan.y / tilePxNow
+                        .coerceIn(13.8f, 18.8f)
+                    val zoomRatio = 2.0.pow((newZoom - currentZoom).toDouble()).toFloat()
+                    val offsetFromCenterX = centroid.x - (canvasWidthPx / 2f)
+                    val offsetFromCenterY = centroid.y - (canvasHeightPx / 2f)
+                    val dxPx = -pan.x + offsetFromCenterX * (1f - 1f / zoomRatio)
+                    val dyPx = -pan.y + offsetFromCenterY * (1f - 1f / zoomRatio)
+                    val dTileX = dxPx / tilePxNow
+                    val dTileY = dyPx / tilePxNow
                     val (newLat, newLon) = tileXYToLatLon(
                         cTx + dTileX,
                         cTy + dTileY,

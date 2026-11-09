@@ -131,25 +131,25 @@ object HautMockSeedData {
     val lianhuajieBuildings = listOf(
         Building(
             id = "b_t1",
-            name = "31号楼（1号教学楼）",
+            name = "31号楼（电气信息楼）",
             shortName = "31号楼",
             latitude = 34.830310,
             longitude = 113.540590,
             category = CampusCategory.TEACHING_BUILDING,
             entrances = listOf("南侧正门", "东连廊入口", "西侧楼梯口"),
-            description = "6层公共教学与电气信息实验楼（311xx-315xx / 11xx-15xx教室）",
-            verifiedAt = LocalDate.of(2026, 11, 5)
+            description = "6层公共教学与电气信息实验楼（311xx-315xx教室）",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_t2",
-            name = "32号楼（土建楼/2教）",
+            name = "32号楼（土建楼）",
             shortName = "32号楼",
             latitude = 34.830190,
             longitude = 113.539030,
             category = CampusCategory.TEACHING_BUILDING,
             entrances = listOf("南门大厅", "东侧连廊"),
-            description = "6层土木建筑学院与公共教学楼（321xx-325xx / 21xx-25xx教室）",
-            verifiedAt = LocalDate.of(2026, 11, 5)
+            description = "6层土木建筑学院与公共教学楼（321xx-325xx教室）",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_t3",
@@ -340,25 +340,25 @@ object HautMockSeedData {
         ),
         Building(
             id = "b_canteen2",
-            name = "第二餐厅",
-            shortName = "二餐厅",
+            name = "原第二餐厅（已停业）",
+            shortName = "原二餐厅(停业)",
             latitude = 34.833950,
             longitude = 113.544600,
             category = CampusCategory.CANTEEN,
             entrances = listOf("南侧入口", "东侧入口"),
-            description = "莲花街校区北区中心湖畔学生餐厅，近1/2号教学楼与A/B/G/H公寓",
-            verifiedAt = LocalDate.of(2026, 11, 5)
+            description = "莲花街校区北区原第二餐厅建筑（现已停业，就餐请前往第一餐厅、第四餐厅或小食堂）",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_canteen3",
-            name = "第三餐厅",
-            shortName = "三餐厅",
+            name = "原第三餐厅（已停业）",
+            shortName = "原三餐厅(停业)",
             latitude = 34.832950,
             longitude = 113.539600,
             category = CampusCategory.CANTEEN,
             entrances = listOf("南门入口", "东侧门"),
-            description = "莲花街校区西生活区风味与清真餐厅，近K/L/M公寓与体育训练中心",
-            verifiedAt = LocalDate.of(2026, 11, 5)
+            description = "莲花街校区西生活区原第三餐厅建筑（现已停业，就餐请前往第四餐厅、第一餐厅或小食堂）",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_canteen4",
@@ -379,8 +379,8 @@ object HautMockSeedData {
             longitude = 113.549520,
             category = CampusCategory.CANTEEN,
             entrances = listOf("西侧入口"),
-            description = "东侧教学区旁特色风味就餐点，近2/3/4号教学楼",
-            verifiedAt = LocalDate.of(2026, 11, 5)
+            description = "东侧教学区旁特色风味就餐点，近3/4号教学楼",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_gate_south",
@@ -490,17 +490,15 @@ object HautMockSeedData {
         BuildingAlias("al_1d", "b_t1", "31号楼", 1.0f, true),
         BuildingAlias("al_1e", "b_t1", "莲31号", 1.0f, true),
         BuildingAlias("al_1f", "b_t1", "^31[1-6]\\d{2}$", 0.96f, true),
-        BuildingAlias("al_2", "b_t1", "一号教学楼", 0.98f, true),
-        BuildingAlias("al_3", "b_t1", "1教", 0.95f, true),
-        BuildingAlias("al_4", "b_t2", "2号教学楼", 1.0f, true),
-        BuildingAlias("al_4b", "b_t2", "莲2号教学楼", 1.0f, true),
-        BuildingAlias("al_4c", "b_t2", "莲02号教学楼", 1.0f, true),
         BuildingAlias("al_4d", "b_t2", "32号楼", 1.0f, true),
         BuildingAlias("al_4e", "b_t2", "土建楼", 1.0f, true),
+        BuildingAlias("al_4e2", "b_t2", "莲32号", 1.0f, true),
         BuildingAlias("al_4f", "b_t2", "^32[1-6]\\d{2}$", 0.96f, true),
-        BuildingAlias("al_5", "b_t2", "二号教学楼", 0.98f, true),
         BuildingAlias("al_6", "b_t2", "教学楼A", 0.90f, true),
         BuildingAlias("al_7", "b_t2", "A座", 0.72f, false), // 模糊别名：触发用户确认弹窗
+        BuildingAlias("al_dorm_f01_a", "b_dorm_ef", "学生宿舍F01", 1.0f, true),
+        BuildingAlias("al_dorm_f01_b", "b_dorm_ef", "宿舍F01", 0.98f, true),
+        BuildingAlias("al_dorm_f01_c", "b_dorm_ef", "F01", 0.96f, true),
         BuildingAlias("al_8", "b_t3", "3号教学楼", 1.0f, true),
         BuildingAlias("al_8a", "b_t3", "3号楼", 1.0f, true),
         BuildingAlias("al_8b", "b_t3", "莲3号教学楼", 1.0f, true),

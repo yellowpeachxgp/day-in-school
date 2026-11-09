@@ -22,16 +22,35 @@ data class CampusStudyPeriodSlot(
 object CampusStudyRoomCatalog {
 
     val LIANHUAJIE_STUDY_ROOMS_MAP: Map<String, List<String>> = linkedMapOf(
+        "3号教学楼" to listOf("3101", "3103", "3201", "3203", "3301", "3401"),
+        "4号教学楼" to listOf("4101", "4103", "4201", "4203", "4301", "4401"),
         "5号教学楼" to listOf("5101", "5103", "5105", "5201", "5202", "5204", "5301", "5303", "5402"),
         "6号教学楼" to listOf("6101", "6102", "6201", "6203", "6205", "6301", "6304", "6401"),
         "7号教学楼" to listOf("7102", "7104", "7201", "7203", "7302", "7305", "7401"),
         "8号教学楼" to listOf("8101", "8103", "8201", "8202", "8301", "8303", "8402"),
         "9号教学楼" to listOf("9101", "9102", "9201", "9204", "9301", "9303"),
-        "11号教学楼" to listOf("11101", "11102", "11201", "11203", "11301", "11302"),
+        "31号楼" to listOf("31101", "31103", "31201", "31203", "31301"),
+        "32号楼" to listOf("32101", "32103", "32201", "32203", "32301"),
+    )
+
+    val SONGSHANLU_STUDY_ROOMS_MAP: Map<String, List<String>> = linkedMapOf(
+        "嵩山路1号教学楼" to listOf("嵩山1教101", "嵩山1教103", "嵩山1教201", "嵩山1教203", "嵩山1教301", "嵩山1教303", "嵩山1教401"),
+        "嵩山路2号教学楼" to listOf("嵩山2教101", "嵩山2教102", "嵩山2教201", "嵩山2教202", "嵩山2教301", "嵩山2教302"),
+        "嵩山路实验与综合楼" to listOf("嵩山综合楼201", "嵩山综合楼202", "嵩山综合楼301", "嵩山综合楼302"),
     )
 
     val ALL_LIANHUAJIE_CANDIDATE_ROOMS: List<String> =
         LIANHUAJIE_STUDY_ROOMS_MAP.values.flatten()
+
+    val ALL_SONGSHANLU_CANDIDATE_ROOMS: List<String> =
+        SONGSHANLU_STUDY_ROOMS_MAP.values.flatten()
+
+    fun studyRoomsMapForCampus(campusId: String?): Map<String, List<String>> =
+        if (campusId != null && campusId.contains("songshan", ignoreCase = true)) {
+            SONGSHANLU_STUDY_ROOMS_MAP
+        } else {
+            LIANHUAJIE_STUDY_ROOMS_MAP
+        }
 
     val STUDY_PERIOD_SLOTS: List<CampusStudyPeriodSlot> = listOf(
         CampusStudyPeriodSlot(0, "1-2节", 1, 2, LocalTime.of(9, 50)),

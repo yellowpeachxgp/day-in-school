@@ -128,6 +128,9 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBuildingAliases(items: List<BuildingAliasEntity>)
 
+    @Query("DELETE FROM building_aliases WHERE id IN (:ids)")
+    suspend fun deleteBuildingAliasesByIds(ids: List<String>)
+
     @Query("SELECT * FROM widget_instance_configs")
     fun observeWidgetConfigs(): Flow<List<WidgetInstanceConfigEntity>>
 

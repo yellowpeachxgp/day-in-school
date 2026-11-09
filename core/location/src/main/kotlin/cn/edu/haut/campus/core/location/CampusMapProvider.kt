@@ -77,7 +77,7 @@ object HautSongshanluMapProvider : CampusMapProvider {
     override val evidence: CapabilityEvidence = CapabilityEvidence(
         level = VerificationLevel.SOURCE_CONFIRMED,
         sourceReference = "core/domain/src/main/kotlin/cn/edu/haut/campus/core/domain/ClassroomBuildingResolver.kt",
-        note = "嵩山路校区（郑州市二七区嵩山南路140号）8栋核心教学与生活楼宇及电子区划围栏"
+        note = "嵩山路校区（郑州市中原区嵩山南路140号）8栋核心教学与生活楼宇及电子区划围栏"
     )
 
     override fun buildWalkingRoute(
@@ -108,7 +108,9 @@ data class DetectedCampusResult(
     val centerLatitude: Double,
     val centerLongitude: Double,
     val source: CampusDetectionSource,
-    val customZone: CustomCampusZone? = null
+    val customZone: CustomCampusZone? = null,
+    val isLowAccuracyGps: Boolean = false,
+    val gpsAccuracyMeters: Float? = null
 )
 
 /**
@@ -156,6 +158,7 @@ object CampusGeofenceRecognizer {
 
         // 2. 实时 GPS 电子区划与双校区电子围栏自动识别
         if (userLocation != null) {
+            val lowAcc = userLocation.accuracyMeters > 90f
             customZones.firstOrNull { it.containsWgs84Point(userLocation.latitude, userLocation.longitude) }?.let { zone ->
                 return DetectedCampusResult(
                     campusId = zone.campusId,
@@ -163,37 +166,41 @@ object CampusGeofenceRecognizer {
                     centerLatitude = zone.centerLatitude,
                     centerLongitude = zone.centerLongitude,
                     source = CampusDetectionSource.LIVE_GPS_CUSTOM_POLYGON,
-                    customZone = zone
+                    customZone = zone,
+                    isLowAccuracyGps = lowAcc,
+                    gpsAccuracyMeters = userLocation.accuracyMeters
                 )
             }
-            if (userLocation.isInsideSongshanluCampus ||
-                CustomCampusZone.isPointInPolygon(
+            if (CustomCampusZone.isPointInPolygon(
                     userLocation.latitude,
                     userLocation.longitude,
                     ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
-                )
+                ) || (userLocation.isInsideSongshanluCampus && !lowAcc)
             ) {
                 return DetectedCampusResult(
                     campusId = SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value,
                     campusName = "嵩山路校区",
                     centerLatitude = CampusMapNavigator.SONGSHANLU_CENTER_LAT,
                     centerLongitude = CampusMapNavigator.SONGSHANLU_CENTER_LNG,
-                    source = CampusDetectionSource.LIVE_GPS_GEOFENCE
+                    source = CampusDetectionSource.LIVE_GPS_GEOFENCE,
+                    isLowAccuracyGps = lowAcc,
+                    gpsAccuracyMeters = userLocation.accuracyMeters
                 )
             }
-            if (userLocation.isInsideLianhuajieCampus ||
-                CustomCampusZone.isPointInPolygon(
+            if (CustomCampusZone.isPointInPolygon(
                     userLocation.latitude,
                     userLocation.longitude,
                     ClassroomBuildingResolver.HAUT_LIANHUAJIE_POLYGON
-                )
+                ) || userLocation.isInsideLianhuajieCampus
             ) {
                 return DetectedCampusResult(
                     campusId = SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID.value,
                     campusName = "莲花街校区",
                     centerLatitude = CampusMapNavigator.CAMPUS_CENTER_LAT,
                     centerLongitude = CampusMapNavigator.CAMPUS_CENTER_LNG,
-                    source = CampusDetectionSource.LIVE_GPS_GEOFENCE
+                    source = CampusDetectionSource.LIVE_GPS_GEOFENCE,
+                    isLowAccuracyGps = lowAcc,
+                    gpsAccuracyMeters = userLocation.accuracyMeters
                 )
             }
         }

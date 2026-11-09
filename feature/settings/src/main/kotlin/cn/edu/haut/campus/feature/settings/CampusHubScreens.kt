@@ -113,18 +113,31 @@ fun EmptyClassroomScreen(
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val rules by repository.rulesFlow.collectAsState(initial = emptyList())
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
+    val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val currentTeachingWeek = remember(today, currentTerm, calendarOverrides) {
         currentTerm?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }
 
+    var selectedCampusKey by remember(prefs.selectedCampusId) {
+        mutableStateOf(
+            if (prefs.selectedCampusId.contains("songshan", ignoreCase = true) ||
+                rules.any { it.rawRoom.contains("嵩山") }
+            ) "songshanlu" else "lianhuajie"
+        )
+    }
+    val campusDisplayName = if (selectedCampusKey == "songshanlu") "嵩山路校区" else "莲花街校区"
+
     var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
     var selectedSlotIndex by remember {
         mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).hour))
     }
-    val buildingKeys = remember { CampusStudyRoomCatalog.LIANHUAJIE_STUDY_ROOMS_MAP.keys.toList() }
-    var selectedBuildingFilter by remember { mutableStateOf<String?>(null) }
+    val campusRoomsMap = remember(selectedCampusKey) {
+        CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
+    }
+    val buildingKeys = remember(campusRoomsMap) { campusRoomsMap.keys.toList() }
+    var selectedBuildingFilter by remember(selectedCampusKey) { mutableStateOf<String?>(null) }
 
     val activeSlot = CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[selectedSlotIndex]
     val busyRoomsInSlot = remember(rules, currentTerm?.id, currentTeachingWeek, selectedDayOfWeek, activeSlot) {
@@ -143,8 +156,8 @@ fun EmptyClassroomScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         XPeachTopBar(
-            title = "空教室查询",
-            subtitle = "莲花街校区 · 第 $currentTeachingWeek 周 · 点击教室可直接导航",
+            title = "自习教室与无课参考",
+            subtitle = "$campusDisplayName · 第 $currentTeachingWeek 周 · 个人课表无冲突参考",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -161,12 +174,41 @@ fun EmptyClassroomScreen(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            XPeachWell(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "选择星期与节次",
+                    text = "选择校区、星期与节次",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    XPeachFilterPill(
+                        label = "莲花街校区",
+                        selected = selectedCampusKey == "lianhuajie",
+                        onClick = { selectedCampusKey = "lianhuajie" }
+                    )
+                    XPeachFilterPill(
+                        label = "嵩山路校区",
+                        selected = selectedCampusKey == "songshanlu",
+                        onClick = { selectedCampusKey = "songshanlu" }
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -226,7 +268,7 @@ fun EmptyClassroomScreen(
             }
 
             for (buildingName in buildingsToShow) {
-                val candidateRooms = CampusStudyRoomCatalog.LIANHUAJIE_STUDY_ROOMS_MAP[buildingName].orEmpty()
+                val candidateRooms = campusRoomsMap[buildingName].orEmpty()
                 val freeRooms = candidateRooms.filter { code ->
                     CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
                 }
@@ -242,7 +284,7 @@ fun EmptyClassroomScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusDotText(
-                            text = "${freeRooms.size}/${candidateRooms.size} 空闲",
+                            text = "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间",
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }
@@ -263,7 +305,12 @@ fun EmptyClassroomScreen(
                                         shape = RoundedCornerShape(10.dp)
                                     )
                                     .clickable {
-                                        onNavigateToMapWithRoom("${buildingName.removeSuffix("教学楼")}-$roomCode")
+                                        val navTarget = if (roomCode.contains("嵩山")) {
+                                            roomCode
+                                        } else {
+                                            "${buildingName.removeSuffix("教学楼")}-$roomCode"
+                                        }
+                                        onNavigateToMapWithRoom(navTarget)
                                     }
                                     .padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,

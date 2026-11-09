@@ -21,110 +21,110 @@ object ClassroomBuildingResolver {
         GeoPoint(34.83580, 113.53560)
     )
 
-    // 河南工业大学嵩山路校区电子围栏多边形顶点（WGS-84，郑州市二七区嵩山南路140号）
+    // 河南工业大学嵩山路校区电子围栏多边形顶点（WGS-84，对应郑州市中原区嵩山南路140号 / 伊河路南侧 GCJ-02 34.740717,113.626113）
     val HAUT_SONGSHANLU_POLYGON = listOf(
-        GeoPoint(34.73520, 113.61620),
-        GeoPoint(34.73520, 113.62220),
-        GeoPoint(34.73980, 113.62220),
-        GeoPoint(34.73980, 113.61620)
+        GeoPoint(34.74029, 113.61816),
+        GeoPoint(34.74029, 113.62216),
+        GeoPoint(34.74349, 113.62216),
+        GeoPoint(34.74349, 113.61816)
     )
 
     val HAUT_SONGSHANLU_BUILDINGS: List<Building> = listOf(
         Building(
             id = "b_ss_gate_east",
             campusId = "songshanlu",
-            name = "嵩山路校区东门（正门）",
-            shortName = "嵩山路东门",
-            latitude = 34.73745,
-            longitude = 113.62110,
+            name = "嵩山路校区主校门（嵩山南路140号）",
+            shortName = "嵩山路校门",
+            latitude = 34.74190,
+            longitude = 113.61855,
             category = CampusCategory.GATE,
             entrances = listOf("嵩山南路140号主入口"),
-            description = "河南工业大学嵩山路校区东侧主校门，紧邻地铁5号线齐礼阎站。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            description = "河南工业大学嵩山路校区主校门（郑州市中原区嵩山南路140号，近伊河路交叉口）。",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_t1",
             campusId = "songshanlu",
             name = "嵩山路1号教学楼",
             shortName = "嵩山1教",
-            latitude = 34.73785,
-            longitude = 113.61980,
+            latitude = 34.74215,
+            longitude = 113.61975,
             category = CampusCategory.TEACHING_BUILDING,
             entrances = listOf("南正门", "东侧门"),
             description = "嵩山路校区核心公共教学楼，承担嵩山路校区专业课与公共基础课教学。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_t2",
             campusId = "songshanlu",
             name = "嵩山路2号教学楼",
             shortName = "嵩山2教",
-            latitude = 34.73830,
-            longitude = 113.61920,
+            latitude = 34.74265,
+            longitude = 113.62030,
             category = CampusCategory.TEACHING_BUILDING,
             entrances = listOf("南门", "西连廊"),
             description = "嵩山路校区第二教学楼及阶梯教室集中区。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_lab",
             campusId = "songshanlu",
             name = "嵩山路实验与综合楼",
             shortName = "嵩山综合楼",
-            latitude = 34.73720,
+            latitude = 34.74145,
             longitude = 113.61960,
             category = CampusCategory.LAB,
             entrances = listOf("北门"),
-            description = "嵩山路校区机房、实验室与继续教育/专科教学办公综合楼。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            description = "嵩山路校区机房、实验室与教学办公综合楼。",
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_lib",
             campusId = "songshanlu",
             name = "嵩山路校区图书馆",
             shortName = "嵩山图书馆",
-            latitude = 34.73760,
-            longitude = 113.61860,
+            latitude = 34.74195,
+            longitude = 113.62055,
             category = CampusCategory.LIBRARY,
-            entrances = listOf("东正门"),
+            entrances = listOf("西正门"),
             description = "嵩山路校区图书借阅与自习阅览室。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_canteen",
             campusId = "songshanlu",
             name = "嵩山路学生餐厅",
             shortName = "嵩山餐厅",
-            latitude = 34.73695,
-            longitude = 113.61810,
+            latitude = 34.74115,
+            longitude = 113.62085,
             category = CampusCategory.CANTEEN,
-            entrances = listOf("东入口", "北入口"),
+            entrances = listOf("西入口", "北入口"),
             description = "嵩山路校区师生综合餐饮中心。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_dorm",
             campusId = "songshanlu",
             name = "嵩山路学生公寓区",
             shortName = "嵩山公寓",
-            latitude = 34.73670,
-            longitude = 113.61750,
+            latitude = 34.74085,
+            longitude = 113.62140,
             category = CampusCategory.DORMITORY,
-            entrances = listOf("东门禁通道"),
+            entrances = listOf("西门禁通道"),
             description = "嵩山路校区学生宿舍楼群与生活服务区。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         ),
         Building(
             id = "b_ss_sports",
             campusId = "songshanlu",
             name = "嵩山路田径运动场",
             shortName = "嵩山操场",
-            latitude = 34.73840,
-            longitude = 113.61760,
+            latitude = 34.74285,
+            longitude = 113.62135,
             category = CampusCategory.SPORTS,
-            entrances = listOf("东看台入口"),
+            entrances = listOf("西看台入口"),
             description = "嵩山路校区标准田径跑道与篮球场。",
-            verifiedAt = LocalDate.of(2026, 3, 1)
+            verifiedAt = LocalDate.of(2026, 11, 9)
         )
     )
 
