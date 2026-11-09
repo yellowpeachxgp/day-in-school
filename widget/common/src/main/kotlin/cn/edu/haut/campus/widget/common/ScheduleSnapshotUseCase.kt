@@ -142,13 +142,20 @@ object ScheduleSnapshotUseCase {
             } else null
         } else null
 
+        val activeTermId = data.term?.id
+        val hasTermCourses = if (!activeTermId.isNullOrBlank()) {
+            data.rules.any { it.termId == activeTermId }
+        } else {
+            data.rules.isNotEmpty()
+        }
+
         return WidgetScheduleSnapshot(
             profileId = active.profileId,
             generation = active.generation,
             daySnapshot = daySnapshot,
             weekOccurrences = weekOccurrences,
             config = config,
-            hasImportedCourses = data.rules.isNotEmpty(),
+            hasImportedCourses = hasTermCourses,
             chronometerTargetElapsedRealtime = chronometerBase,
             themeAccentArgb = themeAccentArgb
         )

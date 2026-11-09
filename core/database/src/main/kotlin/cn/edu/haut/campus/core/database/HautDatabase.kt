@@ -92,6 +92,12 @@ interface CampusDao {
     @Query("DELETE FROM occurrence_overrides WHERE id = :id")
     suspend fun deleteOccurrenceOverrideById(id: String)
 
+    @Query("DELETE FROM occurrence_overrides WHERE courseRuleId = :ruleId AND dateIso = :dateIso")
+    suspend fun deleteOccurrenceOverridesForRuleOnDate(ruleId: String, dateIso: String)
+
+    @Query("DELETE FROM occurrence_overrides WHERE courseRuleId = :ruleId")
+    suspend fun deleteOccurrenceOverridesByRuleId(ruleId: String)
+
     @Query("DELETE FROM occurrence_overrides WHERE courseRuleId = :ruleId AND dateIso = :dateIso AND canceled = 1")
     suspend fun deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId: String, dateIso: String)
 

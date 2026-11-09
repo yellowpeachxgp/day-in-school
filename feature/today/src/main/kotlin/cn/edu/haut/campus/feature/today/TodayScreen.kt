@@ -1304,16 +1304,10 @@ private fun CourseDetailAndSnoozeDialog(
                     OutlinedButton(
                         onClick = {
                             scope.launch {
-                                repository.saveOccurrenceOverride(
-                                    OccurrenceOverride(
-                                        id = "ov_cancel_${occ.date}_${occ.ruleId ?: UUID.randomUUID()}",
-                                        termId = termId,
-                                        courseRuleId = occ.ruleId,
-                                        courseId = occ.courseId,
-                                        date = occ.date,
-                                        canceled = true,
-                                        reason = "单次停课"
-                                    )
+                                repository.cancelClassOccurrenceOnDate(
+                                    occ = occ,
+                                    termId = termId,
+                                    reason = "单次停课"
                                 )
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 onCourseSuspended(occ.courseName)
@@ -1322,7 +1316,8 @@ private fun CourseDetailAndSnoozeDialog(
                         },
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("今日停课", maxLines = 1, softWrap = false)
+                        val isTodayOcc = occ.date == LocalDate.now(HAUT_ZONE_ID)
+                        Text(if (isTodayOcc) "今日停课" else "本节停课", maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -1882,11 +1877,9 @@ private fun TodayCampusBentoSection(
     }
 
     val currentTermExams = remember(examSchedules, activeTermId) {
-        if (!activeTermId.isNullOrBlank()) {
-            examSchedules.filter { it.termId == activeTermId }
-        } else {
-            examSchedules
-        }
+        val effectiveTermId = activeTermId?.takeIf { it.isNotBlank() }
+            ?: cn.edu.haut.campus.core.model.AcademicTermResolver.defaultTermId()
+        examSchedules.filter { it.termId == effectiveTermId }
     }
 
     val nearestExam = remember(currentTermExams, selectedDate, todayDate) {

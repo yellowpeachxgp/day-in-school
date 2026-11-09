@@ -552,6 +552,14 @@ fun GradesScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
+                    if (selectedTermFilter == null && gpaReport.currentTermGpa == null && attempts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "当前学期 ($activeTermId) 暂未出分，下方展示历史已出分成绩",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 // 目标绩点与新修学分测算

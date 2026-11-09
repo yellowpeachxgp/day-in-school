@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.CalendarOverrideType
+import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.ExamScheduleItem
@@ -400,5 +401,67 @@ class ReminderSystemDomainTest {
         assertFalse(plans[0].taskKey == plans[1].taskKey)
         assertTrue(plans.any { it.reminderKind == ReminderKind.EXAM_DAY_BEFORE })
         assertTrue(plans.any { it.reminderKind == ReminderKind.EXAM_HOUR_BEFORE })
+    }
+
+    @Test
+    fun `UT-19 restoring single-day canceled occurrence reactivates CANCELLED reminder task to PENDING`() {
+        val classDate = LocalDate.of(2026, 9, 14)
+        val occ = ClassOccurrence(
+            occurrenceId = "${classDate}_r1",
+            courseId = "c_math",
+            ruleId = "r1",
+            courseName = "高等数学",
+            colorArgb = 0xFF053968,
+            date = classDate,
+            teachingWeek = 3,
+            weekday = DayOfWeek.MONDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            startTime = LocalTime.of(8, 30),
+            endTime = LocalTime.of(10, 5),
+            rawRoom = "莲4号教学楼101"
+        )
+        val event = ReminderPlanner.projectClassOccurrenceToEvent("2026-2027-1", occ)
+        val config = ReminderGlobalConfig(enabled = true, classLeadMinutes = 15)
+        val now = ReminderRevision.schoolInstant(classDate, LocalTime.of(7, 30))
+
+        // Step 1: initial schedule creates PENDING task
+        val initialPlans = ReminderPlanner.planAllEvents(listOf(event), config, emptyMap(), now)
+        val initialDiff = ReminderPlanner.computeReconcileDiff(
+            currentEvents = listOf(event),
+            desiredPlans = initialPlans,
+            persistedTasks = emptyList(),
+            remindersEnabled = true,
+            now = now
+        )
+        assertEquals(1, initialDiff.tasksToSchedule.size)
+        val scheduledTask = initialDiff.tasksToUpsert.single().copy(
+            schedulerState = ReminderSchedulerState.SCHEDULED
+        )
+
+        // Step 2: occurrence canceled -> desiredPlans empty -> persisted task transitions to CANCELLED
+        val cancelDiff = ReminderPlanner.computeReconcileDiff(
+            currentEvents = emptyList(),
+            desiredPlans = emptyList(),
+            persistedTasks = listOf(scheduledTask),
+            remindersEnabled = true,
+            now = now.plusSeconds(60)
+        )
+        val cancelledTask = cancelDiff.tasksToUpsert.single()
+        assertEquals(ReminderTaskStatus.CANCELLED, cancelledTask.status)
+
+        // Step 3: occurrence restored -> same eventRevision & policyRevision -> MUST reactivate to PENDING + NEEDS_SCHEDULE!
+        val restorePlans = ReminderPlanner.planAllEvents(listOf(event), config, emptyMap(), now.plusSeconds(120))
+        val restoreDiff = ReminderPlanner.computeReconcileDiff(
+            currentEvents = listOf(event),
+            desiredPlans = restorePlans,
+            persistedTasks = listOf(cancelledTask),
+            remindersEnabled = true,
+            now = now.plusSeconds(120)
+        )
+        assertEquals(1, restoreDiff.tasksToSchedule.size)
+        val reactivated = restoreDiff.tasksToUpsert.single()
+        assertEquals(ReminderTaskStatus.PENDING, reactivated.status)
+        assertEquals(cancelledTask.generation + 1, reactivated.generation)
     }
 }

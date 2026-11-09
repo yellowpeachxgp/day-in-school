@@ -324,6 +324,25 @@ object ReminderPlanner {
             val samePolicyRev = existing.policyRevision == plan.policyRevision
 
             if (sameEventRev && samePolicyRev) {
+                if (existing.status == ReminderTaskStatus.CANCELLED && targetMs > nowMs) {
+                    // 停课后又恢复上课：事件与策略修订号相同，但原任务处于 CANCELLED，需重新激活并排入调度队列
+                    val reactivated = existing.copy(
+                        eventStartAtEpochMs = startMs,
+                        originalScheduledAtEpochMs = targetMs,
+                        scheduledAtEpochMs = targetMs,
+                        status = ReminderTaskStatus.PENDING,
+                        schedulerState = ReminderSchedulerState.NEEDS_SCHEDULE,
+                        generation = existing.generation + 1,
+                        snoozeCount = 0,
+                        claimedAtEpochMs = null,
+                        deliveredAtEpochMs = null,
+                        lastErrorCode = null,
+                        updatedAtEpochMs = nowMs
+                    )
+                    tasksToUpsert.add(reactivated)
+                    tasksToSchedule.add(reactivated)
+                    continue
+                }
                 // 事件与策略均未变化：保持幂等，仅当处于需要修复调度状态时补排
                 if (existing.status in setOf(ReminderTaskStatus.PENDING, ReminderTaskStatus.SNOOZED) &&
                     existing.schedulerState in setOf(ReminderSchedulerState.NEEDS_SCHEDULE, ReminderSchedulerState.ERROR) &&

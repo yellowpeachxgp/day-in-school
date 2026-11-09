@@ -230,11 +230,14 @@ object AcademicTermResolver {
     const val AUTUMN_SEMESTER_CODE: String = "3"
     const val SPRING_SEMESTER_CODE: String = "12"
     const val SUMMER_SEMESTER_CODE: String = "16"
+    private val CAMPUS_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
+    private fun campusToday(): LocalDate = LocalDate.now(CAMPUS_ZONE)
 
     /**
      * 根据给定日期推算正方教务学年码 `xnm`（如 2025 年 9 月至 2026 年 7 月均为 `"2025"`）。
      */
-    fun defaultAcademicYearCode(today: LocalDate = LocalDate.now()): String {
+    fun defaultAcademicYearCode(today: LocalDate = campusToday()): String {
         val startYear = if (today.monthValue >= 8) today.year else today.year - 1
         return startYear.toString()
     }
@@ -242,14 +245,14 @@ object AcademicTermResolver {
     /**
      * 根据给定日期推算正方教务学期码 `xqm`（2–7 月为第二学期 `"12"`，8–1 月为第一学期 `"3"`）。
      */
-    fun defaultSemesterCode(today: LocalDate = LocalDate.now()): String {
+    fun defaultSemesterCode(today: LocalDate = campusToday()): String {
         return if (today.monthValue in 2..7) SPRING_SEMESTER_CODE else AUTUMN_SEMESTER_CODE
     }
 
     /**
      * 根据给定日期推算标准学期 ID（如 `"2025-2026-2"`）。
      */
-    fun defaultTermId(today: LocalDate = LocalDate.now()): String {
+    fun defaultTermId(today: LocalDate = campusToday()): String {
         val startYear = defaultAcademicYearCode(today).toIntOrNull() ?: 2025
         val endYear = startYear + 1
         val semNo = if (defaultSemesterCode(today) == SPRING_SEMESTER_CODE) "2" else "1"
@@ -259,12 +262,12 @@ object AcademicTermResolver {
     /**
      * 生成候选学年代码列表（供下拉或分段选择）。
      */
-    fun candidateAcademicYearCodes(today: LocalDate = LocalDate.now(), count: Int = 4): List<String> {
+    fun candidateAcademicYearCodes(today: LocalDate = campusToday(), count: Int = 4): List<String> {
         val baseYear = defaultAcademicYearCode(today).toIntOrNull() ?: 2025
         return (0 until count).map { offset -> (baseYear - offset).toString() }
     }
 
-    fun recentAcademicYears(count: Int = 4, today: LocalDate = LocalDate.now()): List<String> =
+    fun recentAcademicYears(count: Int = 4, today: LocalDate = campusToday()): List<String> =
         candidateAcademicYearCodes(today = today, count = count)
 
     /**

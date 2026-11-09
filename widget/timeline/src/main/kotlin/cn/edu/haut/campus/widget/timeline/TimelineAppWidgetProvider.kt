@@ -126,7 +126,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 )
                 views.setTextViewText(
                     R.id.tv_tl_slot_2,
-                    hint?.firstCourseName ?: "近期暂无排课"
+                    if (snapshot.config.privacyMode && hint != null) "课程已隐藏" else (hint?.firstCourseName ?: "近期暂无排课")
                 )
                 val hintRoom = hint?.let { WidgetRoomFormatter.formatCompactRoom(it.firstCourseRoom, snapshot.config.privacyMode) }.orEmpty()
                 views.setTextViewText(R.id.tv_tl_room_2, hintRoom)
@@ -191,7 +191,8 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                 R.id.tv_tl_footer,
                 activeItem?.let {
                     val room = WidgetRoomFormatter.formatFullRoom(it.occurrence.rawRoom, snapshot.config.privacyMode)
-                    "${it.statusText} · ${it.occurrence.courseName} · $room"
+                    val title = if (snapshot.config.privacyMode) "课程已隐藏" else it.occurrence.courseName
+                    "${it.statusText} · $title · $room"
                 } ?: "今日课程已全部结束"
             )
 
@@ -211,6 +212,11 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             }
 
             if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
+            WidgetRefreshCoordinator.scheduleNextBoundaryRefresh(
+                context = context,
+                daySnapshot = day,
+                receiverClass = TimelineAppWidgetProvider::class.java
+            )
         }
     }
 }

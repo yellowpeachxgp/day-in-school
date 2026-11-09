@@ -30,9 +30,13 @@ object ImportDiffEngine {
         for (candidate in incomingCandidates) {
             fun isSameCourse(course: Course?): Boolean {
                 if (course == null) return false
-                if (course.name == candidate.courseName) return true
-                if (!candidate.externalId.isNullOrBlank() && course.externalId == candidate.externalId) return true
-                return false
+                if (!course.externalId.isNullOrBlank() && !candidate.externalId.isNullOrBlank()) {
+                    return course.externalId == candidate.externalId
+                }
+                if (course.externalId.orEmpty().startsWith("sjk:") != candidate.externalId.orEmpty().startsWith("sjk:")) {
+                    return false
+                }
+                return course.name == candidate.courseName
             }
 
             // 仅匹配未被消费的同课程规则（优先完全匹配周次，其次匹配同星期同节次同课程），绝不跨课程互相覆盖

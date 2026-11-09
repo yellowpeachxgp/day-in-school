@@ -433,4 +433,166 @@ class BookingDispatchExclusiveClaimDaoTest {
         repo.wipeAllPersonalData()
         org.junit.Assert.assertEquals(null, testDataStore.data.first()[rawMomentsKey])
     }
+
+    @Test
+    fun `upgraded user on 2025-2026-2 rolls over to 2026-2027-1 and single-day cancel after edit replaces override cleanly`() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val dataStoreFile = java.io.File.createTempFile("haut_term_rollover_", ".preferences_pb")
+        dataStoreFile.deleteOnExit()
+        val testDataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
+            produceFile = { dataStoreFile }
+        )
+        val campusDao = database.campusDao()
+        campusDao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+        campusDao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+        campusDao.upsertPeriodTimes(HautMockSeedData.defaultPeriodTimes.map { it.toEntity() })
+        campusDao.upsertTerms(
+            listOf(
+                cn.edu.haut.campus.core.model.Term(
+                    id = "2025-2026-2",
+                    academicYear = "2025-2026",
+                    termNumber = 2,
+                    startDate = java.time.LocalDate.of(2026, 3, 2),
+                    weekCount = 20,
+                    timeTableId = HautMockSeedData.DEFAULT_TIMETABLE_ID,
+                    current = true
+                ).toEntity()
+            )
+        )
+        val savedXnmKey = androidx.datastore.preferences.core.stringPreferencesKey("saved_jw_sync_xnm")
+        val savedXqmKey = androidx.datastore.preferences.core.stringPreferencesKey("saved_jw_sync_xqm")
+        testDataStore.updateData { prefs ->
+            prefs.toMutablePreferences().apply {
+                this[savedXnmKey] = "2025"
+                this[savedXqmKey] = "12"
+            }
+        }
+
+        val storage = isolatedAccountStoragePartition("prof_rollover_01")
+        val repo = CampusRepository(
+            appContext = context,
+            database = database,
+            preferences = testDataStore,
+            accountProfile = AccountProfileEntity(
+                id = "prof_rollover_01",
+                accountId = "acct_rollover_01",
+                schoolId = "haut",
+                schoolName = "河南工业大学",
+                province = "河南省",
+                city = "郑州市",
+                campusId = "lianhuajie",
+                campusName = "莲花街校区",
+                timeZoneId = "Asia/Shanghai",
+                label = "测试升级账号",
+                isLegacy = false,
+                databaseName = storage.databaseName,
+                preferencesName = storage.preferencesName,
+                createdAtEpochMs = 1_000L
+            )
+        )
+        repo.activateSession(1L)
+        repo.ensureSeasonalTermRolloverIfNeeded(today = java.time.LocalDate.of(2026, 10, 15))
+
+        assertEquals("2026-2027-1", campusDao.getCurrentTerm()?.id)
+        assertEquals("2026", testDataStore.data.first()[savedXnmKey])
+        assertEquals("3", testDataStore.data.first()[savedXqmKey])
+
+        // Verify single-day edit -> single-day cancel deduplicates override and resolves buildingId
+        val activeTerm = campusDao.getCurrentTerm()!!.toDomain()
+        val course = cn.edu.haut.campus.core.model.Course(
+            id = "c_test_01",
+            name = "数据结构",
+            teacher = "张老师",
+            colorArgb = 0xFF053968,
+            source = cn.edu.haut.campus.core.model.CourseSource.MANUAL,
+            userModified = true
+        )
+        val rule1 = cn.edu.haut.campus.core.model.CourseScheduleRule(
+            id = "r_test_1_2",
+            courseId = course.id,
+            termId = activeTerm.id,
+            weekday = java.time.DayOfWeek.MONDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            weeks = setOf(1, 2, 3),
+            rawRoom = "莲4号教学楼101",
+            buildingId = "b_t4"
+        )
+        val rule2 = rule1.copy(id = "r_test_3_4", startPeriod = 3, endPeriod = 4)
+        campusDao.upsertCourse(course.toEntity())
+        campusDao.upsertRules(listOf(rule1.toEntity(), rule2.toEntity()))
+
+        val monday = java.time.LocalDate.of(2026, 9, 7)
+        // 1) Single-day room modification resolves buildingId ("莲5号202" -> "b_t5")
+        repo.saveOccurrenceOverride(
+            cn.edu.haut.campus.core.model.OccurrenceOverride(
+                id = "ov_mod_${monday}_r_test_1_2",
+                termId = activeTerm.id,
+                courseId = course.id,
+                courseRuleId = rule1.id,
+                date = monday,
+                startPeriod = 1,
+                endPeriod = 2,
+                room = "5号教学楼202",
+                canceled = false,
+                reason = "单次调课"
+            )
+        )
+        val afterEdit = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = monday,
+            term = activeTerm,
+            courses = listOf(course),
+            rules = listOf(rule1),
+            periodTimes = HautMockSeedData.defaultPeriodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() },
+            buildings = HautMockSeedData.lianhuajieBuildings
+        )
+        assertEquals(1, afterEdit.size)
+        assertEquals("b_t5", afterEdit.single().buildingId)
+
+        // 2) Cancel after edit replaces ov_mod_... cleanly so Loop 2 does NOT resurrect it!
+        repo.cancelClassOccurrenceOnDate(
+            occ = afterEdit.single(),
+            termId = activeTerm.id,
+            reason = "单次停课"
+        )
+        val afterCancel = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = monday,
+            term = activeTerm,
+            courses = listOf(course),
+            rules = listOf(rule1),
+            periodTimes = HautMockSeedData.defaultPeriodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() },
+            buildings = HautMockSeedData.lianhuajieBuildings
+        )
+        assertEquals(0, afterCancel.size)
+
+        // 3) Merged 1-4节 occurrence cancels BOTH r_test_1_2 and r_test_3_4 in one action
+        val nextMonday = java.time.LocalDate.of(2026, 9, 14)
+        val mergedBeforeCancel = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = nextMonday,
+            term = activeTerm,
+            courses = listOf(course),
+            rules = listOf(rule1, rule2),
+            periodTimes = HautMockSeedData.defaultPeriodTimes
+        )
+        assertEquals(1, mergedBeforeCancel.size)
+        assertEquals(listOf("r_test_1_2", "r_test_3_4"), mergedBeforeCancel.single().mergedRuleIds)
+
+        repo.cancelClassOccurrenceOnDate(
+            occ = mergedBeforeCancel.single(),
+            termId = activeTerm.id,
+            reason = "连堂停课"
+        )
+        val mergedAfterCancel = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = nextMonday,
+            term = activeTerm,
+            courses = listOf(course),
+            rules = listOf(rule1, rule2),
+            periodTimes = HautMockSeedData.defaultPeriodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals(0, mergedAfterCancel.size)
+    }
 }

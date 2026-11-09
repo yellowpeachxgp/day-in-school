@@ -499,6 +499,11 @@ fun SettingsScreen(
 
                     XPeachInsetDivider(verticalPadding = 10.dp)
 
+                    val activeExamTermId = currentTerm?.id?.takeIf { it.isNotBlank() }
+                        ?: cn.edu.haut.campus.core.model.AcademicTermResolver.defaultTermId()
+                    val activeTermExamCount = remember(examSchedules, activeExamTermId) {
+                        examSchedules.count { it.termId == activeExamTermId }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -511,7 +516,7 @@ fun SettingsScreen(
                         )
                         ProfileMetricItem(
                             label = "考试安排",
-                            value = "${examSchedules.size}场",
+                            value = "${activeTermExamCount}场",
                             modifier = Modifier.weight(1f)
                         )
                         ProfileMetricItem(

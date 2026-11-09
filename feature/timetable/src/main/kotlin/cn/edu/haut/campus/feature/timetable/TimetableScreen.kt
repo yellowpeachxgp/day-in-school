@@ -700,9 +700,16 @@ fun TimetableScreen(
                         }
                         XPeachInsetDivider(verticalPadding = 0.dp)
 
-                        // 1-10 节高透气网格（含午休/晚间视觉分段线 + 顶底分离式课程卡片）
+                        // 1-10/12 节高透气网格（含午休/晚间视觉分段线 + 顶底分离式课程卡片）
                         val slotHeightDp = if (showSevenDays) 68.dp else 74.dp
-                        val maxPeriods = periodTimes.maxOfOrNull { it.periodNo }?.coerceAtLeast(10) ?: 10
+                        val maxOccEndPeriod = remember(activeWeekOccurrencesMap) {
+                            activeWeekOccurrencesMap.values.flatten().maxOfOrNull { it.endPeriod } ?: 10
+                        }
+                        val maxPeriods = maxOf(
+                            10,
+                            periodTimes.maxOfOrNull { it.periodNo } ?: 10,
+                            maxOccEndPeriod
+                        )
                         val periodByNo = periodTimes.associateBy { it.periodNo }
 
                         Row(
@@ -924,15 +931,22 @@ fun TimetableScreen(
         val targetCourse = courses.firstOrNull { it.id == occToEdit.courseId }
         val targetRule = rules.firstOrNull { it.id == occToEdit.ruleId }
 
-        var editScopeMode by remember(occToEdit) { mutableIntStateOf(0) } // 0: 全学期规则, 1: 仅本次(单次改教室/节次)
+        var editScopeMode by remember(occToEdit) {
+            mutableIntStateOf(if (targetRule == null) 1 else 0)
+        } // 0: 全学期规则, 1: 仅本次(单次改教室/节次/跨天调课)
         var editedName by remember(occToEdit) { mutableStateOf(occToEdit.courseName) }
         var editedRoom by remember(occToEdit) { mutableStateOf(occToEdit.rawRoom) }
         var editedTeacher by remember(occToEdit) { mutableStateOf(occToEdit.teacher.orEmpty()) }
+        var editedWeekday by remember(occToEdit, targetRule) {
+            mutableIntStateOf(targetRule?.weekday?.value ?: occToEdit.weekday.value)
+        }
         var editedWeeksText by remember(targetRule) {
             mutableStateOf(targetRule?.let { WeeksSetParser.format(it.weeks) } ?: "1-16周")
         }
         var editedStartPeriod by remember(occToEdit) { mutableStateOf(occToEdit.startPeriod.toString()) }
         var editedEndPeriod by remember(occToEdit) { mutableStateOf(occToEdit.endPeriod.toString()) }
+        var targetDateText by remember(occToEdit) { mutableStateOf(occToEdit.date.toString()) }
+        var singleDateError by remember(occToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
 
         val palette = XPeachCoursePalette.SwatchesArgb
@@ -950,12 +964,14 @@ fun TimetableScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = XPeachTheme.readablePrimary
                     )
-                    XPeachSegmentedTabs(
-                        items = listOf("修改全学期规则", "仅改本次 (${occToEdit.date.format(SHORT_DATE_FMT)})"),
-                        selectedIndex = editScopeMode,
-                        onSelect = { editScopeMode = it }
-                    )
-                    if (editScopeMode == 0) {
+                    if (targetRule != null) {
+                        XPeachSegmentedTabs(
+                            items = listOf("修改全学期规则", "仅改本次 (${occToEdit.date.format(SHORT_DATE_FMT)})"),
+                            selectedIndex = editScopeMode,
+                            onSelect = { editScopeMode = it }
+                        )
+                    }
+                    if (editScopeMode == 0 && targetRule != null) {
                         OutlinedTextField(
                             value = editedName,
                             onValueChange = { editedName = it },
@@ -980,6 +996,64 @@ fun TimetableScreen(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Text(
+                            text = "星期与节次",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+                            for (d in 1..7) {
+                                XPeachFilterPill(
+                                    label = dayLabels[d - 1],
+                                    selected = editedWeekday == d,
+                                    onClick = { editedWeekday = d }
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12")) {
+                                XPeachFilterPill(
+                                    label = "${sp}-${ep}节",
+                                    selected = editedStartPeriod == sp && editedEndPeriod == ep,
+                                    onClick = {
+                                        editedStartPeriod = sp
+                                        editedEndPeriod = ep
+                                    }
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = editedStartPeriod,
+                                onValueChange = { editedStartPeriod = it.filter(Char::isDigit).take(2) },
+                                label = { Text("起始节(1-12)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = editedEndPeriod,
+                                onValueChange = { editedEndPeriod = it.filter(Char::isDigit).take(2) },
+                                label = { Text("结束节(1-12)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                         OutlinedTextField(
                             value = editedWeeksText,
                             onValueChange = { editedWeeksText = it },
@@ -1012,10 +1086,28 @@ fun TimetableScreen(
                         }
                     } else {
                         Text(
-                            text = "仅对 ${occToEdit.date} 当日生效，不影响其他教学周排课",
+                            text = "仅对本次课生效（可改教室、节次或跨日期调课），不影响其他教学周排课",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        OutlinedTextField(
+                            value = targetDateText,
+                            onValueChange = {
+                                targetDateText = it
+                                singleDateError = null
+                            },
+                            label = { Text("上课日期 (YYYY-MM-DD)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (singleDateError != null) {
+                            Text(
+                                text = singleDateError!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         OutlinedTextField(
                             value = editedRoom,
                             onValueChange = { editedRoom = it },
@@ -1030,7 +1122,7 @@ fun TimetableScreen(
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                            for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12")) {
                                 XPeachFilterPill(
                                     label = "${sp}-${ep}节",
                                     selected = editedStartPeriod == sp && editedEndPeriod == ep,
@@ -1038,6 +1130,45 @@ fun TimetableScreen(
                                         editedStartPeriod = sp
                                         editedEndPeriod = ep
                                     }
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = editedStartPeriod,
+                                onValueChange = { editedStartPeriod = it.filter(Char::isDigit).take(2) },
+                                label = { Text("起始节(1-12)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = editedEndPeriod,
+                                onValueChange = { editedEndPeriod = it.filter(Char::isDigit).take(2) },
+                                label = { Text("结束节(1-12)") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (!occToEdit.overrideId.isNullOrBlank() && occToEdit.ruleId != null) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        repository.deleteOccurrenceOverride(occToEdit.overrideId!!)
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                        editingOccurrence = null
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "恢复原排课规则",
+                                    color = XPeachTheme.readablePrimary,
+                                    style = MaterialTheme.typography.labelMedium
                                 )
                             }
                         }
@@ -1063,16 +1194,10 @@ fun TimetableScreen(
                             onClick = {
                                 val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                                 scope.launch {
-                                    repository.saveOccurrenceOverride(
-                                        OccurrenceOverride(
-                                            id = occToEdit.overrideId ?: "ov_cancel_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
-                                            termId = activeTermId,
-                                            courseRuleId = occToEdit.ruleId,
-                                            courseId = occToEdit.courseId,
-                                            date = occToEdit.date,
-                                            canceled = true,
-                                            reason = "单次停课"
-                                        )
+                                    repository.cancelClassOccurrenceOnDate(
+                                        occ = occToEdit,
+                                        termId = activeTermId,
+                                        reason = "单次停课"
                                     )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     editingOccurrence = null
@@ -1107,9 +1232,48 @@ fun TimetableScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        scope.launch {
-                            if (editScopeMode == 0) {
-                                if (targetCourse != null && targetRule != null) {
+                        val sp = (editedStartPeriod.toIntOrNull() ?: occToEdit.startPeriod).coerceIn(1, 12)
+                        val ep = (editedEndPeriod.toIntOrNull() ?: occToEdit.endPeriod).coerceIn(sp, 12)
+                        if (editScopeMode != 0 || targetRule == null) {
+                            val parsedTargetDate = runCatching { LocalDate.parse(targetDateText.trim()) }.getOrNull()
+                            if (parsedTargetDate == null) {
+                                singleDateError = "请输入有效日期 (YYYY-MM-DD)"
+                                return@Button
+                            }
+                            scope.launch {
+                                val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
+                                val cleanRoom = editedRoom.trim().ifEmpty { occToEdit.rawRoom }
+                                if (parsedTargetDate != occToEdit.date) {
+                                    repository.rescheduleSingleOccurrenceCrossDate(
+                                        occ = occToEdit,
+                                        termId = activeTermId,
+                                        targetDate = parsedTargetDate,
+                                        newStartPeriod = sp,
+                                        newEndPeriod = ep,
+                                        newRoom = cleanRoom
+                                    )
+                                } else {
+                                    repository.saveOccurrenceOverride(
+                                        OccurrenceOverride(
+                                            id = occToEdit.overrideId ?: "ov_mod_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
+                                            termId = activeTermId,
+                                            courseRuleId = occToEdit.ruleId,
+                                            courseId = occToEdit.courseId,
+                                            date = occToEdit.date,
+                                            startPeriod = sp,
+                                            endPeriod = ep,
+                                            room = cleanRoom,
+                                            canceled = false,
+                                            reason = "单次调课"
+                                        )
+                                    )
+                                }
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                editingOccurrence = null
+                            }
+                        } else {
+                            scope.launch {
+                                if (targetCourse != null) {
                                     val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { targetRule.weeks }
                                     repository.saveUserCourseEdit(
                                         course = targetCourse.copy(
@@ -1118,33 +1282,17 @@ fun TimetableScreen(
                                             colorArgb = selectedColor
                                         ),
                                         rule = targetRule.copy(
+                                            weekday = DayOfWeek.of(editedWeekday.coerceIn(1, 7)),
+                                            startPeriod = sp,
+                                            endPeriod = ep,
                                             rawRoom = editedRoom.trim().ifEmpty { targetRule.rawRoom },
                                             weeks = parsedWeeks
                                         )
                                     )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 }
-                            } else {
-                                val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
-                                val sp = (editedStartPeriod.toIntOrNull() ?: occToEdit.startPeriod).coerceIn(1, 12)
-                                val ep = (editedEndPeriod.toIntOrNull() ?: occToEdit.endPeriod).coerceIn(sp, 12)
-                                repository.saveOccurrenceOverride(
-                                    OccurrenceOverride(
-                                        id = occToEdit.overrideId ?: "ov_mod_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
-                                        termId = activeTermId,
-                                        courseRuleId = occToEdit.ruleId,
-                                        courseId = occToEdit.courseId,
-                                        date = occToEdit.date,
-                                        startPeriod = sp,
-                                        endPeriod = ep,
-                                        room = editedRoom.trim().ifEmpty { occToEdit.rawRoom },
-                                        canceled = false,
-                                        reason = "单次调课"
-                                    )
-                                )
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                editingOccurrence = null
                             }
-                            editingOccurrence = null
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
@@ -1238,7 +1386,7 @@ fun TimetableScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12")) {
                             XPeachFilterPill(
                                 label = "${sp}-${ep}节",
                                 selected = editedStartPeriod == sp && editedEndPeriod == ep,
@@ -1248,6 +1396,27 @@ fun TimetableScreen(
                                 }
                             )
                         }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = editedStartPeriod,
+                            onValueChange = { editedStartPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("起始节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = editedEndPeriod,
+                            onValueChange = { editedEndPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("结束节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     OutlinedTextField(
                         value = editedWeeksText,
@@ -1301,8 +1470,8 @@ fun TimetableScreen(
                     onClick = {
                         scope.launch {
                             if (targetCourse != null) {
-                                val sp = (editedStartPeriod.toIntOrNull() ?: masterRuleToEdit.startPeriod).coerceIn(1, 10)
-                                val ep = (editedEndPeriod.toIntOrNull() ?: masterRuleToEdit.endPeriod).coerceIn(sp, 10)
+                                val sp = (editedStartPeriod.toIntOrNull() ?: masterRuleToEdit.startPeriod).coerceIn(1, 12)
+                                val ep = (editedEndPeriod.toIntOrNull() ?: masterRuleToEdit.endPeriod).coerceIn(sp, 12)
                                 val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { masterRuleToEdit.weeks }
                                 repository.saveUserCourseEdit(
                                     course = targetCourse.copy(
@@ -1410,7 +1579,7 @@ fun TimetableScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "1" to "4", "5" to "8")) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12", "1" to "4", "5" to "8")) {
                             XPeachFilterPill(
                                 label = "${sp}-${ep}节",
                                 selected = pracStartPeriod == sp && pracEndPeriod == ep,
@@ -1460,8 +1629,8 @@ fun TimetableScreen(
                 Button(
                     onClick = {
                         scope.launch {
-                            val sp = (pracStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 10)
-                            val ep = (pracEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 10)
+                            val sp = (pracStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 12)
+                            val ep = (pracEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 12)
                             val weeks = WeeksSetParser.parse(pracWeeks).ifEmpty { setOf(selectedWeek) }
                             repository.scheduleUnscheduledPracticalCourse(
                                 unscheduled = pracToSchedule,
@@ -1560,7 +1729,7 @@ fun TimetableScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12")) {
                             XPeachFilterPill(
                                 label = "${sp}-${ep}节",
                                 selected = newStartPeriod == sp && newEndPeriod == ep,
@@ -1612,8 +1781,8 @@ fun TimetableScreen(
                         val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                         if (newName.isNotBlank()) {
                             scope.launch {
-                                val sp = (newStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 10)
-                                val ep = (newEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 10)
+                                val sp = (newStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 12)
+                                val ep = (newEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 12)
                                 val weeks = WeeksSetParser.parse(newWeeks).ifEmpty { setOf(selectedWeek) }
                                 repository.addManualCourseWithRule(
                                     termId = activeTermId,
@@ -2043,13 +2212,18 @@ private fun RawMasterTimetableView(
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            val bigSlots = listOf(
-                1 to 2,
-                3 to 4,
-                5 to 6,
-                7 to 8,
-                9 to 10
-            )
+            val bigSlots = remember(sortedRules) {
+                buildList {
+                    add(1 to 2)
+                    add(3 to 4)
+                    add(5 to 6)
+                    add(7 to 8)
+                    add(9 to 10)
+                    if (sortedRules.any { it.endPeriod > 10 }) {
+                        add(11 to 12)
+                    }
+                }
+            }
             val hasWeekendRules = remember(sortedRules) {
                 sortedRules.any { it.weekday.value >= 6 }
             }

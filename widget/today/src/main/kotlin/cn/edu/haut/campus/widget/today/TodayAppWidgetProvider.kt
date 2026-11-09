@@ -253,6 +253,11 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
             }
 
             if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
+            WidgetRefreshCoordinator.scheduleNextBoundaryRefresh(
+                context = context,
+                daySnapshot = day,
+                receiverClass = TodayAppWidgetProvider::class.java
+            )
         }
     }
 }

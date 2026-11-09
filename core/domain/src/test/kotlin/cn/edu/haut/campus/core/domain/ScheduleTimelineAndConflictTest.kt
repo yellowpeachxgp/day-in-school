@@ -325,4 +325,89 @@ class ScheduleTimelineAndConflictTest {
         assertEquals(LocalTime.of(12, 0), noonBreak.startTime)
         assertEquals(LocalTime.of(14, 30), noonBreak.endTime)
     }
+
+    @Test
+    fun `merged adjacent rules preserve all mergedRuleIds and practical sjk course does not collide with same-name regular course`() {
+        val monday = LocalDate.of(2026, 9, 7)
+        val multiSlotRules = listOf(
+            CourseScheduleRule(
+                id = "r_lab_1_2",
+                courseId = "c_algo",
+                termId = term.id,
+                weekday = DayOfWeek.MONDAY,
+                startPeriod = 1,
+                endPeriod = 2,
+                weeks = setOf(1, 2),
+                rawRoom = "莲4号教学楼321"
+            ),
+            CourseScheduleRule(
+                id = "r_lab_3_4",
+                courseId = "c_algo",
+                termId = term.id,
+                weekday = DayOfWeek.MONDAY,
+                startPeriod = 3,
+                endPeriod = 4,
+                weeks = setOf(1, 2),
+                rawRoom = "莲4号教学楼321"
+            )
+        )
+        val mergedOccs = ScheduleEngine.resolveOccurrencesForDate(
+            date = monday,
+            term = term,
+            courses = courses,
+            rules = multiSlotRules,
+            periodTimes = periods
+        )
+        assertEquals(1, mergedOccs.size)
+        assertEquals(1, mergedOccs.first().startPeriod)
+        assertEquals(4, mergedOccs.first().endPeriod)
+        assertEquals(listOf("r_lab_1_2", "r_lab_3_4"), mergedOccs.first().mergedRuleIds)
+
+        // Same-name practical course ("sjk:...") must NOT collide with regular JW lecture ("JW_ALGO_01")
+        val practicalCourse = Course(
+            id = "c_prac_algo",
+            externalId = "sjk:2026-2027-1:deadbeef",
+            name = "算法设计与分析",
+            teacher = "王工",
+            colorArgb = 0xFF0D9488,
+            source = CourseSource.OFFICIAL_JW,
+            userModified = true
+        )
+        val practicalRule = CourseScheduleRule(
+            id = "r_prac_algo",
+            courseId = practicalCourse.id,
+            termId = term.id,
+            weekday = DayOfWeek.FRIDAY,
+            startPeriod = 5,
+            endPeriod = 6,
+            weeks = (1..16).toSet(),
+            rawRoom = "实践机房A",
+            userModified = true
+        )
+        val regularLectureCandidate = ImportCourseCandidate(
+            externalId = "JW_ALGO_LECTURE",
+            courseName = "算法设计与分析",
+            teacher = "李教授",
+            credit = BigDecimal("4.0"),
+            weekday = DayOfWeek.FRIDAY,
+            startPeriod = 5,
+            endPeriod = 6,
+            weeks = (1..16).toSet(),
+            rawRoom = "莲4号教学楼201"
+        )
+        val diff = ImportDiffEngine.computeDiff(
+            termId = term.id,
+            source = CourseSource.OFFICIAL_JW,
+            existingCourses = listOf(practicalCourse),
+            existingRules = listOf(practicalRule),
+            incomingCandidates = listOf(regularLectureCandidate)
+        )
+        assertEquals(1, diff.addedCount)
+        val addedEntry = diff.entries.single { it.changeType == ImportChangeType.ADDED }
+        assertEquals("JW_ALGO_LECTURE", addedEntry.incoming?.externalId)
+        val preservedPractical = diff.entries.single { it.changeType == ImportChangeType.CONFLICT_USER_MODIFIED }
+        assertEquals(null, preservedPractical.incoming)
+        assertEquals("sjk:2026-2027-1:deadbeef", preservedPractical.existingCourse?.externalId)
+        assertTrue(preservedPractical.keepUserEditByDefault)
+    }
 }

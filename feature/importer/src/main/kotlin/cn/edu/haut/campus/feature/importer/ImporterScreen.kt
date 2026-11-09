@@ -480,6 +480,7 @@ fun ImporterScreen(
                                                 selectedXnm = yr
                                                 scope.launch {
                                                     repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
+                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                                 }
                                             }
                                         )
@@ -499,6 +500,7 @@ fun ImporterScreen(
                                             selectedXqm = "3"
                                             scope.launch {
                                                 repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             }
                                         }
                                     )
@@ -510,6 +512,7 @@ fun ImporterScreen(
                                             selectedXqm = "12"
                                             scope.launch {
                                                 repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             }
                                         }
                                     )
@@ -592,6 +595,7 @@ fun ImporterScreen(
                                                 selectedXnm = yr
                                                 scope.launch {
                                                     repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
+                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                                 }
                                             }
                                         )
@@ -611,6 +615,7 @@ fun ImporterScreen(
                                             selectedXqm = "3"
                                             scope.launch {
                                                 repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             }
                                         }
                                     )
@@ -622,6 +627,7 @@ fun ImporterScreen(
                                             selectedXqm = "12"
                                             scope.launch {
                                                 repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                             }
                                         }
                                     )
@@ -664,11 +670,13 @@ fun ImporterScreen(
                                                     var kb = postSync('${HautAcademicEndpoints.TIMETABLE_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm&kzlx=ck&xsdm=');
                                                     var zc = postSync('${HautAcademicEndpoints.TERM_WEEKS_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm');
                                                     var cj = postSync('${HautAcademicEndpoints.GRADES_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=500&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
+                                                    var ksTarget = postSync('${HautAcademicEndpoints.EXAMS_API_PATH}', 'xnm=$selectedXnm&xqm=$selectedXqm&_search=false&queryModel.showCount=200&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
                                                     var ks = postSync('${HautAcademicEndpoints.EXAMS_API_PATH}', 'xnm=&xqm=&_search=false&queryModel.showCount=200&queryModel.currentPage=1&queryModel.sortName=&queryModel.sortOrder=asc&time=0');
                                                     return JSON.stringify({
                                                         kb: kb,
                                                         zc: zc,
                                                         cj: cj,
+                                                        ksTarget: ksTarget,
                                                         ks: ks
                                                     });
                                                 })();
@@ -686,6 +694,7 @@ fun ImporterScreen(
                                                     val kbJson = wrapper?.optString("kb").orEmpty()
                                                     val zcJson = wrapper?.optString("zc").orEmpty()
                                                     val cjJson = wrapper?.optString("cj").orEmpty()
+                                                    val ksTargetJson = wrapper?.optString("ksTarget").orEmpty()
                                                     val ksJson = wrapper?.optString("ks").orEmpty()
                                                     val breakdown = runCatching {
                                                         HautZfsoftParser.parseTimetableWithBreakdown(kbJson)
@@ -698,13 +707,22 @@ fun ImporterScreen(
                                                     val gradesRead = runCatching {
                                                         HautZfsoftParser.parseGradesJson(cjJson)
                                                     }
+                                                    val targetExamsRead = runCatching {
+                                                        HautZfsoftParser.parseExamsJson(ksTargetJson)
+                                                    }
                                                     val examsRead = runCatching {
                                                         HautZfsoftParser.parseExamsJson(ksJson)
                                                     }
                                                     val gradesList = gradesRead.getOrDefault(emptyList())
-                                                    val examsList = examsRead.getOrDefault(emptyList())
+                                                    val targetExamsList = targetExamsRead.getOrDefault(emptyList())
+                                                    val allExamsList = examsRead.getOrDefault(emptyList())
+                                                    val examsList = (targetExamsList + allExamsList).distinctBy {
+                                                        "${it.termId}|${it.courseName}|${it.examDate}|${it.startTime}|${it.examStageLabel}"
+                                                    }
+                                                    val targetExamsComplete = ksTargetJson.contains("\"items\"") && targetExamsRead.isSuccess
+                                                    val allExamsComplete = ksJson.contains("\"items\"") && examsRead.isSuccess
 
-                                                    if (parsed.isNotEmpty() || unscheduled.isNotEmpty() || gradesList.isNotEmpty()) {
+                                                    if (parsed.isNotEmpty() || unscheduled.isNotEmpty() || gradesList.isNotEmpty() || examsList.isNotEmpty()) {
                                                         val profile = HautZfsoftParser.parseStudentProfileFromTimetableJson(kbJson)
                                                         val termId = HautAcademicEndpoints.toTermId(selectedXnm, selectedXqm)
                                                         val syncData = HautLiveSyncResult(
@@ -718,7 +736,9 @@ fun ImporterScreen(
                                                             regularCourseCount = breakdown?.regularCount ?: parsed.size,
                                                             practiceCourseCount = breakdown?.practiceCount ?: 0,
                                                             gradesComplete = cjJson.contains("\"items\"") && gradesRead.isSuccess,
-                                                            examsComplete = ksJson.contains("\"items\"") && examsRead.isSuccess,
+                                                            examsComplete = allExamsComplete,
+                                                            targetTermExamsComplete = targetExamsComplete,
+                                                            completedExamTermIds = if (targetExamsComplete) setOf(termId) else emptySet(),
                                                             unscheduledCourses = unscheduled
                                                         )
                                                         repository.applyLiveSyncData(

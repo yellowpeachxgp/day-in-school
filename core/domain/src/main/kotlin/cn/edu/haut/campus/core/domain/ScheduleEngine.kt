@@ -205,20 +205,23 @@ object ScheduleEngine {
         }
         val activeWeek = effectiveDate.teachingWeek
         val targetWeekday = effectiveDate.weekdayUsed
-        val dayCanceledOverrides = occurrenceOverrides.filter {
+        val dayCanceledRuleOverrides = occurrenceOverrides.filter {
             it.termId == activeTerm.id && it.date == date && it.canceled && it.courseRuleId != null
         }.associateBy { it.courseRuleId!! }
-        if (dayCanceledOverrides.isEmpty()) return emptyList()
+        val standaloneCanceledOverrides = occurrenceOverrides.filter {
+            it.termId == activeTerm.id && it.date == date && it.canceled && it.courseRuleId == null && it.courseId != null
+        }
+        if (dayCanceledRuleOverrides.isEmpty() && standaloneCanceledOverrides.isEmpty()) return emptyList()
 
         val matchingRules = rules.filter { rule ->
             rule.termId == activeTerm.id &&
                 rule.weekday == targetWeekday &&
                 activeWeek in rule.weeks &&
-                rule.id in dayCanceledOverrides
+                rule.id in dayCanceledRuleOverrides
         }
-        return matchingRules.mapNotNull { rule ->
+        val ruleCanceled = matchingRules.mapNotNull { rule ->
             val course = courseMap[rule.courseId] ?: return@mapNotNull null
-            val ov = dayCanceledOverrides[rule.id] ?: return@mapNotNull null
+            val ov = dayCanceledRuleOverrides[rule.id] ?: return@mapNotNull null
             val startTime = rule.customStartTime
                 ?: periodMap[rule.startPeriod]?.startLocalTime
                 ?: LocalTime.of(8, 0)
@@ -247,7 +250,37 @@ object ScheduleEngine {
                 overrideReason = ov.reason ?: "单次停课",
                 userModified = true
             )
-        }.sortedBy { it.startPeriod }
+        }
+        val standaloneCanceled = standaloneCanceledOverrides.mapNotNull { ov ->
+            val course = courseMap[ov.courseId] ?: return@mapNotNull null
+            val startPeriod = ov.startPeriod ?: 1
+            val endPeriod = ov.endPeriod ?: (startPeriod + 1)
+            val startTime = ov.startAt ?: periodMap[startPeriod]?.startLocalTime ?: LocalTime.of(8, 0)
+            val endTime = ov.endAt ?: periodMap[endPeriod]?.endLocalTime ?: startTime.plusMinutes(95)
+            ClassOccurrence(
+                occurrenceId = "canceled_${date}_ov_${ov.id}",
+                courseId = course.id,
+                ruleId = null,
+                overrideId = ov.id,
+                courseName = course.name,
+                teacher = course.teacher,
+                colorArgb = course.colorArgb,
+                date = date,
+                teachingWeek = activeWeek,
+                weekday = date.dayOfWeek,
+                startPeriod = startPeriod,
+                endPeriod = endPeriod,
+                startTime = startTime,
+                endTime = endTime,
+                rawRoom = ov.room ?: "待定教室",
+                buildingId = ov.buildingId,
+                buildingName = ov.buildingId?.let { buildingMap[it]?.name },
+                isMakeupOrOverridden = true,
+                overrideReason = ov.reason ?: "单次停课",
+                userModified = true
+            )
+        }
+        return (ruleCanceled + standaloneCanceled).sortedBy { it.startPeriod }
     }
 
     /**
@@ -683,7 +716,8 @@ object ScheduleEngine {
             current = if (canMerge) {
                 current.copy(
                     endPeriod = next.endPeriod,
-                    endTime = next.endTime
+                    endTime = next.endTime,
+                    mergedRuleIds = (current.mergedRuleIds + next.mergedRuleIds).distinct()
                 )
             } else {
                 merged.add(current)

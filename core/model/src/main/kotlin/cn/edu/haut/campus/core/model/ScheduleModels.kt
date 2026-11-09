@@ -217,7 +217,8 @@ data class ClassOccurrence(
     val userModified: Boolean = false,
     val conflictColumnIndex: Int = 0,
     val conflictColumnCount: Int = 1,
-    val internalBreaks: List<InternalPeriodBreak> = emptyList()
+    val internalBreaks: List<InternalPeriodBreak> = emptyList(),
+    val mergedRuleIds: List<String> = listOfNotNull(ruleId)
 ) {
     val periodRangeText: String
         get() = if (startPeriod == endPeriod) "第${startPeriod}节" else "${startPeriod}-${endPeriod}节"

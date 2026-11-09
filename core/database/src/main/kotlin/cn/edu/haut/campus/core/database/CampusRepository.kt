@@ -258,6 +258,8 @@ class CampusRepository internal constructor(
         val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
         val GIS_DICTIONARY_SYNCED_V17 = booleanPreferencesKey("official_gis_dictionary_synced_v17")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
+        val LAST_SEASONAL_ROLLOVER_TERM_ID = stringPreferencesKey("last_seasonal_rollover_term_id_v1")
+        val USER_MANUAL_TERM_SEASON = stringPreferencesKey("user_manual_term_override_season_v1")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
         val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
         val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")
@@ -740,6 +742,7 @@ class CampusRepository internal constructor(
                     it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
                 }
             }
+            ensureSeasonalTermRolloverIfNeeded()
             return
         }
         if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
@@ -823,6 +826,72 @@ class CampusRepository internal constructor(
                 it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
                 it.remove(PrefKeys.LAST_AUTO_SYNC_MS)
             }
+        }
+        ensureSeasonalTermRolloverIfNeeded()
+    }
+
+    private fun parseTermSortKey(termId: String): Pair<Int, Int>? {
+        val parts = termId.trim().split("-")
+        if (parts.size < 3) return null
+        val startYear = parts[0].toIntOrNull() ?: return null
+        val semNo = parts[2].toIntOrNull() ?: return null
+        return startYear to semNo
+    }
+
+    private fun isTermOlderThan(candidateTermId: String, referenceTermId: String): Boolean {
+        val cand = parseTermSortKey(candidateTermId) ?: return false
+        val ref = parseTermSortKey(referenceTermId) ?: return false
+        return if (cand.first != ref.first) cand.first < ref.first else cand.second < ref.second
+    }
+
+    /**
+     * 自然学期跨季自动演进：
+     * 当升级老用户仍停留在上一自然学期（如 2025-2026-2 + SAVED_SYNC_XNM=2025/XQM=12），
+     * 且未在本学期主动手动锁定查看旧学期时，自动推进 currentTerm 与默认同步参数至当前自然学期（如 2026-2027-1）。
+     */
+    internal suspend fun ensureSeasonalTermRolloverIfNeeded(today: LocalDate = LocalDate.now(timeZone)) {
+        val seasonalTermId = AcademicTermResolver.defaultTermId(today)
+        val seasonalXnm = AcademicTermResolver.defaultAcademicYearCode(today)
+        val seasonalXqm = AcademicTermResolver.defaultSemesterCode(today)
+        val prefs = preferences.data.first()
+        val manualSeason = prefs[PrefKeys.USER_MANUAL_TERM_SEASON]
+        val lastRolled = prefs[PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID]
+        val currentTermEntity = dao.getCurrentTerm()
+        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
+            HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
+        } else null
+
+        val needsTermAdvance = manualSeason != seasonalTermId &&
+            (currentTermEntity == null || isTermOlderThan(currentTermEntity.id, seasonalTermId))
+        val needsSyncParamAdvance = manualSeason != seasonalTermId &&
+            (savedSyncTermId == null || isTermOlderThan(savedSyncTermId, seasonalTermId))
+
+        if (lastRolled == seasonalTermId && !needsTermAdvance && !needsSyncParamAdvance) {
+            return
+        }
+
+        val repairedStart = if (seasonalTermId == "2026-2027-1") {
+            val existing = dao.observeTerms().first().firstOrNull { it.id == seasonalTermId }
+            if (existing?.startDateIso == "2026-09-07") LocalDate.of(2026, 8, 31) else null
+        } else null
+
+        ensureTermExistsAndUpdateCalendar(
+            termId = seasonalTermId,
+            semesterStart = repairedStart,
+            setCurrent = needsTermAdvance
+        )
+        preferences.edit { editPrefs ->
+            editPrefs[PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID] = seasonalTermId
+            if (needsSyncParamAdvance || needsTermAdvance) {
+                editPrefs[PrefKeys.SAVED_SYNC_XNM] = seasonalXnm
+                editPrefs[PrefKeys.SAVED_SYNC_XQM] = seasonalXqm
+                editPrefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+            }
+        }
+        if (needsTermAdvance) {
+            notifyScheduleOrPolicyChanged("SEASONAL_TERM_ROLLOVER")
         }
     }
 
@@ -929,9 +998,15 @@ class CampusRepository internal constructor(
     suspend fun selectCurrentTerm(termId: String) {
         ensureTermExistsAndUpdateCalendar(termId = termId, setCurrent = true)
         val (xnm, xqm) = HautAcademicEndpoints.fromTermId(termId)
+        val seasonalTermId = AcademicTermResolver.defaultTermId(LocalDate.now(timeZone))
         preferences.edit { prefs ->
             prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
             prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
+            if (termId != seasonalTermId) {
+                prefs[PrefKeys.USER_MANUAL_TERM_SEASON] = seasonalTermId
+            } else {
+                prefs.remove(PrefKeys.USER_MANUAL_TERM_SEASON)
+            }
         }
         notifyScheduleOrPolicyChanged("TERM_CHANGED")
     }
@@ -1022,8 +1097,129 @@ class CampusRepository internal constructor(
     }
 
     suspend fun saveOccurrenceOverride(override: OccurrenceOverride) {
-        dao.upsertOccurrenceOverride(override.toEntity())
+        val resolvedBuildingId = if (override.buildingId == null && !override.room.isNullOrBlank()) {
+            val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+            val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
+            val resolved = ClassroomBuildingResolver.resolve(override.room!!, buildings, aliases)
+            if (resolved.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED) {
+                resolved.building?.id
+            } else null
+        } else {
+            override.buildingId
+        }
+        val normalized = override.copy(buildingId = resolvedBuildingId)
+        database.withTransaction {
+            val ruleId = normalized.courseRuleId
+            if (!ruleId.isNullOrBlank()) {
+                dao.deleteOccurrenceOverridesForRuleOnDate(ruleId, normalized.date.toString())
+            }
+            dao.upsertOccurrenceOverride(normalized.toEntity())
+        }
         notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
+    }
+
+    suspend fun cancelClassOccurrenceOnDate(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        reason: String = "单次停课"
+    ) {
+        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+        database.withTransaction {
+            if (ruleIds.isNotEmpty()) {
+                for (rId in ruleIds) {
+                    dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
+                    dao.upsertOccurrenceOverride(
+                        OccurrenceOverride(
+                            id = "ov_cancel_${occ.date}_$rId",
+                            termId = termId,
+                            courseId = occ.courseId,
+                            courseRuleId = rId,
+                            date = occ.date,
+                            canceled = true,
+                            reason = reason
+                        ).toEntity()
+                    )
+                }
+            } else if (!occ.overrideId.isNullOrBlank()) {
+                dao.upsertOccurrenceOverride(
+                    OccurrenceOverride(
+                        id = occ.overrideId!!,
+                        termId = termId,
+                        courseId = occ.courseId,
+                        courseRuleId = null,
+                        date = occ.date,
+                        startPeriod = occ.startPeriod,
+                        endPeriod = occ.endPeriod,
+                        startAt = occ.startTime,
+                        endAt = occ.endTime,
+                        room = occ.rawRoom,
+                        buildingId = occ.buildingId,
+                        canceled = true,
+                        reason = reason
+                    ).toEntity()
+                )
+            }
+        }
+        notifyScheduleOrPolicyChanged("OCCURRENCE_CANCELED")
+    }
+
+    suspend fun rescheduleSingleOccurrenceCrossDate(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        targetDate: LocalDate,
+        newStartPeriod: Int,
+        newEndPeriod: Int,
+        newRoom: String,
+        reason: String? = null
+    ) {
+        val cleanRoom = newRoom.trim().ifBlank { occ.rawRoom }
+        val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
+        val resolved = ClassroomBuildingResolver.resolve(cleanRoom, buildings, aliases)
+        val verifiedBuildingId = if (resolved.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED) {
+            resolved.building?.id
+        } else if (cleanRoom == occ.rawRoom) {
+            occ.buildingId
+        } else null
+
+        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+        database.withTransaction {
+            if (ruleIds.isNotEmpty()) {
+                for (rId in ruleIds) {
+                    dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
+                    dao.upsertOccurrenceOverride(
+                        OccurrenceOverride(
+                            id = "ov_cancel_${occ.date}_$rId",
+                            termId = termId,
+                            courseId = occ.courseId,
+                            courseRuleId = rId,
+                            date = occ.date,
+                            canceled = true,
+                            reason = "已调至 $targetDate"
+                        ).toEntity()
+                    )
+                }
+            } else if (!occ.overrideId.isNullOrBlank()) {
+                dao.deleteOccurrenceOverrideById(occ.overrideId!!)
+            }
+
+            dao.upsertOccurrenceOverride(
+                OccurrenceOverride(
+                    id = "ov_move_${targetDate}_${UUID.randomUUID().toString().take(8)}",
+                    termId = termId,
+                    courseId = occ.courseId,
+                    courseRuleId = null,
+                    date = targetDate,
+                    startPeriod = newStartPeriod.coerceIn(1, 12),
+                    endPeriod = newEndPeriod.coerceIn(newStartPeriod.coerceIn(1, 12), 12),
+                    room = cleanRoom,
+                    buildingId = verifiedBuildingId,
+                    canceled = false,
+                    reason = reason?.trim()?.takeIf { it.isNotBlank() } ?: "由 ${occ.date} 调入"
+                ).toEntity()
+            )
+        }
+        notifyScheduleOrPolicyChanged("OCCURRENCE_MOVED_CROSS_DATE")
     }
 
     suspend fun deleteOccurrenceOverride(overrideId: String) {
@@ -1038,7 +1234,12 @@ class CampusRepository internal constructor(
     ) {
         database.withTransaction {
             if (!overrideId.isNullOrBlank()) {
-                dao.deleteOccurrenceOverrideById(overrideId)
+                val existing = dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == overrideId }
+                if (existing != null && existing.courseRuleId == null && existing.canceled) {
+                    dao.upsertOccurrenceOverride(existing.copy(canceled = false, reason = "临时调课/补课"))
+                } else {
+                    dao.deleteOccurrenceOverrideById(overrideId)
+                }
             }
             if (!ruleId.isNullOrBlank()) {
                 dao.deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId, date.toString())
@@ -1052,10 +1253,15 @@ class CampusRepository internal constructor(
             val rules = dao.getRulesSnapshot()
             val targetRule = rules.firstOrNull { it.id == ruleId } ?: return@withTransaction
             dao.deleteRuleById(ruleId)
+            dao.deleteOccurrenceOverridesByRuleId(ruleId)
             val remainingForCourse = rules.count { it.courseId == targetRule.courseId && it.id != ruleId }
             if (remainingForCourse == 0) {
                 val course = dao.getCoursesSnapshot().firstOrNull { it.id == targetRule.courseId }
-                if (course != null && course.source == CourseSource.MANUAL.name) {
+                if (course != null && (
+                        course.source == CourseSource.MANUAL.name ||
+                            course.externalId?.startsWith("sjk:") == true
+                        )
+                ) {
                     dao.deleteCourseById(course.id)
                 }
             }
@@ -1493,6 +1699,25 @@ class CampusRepository internal constructor(
         }
         val targetTermId = syncData.termId
         database.withTransaction {
+            val allRules = dao.getRulesSnapshot()
+            val allCourses = dao.getCoursesSnapshot()
+            if (overwriteUserConflicts) {
+                val oldPracticalCourses = allCourses.filter {
+                    it.source == CourseSource.OFFICIAL_JW.name &&
+                        it.externalId?.startsWith("sjk:$targetTermId:") == true
+                }
+                val oldPracticalCourseIds = oldPracticalCourses.map { it.id }.toSet()
+                val oldPracticalRules = allRules.filter {
+                    it.termId == targetTermId && (it.id.startsWith("r_prac_") || it.courseId in oldPracticalCourseIds)
+                }
+                oldPracticalRules.forEach { r ->
+                    dao.deleteRuleById(r.id)
+                    dao.deleteOccurrenceOverridesByRuleId(r.id)
+                }
+                oldPracticalCourses.forEach { c ->
+                    dao.deleteCourseById(c.id)
+                }
+            }
             val scheduledUserCourseIds = dao.getRulesSnapshot()
                 .filter { it.termId == targetTermId && it.userModified }
                 .map { it.courseId }
@@ -1517,9 +1742,14 @@ class CampusRepository internal constructor(
             dao.clearUnscheduledCoursesForTerm(targetTermId)
             dao.upsertUnscheduledCourses(remainingUnscheduledEntities)
         }
-        val fallbackPopulatedSiblingTermId = if (syncData.timetableCandidates.isEmpty()) {
+        val seasonalTermId = AcademicTermResolver.defaultTermId(LocalDate.now(timeZone))
+        val targetHasAnyAcademicContent = syncData.timetableCandidates.isNotEmpty() ||
+            syncData.unscheduledCourses.isNotEmpty() ||
+            syncData.examItems.any { it.termId == targetTermId } ||
+            targetTermId == seasonalTermId
+        val fallbackPopulatedSiblingTermId = if (!targetHasAnyAcademicContent) {
             syncData.additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
-                sibId != targetTermId && cands.isNotEmpty()
+                sibId != targetTermId && cands.isNotEmpty() && !isTermOlderThan(sibId, targetTermId)
             }?.key
         } else null
         val activateTargetTerm = fallbackPopulatedSiblingTermId == null
@@ -1541,10 +1771,9 @@ class CampusRepository internal constructor(
             setAsCurrentTerm = activateTargetTerm
         )
         if (fallbackPopulatedSiblingTermId != null) {
-            selectCurrentTerm(fallbackPopulatedSiblingTermId)
+            ensureTermExistsAndUpdateCalendar(termId = fallbackPopulatedSiblingTermId, setCurrent = true)
         }
-        val activeSyncTermId = fallbackPopulatedSiblingTermId ?: targetTermId
-        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(activeSyncTermId)
+        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
         preferences.edit { prefs ->
             prefs[PrefKeys.SAVED_SYNC_XNM] = syncXnm
             prefs[PrefKeys.SAVED_SYNC_XQM] = syncXqm
@@ -1560,6 +1789,7 @@ class CampusRepository internal constructor(
         requireActiveSession()
         if (!supportsHautServices) return@withContext Result.failure(IllegalStateException("当前学校教务登录尚未适配，可使用离线导入"))
         migrateLegacyAcademicCredentialsIfNeeded()
+        ensureSeasonalTermRolloverIfNeeded()
         academicCredentialMutex.withLock {
         val prefs = preferences.data.first()
         val autoEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true
@@ -3384,6 +3614,10 @@ class CampusRepository internal constructor(
                 prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
                 prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
                 prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                prefs.remove(PrefKeys.SAVED_SYNC_XNM)
+                prefs.remove(PrefKeys.SAVED_SYNC_XQM)
+                prefs.remove(PrefKeys.USER_MANUAL_TERM_SEASON)
+                prefs.remove(PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
                 prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
                 prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
                 prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
