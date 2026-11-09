@@ -1087,4 +1087,849 @@ class BookingDispatchExclusiveClaimDaoTest {
         assertEquals(java.time.LocalTime.of(21, 15), afterFullEditW3.single().startTime)
         assertEquals(java.time.LocalTime.of(22, 50), afterFullEditW3.single().endTime)
     }
+
+    private fun buildInMemoryTestRepo(profileSeed: String): CampusRepository {
+        val context = RuntimeEnvironment.getApplication()
+        val dataStoreFile = java.io.File.createTempFile("booking_test_${profileSeed}_", ".preferences_pb")
+        dataStoreFile.deleteOnExit()
+        val testDataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+            scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined
+            ),
+            produceFile = { dataStoreFile }
+        )
+        val keysMap = java.util.concurrent.ConcurrentHashMap<String, javax.crypto.SecretKey>()
+        val storageMap = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        val vault = AcademicCredentialVault(
+            keys = object : AcademicCredentialKeyProvider {
+                override fun existing(scope: AcademicCredentialScope) = keysMap[scope.storageKey]
+                override fun getOrCreate(scope: AcademicCredentialScope) = keysMap.getOrPut(scope.storageKey) {
+                    val kg = javax.crypto.KeyGenerator.getInstance("AES")
+                    kg.init(256)
+                    kg.generateKey()
+                }
+                override fun delete(scope: AcademicCredentialScope) { keysMap.remove(scope.storageKey) }
+            },
+            storage = object : AcademicCredentialStorage {
+                override fun read(scope: AcademicCredentialScope) = storageMap[scope.storageKey]
+                override fun write(scope: AcademicCredentialScope, envelope: ByteArray) { storageMap[scope.storageKey] = envelope }
+                override fun delete(scope: AcademicCredentialScope) { storageMap.remove(scope.storageKey) }
+            }
+        )
+        val storage = isolatedAccountStoragePartition("prof_$profileSeed")
+        return CampusRepository(
+            appContext = context,
+            database = database,
+            preferences = testDataStore,
+            accountProfile = AccountProfileEntity(
+                id = "prof_$profileSeed",
+                accountId = "acct_$profileSeed",
+                schoolId = "haut",
+                schoolName = "河南工业大学",
+                province = "河南省",
+                city = "郑州市",
+                campusId = "lianhuajie",
+                campusName = "莲花街校区",
+                timeZoneId = "Asia/Shanghai",
+                label = "测试身份_$profileSeed",
+                isLegacy = false,
+                databaseName = storage.databaseName,
+                preferencesName = storage.preferencesName,
+                createdAtEpochMs = 1_000L
+            ),
+            academicCredentialVaultOverride = vault
+        ).also { it.activateSession(1L) }
+    }
+
+    private fun testCloudJwt(sub: String): String {
+        val header = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"alg":"HS256","typ":"JWT"}""".toByteArray())
+        val payload = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"sub":"$sub","exp":4102444800}""".toByteArray())
+        return "ctseal1:$header.$payload.sig"
+    }
+
+    @Test
+    fun syncAndReconfirmIsolateAccountsAndNullOwners() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("sync_reconfirm_iso")
+        val jwtA = testCloudJwt("cloud_user_A")
+        val jwtB = testCloudJwt("cloud_user_B")
+
+        // Seed unattributed null-owner legacy row + Account A rows before switching to Account B
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_null_owner_legacy",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-26",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "09桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_legacy_null_01",
+                externalBookingId = "bk_legacy_null_01",
+                evidenceSha256 = "sha_legacy_null_01",
+                priceMicropeach = 10_000L,
+                paymentState = "PAID",
+                status = "CONFIRMED",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = "旧版无归属记录",
+                createdAtEpochMillis = 500L,
+                updatedAtEpochMillis = 500L,
+                ownerCloudUserId = null,
+                ownerStudentId = null
+            )
+        )
+        // Logged-out view sees preserved confirmed evidence locally, and unattributed flow captures null-owner row
+        org.junit.Assert.assertTrue(
+            repo.libraryBookingPlansFlow.first().any { it.id == "plan_null_owner_legacy" }
+        )
+        org.junit.Assert.assertTrue(
+            repo.unattributedLegacyBookingPlansFlow.first().any { it.id == "plan_null_owner_legacy" }
+        )
+
+        // Login Account A (20240001) and seed A's plans (CONFIRMED, NEEDS_RECONFIRMATION, CANCELLED)
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_A",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_A",
+                displayName = "User A",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtA,
+                refreshToken = "ctseal1:ref_A",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_A_confirmed",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-26",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "01桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_A_conf_1",
+                externalBookingId = "bk_A_conf_1",
+                evidenceSha256 = "sha_A_conf_1",
+                priceMicropeach = 10_000L,
+                paymentState = "PAID",
+                status = "CONFIRMED",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "A已确认",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_A_reconfirm",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-27",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "02桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_A_reconf_1",
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "NEEDS_RECONFIRMATION",
+                stateVersion = 3,
+                generation = 1,
+                lastDiagnosticMessage = "A待重新确认",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_A_cancelled",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-28",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "CANCELLED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "03桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_A_cancelled_1",
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "CANCELLED",
+                stateVersion = 2,
+                generation = 2,
+                lastDiagnosticMessage = "A已取消",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // Switch A -> B (cloud_user_B + student 20240002)
+        repo.saveAuthorizedSyncCredentials("20240002", "pw_B", "2026", "3")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_B",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_B",
+                displayName = "User B",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtB,
+                refreshToken = "ctseal1:ref_B",
+                linkedAtEpochMillis = 2_000L
+            )
+        )
+        // Null-owner legacy row & Account A's rows MUST be invisible to ordinary Account B UI!
+        val visibleForBInitial = repo.libraryBookingPlansFlow.first()
+        org.junit.Assert.assertTrue(visibleForBInitial.none { it.id == "plan_null_owner_legacy" })
+        org.junit.Assert.assertTrue(visibleForBInitial.none { it.id.startsWith("plan_A_") })
+
+        // Also verify an unsynced NEEDS_RECONFIRMATION row owned by Account A in DB is NOT touched or armed when B reconfirms!
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_A_unsynced_reconfirm",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-29",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "04桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "NEEDS_RECONFIRMATION",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = "A本地待重新确认",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // Add Account B's own NEEDS_RECONFIRMATION plan
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_B_reconfirm",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-26",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "08桌 B座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "NEEDS_RECONFIRMATION",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = "B待确认",
+                createdAtEpochMillis = 2_000L,
+                updatedAtEpochMillis = 2_000L,
+                ownerCloudUserId = "cloud_user_B",
+                ownerStudentId = "20240002"
+            )
+        )
+
+        var lastSyncPostBody = ""
+        repo.cloudHttpTransportForTest = { method, url, body, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"con_B_v2","auth_version":2}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_B_v2"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{"status":"DELEGATED_ACTIVE"}}"""
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"auth_version":2,"user":{"cloud_user_id":"cloud_user_B"},"consents":[{"id":"con_B_v2","school_id":"haut","auth_version":2}],"school_bindings":[{"id":"bind_B_v2","school_id":"haut","student_no":"20240002","consent_id":"con_B_v2","auth_version":2}]}}"""
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    lastSyncPostBody = body.orEmpty()
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "auth_version": 2,
+                        "user": { "cloud_user_id": "cloud_user_B", "display_name": "User B" },
+                        "wallet": { "peach_balance": 5.0 },
+                        "consents": [{ "id": "con_B_v2", "school_id": "haut", "auth_version": 2 }],
+                        "school_bindings": [{ "id": "bind_B_v2", "school_id": "haut", "student_no": "20240002", "consent_id": "con_B_v2", "auth_version": 2 }],
+                        "reservation_plans": [],
+                        "reservation_jobs": [
+                          { "id": "job_B_remote_26", "plan_id": "plan_B_reconfirm", "booking_local_date": "2026-11-26", "target_local_time": "07:00:00", "state": "ARMED", "display_status": "ARMED", "user_intent_state": "ACTIVE", "external_execution_state": "NOT_DISPATCHED", "school_cancellation_state": "NOT_REQUESTED", "candidate_seats": ["08桌 B座"] }
+                        ],
+                        "orders": [],
+                        "parcels": []
+                      }
+                    }
+                    """.trimIndent()
+                }
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+
+        // Reconfirm ONLY B -> must NOT send A's plans/cancellations, must NOT arm A's NEEDS_RECONFIRMATION row, and must NOT merge into plan_null_owner_legacy!
+        val reconfRes = repo.reconfirmAndRestoreCloudBookingPlans()
+        org.junit.Assert.assertTrue("B reconfirm should succeed: ${reconfRes.exceptionOrNull()}", reconfRes.isSuccess)
+        org.junit.Assert.assertFalse("Must NOT send A's cancelled job", lastSyncPostBody.contains("job_A_cancelled_1"))
+        org.junit.Assert.assertFalse("Must NOT send A's plan", lastSyncPostBody.contains("plan_A_reconfirm"))
+        org.junit.Assert.assertFalse("Must NOT send A's unsynced reconfirm plan", lastSyncPostBody.contains("plan_A_unsynced_reconfirm"))
+        org.junit.Assert.assertTrue("Must send B's reconfirmed plan", lastSyncPostBody.contains("plan_B_reconfirm"))
+        assertEquals("ARMED", dao.getLibraryBookingPlanById("plan_B_reconfirm")?.status)
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", dao.getLibraryBookingPlanById("plan_A_reconfirm")?.status)
+        assertEquals("NEEDS_RECONFIRMATION", dao.getLibraryBookingPlanById("plan_A_unsynced_reconfirm")?.status)
+        assertEquals("cloud_user_A", dao.getLibraryBookingPlanById("plan_A_unsynced_reconfirm")?.ownerCloudUserId)
+        assertEquals(null, dao.getLibraryBookingPlanById("plan_null_owner_legacy")?.ownerCloudUserId)
+        assertEquals("bk_legacy_null_01", dao.getLibraryBookingPlanById("plan_null_owner_legacy")?.externalBookingId)
+
+        // Mid-sync account switch (B -> A during POST /api/v1/sync/snapshot): must abort and NOT write B's snapshot onto A!
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            if (method == "POST" && url.endsWith("/api/v1/sync/snapshot")) {
+                kotlinx.coroutines.runBlocking {
+                    repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+                    repo.saveVerifiedXpeachCloudAccount(
+                        cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                            cloudUserId = "cloud_user_A",
+                            ssoIssuer = "https://auth.yellowpeachxgp.com",
+                            ssoSubject = "sub_A",
+                            displayName = "User A",
+                            peachBalanceMicropeach = 50_000L,
+                            holdSupported = false,
+                            accessToken = jwtA,
+                            refreshToken = "ctseal1:ref_A",
+                            linkedAtEpochMillis = 3_000L
+                        )
+                    )
+                }
+                """{"ok":true,"data":{"auth_version":2,"user":{"cloud_user_id":"cloud_user_B"},"wallet":{"peach_balance":99.0},"reservation_jobs":[{"id":"job_B_late","plan_id":"p_B_late","booking_local_date":"2026-11-30","state":"ARMED"}]}}"""
+            } else {
+                """{"ok":true,"data":{"auth_version":2,"user":{"cloud_user_id":"cloud_user_B"}}}"""
+            }
+        }
+        val midSwitchSync = repo.syncWithCampusCloud()
+        org.junit.Assert.assertTrue("Mid-sync switch must reject stale write", midSwitchSync.isFailure)
+        org.junit.Assert.assertTrue(
+            dao.getLibraryBookingPlansSnapshot().none { it.cloudJobId == "job_B_late" }
+        )
+
+        // Verify A -> B -> A: Account A sees its own preserved CONFIRMED & NEEDS_RECONFIRMATION rows intact and never sees B's rows!
+        val visibleBackOnA = repo.libraryBookingPlansFlow.first()
+        org.junit.Assert.assertTrue(visibleBackOnA.any { it.id == "plan_A_confirmed" && it.externalBookingId == "bk_A_conf_1" })
+        org.junit.Assert.assertTrue(visibleBackOnA.any { it.id == "plan_A_unsynced_reconfirm" && it.status == "NEEDS_RECONFIRMATION" })
+        org.junit.Assert.assertTrue(visibleBackOnA.none { it.id == "plan_B_reconfirm" })
+    }
+
+    @Test
+    fun stopDelegationRaceWithFireNeverCallsLiveSeatCancel() = runBlocking {
+        val repo = buildInMemoryTestRepo("stop_race_zero_cancel")
+        var liveSeatCancelCount = 0
+        repo.liveSeatCancelObserverForTest = { _, _ ->
+            liveSeatCancelCount += 1
+        }
+
+        // UI saw plan in EXECUTING and user clicked "停止委托", but right before click handler runs, FIRE succeeded -> CONFIRMED!
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_race_stop_conf",
+                schoolId = "haut",
+                executionMode = "LOCAL_ASSISTED",
+                targetLocalDate = "2026-11-26",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "05桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = "bk_race_991122",
+                evidenceSha256 = "sha_race_991122",
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "CONFIRMED",
+                stateVersion = 3,
+                generation = 1,
+                lastDiagnosticMessage = "刚刚抢座成功",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 2_500L,
+                repeatDays = 3,
+                remainingDays = 2,
+                ownerStudentId = "20240001"
+            )
+        )
+
+        val stopped = repo.stopInFlightOrQueuedDelegation("plan_race_stop_conf")
+        assertEquals("Zero live seat cancel calls allowed on stop-delegation!", 0, liveSeatCancelCount)
+        assertEquals("DELEGATION_STOPPED_SCHOOL_CONFIRMED", stopped?.status)
+        assertEquals(0, stopped?.remainingDays)
+        assertEquals("bk_race_991122", stopped?.externalBookingId)
+
+        // Even calling legacy cancelDualEngineBookingPlan MUST NEVER call cancelActiveLibrarySeatBooking!
+        repo.cancelDualEngineBookingPlan("plan_race_stop_conf")
+        assertEquals(0, liveSeatCancelCount)
+        assertEquals("DELEGATION_STOPPED_SCHOOL_CONFIRMED", dao.getLibraryBookingPlanById("plan_race_stop_conf")?.status)
+    }
+
+    @Test
+    fun engineSwitchCoordinatesStaleFailedChildWithActiveParent() = runBlocking {
+        val repo = buildInMemoryTestRepo("switch_stale_failed_parent")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_A",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_A",
+                displayName = "User A",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtA,
+                refreshToken = "ctseal1:ref_A",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+
+        // Day-1 child job (2026-11-25) is FAILED locally (remainingDays=0), while parent plan repeatDays=3 covers 2026-11-26 and has rolled-over child job on Cloud!
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_multi_day1_failed",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-25",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "FAILED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "05桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_day1_failed",
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "FAILED",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "首日未抢到",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 2_000L,
+                repeatDays = 3,
+                remainingDays = 0,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // 5a: Cloud parent plan has rolled-over Day-2 child job in EXECUTING/RESULT_UNKNOWN -> MUST NOT skip coordination and MUST block local plan creation!
+        var coordinationInvoked = false
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            coordinationInvoked = true
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "reservation_plans": [
+                          { "id": "plan_cloud_parent_1", "enabled": true, "user_intent_state": "ACTIVE", "target_local_date": "2026-11-26" }
+                        ],
+                        "reservation_jobs": [
+                          { "id": "job_day1_failed", "plan_id": "plan_cloud_parent_1", "booking_local_date": "2026-11-25", "state": "FAILED", "external_execution_state": "SCHOOL_REJECTED" },
+                          { "id": "job_day2_inflight", "plan_id": "plan_cloud_parent_1", "booking_local_date": "2026-11-26", "state": "RESULT_UNKNOWN", "external_execution_state": "RESULT_UNKNOWN" }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_cloud_parent_1") ->
+                    """{"ok":true,"data":{"plan_id":"plan_cloud_parent_1","enabled":false}}"""
+                else -> """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"terminal"}}"""
+            }
+        }
+
+        val nowMs = java.time.ZonedDateTime.of(2026, 11, 25, 22, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
+        val blockedCreate = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = nowMs
+        )
+        org.junit.Assert.assertTrue("Coordination MUST have been called despite local FAILED status", coordinationInvoked)
+        org.junit.Assert.assertTrue("Must block local creation when rolled-over child is RESULT_UNKNOWN", blockedCreate.isFailure)
+        org.junit.Assert.assertTrue(
+            dao.getLibraryBookingPlansSnapshot().none {
+                it.executionMode != "CLOUD_HOSTED" && it.targetLocalDate == "2026-11-26"
+            }
+        )
+
+        // 5b: Cloud disables parent plan (enabled=false) and cancels queued Day-2 child -> safe to create local plan!
+        var parentStopped = false
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_cloud_parent_1") -> {
+                    parentStopped = true
+                    """{"ok":true,"data":{"plan_id":"plan_cloud_parent_1","enabled":false}}"""
+                }
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    val en = !parentStopped
+                    val d2State = if (parentStopped) "CANCELLED" else "ARMED"
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "reservation_plans": [
+                          { "id": "plan_cloud_parent_1", "enabled": $en, "user_intent_state": "${if (en) "ACTIVE" else "STOP_REQUESTED"}", "target_local_date": "2026-11-26" }
+                        ],
+                        "reservation_jobs": [
+                          { "id": "job_day1_failed", "plan_id": "plan_cloud_parent_1", "booking_local_date": "2026-11-25", "state": "FAILED", "external_execution_state": "SCHOOL_REJECTED" },
+                          { "id": "job_day2_queued", "plan_id": "plan_cloud_parent_1", "booking_local_date": "2026-11-26", "state": "$d2State", "external_execution_state": "NOT_DISPATCHED" }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                }
+                else -> """{"ok":true,"data":{"id":"job_day2_queued","state":"CANCELLED"}}"""
+            }
+        }
+        val allowedCreate = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = nowMs
+        )
+        org.junit.Assert.assertTrue("Should succeed after Cloud parent & Day-2 child stopped: ${allowedCreate.exceptionOrNull()}", allowedCreate.isSuccess)
+    }
+
+    @Test
+    fun conditionalRestoreNeverOverwritesCancelEditOrAccountSwitch() = runBlocking {
+        val repo = buildInMemoryTestRepo("cas_restore_handoff")
+        val jwtA = testCloudJwt("cloud_user_A")
+        val jwtB = testCloudJwt("cloud_user_B")
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_A",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_A",
+                displayName = "User A",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtA,
+                refreshToken = "ctseal1:ref_A",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+        val nowMs = java.time.ZonedDateTime.of(2026, 11, 25, 22, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
+
+        // 6a: User edits/cancels local plan WHILE Cloud creation is pending, then Cloud rejects pre-persist -> user's new decision MUST NOT be overwritten!
+        val local27 = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 27),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "01桌 A座",
+            nowEpochMillis = nowMs
+        ).getOrThrow()
+
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            if (method == "POST" && url.endsWith("/api/v1/me/consents")) {
+                // Simulate user explicitly cancelling/modifying the plan while Cloud request is in flight!
+                kotlinx.coroutines.runBlocking {
+                    val cur = dao.getLibraryBookingPlanById(local27.id)!!
+                    dao.upsertLibraryBookingPlan(
+                        cur.copy(
+                            status = "CANCELLED",
+                            preferredSeatLabel = "用户手动取消不恢复",
+                            stateVersion = cur.stateVersion + 1,
+                            generation = cur.generation + 1,
+                            lastDiagnosticMessage = "用户主动取消，禁止补偿恢复"
+                        )
+                    )
+                }
+                """{"ok":false,"error":{"code":"FORBIDDEN","message":"委托已拒绝"}}"""
+            } else {
+                """{"ok":false,"error":{"code":"FORBIDDEN","message":"拒绝"}}"""
+            }
+        }
+        val rejected27 = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = java.time.LocalDate.of(2026, 11, 27),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "01桌 A座",
+            nowEpochMillis = nowMs + 1_000L
+        )
+        org.junit.Assert.assertTrue(rejected27.isFailure)
+        val after27 = dao.getLibraryBookingPlanById(local27.id)!!
+        assertEquals("CANCELLED", after27.status)
+        assertEquals("用户主动取消，禁止补偿恢复", after27.lastDiagnosticMessage)
+
+        // 6b: User switches account A -> B WHILE Cloud request is pending, then Cloud times out & reconciles SAFE_TO_SWITCH_STOPPED -> MUST NOT restore A's plan under B!
+        val local28 = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 28),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "02桌 A座",
+            nowEpochMillis = nowMs
+        ).getOrThrow()
+
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"con_A_28","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_A_28"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{"status":"DELEGATED_ACTIVE"}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    // User switches A -> B while waiting for Cloud response!
+                    kotlinx.coroutines.runBlocking {
+                        repo.saveAuthorizedSyncCredentials("20240002", "pw_B", "2026", "3")
+                        repo.saveVerifiedXpeachCloudAccount(
+                            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                                cloudUserId = "cloud_user_B",
+                                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                                ssoSubject = "sub_B",
+                                displayName = "User B",
+                                peachBalanceMicropeach = 50_000L,
+                                holdSupported = false,
+                                accessToken = jwtB,
+                                refreshToken = "ctseal1:ref_B",
+                                linkedAtEpochMillis = nowMs + 2_000L
+                            )
+                        )
+                    }
+                    throw java.net.SocketTimeoutException("Timed out during POST /reservation-plans")
+                }
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"reservation_plans":[],"reservation_jobs":[]}}"""
+                method == "DELETE" && url.contains("/api/v1/reservation-plans/") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"not found"}}"""
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"not found"}}"""
+            }
+        }
+        val switchedMidCloud = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = java.time.LocalDate.of(2026, 11, 28),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "02桌 A座",
+            nowEpochMillis = nowMs + 1_500L
+        )
+        org.junit.Assert.assertTrue(switchedMidCloud.isFailure)
+        val after28 = dao.getLibraryBookingPlanById(local28.id)!!
+        assertEquals("Account A's paused local plan must remain CANCELLED after switching to B", "CANCELLED", after28.status)
+    }
+
+    @Test
+    fun fireConflictIsolatesStudentsAndBlocksSameStudentAcrossCloud() = runBlocking {
+        val repo = buildInMemoryTestRepo("fire_conflict_scope")
+        val nowMs = java.time.ZonedDateTime.of(2026, 11, 29, 7, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
+
+        // Seed Account A (student 20240001) with CONFIRMED record on 2026-11-29
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_fire_A_confirmed",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-29",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "01桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_fire_A_1",
+                externalBookingId = "bk_fire_A_1",
+                evidenceSha256 = "sha_fire_A_1",
+                priceMicropeach = 10_000L,
+                paymentState = "PAID",
+                status = "CONFIRMED",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "A已成功锁定",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // 8a: Independent Student B (20240002) runs LOCAL_DEVICE FIRE on 2026-11-29 (with no library token so it reaches token check AFTER conflictSameDay!)
+        // If A's record falsely blocked B, B would become RESULT_UNKNOWN with "检测到同一学号/账号在同日存在另一笔有效或待核对的预约任务"!
+        // Because B is isolated from A, B passes conflictSameDay and fails pre-dispatch as FAILED (no library session), NEVER RESULT_UNKNOWN!
+        repo.saveAuthorizedSyncCredentials("20240002", "pw_B", "2026", "3")
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_fire_B_local",
+                schoolId = "haut",
+                executionMode = "LOCAL_ASSISTED",
+                targetLocalDate = "2026-11-29",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "02桌 B座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "FINAL_CHECK_OK",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = null,
+                createdAtEpochMillis = 2_000L,
+                updatedAtEpochMillis = 2_000L,
+                ownerCloudUserId = null,
+                ownerStudentId = "20240002"
+            )
+        )
+        val fireResB = repo.advanceBookingPlanStage(
+            planId = "plan_fire_B_local",
+            stage = cn.edu.haut.campus.core.campusservices.TripleScheduleStage.FIRE,
+            nowEpochMillis = nowMs
+        ).getOrThrow()
+        org.junit.Assert.assertNotEquals(
+            "Student B must NOT be blocked into RESULT_UNKNOWN by Student A's confirmed record",
+            "RESULT_UNKNOWN",
+            fireResB.status
+        )
+        org.junit.Assert.assertFalse(
+            fireResB.lastDiagnosticMessage.orEmpty().contains("检测到同一学号/账号在同日存在另一笔")
+        )
+
+        // 8b: SAME Student (20240001) under a different cloud account (cloud_user_B) runs LOCAL_DEVICE FIRE on 2026-11-29 -> MUST be blocked by conflictSameDay!
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_fire_same_stu_cross_cloud",
+                schoolId = "haut",
+                executionMode = "LOCAL_ASSISTED",
+                targetLocalDate = "2026-11-29",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "03桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "FINAL_CHECK_OK",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = null,
+                createdAtEpochMillis = 3_000L,
+                updatedAtEpochMillis = 3_000L,
+                ownerCloudUserId = "cloud_user_B",
+                ownerStudentId = "20240001"
+            )
+        )
+        val fireResSameStu = repo.advanceBookingPlanStage(
+            planId = "plan_fire_same_stu_cross_cloud",
+            stage = cn.edu.haut.campus.core.campusservices.TripleScheduleStage.FIRE,
+            nowEpochMillis = nowMs
+        ).getOrThrow()
+        assertEquals("RESULT_UNKNOWN", fireResSameStu.status)
+        org.junit.Assert.assertTrue(
+            fireResSameStu.lastDiagnosticMessage.orEmpty().contains("检测到同一学号/账号在同日存在另一笔")
+        )
+    }
 }

@@ -483,15 +483,46 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         db.execSQL(
             """
             UPDATE `library_booking_plans`
-            SET `ownerCloudUserId` = (SELECT `cloudUserId` FROM `cloud_identity_binding` LIMIT 1)
-            WHERE `executionMode` = 'CLOUD_HOSTED' AND `ownerCloudUserId` IS NULL
+            SET `ownerCloudUserId` = (
+                SELECT TRIM(`cloudUserId`)
+                FROM `cloud_identity_binding`
+                WHERE TRIM(IFNULL(`cloudUserId`, '')) != ''
+                LIMIT 1
+            )
+            WHERE `executionMode` = 'CLOUD_HOSTED'
+              AND TRIM(IFNULL(`ownerCloudUserId`, '')) = ''
+              AND (
+                SELECT COUNT(DISTINCT TRIM(`cloudUserId`))
+                FROM `cloud_identity_binding`
+                WHERE TRIM(IFNULL(`cloudUserId`, '')) != ''
+              ) = 1
             """.trimIndent()
         )
         db.execSQL(
             """
             UPDATE `library_booking_plans`
-            SET `ownerStudentId` = (SELECT `schoolId` FROM `student_profile` LIMIT 1)
-            WHERE `ownerStudentId` IS NULL
+            SET `ownerStudentId` = (
+                SELECT TRIM(`schoolId`)
+                FROM `student_profile`
+                WHERE TRIM(IFNULL(`schoolId`, '')) != ''
+                LIMIT 1
+            )
+            WHERE TRIM(IFNULL(`ownerStudentId`, '')) = ''
+              AND (
+                SELECT COUNT(DISTINCT TRIM(`schoolId`))
+                FROM `student_profile`
+                WHERE TRIM(IFNULL(`schoolId`, '')) != ''
+              ) = 1
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            UPDATE `library_booking_plans`
+            SET `status` = 'NEEDS_RECONFIRMATION',
+                `remainingDays` = 0
+            WHERE `executionMode` = 'CLOUD_HOSTED'
+              AND TRIM(IFNULL(`ownerCloudUserId`, '')) = ''
+              AND `status` IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
             """.trimIndent()
         )
     }

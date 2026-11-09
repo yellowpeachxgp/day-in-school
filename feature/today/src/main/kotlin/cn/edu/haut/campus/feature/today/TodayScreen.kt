@@ -459,9 +459,9 @@ fun TodayScreen(
                 TodayLibrarySeatDynamicCard(
                     activePlans = activeSeatPlans,
                     onOpenLibrarySeats = onNavigateToLibrarySeats,
-                    onCancelPlan = { planId ->
+                    onStopDelegation = { planId ->
                         scope.launch {
-                            repository.cancelDualEngineBookingPlan(planId)
+                            repository.stopInFlightOrQueuedDelegation(planId)
                         }
                     }
                 )
@@ -1702,7 +1702,7 @@ private fun TodayExpressPickupHeroCard(
 private fun TodayLibrarySeatDynamicCard(
     activePlans: List<cn.edu.haut.campus.core.database.LibraryBookingPlanEntity>,
     onOpenLibrarySeats: () -> Unit,
-    onCancelPlan: (String) -> Unit
+    onStopDelegation: (String) -> Unit
 ) {
     XPeachCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1813,7 +1813,7 @@ private fun TodayLibrarySeatDynamicCard(
                                 label = if (isExecutingInFlight) "停止委托" else "取消委托",
                                 selected = false,
                                 compact = true,
-                                onClick = { onCancelPlan(plan.id) }
+                                onClick = { onStopDelegation(plan.id) }
                             )
                         }
                     }

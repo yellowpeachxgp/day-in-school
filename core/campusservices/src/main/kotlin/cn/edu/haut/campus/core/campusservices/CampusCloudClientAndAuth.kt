@@ -963,15 +963,18 @@ object CampusCloudOidcHelper {
 
     private fun prefetchScopedAuthMetadata(
         cloudBaseUrl: String,
-        accessToken: String
+        accessToken: String,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ) {
+        val transport = httpTransport ?: ::httpJsonRequest
         runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val raw = httpJsonRequest(
-                method = "GET",
-                url = "$cleanBase/api/v1/sync/snapshot",
-                bodyJson = null,
-                bearerToken = accessToken
+            val raw = transport(
+                "GET",
+                "$cleanBase/api/v1/sync/snapshot",
+                null,
+                accessToken,
+                emptyMap()
             )
             val root = JSONObject(raw)
             if (root.optBoolean("ok", false)) {
@@ -1347,45 +1350,51 @@ object CampusCloudOidcHelper {
         studentNo: String,
         delegatedSecret: String,
         plansToReconfirm: List<CloudUnsyncedPlanUpsertDto> = emptyList(),
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): Boolean {
         if (accessToken.isBlank() || studentNo.isBlank()) return false
+        val transport = httpTransport ?: ::httpJsonRequest
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val consentRaw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/me/consents",
-                bodyJson = JSONObject().put("school_id", "haut").toString(),
-                bearerToken = accessToken
+            val consentRaw = transport(
+                "POST",
+                "$cleanBase/api/v1/me/consents",
+                JSONObject().put("school_id", "haut").toString(),
+                accessToken,
+                emptyMap()
             )
             val consentData = JSONObject(consentRaw).optJSONObject("data") ?: return false
             val consentId = consentData.optString("id").trim()
             val consentAuthVer = consentData.optInt("auth_version", 1).coerceAtLeast(1)
             if (consentId.isEmpty()) return false
 
-            val bindInitRaw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/school-bindings",
-                bodyJson = JSONObject()
+            val bindInitRaw = transport(
+                "POST",
+                "$cleanBase/api/v1/school-bindings",
+                JSONObject()
                     .put("school_id", "haut")
                     .put("student_no", studentNo.trim())
                     .put("consent_id", consentId)
                     .toString(),
-                bearerToken = accessToken
+                accessToken,
+                emptyMap()
             )
             val bindId = JSONObject(bindInitRaw).optJSONObject("data")?.optString("id")?.trim().orEmpty()
             if (bindId.isEmpty()) return false
 
-            httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/school-bindings/$bindId/complete",
-                bodyJson = JSONObject()
+            val completeRaw = transport(
+                "POST",
+                "$cleanBase/api/v1/school-bindings/$bindId/complete",
+                JSONObject()
                     .put("credential_kind", "DELEGATED_SESSION_BUNDLE")
                     .put("consent_id", consentId)
                     .put("delegated_secret", delegatedSecret.ifBlank { "delegated_android_session" })
                     .toString(),
-                bearerToken = accessToken
+                accessToken,
+                emptyMap()
             )
+            if (!JSONObject(completeRaw).optBoolean("ok", false)) return false
 
             recordScopedAuthMetadata(
                 cloudBaseUrl = cleanBase,
@@ -1499,16 +1508,22 @@ object CampusCloudOidcHelper {
             "school_cancellation_state",
             if (rawState == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") "MANUAL_ACTION_REQUIRED" else "NOT_REQUESTED"
         )
+        val confirmedEvidenceObj = sr?.optJSONObject("confirmed_booking_evidence")
         val rawBookingId = sr?.optCleanString("external_booking_id")
+            ?.ifBlank { confirmedEvidenceObj?.optCleanString("external_booking_id").orEmpty() }
             ?.ifBlank { job.optCleanString("external_booking_id") }
             .orEmpty()
         val seatAlias = sr?.optCleanString("seat_alias")
+            ?.ifBlank { confirmedEvidenceObj?.optCleanString("seat_alias").orEmpty() }
             ?.ifBlank { job.optCleanString("confirmed_seat_name") }
             .orEmpty()
         val regionAlias = sr?.optCleanString("region_alias")
+            ?.ifBlank { confirmedEvidenceObj?.optCleanString("region_alias").orEmpty() }
             ?.ifBlank { job.optCleanString("confirmed_region_name") }
             .orEmpty()
-        val evidenceHash = sr?.optCleanString("evidence_sha256").orEmpty()
+        val evidenceHash = sr?.optCleanString("evidence_sha256")
+            ?.ifBlank { confirmedEvidenceObj?.optCleanString("evidence_sha256").orEmpty() }
+            .orEmpty()
 
         val isRealBookingId = rawBookingId.isNotBlank() &&
             rawBookingId != jobId &&
@@ -1516,10 +1531,23 @@ object CampusCloudOidcHelper {
             !rawBookingId.startsWith("plan_") &&
             !Regex("""^haut_\d{4}-\d{2}-\d{2}_""").containsMatchIn(rawBookingId)
 
+        val isCancelConfirmed =
+            schoolCancelState == "SCHOOL_CANCELLED" ||
+                rawState == "SCHOOL_CANCELLED" ||
+                rawDisplay == "SCHOOL_CANCELLED"
+        val isCancelResultUnknown =
+            !isCancelConfirmed && (
+                schoolCancelState in setOf("CANCEL_RESULT_UNKNOWN", "CANCEL_IN_PROGRESS") ||
+                    rawState == "CANCEL_RESULT_UNKNOWN" ||
+                    rawDisplay == "CANCEL_RESULT_UNKNOWN"
+                )
+
         val claimsConfirmed =
-            rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
-                rawDisplay in setOf("CONFIRMED", "SCHOOL_CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
-                rawExternalExecState == "SCHOOL_CONFIRMED"
+            !isCancelConfirmed && !isCancelResultUnknown && (
+                rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                    rawDisplay in setOf("CONFIRMED", "SCHOOL_CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                    rawExternalExecState == "SCHOOL_CONFIRMED"
+                )
 
         val isDelegationStopped =
             userIntentState in setOf("REVOKED", "STOP_REQUESTED") ||
@@ -1535,16 +1563,19 @@ object CampusCloudOidcHelper {
                 evidenceHash.isNotBlank()
 
         val safeState = when {
+            isCancelConfirmed -> "SCHOOL_CANCELLED"
+            isCancelResultUnknown -> "CANCEL_RESULT_UNKNOWN"
             claimsConfirmed && !hasCompleteConfirmedData ->
                 if (isDelegationStopped) "DELEGATION_STOPPED_RESULT_UNKNOWN" else "RESULT_UNKNOWN"
             hasCompleteConfirmedData && isDelegationStopped -> "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
             hasCompleteConfirmedData -> "CONFIRMED"
             else -> rawState
         }
-        val safeDisplayStatus = if (claimsConfirmed && !hasCompleteConfirmedData) {
-            safeState
-        } else {
-            rawDisplay
+        val safeDisplayStatus = when {
+            isCancelConfirmed -> "SCHOOL_CANCELLED"
+            isCancelResultUnknown -> "CANCEL_RESULT_UNKNOWN"
+            claimsConfirmed && !hasCompleteConfirmedData -> safeState
+            else -> rawDisplay
         }
         val safeExecState = when {
             hasCompleteConfirmedData -> "SCHOOL_CONFIRMED"
@@ -1771,6 +1802,41 @@ object CampusCloudOidcHelper {
                     )
                 }
             }
+            fun isAuthoritativeNotFoundResponse(raw: String?): Boolean {
+                if (raw.isNullOrBlank()) return false
+                val root = runCatching { JSONObject(raw) }.getOrNull() ?: return false
+                if (!root.has("ok") || root.get("ok") !is Boolean || root.getBoolean("ok")) return false
+                val errObj = root.optJSONObject("error") ?: return false
+                return errObj.optCleanString("code") == "NOT_FOUND"
+            }
+
+            fun parseStrictSyncSnapshotArrays(raw: String?): Pair<JSONArray, JSONArray>? {
+                if (raw.isNullOrBlank()) return null
+                val root = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+                if (!root.has("ok") || root.get("ok") !is Boolean || !root.getBoolean("ok")) return null
+                if (!root.has("data") || root.isNull("data") || root.get("data") !is JSONObject) return null
+                val data = root.getJSONObject("data")
+                if (!data.has("reservation_plans") || data.isNull("reservation_plans") || data.get("reservation_plans") !is JSONArray) {
+                    return null
+                }
+                if (!data.has("reservation_jobs") || data.isNull("reservation_jobs") || data.get("reservation_jobs") !is JSONArray) {
+                    return null
+                }
+                val plans = data.getJSONArray("reservation_plans")
+                val jobs = data.getJSONArray("reservation_jobs")
+                for (i in 0 until plans.length()) {
+                    val item = plans.opt(i) as? JSONObject ?: return null
+                    if (item.optCleanString("id").isBlank()) return null
+                    if (!item.has("enabled") || item.get("enabled") !is Boolean) return null
+                }
+                for (i in 0 until jobs.length()) {
+                    val item = jobs.opt(i) as? JSONObject ?: return null
+                    if (item.optCleanString("id").isBlank()) return null
+                    if (!item.has("state") || item.optCleanString("state").isBlank()) return null
+                }
+                return plans to jobs
+            }
+
             val firstSnapRaw = transport(
                 "GET",
                 "$cleanBase/api/v1/sync/snapshot",
@@ -1778,72 +1844,121 @@ object CampusCloudOidcHelper {
                 accessToken,
                 emptyMap()
             )
-            val firstRoot = JSONObject(firstSnapRaw)
-            if (!firstRoot.optBoolean("ok", false)) {
-                return EngineSwitchCloudCheckResult(
+            val (firstPlans, firstJobs) = parseStrictSyncSnapshotArrays(firstSnapRaw)
+                ?: return EngineSwitchCloudCheckResult(
                     outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
-                    reason = "无法从云端核实当前任务状态，不能确保云端未发起预约，已阻止切换为本机抢座"
+                    reason = "云端同步快照响应结构缺失或异常，无法确认父计划与子任务状态，已失败闭合阻止切换本机抢座"
                 )
-            }
-            val firstData = firstRoot.optJSONObject("data") ?: JSONObject()
-            val firstPlans = firstData.optJSONArray("reservation_plans") ?: JSONArray()
-            val firstJobs = firstData.optJSONArray("reservation_jobs") ?: JSONArray()
 
+            val firstPlanIds = linkedSetOf<String>()
             // Collect ALL parent plan IDs associated with cleanJobId (even if FAILED/EXPIRED!), planId, or targetLocalDate
             val matchedRemotePlanIds = linkedSetOf<String>()
-            if (planId.isNotBlank()) {
-                for (i in 0 until firstPlans.length()) {
-                    val p = firstPlans.optJSONObject(i) ?: continue
-                    val pId = p.optCleanString("id")
-                    val cPlanId = p.optCleanString("client_plan_id")
-                    val pDate = p.optCleanString("target_local_date")
-                    if (pId.isNotBlank() && (pId == planId || cPlanId == planId || pDate == targetLocalDate)) {
-                        matchedRemotePlanIds += pId
-                    }
+            val authoritativelyAbsentPlanIds = linkedSetOf<String>()
+            val authoritativelyAbsentJobIds = linkedSetOf<String>()
+
+            for (i in 0 until firstPlans.length()) {
+                val p = firstPlans.getJSONObject(i)
+                val pId = p.optCleanString("id")
+                firstPlanIds += pId
+                val cPlanId = p.optCleanString("client_plan_id")
+                val pDate = p.optCleanString("target_local_date")
+                if (planId.isNotBlank() && (pId == planId || cPlanId == planId)) {
+                    matchedRemotePlanIds += pId
+                } else if (pDate == targetLocalDate) {
+                    matchedRemotePlanIds += pId
                 }
             }
             for (i in 0 until firstJobs.length()) {
-                val j = firstJobs.optJSONObject(i) ?: continue
+                val j = firstJobs.getJSONObject(i)
                 val jId = j.optCleanString("id")
                 val remotePlanId = j.optCleanString("plan_id")
                 val jDate = j.optCleanString("booking_local_date")
-                if ((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate || remotePlanId == planId) {
+                if ((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate || (planId.isNotBlank() && remotePlanId == planId)) {
                     if (remotePlanId.isNotBlank()) {
                         matchedRemotePlanIds += remotePlanId
                     }
                 }
             }
 
-            // If cleanJobId was not found in snapshot at all, probe GET /api/v1/reservation-jobs/{cleanJobId} directly (fail closed unless 404)
-            if (cleanJobId != null && (0 until firstJobs.length()).none { firstJobs.optJSONObject(it)?.optCleanString("id") == cleanJobId }) {
+            // If cleanJobId was not found in snapshot at all, probe GET /api/v1/reservation-jobs/{cleanJobId} directly (fail closed unless authoritative 404 NOT_FOUND)
+            val cleanJobPresentInFirstSnap = cleanJobId != null &&
+                (0 until firstJobs.length()).any { firstJobs.getJSONObject(it).optCleanString("id") == cleanJobId }
+            if (cleanJobId != null && !cleanJobPresentInFirstSnap) {
                 val jobProbeRaw = runCatching {
                     transport("GET", "$cleanBase/api/v1/reservation-jobs/$cleanJobId", null, accessToken, emptyMap())
                 }.getOrNull()
-                if (jobProbeRaw == null) {
+                val probeRoot = jobProbeRaw?.let { runCatching { JSONObject(it) }.getOrNull() }
+                if (probeRoot == null || !probeRoot.has("ok") || probeRoot.get("ok") !is Boolean) {
                     return EngineSwitchCloudCheckResult(
                         outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
                         reason = "无法向云端核实旧任务与父计划状态，已阻止切换以避免双引擎重复预约"
                     )
                 }
-                val probeRoot = JSONObject(jobProbeRaw)
-                if (probeRoot.optBoolean("ok", false)) {
+                if (probeRoot.getBoolean("ok")) {
                     val probeData = probeRoot.optJSONObject("data")
-                    val probePlanId = probeData?.optCleanString("plan_id").orEmpty()
-                    if (probePlanId.isNotBlank()) matchedRemotePlanIds += probePlanId
-                } else {
-                    val code = probeRoot.optJSONObject("error")?.optCleanString("code").orEmpty()
-                    if (code != "NOT_FOUND") {
+                    if (probeData == null ||
+                        probeData.optCleanString("id") != cleanJobId ||
+                        !probeData.has("state") ||
+                        probeData.optCleanString("state").isBlank()
+                    ) {
                         return EngineSwitchCloudCheckResult(
                             outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
-                            reason = "查询云端任务返回异常（$code），未核实前已阻止切换"
+                            reason = "云端任务详情缺少关键状态字段，未核实前已阻止切换"
                         )
                     }
+                    val probePlanId = probeData.optCleanString("plan_id")
+                    if (probePlanId.isNotBlank()) matchedRemotePlanIds += probePlanId
+                } else if (isAuthoritativeNotFoundResponse(jobProbeRaw)) {
+                    authoritativelyAbsentJobIds += cleanJobId
+                } else {
+                    val code = probeRoot.optJSONObject("error")?.optCleanString("code").orEmpty()
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "查询云端任务返回异常（$code），未核实前已阻止切换"
+                    )
                 }
             }
 
             var needsFollowUpSnapshot = false
-            for (remotePlanId in matchedRemotePlanIds) {
-                runCatching {
+            // If caller specified a planId that was absent from firstPlans/firstJobs, require authoritative stop or NOT_FOUND!
+            if (planId.isNotBlank() &&
+                matchedRemotePlanIds.isEmpty() &&
+                (cleanJobId == null || cleanJobId in authoritativelyAbsentJobIds) &&
+                (0 until firstJobs.length()).none {
+                    val j = firstJobs.getJSONObject(it)
+                    j.optCleanString("booking_local_date") == targetLocalDate || j.optCleanString("plan_id") == planId
+                }
+            ) {
+                val delProbeRaw = runCatching {
+                    transport("DELETE", "$cleanBase/api/v1/reservation-plans/$planId", null, accessToken, emptyMap())
+                }.getOrNull()
+                val delProbeRoot = delProbeRaw?.let { runCatching { JSONObject(it) }.getOrNull() }
+                if (delProbeRoot != null &&
+                    delProbeRoot.has("ok") &&
+                    delProbeRoot.get("ok") is Boolean &&
+                    delProbeRoot.getBoolean("ok")
+                ) {
+                    val delData = delProbeRoot.optJSONObject("data")
+                    if (delData == null || !delData.has("enabled") || delData.get("enabled") !is Boolean || delData.getBoolean("enabled")) {
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                            reason = "云端停止计划响应缺少明确的禁用确认字段，已阻止切换以避免双引擎并跑"
+                        )
+                    }
+                    matchedRemotePlanIds += delData.optCleanString("plan_id").ifBlank { planId }
+                    needsFollowUpSnapshot = true
+                } else if (isAuthoritativeNotFoundResponse(delProbeRaw)) {
+                    authoritativelyAbsentPlanIds += planId
+                } else {
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "无法确认云端目标计划不存在或已停止，已失败闭合阻止恢复本机自动执行"
+                    )
+                }
+            }
+
+            for (remotePlanId in matchedRemotePlanIds.toList()) {
+                val delRaw = runCatching {
                     transport(
                         "DELETE",
                         "$cleanBase/api/v1/reservation-plans/$remotePlanId",
@@ -1851,18 +1966,47 @@ object CampusCloudOidcHelper {
                         accessToken,
                         emptyMap()
                     )
+                }.getOrNull()
+                val delRoot = delRaw?.let { runCatching { JSONObject(it) }.getOrNull() }
+                if (delRoot != null &&
+                    delRoot.has("ok") &&
+                    delRoot.get("ok") is Boolean &&
+                    delRoot.getBoolean("ok")
+                ) {
+                    val delData = delRoot.optJSONObject("data")
+                    if (delData == null || !delData.has("enabled") || delData.get("enabled") !is Boolean || delData.getBoolean("enabled")) {
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                            reason = "云端父计划（$remotePlanId）停止响应缺少显式禁用确认，已阻止切换"
+                        )
+                    }
+                } else if (isAuthoritativeNotFoundResponse(delRaw) && remotePlanId !in firstPlanIds) {
+                    authoritativelyAbsentPlanIds += remotePlanId
+                } else {
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "停止云端父计划（$remotePlanId）失败或未返回明确确认，已阻止切换以避免重复预约"
+                    )
                 }
                 needsFollowUpSnapshot = true
             }
+
+            val expectedScopedJobIds = linkedSetOf<String>()
+            if (cleanJobId != null && cleanJobPresentInFirstSnap) {
+                expectedScopedJobIds += cleanJobId
+            }
             for (i in 0 until firstJobs.length()) {
-                val j = firstJobs.optJSONObject(i) ?: continue
+                val j = firstJobs.getJSONObject(i)
                 val jId = j.optCleanString("id")
                 val remotePlanId = j.optCleanString("plan_id")
                 val jDate = j.optCleanString("booking_local_date")
-                val st = j.optCleanString("state", "ARMED")
+                val st = j.optCleanString("state")
                 val belongsToScope = (cleanJobId != null && jId == cleanJobId) ||
                     jDate == targetLocalDate ||
                     (remotePlanId.isNotBlank() && remotePlanId in matchedRemotePlanIds)
+                if (belongsToScope) {
+                    expectedScopedJobIds += jId
+                }
                 if (belongsToScope &&
                     st !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")
                 ) {
@@ -1881,7 +2025,7 @@ object CampusCloudOidcHelper {
                 }
             }
 
-            val finalData = if (needsFollowUpSnapshot) {
+            val (finalPlans, finalJobs) = if (needsFollowUpSnapshot) {
                 val secondSnapRaw = transport(
                     "GET",
                     "$cleanBase/api/v1/sync/snapshot",
@@ -1889,36 +2033,63 @@ object CampusCloudOidcHelper {
                     accessToken,
                     emptyMap()
                 )
-                val secondRoot = JSONObject(secondSnapRaw)
-                if (!secondRoot.optBoolean("ok", false)) {
-                    return EngineSwitchCloudCheckResult(
+                parseStrictSyncSnapshotArrays(secondSnapRaw)
+                    ?: return EngineSwitchCloudCheckResult(
                         outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
-                        reason = "云端停止指令发出后无法复核父计划与子任务最终状态，已阻止切换以避免重复预约"
+                        reason = "云端停止指令发出后复核快照结构异常或字段缺失，已失败闭合阻止切换以避免重复预约"
                     )
-                }
-                secondRoot.optJSONObject("data") ?: JSONObject()
             } else {
-                firstData
+                firstPlans to firstJobs
             }
 
-            val finalPlans = finalData.optJSONArray("reservation_plans") ?: JSONArray()
-            val finalJobs = finalData.optJSONArray("reservation_jobs") ?: JSONArray()
-
-            // 1) Verify every matched parent plan is explicitly disabled (enabled == false)!
+            // 1) Verify EVERY matched parent plan is present in finalPlans with explicit boolean enabled == false (or proven authoritative NOT_FOUND)!
+            val finalPlanById = LinkedHashMap<String, JSONObject>()
             for (i in 0 until finalPlans.length()) {
-                val p = finalPlans.optJSONObject(i) ?: continue
-                val pId = p.optCleanString("id")
-                if (pId in matchedRemotePlanIds && p.optBoolean("enabled", false)) {
+                val p = finalPlans.getJSONObject(i)
+                finalPlanById[p.optCleanString("id")] = p
+            }
+            for (requiredPlanId in matchedRemotePlanIds) {
+                val p = finalPlanById[requiredPlanId]
+                if (p == null) {
+                    if (requiredPlanId !in authoritativelyAbsentPlanIds) {
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                            reason = "云端最终快照遗漏了已关联的父计划（$requiredPlanId），缺少权威不存在证据，已失败闭合阻止切换"
+                        )
+                    }
+                    continue
+                }
+                if (!p.has("enabled") || p.get("enabled") !is Boolean || p.getBoolean("enabled")) {
                     return EngineSwitchCloudCheckResult(
                         outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
-                        reason = "云端父计划（$pId）仍处于启用续期状态，尚未确认停止，已阻止切换本机抢座"
+                        reason = "云端父计划（$requiredPlanId）仍处于启用续期状态或缺少明确禁用标记，已阻止切换本机抢座"
+                    )
+                }
+                if (p.has("user_intent_state") && p.optCleanString("user_intent_state") == "ACTIVE") {
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "云端父计划（$requiredPlanId）意图状态仍为 ACTIVE，尚未确认停止，已阻止切换本机抢座"
                     )
                 }
             }
 
-            // 2) Verify ALL child jobs belonging to matchedRemotePlanIds AND all jobs on targetLocalDate!
+            // 2) Verify ALL expected child jobs are still covered in finalJobs and have safe states!
+            val finalJobById = LinkedHashMap<String, JSONObject>()
             for (i in 0 until finalJobs.length()) {
-                val j = finalJobs.optJSONObject(i) ?: continue
+                val j = finalJobs.getJSONObject(i)
+                finalJobById[j.optCleanString("id")] = j
+            }
+            for (expectedJobId in expectedScopedJobIds) {
+                if (expectedJobId !in finalJobById && expectedJobId !in authoritativelyAbsentJobIds) {
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "云端最终快照遗漏了需核实的关联子任务（$expectedJobId），已失败闭合阻止切换"
+                    )
+                }
+            }
+
+            for (i in 0 until finalJobs.length()) {
+                val j = finalJobs.getJSONObject(i)
                 val jId = j.optCleanString("id")
                 val jPlanId = j.optCleanString("plan_id")
                 val jDate = j.optCleanString("booking_local_date")
@@ -1926,7 +2097,9 @@ object CampusCloudOidcHelper {
                 val inTargetScope = (cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate || inParentScope
                 if (!inTargetScope) continue
 
-                if (j.has("parent_plan_enabled") && j.optBoolean("parent_plan_enabled", false)) {
+                if (j.has("parent_plan_enabled") &&
+                    (j.get("parent_plan_enabled") !is Boolean || j.getBoolean("parent_plan_enabled"))
+                ) {
                     return EngineSwitchCloudCheckResult(
                         outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
                         reason = "云端父计划仍未停用，可能继续自动生成新任务，已阻止切换本机抢座"
@@ -1939,7 +2112,7 @@ object CampusCloudOidcHelper {
                     job = j,
                     sr = sr,
                     orderObj = null,
-                    defaultStateWhenMissing = "ARMED"
+                    defaultStateWhenMissing = "RESULT_UNKNOWN"
                 )
                 // If confirmed on targetLocalDate (or active confirmed on the same plan for targetLocalDate), block duplicate booking!
                 // (Note: if Day-1 was CONFIRMED yesterday on a multi-day plan and user is switching Day-2 today, Day-1's jDate != targetLocalDate so past confirmed Day-1 won't block stopping Day-2 once Day-2 is CANCELLED and parent plan is disabled!)
@@ -2092,19 +2265,23 @@ object CampusCloudOidcHelper {
         localParcels: List<CloudSyncedParcelDto>,
         cancelledJobOrPlanIds: List<String>,
         localActiveCloudPlans: List<CloudUnsyncedPlanUpsertDto> = emptyList(),
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        expectedCloudUserId: String? = null,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): CloudSyncSnapshotResult? {
         if (accessToken.isBlank()) return null
+        val transport = httpTransport ?: ::httpJsonRequest
         return runCatching {
             ensurePersistentAuthStoreLoaded()
             val cleanBase = cloudBaseUrl.trimEnd('/')
+            val cleanExpectedUser = expectedCloudUserId?.trim().orEmpty()
             val cleanStudentNo = studentNo?.trim().orEmpty()
             val hasBindingOrPlanPush = cleanStudentNo.isNotEmpty() || localActiveCloudPlans.isNotEmpty()
             val priorLocalMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", cleanStudentNo.ifEmpty { null })
             if (hasBindingOrPlanPush &&
                 (priorLocalMeta == null || priorLocalMeta.authVersion <= 0 || priorLocalMeta.bindingId.isNullOrBlank() || priorLocalMeta.consentId.isNullOrBlank())
             ) {
-                prefetchScopedAuthMetadata(cleanBase, accessToken)
+                prefetchScopedAuthMetadata(cleanBase, accessToken, httpTransport = transport)
             }
             val currentMeta = resolveScopedAuthMetadata(cleanBase, accessToken, "haut", cleanStudentNo.ifEmpty { null })
             val knownAuthVer = currentMeta?.authVersion ?: 0
@@ -2159,11 +2336,13 @@ object CampusCloudOidcHelper {
                 val recordedAuthVer = if (lp.createdAuthVersion > 0) lp.createdAuthVersion else (persistedProv?.authVersion ?: 0)
                 val recordedBindId = lp.boundBindingId?.trim()?.takeIf { it.isNotEmpty() } ?: persistedProv?.bindingId
                 val recordedConsentId = lp.boundConsentId?.trim()?.takeIf { it.isNotEmpty() } ?: persistedProv?.consentId
+                val recordedStudentNo = persistedProv?.studentNo?.trim().orEmpty()
 
                 val isEligible = when {
                     // 无可验证授权来源（recordedAuthVer <= 0 或缺少明确 binding/consent 归属）的计划：
                     // 一律暂停并要求显式重新确认，绝不通过当前绑定或默认版本猜测授权！
                     recordedAuthVer <= 0 || recordedBindId.isNullOrBlank() || recordedConsentId.isNullOrBlank() -> false
+                    recordedStudentNo.isNotEmpty() && (planSno.isEmpty() || recordedStudentNo != planSno) -> false
                     recordedAuthVer != serverVer.coerceAtLeast(1) -> false
                     !serverBindId.isNullOrBlank() && recordedBindId != serverBindId -> false
                     !serverConsentId.isNullOrBlank() && recordedConsentId != serverConsentId -> false
@@ -2290,17 +2469,24 @@ object CampusCloudOidcHelper {
                 bodyObj.put("reservation_plan_upserts", planUpsertsArr)
             }
 
-            val raw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/sync/snapshot",
-                bodyJson = bodyObj.toString(),
-                bearerToken = accessToken
+            val raw = transport(
+                "POST",
+                "$cleanBase/api/v1/sync/snapshot",
+                bodyObj.toString(),
+                accessToken,
+                emptyMap()
             )
             val root = JSONObject(raw)
             if (!root.optBoolean("ok", false)) return null
             val data = root.getJSONObject("data")
-            updateScopedAuthMetadataFromSnapshotData(cleanBase, accessToken, data)
             val userObj = data.optJSONObject("user") ?: JSONObject()
+            val responseCloudUserId = userObj.optCleanString("cloud_user_id")
+            if (cleanExpectedUser.isNotEmpty() &&
+                (responseCloudUserId.isEmpty() || responseCloudUserId != cleanExpectedUser)
+            ) {
+                return null
+            }
+            updateScopedAuthMetadataFromSnapshotData(cleanBase, accessToken, data)
             val walletObj = data.optJSONObject("wallet") ?: JSONObject()
             val bindingsArr = data.optJSONArray("school_bindings") ?: JSONArray()
             val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()

@@ -1897,4 +1897,112 @@ class CampusServicesUnitTest {
             checkSafeAfterStoppingRolledChild.outcome
         )
     }
+
+    @Test
+    fun coordinateStopCloudJobRejectsMalformedAndIncompleteSnapshots() {
+        val malformedPayloads = listOf(
+            // 1) ok:true but missing data
+            """{"ok":true}""",
+            // 2) ok:true but data is wrong type (array instead of object)
+            """{"ok":true,"data":[]}""",
+            // 3) ok:true but missing reservation_plans or reservation_jobs
+            """{"ok":true,"data":{"reservation_plans":[]}}""",
+            """{"ok":true,"data":{"reservation_jobs":[]}}""",
+            """{"ok":true,"data":{"reservation_plans":{},"reservation_jobs":[]}}""",
+            // 4) parent plan missing explicit boolean enabled (omitted or string "false")
+            """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","target_local_date":"2026-11-25"}],"reservation_jobs":[]}}""",
+            """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","enabled":"false","target_local_date":"2026-11-25"}],"reservation_jobs":[]}}""",
+            // 5) job missing state field
+            """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","enabled":false}],"reservation_jobs":[{"id":"job_m1","plan_id":"plan_m1","booking_local_date":"2026-11-25"}]}}"""
+        )
+
+        for ((idx, payload) in malformedPayloads.withIndex()) {
+            val res = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+                accessToken = "tok_strict_schema",
+                cloudJobId = "job_m1",
+                planId = "plan_m1",
+                targetLocalDate = "2026-11-25",
+                cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+            ) { method, url, _, _, _ ->
+                if (method == "GET" && url.endsWith("/api/v1/sync/snapshot")) payload
+                else """{"ok":true,"data":{"plan_id":"plan_m1","enabled":false}}"""
+            }
+            assertEquals(
+                "Malformed snapshot #$idx must fail closed",
+                CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                res.outcome
+            )
+        }
+
+        // 6) Matched parent plan present in first snapshot but OMITTED from final snapshot without authoritative NOT_FOUND -> fail closed!
+        var snapCountParentOmitted = 0
+        val omittedParentRes = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_strict_schema",
+            cloudJobId = "job_m1",
+            planId = "plan_m1",
+            targetLocalDate = "2026-11-25",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    snapCountParentOmitted += 1
+                    if (snapCountParentOmitted == 1) {
+                        """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","enabled":true,"target_local_date":"2026-11-25"}],"reservation_jobs":[{"id":"job_m1","plan_id":"plan_m1","booking_local_date":"2026-11-25","state":"ARMED"}]}}"""
+                    } else {
+                        // Parent plan disappeared from final snapshot!
+                        """{"ok":true,"data":{"reservation_plans":[],"reservation_jobs":[{"id":"job_m1","plan_id":"plan_m1","booking_local_date":"2026-11-25","state":"CANCELLED"}]}}"""
+                    }
+                }
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_m1") ->
+                    """{"ok":true,"data":{"plan_id":"plan_m1","enabled":false}}"""
+                else -> """{"ok":true,"data":{"id":"job_m1","state":"CANCELLED"}}"""
+            }
+        }
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+            omittedParentRes.outcome
+        )
+
+        // 7) Matched child job present in first snapshot but OMITTED from final snapshot -> fail closed!
+        var snapCountJobOmitted = 0
+        val omittedJobRes = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_strict_schema",
+            cloudJobId = "job_m1",
+            planId = "plan_m1",
+            targetLocalDate = "2026-11-25",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    snapCountJobOmitted += 1
+                    if (snapCountJobOmitted == 1) {
+                        """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","enabled":true,"target_local_date":"2026-11-25"}],"reservation_jobs":[{"id":"job_m1","plan_id":"plan_m1","booking_local_date":"2026-11-25","state":"ARMED"}]}}"""
+                    } else {
+                        """{"ok":true,"data":{"reservation_plans":[{"id":"plan_m1","enabled":false,"user_intent_state":"STOP_REQUESTED"}],"reservation_jobs":[]}}"""
+                    }
+                }
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_m1") ->
+                    """{"ok":true,"data":{"plan_id":"plan_m1","enabled":false}}"""
+                else -> """{"ok":true,"data":{"id":"job_m1","state":"CANCELLED"}}"""
+            }
+        }
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+            omittedJobRes.outcome
+        )
+
+        // 8) normalizeCloudJobConfirmation preserves CANCEL_RESULT_UNKNOWN (never misreporting as DELEGATION_STOPPED_SCHOOL_CONFIRMED)
+        val normUnknownCancel = CampusCloudOidcHelper.normalizeCloudJobConfirmation(
+            jobId = "job_cancel_unk_1",
+            job = org.json.JSONObject(
+                """{"id":"job_cancel_unk_1","state":"CANCEL_RESULT_UNKNOWN","display_status":"CANCEL_RESULT_UNKNOWN","user_intent_state":"REVOKED","external_execution_state":"SCHOOL_CONFIRMED","school_cancellation_state":"CANCEL_RESULT_UNKNOWN"}"""
+            ),
+            sr = org.json.JSONObject(
+                """{"external_booking_id":"88990011","seat_alias":"05桌 A座","region_alias":"五层中区","evidence_sha256":"abc123sha","official_status":"CANCEL_RESULT_UNKNOWN","school_cancellation_state":"CANCEL_RESULT_UNKNOWN"}"""
+            )
+        )
+        assertEquals("CANCEL_RESULT_UNKNOWN", normUnknownCancel.state)
+        assertEquals("CANCEL_RESULT_UNKNOWN", normUnknownCancel.displayStatus)
+        assertEquals("CANCEL_RESULT_UNKNOWN", normUnknownCancel.schoolCancellationState)
+    }
 }

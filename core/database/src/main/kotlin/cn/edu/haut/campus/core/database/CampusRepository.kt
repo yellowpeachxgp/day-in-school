@@ -181,7 +181,8 @@ class CampusRepository internal constructor(
     private val appContext: Context,
     private val database: HautDatabase,
     private val preferences: DataStore<Preferences>,
-    private val accountProfile: AccountProfileEntity
+    private val accountProfile: AccountProfileEntity,
+    academicCredentialVaultOverride: AcademicCredentialVault? = null
 ) {
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
@@ -191,7 +192,7 @@ class CampusRepository internal constructor(
     private val librarySeatSessionVault = LibrarySeatSessionVault(appContext, scopeId = accountProfile.id.takeUnless { accountProfile.isLegacy })
     private val xiaomiAccountVault = XiaomiAccountSecureVault(appContext, scopeId = accountProfile.id)
     private val cloudTokenVault = CloudTokenSecureVault(appContext, scopeId = accountProfile.id)
-    private val academicCredentialVault = createAcademicCredentialVault(appContext)
+    private val academicCredentialVault = academicCredentialVaultOverride ?: createAcademicCredentialVault(appContext)
     private val academicCredentialMutex = Mutex()
     private val librarySeatAuthMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
@@ -4165,7 +4166,7 @@ class CampusRepository internal constructor(
                     val oldPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                     for (plan in oldPlans) {
                         if (plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName) continue
-                        val planOwner = plan.ownerCloudUserId?.takeIf { it.isNotBlank() } ?: prevCloudUserId
+                        val planOwner = plan.ownerCloudUserId?.trim()?.takeIf { it.isNotEmpty() } ?: continue
                         if (planOwner != prevCloudUserId) continue
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
                         // 严禁在换号时 deleteLibraryBookingPlan！必须按原账号隔离保留全部已派发/待核对/已成功记录与预约凭据
@@ -4312,16 +4313,30 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.configurePersistentAuthStorageDir(
                     java.io.File(appContext.filesDir, "cloud_auth_provenance")
                 )
+                CampusCloudOidcHelper.configurePersistentAuthStorageDir(
+                    java.io.File(appContext.filesDir, "cloud_auth_provenance")
+                )
                 val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                     ?: throw IllegalStateException("尚未连接 XPeach 通行证")
+                val expectedCloudUserId = currentBinding.cloudUserId.trim()
+                if (expectedCloudUserId.isEmpty()) {
+                    throw IllegalStateException("当前 XPeach 通行证标识异常，请重新登录")
+                }
                 var token = resolveValidCloudAccessToken(forceRefresh = false)
                 if (token.isBlank()) {
                     throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
                 }
 
+                val prefsBeforeSync = preferencesFlow.first()
+                val (bundleStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
+                val localStudentNo = bundleStudentNo?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: prefsBeforeSync.savedStudentId?.trim()?.takeIf { it.isNotEmpty() }
+                val expectedStudentNo = localStudentNo.orEmpty()
+
                 val existingPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 val activeCloudPlans = existingPlansSnapshot.filter {
                     it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                        doesCloudPlanBelongToActiveAccount(it, expectedCloudUserId, expectedStudentNo) &&
                         it.status !in setOf(
                             "CANCELLED",
                             "FAILED",
@@ -4333,12 +4348,12 @@ class CampusRepository internal constructor(
                 }
                 val hasActiveCloudBookingPlan = existingPlansSnapshot.any {
                     it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                        doesCloudPlanBelongToActiveAccount(it, expectedCloudUserId, expectedStudentNo) &&
                         it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
                 }
-                val (localStudentNo, localDelegatedSecret) = buildDelegatedCredentialBundle()
                 val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
                 val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+                    prefsBeforeSync.networkProxyConfig.customCloudApiBaseUrl
                 )
 
                 val localPlanUpserts = activeCloudPlans.map { plan ->
@@ -4356,7 +4371,7 @@ class CampusRepository internal constructor(
                         repeatDays = plan.repeatDays.coerceIn(1, 30),
                         remainingDays = plan.remainingDays.coerceIn(1, 30),
                         allowAlternativeSeat = plan.allowAlternativeSeat,
-                        studentNo = localStudentNo
+                        studentNo = plan.ownerStudentId?.trim()?.takeIf { it.isNotEmpty() } ?: localStudentNo
                     )
                 }
 
@@ -4375,7 +4390,9 @@ class CampusRepository internal constructor(
                 }
                 val cancelledJobIds = existingPlansSnapshot
                     .filter {
-                        it.status in setOf("CANCELLED", "DELEGATION_STOPPED_RESULT_UNKNOWN") &&
+                        it.ownerCloudUserId?.trim() == expectedCloudUserId &&
+                            (expectedStudentNo.isEmpty() || it.ownerStudentId.isNullOrBlank() || it.ownerStudentId.trim() == expectedStudentNo) &&
+                            it.status in setOf("CANCELLED", "DELEGATION_STOPPED_RESULT_UNKNOWN") &&
                             !it.cloudJobId.isNullOrBlank() &&
                             !it.cloudJobId.startsWith("cjob_")
                     }
@@ -4388,7 +4405,9 @@ class CampusRepository internal constructor(
                     localParcels = localParcels,
                     cancelledJobOrPlanIds = cancelledJobIds,
                     localActiveCloudPlans = localPlanUpserts,
-                    cloudBaseUrl = cloudBaseUrl
+                    cloudBaseUrl = cloudBaseUrl,
+                    expectedCloudUserId = expectedCloudUserId,
+                    httpTransport = cloudHttpTransportForTest
                 )
                 if (snapshot == null) {
                     token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
@@ -4400,14 +4419,23 @@ class CampusRepository internal constructor(
                             localParcels = localParcels,
                             cancelledJobOrPlanIds = cancelledJobIds,
                             localActiveCloudPlans = localPlanUpserts,
-                            cloudBaseUrl = cloudBaseUrl
+                            cloudBaseUrl = cloudBaseUrl,
+                            expectedCloudUserId = expectedCloudUserId,
+                            httpTransport = cloudHttpTransportForTest
                         )
                     }
                 }
                 val verifiedSnapshot = snapshot ?: throw IllegalStateException("同步云端数据失败，请稍后重试")
+                if (verifiedSnapshot.cloudUserId.trim() != expectedCloudUserId) {
+                    throw IllegalStateException("云端同步返回账号与当前绑定账号不一致，已拒绝落库")
+                }
                 val activeBindingAfterSync = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
-                if (activeBindingAfterSync == null || activeBindingAfterSync.cloudUserId != currentBinding.cloudUserId) {
+                if (activeBindingAfterSync == null || activeBindingAfterSync.cloudUserId.trim() != expectedCloudUserId) {
                     throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
+                }
+                val liveStuAfterSync = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (expectedStudentNo.isNotEmpty() && liveStuAfterSync.isNotEmpty() && liveStuAfterSync != expectedStudentNo) {
+                    throw IllegalStateException("同步期间学号已切换，已忽略旧学号会话同步结果")
                 }
                 val now = System.currentTimeMillis()
 
@@ -4478,12 +4506,22 @@ class CampusRepository internal constructor(
                 }
             }
 
-            // 3) 合并云端图书馆预约任务到本地 Room（严格隔离 ownerCloudUserId，严禁跨云账号混并或覆盖正在执行/待核对状态）
+            // 3) 合并云端图书馆预约任务到本地 Room（严格隔离 ownerCloudUserId + 学号，严禁混并空 owner 旧记录或跨云账号记录）
             bookingPlanStateMutex.withLock {
-                val syncedCloudUserId = verifiedSnapshot.cloudUserId
-                val activeStuNo = preferencesFlow.first().savedStudentId
-                val localPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot().filter {
-                    it.ownerCloudUserId.isNullOrBlank() || it.ownerCloudUserId == syncedCloudUserId
+                val liveBindingLocked = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                val liveStuLocked = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (liveBindingLocked == null || liveBindingLocked.cloudUserId.trim() != expectedCloudUserId) {
+                    throw IllegalStateException("同步落库前云端账号已切换或解绑，已放弃写入旧会话同步结果")
+                }
+                if (expectedStudentNo.isNotEmpty() && liveStuLocked.isNotEmpty() && liveStuLocked != expectedStudentNo) {
+                    throw IllegalStateException("同步落库前学号已切换，已放弃写入旧学号会话同步结果")
+                }
+                val syncedCloudUserId = expectedCloudUserId
+                val activeStuNo = expectedStudentNo.ifEmpty { liveStuLocked }.takeIf { it.isNotEmpty() }
+                val allExistingInLock = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+                val existingById = allExistingInLock.associateBy { it.id }
+                val localPlans = allExistingInLock.filter {
+                    doesCloudPlanBelongToActiveAccount(it, syncedCloudUserId, activeStuNo.orEmpty())
                 }
                 for (rj in verifiedSnapshot.jobs) {
                     val matchingLocal = localPlans.firstOrNull {
@@ -4578,8 +4616,16 @@ class CampusRepository internal constructor(
                     }
                     val isConfirmedOnSchool =
                         effectiveStatus == "CONFIRMED" || effectiveStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
+                    val candidatePlanId = "plan_${rj.jobId.ifBlank { rj.planId }.replace("-", "").take(14)}"
+                    val resolvedPlanId = when {
+                        matchingLocal != null -> matchingLocal.id
+                        existingById[candidatePlanId] != null &&
+                            existingById[candidatePlanId]?.ownerCloudUserId?.trim() != syncedCloudUserId ->
+                            "${candidatePlanId}_${syncedCloudUserId.replace("-", "").takeLast(6)}"
+                        else -> candidatePlanId
+                    }
                     val mergedPlan = LibraryBookingPlanEntity(
-                        id = matchingLocal?.id ?: "plan_${rj.jobId.ifBlank { rj.planId }.replace("-", "").take(14)}",
+                        id = resolvedPlanId,
                         schoolId = schoolId,
                         executionMode = BookingExecutionMode.CLOUD_HOSTED.wireName,
                         targetLocalDate = rj.targetLocalDate,
@@ -4629,7 +4675,7 @@ class CampusRepository internal constructor(
                     }
                 }
 
-                // 4) 对因新授权世代未确认而被安全阻断上推的本地计划，显式标记为 NEEDS_RECONFIRMATION 并取消闹钟
+                // 4) 对因新授权世代未确认而被安全阻断上推的当前账号本地计划，显式标记为 NEEDS_RECONFIRMATION 并取消闹钟（绝不改动其他账号保留记录！）
                 if (verifiedSnapshot.needsReconfirmationPlanIds.isNotEmpty() ||
                     verifiedSnapshot.needsReconfirmationBindingStudentNos.isNotEmpty()
                 ) {
@@ -4637,6 +4683,7 @@ class CampusRepository internal constructor(
                     val latestLocalPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                     for (lp in latestLocalPlans) {
                         if (lp.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                            doesCloudPlanBelongToActiveAccount(lp, syncedCloudUserId, activeStuNo.orEmpty()) &&
                             (lp.id in reconfirmSet ||
                                 (verifiedSnapshot.needsReconfirmationBindingStudentNos.isNotEmpty() &&
                                     lp.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")))
@@ -4676,6 +4723,15 @@ class CampusRepository internal constructor(
      */
     suspend fun reconfirmAndRestoreCloudBookingPlans(): Result<CloudSyncSnapshotResult> = withContext(Dispatchers.IO) {
         runCatching {
+            CampusCloudOidcHelper.configurePersistentAuthStorageDir(
+                java.io.File(appContext.filesDir, "cloud_auth_provenance")
+            )
+            val bindingAtStart = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                ?: throw IllegalStateException("尚未连接 XPeach 通行证")
+            val expectedCloudUserId = bindingAtStart.cloudUserId.trim()
+            if (expectedCloudUserId.isEmpty()) {
+                throw IllegalStateException("当前 XPeach 通行证标识异常，请重新登录")
+            }
             val token = resolveValidCloudAccessToken(forceRefresh = false)
             if (token.isBlank()) {
                 throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
@@ -4690,10 +4746,13 @@ class CampusRepository internal constructor(
                 prefsSnap.networkProxyConfig.customCloudApiBaseUrl
             )
             val plansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-            val plansToReconfirm = plansSnapshot.filter {
+            val matchingPlans = plansSnapshot.filter {
                 it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                    doesCloudPlanBelongToActiveAccount(it, expectedCloudUserId, studentNo) &&
                     it.status in setOf("NEEDS_RECONFIRMATION", "ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
-            }.map { plan ->
+            }
+            val expectedStateVersionsById = matchingPlans.associate { it.id to it.stateVersion }
+            val plansToReconfirm = matchingPlans.map { plan ->
                 val seats = plan.preferredSeatLabel
                     .split(",", "，", "、", "/", "|", ";", "；")
                     .map { it.trim() }
@@ -4716,24 +4775,39 @@ class CampusRepository internal constructor(
                 studentNo = studentNo,
                 delegatedSecret = localDelegatedSecret.orEmpty(),
                 plansToReconfirm = plansToReconfirm,
-                cloudBaseUrl = cloudBaseUrl
+                cloudBaseUrl = cloudBaseUrl,
+                httpTransport = cloudHttpTransportForTest
             )
             if (!reconfirmed) {
                 throw IllegalStateException("重新确认学校授权失败，请检查网络连接后重试")
             }
             val now = System.currentTimeMillis()
-            for (p in plansSnapshot) {
-                if (p.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                    p.status == "NEEDS_RECONFIRMATION"
-                ) {
-                    cloudAndParcelDao.upsertLibraryBookingPlan(
-                        p.copy(
-                            status = "ARMED",
-                            stateVersion = p.stateVersion + 1,
-                            lastDiagnosticMessage = "已重新确认云端授权，正在同步恢复云端托管抢座",
-                            updatedAtEpochMillis = now
-                        )
-                    )
+            bookingPlanStateMutex.withLock {
+                val liveBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                val liveStu = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (liveBinding == null || liveBinding.cloudUserId.trim() != expectedCloudUserId || liveStu != studentNo) {
+                    throw IllegalStateException("重新确认授权期间账号或学号已切换，已停止恢复旧会话计划")
+                }
+                database.withTransaction {
+                    for ((planId, expectedVer) in expectedStateVersionsById) {
+                        val currentRow = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: continue
+                        if (currentRow.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                            doesCloudPlanBelongToActiveAccount(currentRow, expectedCloudUserId, studentNo) &&
+                            currentRow.status == "NEEDS_RECONFIRMATION" &&
+                            currentRow.stateVersion == expectedVer
+                        ) {
+                            cloudAndParcelDao.upsertLibraryBookingPlan(
+                                currentRow.copy(
+                                    status = "ARMED",
+                                    stateVersion = currentRow.stateVersion + 1,
+                                    ownerCloudUserId = expectedCloudUserId,
+                                    ownerStudentId = currentRow.ownerStudentId?.takeIf { it.isNotBlank() } ?: studentNo,
+                                    lastDiagnosticMessage = "已重新确认云端授权，正在同步恢复云端托管抢座",
+                                    updatedAtEpochMillis = now
+                                )
+                            )
+                        }
+                    }
                 }
             }
             syncWithCampusCloud().getOrThrow()
@@ -4790,7 +4864,11 @@ class CampusRepository internal constructor(
                 val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 for (plan in plans) {
                     if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                        val stampedCloudOwner = plan.ownerCloudUserId?.takeIf { it.isNotBlank() } ?: prevCloudUserId
+                        val explicitCloudOwner = plan.ownerCloudUserId?.trim()?.takeIf { it.isNotEmpty() }
+                        if (prevCloudUserId != null && explicitCloudOwner != prevCloudUserId) {
+                            continue
+                        }
+                        val stampedCloudOwner = explicitCloudOwner
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
                         when {
                             // 严禁把已确认、在途或结果未知的状态覆盖为 CANCELLED（否则会丢失预约凭据或放行同日重复抢座！）
@@ -4863,23 +4941,65 @@ class CampusRepository internal constructor(
     val allLibraryBookingPlansForAuditFlow: Flow<List<LibraryBookingPlanEntity>> =
         cloudAndParcelDao.observeLibraryBookingPlans()
 
+    private fun doesCloudPlanBelongToActiveAccount(
+        plan: LibraryBookingPlanEntity,
+        activeCloudUserId: String?,
+        activeStudentNo: String?
+    ): Boolean {
+        val cleanActiveCloud = activeCloudUserId?.trim().orEmpty()
+        if (cleanActiveCloud.isEmpty()) return false
+        val planCloud = plan.ownerCloudUserId?.trim().orEmpty()
+        if (planCloud.isEmpty() || planCloud != cleanActiveCloud) return false
+        val cleanActiveStu = activeStudentNo?.trim().orEmpty()
+        val planStu = plan.ownerStudentId?.trim().orEmpty()
+        if (planStu.isNotEmpty() && cleanActiveStu.isNotEmpty() && planStu != cleanActiveStu) {
+            return false
+        }
+        if (planStu.isNotEmpty() && cleanActiveStu.isEmpty()) {
+            return false
+        }
+        return true
+    }
+
+    private fun isUnattributedLegacyBookingPlan(plan: LibraryBookingPlanEntity): Boolean {
+        return if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+            plan.ownerCloudUserId.isNullOrBlank()
+        } else {
+            plan.ownerStudentId.isNullOrBlank()
+        }
+    }
+
+    /** 无法证明唯一归属的升级遗留记录（待认领/本地审计专用，普通登录账号页面与同步不可见） */
+    val unattributedLegacyBookingPlansFlow: Flow<List<LibraryBookingPlanEntity>> =
+        cloudAndParcelDao.observeLibraryBookingPlans().map { plans ->
+            plans.filter(::isUnattributedLegacyBookingPlan)
+        }
+
     private fun isBookingPlanVisibleToIdentity(
         plan: LibraryBookingPlanEntity,
         activeCloudUserId: String?,
         activeStudentId: String?
     ): Boolean {
+        val cleanActiveCloud = activeCloudUserId?.trim().orEmpty()
         val cleanActiveStudent = activeStudentId?.trim().orEmpty()
         if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
             val planOwnerCloud = plan.ownerCloudUserId?.trim().orEmpty()
+            val planOwnerStu = plan.ownerStudentId?.trim().orEmpty()
             return when {
-                !activeCloudUserId.isNullOrBlank() ->
-                    planOwnerCloud.isEmpty() || planOwnerCloud == activeCloudUserId
-                // 未登录云端账号时，保留展示本机待核对或学校已成功但委托已停的记录，确保退出登录后证据仍可追溯
+                cleanActiveCloud.isNotEmpty() -> {
+                    // 已登录当前云端账号 B：严禁将空 owner 旧记录或账号 A 的记录当作 B 的数据展示！
+                    planOwnerCloud.isNotEmpty() &&
+                        planOwnerCloud == cleanActiveCloud &&
+                        (cleanActiveStudent.isEmpty() || planOwnerStu.isEmpty() || planOwnerStu == cleanActiveStudent)
+                }
+                // 未登录云端账号时：若已登录某学号则仅展示明确匹配该学号的证据记录；若完全未登录则保留展示本机待核对/已确认证据
                 else -> {
-                    val studentMatchesOrBlank = cleanActiveStudent.isEmpty() ||
-                        plan.ownerStudentId.isNullOrBlank() ||
-                        plan.ownerStudentId == cleanActiveStudent
-                    studentMatchesOrBlank && (
+                    val studentMatchesWhenLoggedOutOfCloud = if (cleanActiveStudent.isNotEmpty()) {
+                        planOwnerStu.isNotEmpty() && planOwnerStu == cleanActiveStudent
+                    } else {
+                        true
+                    }
+                    studentMatchesWhenLoggedOutOfCloud && (
                         plan.status in setOf(
                             "CONFIRMED",
                             "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
@@ -4893,7 +5013,60 @@ class CampusRepository internal constructor(
             }
         }
         val planOwnerStu = plan.ownerStudentId?.trim().orEmpty()
-        return cleanActiveStudent.isEmpty() || planOwnerStu.isEmpty() || planOwnerStu == cleanActiveStudent
+        return if (cleanActiveStudent.isNotEmpty()) {
+            // 已登录本地学号 B：严禁将未知归属（空 ownerStudentId）旧记录展示为 B 的计划！
+            planOwnerStu.isNotEmpty() && planOwnerStu == cleanActiveStudent
+        } else {
+            planOwnerStu.isEmpty() ||
+                plan.status in setOf(
+                    "CONFIRMED",
+                    "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                    "RESULT_UNKNOWN",
+                    "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                    "CANCEL_RESULT_UNKNOWN",
+                    "SCHOOL_CANCELLED"
+                ) || !plan.externalBookingId.isNullOrBlank() || !plan.evidenceSha256.isNullOrBlank()
+        }
+    }
+
+    private fun isSamePersonBookingConflictCandidate(
+        candidate: LibraryBookingPlanEntity,
+        targetLocalDate: String,
+        activeCloudUserId: String?,
+        activeStudentNo: String?,
+        excludePlanId: String? = null
+    ): Boolean {
+        if (excludePlanId != null && candidate.id == excludePlanId) return false
+        if (candidate.targetLocalDate != targetLocalDate) return false
+        if (candidate.status in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "REMINDER_SENT")) {
+            return false
+        }
+        val cleanActiveStu = activeStudentNo?.trim().orEmpty()
+        val candStu = candidate.ownerStudentId?.trim().orEmpty()
+        val cleanActiveCloud = activeCloudUserId?.trim().orEmpty()
+        val candCloud = candidate.ownerCloudUserId?.trim().orEmpty()
+
+        // 1. 两侧均有明确学号：同一学号（哪怕跨不同云账号）严格防重；不同学号严格隔离不误阻！
+        if (cleanActiveStu.isNotEmpty() && candStu.isNotEmpty()) {
+            return cleanActiveStu == candStu
+        }
+        // 2. 两侧均有明确云账号：同一云账号防重；不同云账号隔离不误阻！
+        if (cleanActiveCloud.isNotEmpty() && candCloud.isNotEmpty()) {
+            return cleanActiveCloud == candCloud
+        }
+        // 3. 当前与候选记录均未写入学号，且候选为本机非云端任务（同设备未绑学号时的在途/排队本机计划）：必须防重阻断！
+        if (cleanActiveStu.isEmpty() &&
+            candStu.isEmpty() &&
+            candCloud.isEmpty() &&
+            candidate.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName
+        ) {
+            return true
+        }
+        // 4. 完全退出云账号且未切换为其他学号时（例如仅解绑 XPeach 云账号后尝试同日改建本机抢座）：保留对本机可见已确认/待核对记录的同日防重！
+        if (cleanActiveCloud.isEmpty() && cleanActiveStu.isEmpty()) {
+            return isBookingPlanVisibleToIdentity(candidate, null, "")
+        }
+        return false
     }
 
     val libraryBookingPlansFlow: Flow<List<LibraryBookingPlanEntity>> =
@@ -4934,16 +5107,16 @@ class CampusRepository internal constructor(
         val (studentNoBundlePre, delegatedBundlePre) = buildDelegatedCredentialBundle()
         val currentStudentNo = (studentNoBundlePre ?: prefsSnap.savedStudentId.orEmpty()).trim()
 
-        // 0) 跨引擎切换与同日同人防重协调：仅匹配当前活跃云账号或同一学号的记录（不同账号历史证据隔离保存不误伤，同一学号跨账号仍严格防重！）
-        val existingForDate = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-            .filter { plan ->
-                plan.targetLocalDate == targetDateStr &&
-                    plan.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "REMINDER_SENT") &&
-                    (
-                        isBookingPlanVisibleToIdentity(plan, activeBindingSnap?.cloudUserId, currentStudentNo) ||
-                            (currentStudentNo.isNotEmpty() && plan.ownerStudentId == currentStudentNo)
-                    )
-            }
+        // 0) 跨引擎切换与同日同人防重协调：统一按真实学校身份（学号）与明确 owner 归属判重（不同人隔离不误伤，同一学号跨账号仍严格防重！）
+        val allPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
+        val existingForDate = allPlansSnapshot.filter { plan ->
+            isSamePersonBookingConflictCandidate(
+                candidate = plan,
+                targetLocalDate = targetDateStr,
+                activeCloudUserId = activeBindingSnap?.cloudUserId,
+                activeStudentNo = currentStudentNo
+            )
+        }
 
         val confirmedForDate = existingForDate.firstOrNull {
             it.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")
@@ -4990,12 +5163,36 @@ class CampusRepository internal constructor(
         var remoteCloudJobId: String? = null
         var planOwnerCloudUserId: String? = null
 
-        // 若目标为本机抢座/提醒（无需强制绑定 SSO），但同日存在已排队的云端代抢计划，则必须先与云端协调停止父计划及全部子任务并核实无在途请求
+        // 若目标为本机抢座/提醒：必须按「父计划关联与续期可能性」选取全部相关云端计划（包括旧 FAILED/EXPIRED 子任务及跨日连续计划），
+        // 先向云端执行权威核查与父计划停止，绝不因本地旧子任务已终态而跳过协调！
         if (executionMode != BookingExecutionMode.CLOUD_HOSTED) {
-            val queuedCloudPlans = existingForDate.filter {
-                it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
+            val cloudPlansRequiringCoordination = allPlansSnapshot.filter { plan ->
+                if (plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName) return@filter false
+                val belongsToSamePerson =
+                    doesCloudPlanBelongToActiveAccount(plan, activeBindingSnap?.cloudUserId, currentStudentNo) ||
+                        (currentStudentNo.isNotEmpty() && plan.ownerStudentId?.trim() == currentStudentNo)
+                if (!belongsToSamePerson) return@filter false
+                // 仅排除已在本地完成过云端父计划协调停止且 remainingDays == 0 的 CANCELLED/SCHOOL_CANCELLED 记录；
+                // FAILED / EXPIRED 以及跨日连续计划（repeatDays > 1 或 remainingDays > 0）必须纳入云端父计划权威核查！
+                val alreadyCoordinatedStopped =
+                    (plan.status == "CANCELLED" && plan.remainingDays <= 0 &&
+                        plan.lastDiagnosticMessage?.contains("已与云端协调停止父计划") == true) ||
+                        plan.status == "SCHOOL_CANCELLED"
+                if (alreadyCoordinatedStopped) return@filter false
+
+                val planStartDate = runCatching { LocalDate.parse(plan.targetLocalDate) }.getOrNull()
+                val spanDays = plan.repeatDays.coerceAtLeast(1).toLong()
+                val coversTargetDate = plan.targetLocalDate == targetDateStr ||
+                    plan.remainingDays > 0 ||
+                    (planStartDate != null &&
+                        !targetDate.isBefore(planStartDate) &&
+                        !targetDate.isAfter(planStartDate.plusDays(spanDays - 1)))
+                if (!coversTargetDate) return@filter false
+
+                plan.status != "CANCELLED" || !plan.cloudJobId.isNullOrBlank() || plan.repeatDays > 1
             }
-            for (cloudPlan in queuedCloudPlans) {
+
+            for (cloudPlan in cloudPlansRequiringCoordination) {
                 var cloudToken = resolveValidCloudAccessToken(forceRefresh = false)
                 if (cloudToken.isBlank()) {
                     cloudToken = resolveValidCloudAccessToken(forceRefresh = true)
@@ -5010,14 +5207,22 @@ class CampusRepository internal constructor(
                         httpTransport = cloudHttpTransportForTest
                     )
                 }
+                val isSameTargetDateRow = cloudPlan.targetLocalDate == targetDateStr
                 when (checkRes.outcome) {
                     CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED -> {
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, cloudPlan.id)
                         bookingPlanStateMutex.withLock {
+                            val nextStatus = if (cloudPlan.status in setOf("FAILED", "EXPIRED", "CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") &&
+                                (!isSameTargetDateRow || cloudPlan.status in setOf("FAILED", "EXPIRED"))
+                            ) {
+                                if (cloudPlan.status == "CONFIRMED") "DELEGATION_STOPPED_SCHOOL_CONFIRMED" else cloudPlan.status
+                            } else {
+                                "CANCELLED"
+                            }
                             cloudAndParcelDao.upsertLibraryBookingPlan(
                                 cloudPlan.copy(
-                                    status = "CANCELLED",
-                                    fireStatus = "CANCELLED",
+                                    status = nextStatus,
+                                    fireStatus = nextStatus,
                                     generation = cloudPlan.generation + 1,
                                     stateVersion = cloudPlan.stateVersion + 1,
                                     remainingDays = 0,
@@ -5029,37 +5234,41 @@ class CampusRepository internal constructor(
                     }
                     CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED -> {
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, cloudPlan.id)
-                        bookingPlanStateMutex.withLock {
-                            cloudAndParcelDao.upsertLibraryBookingPlan(
-                                cloudPlan.copy(
-                                    status = checkRes.resolvedStatus,
-                                    fireStatus = checkRes.resolvedStatus,
-                                    externalBookingId = checkRes.externalBookingId ?: cloudPlan.externalBookingId,
-                                    evidenceSha256 = checkRes.evidenceSha256 ?: cloudPlan.evidenceSha256,
-                                    preferredAreaName = checkRes.bookedRegionAlias?.takeIf { it.isNotBlank() } ?: cloudPlan.preferredAreaName,
-                                    preferredSeatLabel = checkRes.bookedSeatAlias?.takeIf { it.isNotBlank() } ?: cloudPlan.preferredSeatLabel,
-                                    remainingDays = 0,
-                                    stateVersion = cloudPlan.stateVersion + 1,
-                                    lastDiagnosticMessage = checkRes.reason,
-                                    updatedAtEpochMillis = nowEpochMillis
+                        if (isSameTargetDateRow) {
+                            bookingPlanStateMutex.withLock {
+                                cloudAndParcelDao.upsertLibraryBookingPlan(
+                                    cloudPlan.copy(
+                                        status = checkRes.resolvedStatus,
+                                        fireStatus = checkRes.resolvedStatus,
+                                        externalBookingId = checkRes.externalBookingId ?: cloudPlan.externalBookingId,
+                                        evidenceSha256 = checkRes.evidenceSha256 ?: cloudPlan.evidenceSha256,
+                                        preferredAreaName = checkRes.bookedRegionAlias?.takeIf { it.isNotBlank() } ?: cloudPlan.preferredAreaName,
+                                        preferredSeatLabel = checkRes.bookedSeatAlias?.takeIf { it.isNotBlank() } ?: cloudPlan.preferredSeatLabel,
+                                        remainingDays = 0,
+                                        stateVersion = cloudPlan.stateVersion + 1,
+                                        lastDiagnosticMessage = checkRes.reason,
+                                        updatedAtEpochMillis = nowEpochMillis
+                                    )
                                 )
-                            )
+                            }
                         }
                         throw IllegalStateException(checkRes.reason)
                     }
                     CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN -> {
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, cloudPlan.id)
-                        bookingPlanStateMutex.withLock {
-                            cloudAndParcelDao.upsertLibraryBookingPlan(
-                                cloudPlan.copy(
-                                    status = checkRes.resolvedStatus,
-                                    fireStatus = checkRes.resolvedStatus,
-                                    remainingDays = 0,
-                                    stateVersion = cloudPlan.stateVersion + 1,
-                                    lastDiagnosticMessage = checkRes.reason,
-                                    updatedAtEpochMillis = nowEpochMillis
+                        if (isSameTargetDateRow) {
+                            bookingPlanStateMutex.withLock {
+                                cloudAndParcelDao.upsertLibraryBookingPlan(
+                                    cloudPlan.copy(
+                                        status = checkRes.resolvedStatus,
+                                        fireStatus = checkRes.resolvedStatus,
+                                        remainingDays = 0,
+                                        stateVersion = cloudPlan.stateVersion + 1,
+                                        lastDiagnosticMessage = checkRes.reason,
+                                        updatedAtEpochMillis = nowEpochMillis
+                                    )
                                 )
-                            )
+                            }
                         }
                         throw IllegalStateException(checkRes.reason)
                     }
@@ -5083,13 +5292,86 @@ class CampusRepository internal constructor(
             }
             planOwnerCloudUserId = binding.cloudUserId
 
-            // 1) 严格交接顺序（Item #5）：必须先在互斥锁与事务内原子停止并围栏隔离同日本机排队计划，验证撤回成功后才允许向云端发起创建！
-            //    严禁先创建云任务再停本机（否则创建期间本机可能并发开抢，或撤回失败造成双引擎同时生效）。
+            data class StoppedLocalPlanLease(
+                val snapshotBeforeStop: LibraryBookingPlanEntity,
+                val expectedStoppedGeneration: Int,
+                val expectedStoppedStateVersion: Int,
+                val expectedOwnerCloudUserId: String?,
+                val expectedOwnerStudentId: String?,
+                val handoffDiagnosticMarker: String
+            )
+
+            // 1) 严格交接顺序：先在互斥锁与事务内原子停止并围栏隔离同日本机排队计划，记录临时停止租约标识，验证撤回成功后才允许向云端发起创建！
             val queuedLocalPlans = existingForDate.filter {
                 it.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
                     it.status != "REMINDER_SENT"
             }
-            val stoppedLocalSnapshots = mutableListOf<LibraryBookingPlanEntity>()
+            val handoffOpToken = "HANDOFF_TO_CLOUD:$planId:${UUID.randomUUID().toString().replace("-", "").take(8)}"
+            val handoffDiagnostic = "正在切换至云端托管抢座，已先行原子停止本机排队计划 [$handoffOpToken]"
+            val stoppedLocalLeases = mutableListOf<StoppedLocalPlanLease>()
+
+            suspend fun restoreStoppedLocalPlansSafely() {
+                if (stoppedLocalLeases.isEmpty()) return
+                val liveBindingNow = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                val liveStuNow = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (liveBindingNow?.cloudUserId?.trim() != binding.cloudUserId.trim() ||
+                    (currentStudentNo.isNotEmpty() && liveStuNow != currentStudentNo) ||
+                    (currentStudentNo.isEmpty() && liveStuNow.isNotEmpty())
+                ) {
+                    // 等待云端响应期间已切换云账号或学号：严禁恢复旧快照或重排闹钟！
+                    return
+                }
+                val restoredForAlarm = mutableListOf<LibraryBookingPlanEntity>()
+                bookingPlanStateMutex.withLock {
+                    val liveBindingLocked = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                    val liveStuLocked = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                    if (liveBindingLocked?.cloudUserId?.trim() != binding.cloudUserId.trim() ||
+                        (currentStudentNo.isNotEmpty() && liveStuLocked != currentStudentNo) ||
+                        (currentStudentNo.isEmpty() && liveStuLocked.isNotEmpty())
+                    ) {
+                        return@withLock
+                    }
+                    database.withTransaction {
+                        val restoreTs = System.currentTimeMillis()
+                        for (lease in stoppedLocalLeases) {
+                            val currentDbRow = cloudAndParcelDao.getLibraryBookingPlanById(lease.snapshotBeforeStop.id)
+                                ?: continue
+                            val unchangedSinceTempStop =
+                                currentDbRow.status == "CANCELLED" &&
+                                    currentDbRow.generation == lease.expectedStoppedGeneration &&
+                                    currentDbRow.stateVersion == lease.expectedStoppedStateVersion &&
+                                    currentDbRow.ownerCloudUserId.orEmpty() == lease.expectedOwnerCloudUserId.orEmpty() &&
+                                    currentDbRow.ownerStudentId.orEmpty() == lease.expectedOwnerStudentId.orEmpty() &&
+                                    currentDbRow.lastDiagnosticMessage == lease.handoffDiagnosticMarker
+                            if (!unchangedSinceTempStop) {
+                                // 等待期间用户已取消、编辑或变更了该计划：保留用户最新决定，绝不用旧快照覆盖！
+                                continue
+                            }
+                            val restored = lease.snapshotBeforeStop.copy(
+                                generation = currentDbRow.generation + 1,
+                                stateVersion = currentDbRow.stateVersion + 1,
+                                updatedAtEpochMillis = restoreTs
+                            )
+                            cloudAndParcelDao.upsertLibraryBookingPlan(restored)
+                            val reread = cloudAndParcelDao.getLibraryBookingPlanById(restored.id)
+                            if (reread != null && reread.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
+                                restoredForAlarm += reread
+                            }
+                        }
+                    }
+                }
+                for (rereadPlan in restoredForAlarm) {
+                    val latestVerify = cloudAndParcelDao.getLibraryBookingPlanById(rereadPlan.id)
+                    if (latestVerify != null &&
+                        latestVerify.generation == rereadPlan.generation &&
+                        latestVerify.stateVersion == rereadPlan.stateVersion &&
+                        latestVerify.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+                    ) {
+                        LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, latestVerify)
+                    }
+                }
+            }
+
             for (localPlan in queuedLocalPlans) {
                 LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, localPlan.id)
                 var stopFailedReason: String? = null
@@ -5097,11 +5379,21 @@ class CampusRepository internal constructor(
                     database.withTransaction {
                         val cancelledRows = cloudAndParcelDao.cancelQueuedBookingPlanAtomically(
                             planId = localPlan.id,
-                            diagnosticMessage = "正在切换至云端托管抢座，已先行原子停止本机排队计划",
+                            diagnosticMessage = handoffDiagnostic,
                             nowEpochMillis = nowEpochMillis
                         )
                         if (cancelledRows > 0) {
-                            stoppedLocalSnapshots += localPlan
+                            val stoppedRow = cloudAndParcelDao.getLibraryBookingPlanById(localPlan.id)
+                            if (stoppedRow != null) {
+                                stoppedLocalLeases += StoppedLocalPlanLease(
+                                    snapshotBeforeStop = localPlan,
+                                    expectedStoppedGeneration = stoppedRow.generation,
+                                    expectedStoppedStateVersion = stoppedRow.stateVersion,
+                                    expectedOwnerCloudUserId = stoppedRow.ownerCloudUserId,
+                                    expectedOwnerStudentId = stoppedRow.ownerStudentId,
+                                    handoffDiagnosticMarker = handoffDiagnostic
+                                )
+                            }
                         } else {
                             val latestLocal = cloudAndParcelDao.getLibraryBookingPlanById(localPlan.id)
                             if (latestLocal == null || latestLocal.status !in setOf("CANCELLED", "REMINDER_SENT")) {
@@ -5111,17 +5403,7 @@ class CampusRepository internal constructor(
                     }
                 }
                 if (stopFailedReason != null) {
-                    // 恢复此前在同一循环中刚暂停的其他未派发本机计划（此时尚未向云端发送任何请求，完全无外部副作用！）
-                    bookingPlanStateMutex.withLock {
-                        database.withTransaction {
-                            for (prev in stoppedLocalSnapshots) {
-                                cloudAndParcelDao.upsertLibraryBookingPlan(prev)
-                            }
-                        }
-                    }
-                    for (prev in stoppedLocalSnapshots) {
-                        LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, prev)
-                    }
+                    restoreStoppedLocalPlansSafely()
                     throw IllegalStateException(stopFailedReason!!)
                 }
             }
@@ -5163,25 +5445,6 @@ class CampusRepository internal constructor(
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
-                }
-            }
-
-            suspend fun restoreStoppedLocalPlansSafely() {
-                if (stoppedLocalSnapshots.isEmpty()) return
-                bookingPlanStateMutex.withLock {
-                    database.withTransaction {
-                        for (prev in stoppedLocalSnapshots) {
-                            cloudAndParcelDao.upsertLibraryBookingPlan(
-                                prev.copy(
-                                    stateVersion = prev.stateVersion + 1,
-                                    updatedAtEpochMillis = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                    }
-                }
-                for (prev in stoppedLocalSnapshots) {
-                    LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, prev)
                 }
             }
 
@@ -5491,10 +5754,23 @@ class CampusRepository internal constructor(
                     val hadExternalWriteAttempt = java.util.concurrent.atomic.AtomicBoolean(false)
                     val liveBooking: AutomatedSeatBookingResult? =
                         if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                            // 云端托管计划严格只走云端执行与核验，严禁在云端返回失败、缺数据或未知状态时退回本机发起预约
+                            // 云端托管计划严格校验归属当前云账号且只走云端执行与核验，严禁在云端返回失败、缺数据或未知状态时退回本机发起预约
+                            val activeCloudId = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim().orEmpty()
+                            val planOwnerCloud = current.ownerCloudUserId?.trim().orEmpty()
                             val validCloudJobId = current.cloudJobId?.takeIf { it.isNotBlank() && !it.startsWith("cjob_") }
-                            val cloudToken = if (validCloudJobId != null) resolveValidCloudAccessToken() else ""
-                            if (validCloudJobId != null && cloudToken.isNotBlank()) {
+                            val cloudOwnerMatched = planOwnerCloud.isNotEmpty() && activeCloudId.isNotEmpty() && planOwnerCloud == activeCloudId
+                            val cloudToken = if (validCloudJobId != null && cloudOwnerMatched) resolveValidCloudAccessToken() else ""
+                            if (!cloudOwnerMatched) {
+                                AutomatedSeatBookingResult(
+                                    confirmed = false,
+                                    bookingId = "",
+                                    seatTitle = "",
+                                    evidenceSha256 = "",
+                                    diagnosticMessage = "当前登录的云端账号与预约计划归属不一致或归属未知，已在发起请求前终止执行",
+                                    outcomeState = "FAILED",
+                                    externalExecutionState = "NOT_DISPATCHED"
+                                )
+                            } else if (validCloudJobId != null && cloudToken.isNotBlank()) {
                                 hadExternalWriteAttempt.set(true)
                                 activeDispatchedFireAttempts[current.id] = true
                                 withContext(Dispatchers.IO) {
@@ -5515,23 +5791,43 @@ class CampusRepository internal constructor(
                                 )
                             }
                         } else {
-                            // 本机抢座在发起实际外部写入前，再次核对同日是否存在未停止的云端计划或已发出/已确认的同日记录
-                            val conflictSameDay = cloudAndParcelDao.getLibraryBookingPlansSnapshot().firstOrNull {
-                                it.id != current.id &&
-                                    it.targetLocalDate == current.targetLocalDate &&
-                                    it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
-                            }
-                            if (conflictSameDay != null) {
+                            // 本机抢座在发起实际外部写入前：1) 核验计划归属学号与当前活跃学号一致；2) 按实际学校身份与 owner 核对同日冲突（不同人隔离，同一学号跨云账号仍严格防重！）
+                            val activeCloudIdForFire = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim()
+                            val liveStuForFire = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                            val planOwnerStu = current.ownerStudentId?.trim().orEmpty()
+                            val effectiveStudentForConflict = planOwnerStu.ifEmpty { liveStuForFire }
+
+                            if (planOwnerStu.isNotEmpty() && liveStuForFire.isNotEmpty() && planOwnerStu != liveStuForFire) {
                                 AutomatedSeatBookingResult(
                                     confirmed = false,
                                     bookingId = "",
                                     seatTitle = "",
                                     evidenceSha256 = "",
-                                    diagnosticMessage = "检测到同日存在另一笔有效或待核对的预约任务（${conflictSameDay.executionMode} · ${conflictSameDay.status}），已停止本机发起重复写入",
-                                    outcomeState = "RESULT_UNKNOWN",
-                                    externalExecutionState = "RESULT_UNKNOWN"
+                                    diagnosticMessage = "当前登录的图书馆学号与本机预约计划归属学号不一致，已在发起学校请求前终止执行",
+                                    outcomeState = "FAILED",
+                                    externalExecutionState = "NOT_DISPATCHED"
                                 )
                             } else {
+                                val conflictSameDay = cloudAndParcelDao.getLibraryBookingPlansSnapshot().firstOrNull { cand ->
+                                    isSamePersonBookingConflictCandidate(
+                                        candidate = cand,
+                                        targetLocalDate = current.targetLocalDate,
+                                        activeCloudUserId = current.ownerCloudUserId?.takeIf { it.isNotBlank() } ?: activeCloudIdForFire,
+                                        activeStudentNo = effectiveStudentForConflict,
+                                        excludePlanId = current.id
+                                    )
+                                }
+                                if (conflictSameDay != null) {
+                                    AutomatedSeatBookingResult(
+                                        confirmed = false,
+                                        bookingId = "",
+                                        seatTitle = "",
+                                        evidenceSha256 = "",
+                                        diagnosticMessage = "检测到同一学号/账号在同日存在另一笔有效或待核对的预约任务（${conflictSameDay.executionMode} · ${conflictSameDay.status}），已停止本机发起重复写入",
+                                        outcomeState = "RESULT_UNKNOWN",
+                                        externalExecutionState = "RESULT_UNKNOWN"
+                                    )
+                                } else {
                                 val checkStillActive: () -> Boolean = {
                                     kotlinx.coroutines.runBlocking {
                                         cloudAndParcelDao.isBookingPlanOwnedByAttempt(
@@ -5673,6 +5969,7 @@ class CampusRepository internal constructor(
                                     }
                                 } else {
                                     null
+                                }
                                 }
                             }
                         }
@@ -5964,6 +6261,30 @@ class CampusRepository internal constructor(
                         cloudAndParcelDao.upsertLibraryBookingPlan(stoppedPreWrite)
                         stoppedPreWrite
                     }
+                    latest.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") -> {
+                        // 点击「停止委托」与在途 FIRE 成功返回发生交错竞态：仅停止后续委托与多日续期，严禁越权代调学校退座接口！
+                        val stoppedConfirmed = latest.copy(
+                            status = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                            fireStatus = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                            generation = latest.generation + 1,
+                            stateVersion = latest.stateVersion + 1,
+                            remainingDays = 0,
+                            lastDiagnosticMessage = "已停止后续委托与自动续期；本次在途抢座已在学校端成功锁定座位（未发起退座），如需释放请点击「学校退座」",
+                            updatedAtEpochMillis = nowMs
+                        )
+                        cloudAndParcelDao.upsertLibraryBookingPlan(stoppedConfirmed)
+                        stoppedConfirmed
+                    }
+                    latest.status == "CANCEL_RESULT_UNKNOWN" -> {
+                        // 已处于退座结果待核对状态：停止委托不得覆盖退座待核对证据
+                        val preservedUnknownCancel = latest.copy(
+                            remainingDays = 0,
+                            stateVersion = latest.stateVersion + 1,
+                            updatedAtEpochMillis = nowMs
+                        )
+                        cloudAndParcelDao.upsertLibraryBookingPlan(preservedUnknownCancel)
+                        preservedUnknownCancel
+                    }
                     latest.status in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") ||
                         latest.fireStatus.startsWith("DISPATCH_INTENT") -> {
                         val stoppedUnknown = latest.copy(
@@ -5999,48 +6320,22 @@ class CampusRepository internal constructor(
         return updated
     }
 
+    /**
+     * 仅执行「停止委托 / 取消排队计划」，绝不根据刷新后的最新状态暗中升级为真实学校退座！
+     * 如需释放学校端已锁定的座位，必须由用户在已确认状态下显式触发 [cancelActiveLibrarySeatBooking]。
+     */
     suspend fun cancelDualEngineBookingPlan(planId: String) {
-        val current = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: return
-        LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, planId)
-        if (!current.externalBookingId.isNullOrBlank() ||
-            current.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")
-        ) {
-            // 直接调用返回 Result<String> 的 cancelActiveLibrarySeatBooking（严禁外层再套 runCatching 吞掉失败 Result！）
-            val cancelRes = cancelActiveLibrarySeatBooking(
-                planId = planId,
-                bookingId = current.externalBookingId
-            )
-            if (cancelRes.isFailure) {
-                val errMsg = cancelRes.exceptionOrNull()?.message ?: "学校端退座结果待核对"
-                bookingPlanStateMutex.withLock {
-                    database.withTransaction {
-                        val latest = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
-                        cloudAndParcelDao.upsertLibraryBookingPlan(
-                            latest.copy(
-                                status = "CANCEL_RESULT_UNKNOWN",
-                                generation = latest.generation + 1,
-                                stateVersion = latest.stateVersion + 1,
-                                remainingDays = 0,
-                                lastDiagnosticMessage = "已请求取消预约，但退座未确认成功（$errMsg），核实前不宣称已释放座位",
-                                updatedAtEpochMillis = System.currentTimeMillis()
-                            )
-                        )
-                    }
-                }
-                repoScope.launch { runCatching { syncWithCampusCloud() } }
-                return
-            }
-            repoScope.launch { runCatching { syncWithCampusCloud() } }
-            return
-        }
-
         stopInFlightOrQueuedDelegation(planId)
     }
+
+    @Volatile
+    internal var liveSeatCancelObserverForTest: ((planId: String?, bookingId: String?) -> Unit)? = null
 
     suspend fun cancelActiveLibrarySeatBooking(
         planId: String? = null,
         bookingId: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
+        liveSeatCancelObserverForTest?.invoke(planId, bookingId)
         runCatching {
             val plan = planId?.let { cloudAndParcelDao.getLibraryBookingPlanById(it) }
             val hasCloudJob = plan != null && !plan.cloudJobId.isNullOrBlank() && !plan.cloudJobId.startsWith("cjob_")

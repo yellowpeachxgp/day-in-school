@@ -257,6 +257,116 @@ class UniversalDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration7To8BackfillsSingleOwnerAndIsolatesUnprovableRows() {
+        val dbProvable = "migration_v7_provable.db"
+        val dbUnprovable = "migration_v7_unprovable.db"
+        try {
+            // Case A: Provable single cloud_identity_binding (cloud_user_A) + single student_profile (20240001)
+            createVersionSevenDatabase(dbProvable) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO `cloud_identity_binding`
+                    (`profileId`, `cloudUserId`, `ssoIssuer`, `ssoSubject`, `displayName`, `peachBalanceMicropeach`, `holdSupported`, `linkedAtEpochMillis`, `updatedAtEpochMillis`)
+                    VALUES ('singleton', 'cloud_user_A', 'https://sso.xpeach.codes', 'sub_A', 'User A', 50000, 0, 1000, 1000)
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `student_profile` (`id`, `schoolId`, `displayName`, `major`, `enrollmentYear`)
+                    VALUES ('stu_1', '20240001', '张三', '计算机科学与技术', 2024)
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `library_booking_plans`
+                    (`id`, `schoolId`, `executionMode`, `targetLocalDate`, `targetLocalTime`, `timezoneId`, `precheckAtEpochMillis`, `finalCheckAtEpochMillis`, `fireAtEpochMillis`, `precheckStatus`, `finalCheckStatus`, `fireStatus`, `preferredAreaName`, `preferredSeatLabel`, `allowAlternativeSeat`, `cloudJobId`, `externalBookingId`, `evidenceSha256`, `priceMicropeach`, `paymentState`, `status`, `stateVersion`, `generation`, `lastDiagnosticMessage`, `createdAtEpochMillis`, `updatedAtEpochMillis`, `repeatDays`, `remainingDays`)
+                    VALUES ('plan_v7_provable', 'haut', 'CLOUD_HOSTED', '2026-11-25', '07:00:00', 'Asia/Shanghai', 1000, 2000, 3000, 'ARMED', 'ARMED', 'ARMED', '五层中区', '01桌 A座', 1, 'job_v7_1', NULL, NULL, 10000, 'DEBIT_PENDING', 'ARMED', 1, 1, NULL, 1000, 1000, 2, 2)
+                    """.trimIndent()
+                )
+            }
+            val migratedProvable = Room.databaseBuilder(context, HautDatabase::class.java, dbProvable)
+                .addMigrations(MIGRATION_7_8)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val p = kotlinx.coroutines.runBlocking {
+                    migratedProvable.cloudAndParcelDao().getLibraryBookingPlanById("plan_v7_provable")
+                }!!
+                assertEquals("cloud_user_A", p.ownerCloudUserId)
+                assertEquals("20240001", p.ownerStudentId)
+                assertEquals("ARMED", p.status)
+            } finally {
+                migratedProvable.close()
+            }
+
+            // Case B: Unprovable ownership (upgraded while logged out: 0 cloud_identity_binding rows, 0 student_profile rows)
+            createVersionSevenDatabase(dbUnprovable) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO `library_booking_plans`
+                    (`id`, `schoolId`, `executionMode`, `targetLocalDate`, `targetLocalTime`, `timezoneId`, `precheckAtEpochMillis`, `finalCheckAtEpochMillis`, `fireAtEpochMillis`, `precheckStatus`, `finalCheckStatus`, `fireStatus`, `preferredAreaName`, `preferredSeatLabel`, `allowAlternativeSeat`, `cloudJobId`, `externalBookingId`, `evidenceSha256`, `priceMicropeach`, `paymentState`, `status`, `stateVersion`, `generation`, `lastDiagnosticMessage`, `createdAtEpochMillis`, `updatedAtEpochMillis`, `repeatDays`, `remainingDays`)
+                    VALUES
+                    ('plan_v7_orphan_queued', 'haut', 'CLOUD_HOSTED', '2026-11-26', '07:00:00', 'Asia/Shanghai', 1000, 2000, 3000, 'ARMED', 'ARMED', 'ARMED', '五层中区', '02桌 A座', 1, 'job_v7_orphan', NULL, NULL, 10000, 'DEBIT_PENDING', 'ARMED', 1, 1, NULL, 1000, 1000, 3, 3),
+                    ('plan_v7_orphan_conf', 'haut', 'CLOUD_HOSTED', '2026-11-26', '07:00:00', 'Asia/Shanghai', 1000, 2000, 3000, 'PRECHECK_OK', 'FINAL_CHECK_OK', 'CONFIRMED', '五层中区', '03桌 A座', 1, 'job_v7_conf', 'bk_v7_88', 'sha_v7_88', 10000, 'PAID', 'CONFIRMED', 2, 1, NULL, 1000, 1000, 1, 0)
+                    """.trimIndent()
+                )
+            }
+            val migratedUnprovable = Room.databaseBuilder(context, HautDatabase::class.java, dbUnprovable)
+                .addMigrations(MIGRATION_7_8)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val orphanQueued = kotlinx.coroutines.runBlocking {
+                    migratedUnprovable.cloudAndParcelDao().getLibraryBookingPlanById("plan_v7_orphan_queued")
+                }!!
+                val orphanConf = kotlinx.coroutines.runBlocking {
+                    migratedUnprovable.cloudAndParcelDao().getLibraryBookingPlanById("plan_v7_orphan_conf")
+                }!!
+                assertEquals(null, orphanQueued.ownerCloudUserId)
+                assertEquals(null, orphanQueued.ownerStudentId)
+                assertEquals("NEEDS_RECONFIRMATION", orphanQueued.status)
+                assertEquals(0, orphanQueued.remainingDays)
+                assertEquals(null, orphanConf.ownerCloudUserId)
+                assertEquals("CONFIRMED", orphanConf.status)
+                assertEquals("bk_v7_88", orphanConf.externalBookingId)
+            } finally {
+                migratedUnprovable.close()
+            }
+        } finally {
+            context.deleteDatabase(dbProvable)
+            context.deleteDatabase(dbUnprovable)
+        }
+    }
+
+    private fun createVersionSevenDatabase(
+        name: String,
+        seed: (SQLiteDatabase) -> Unit
+    ) {
+        context.deleteDatabase(name)
+        val path = "cn.edu.haut.campus.core.database.HautDatabase/7.json"
+        val content = checkNotNull(javaClass.classLoader?.getResourceAsStream(path)) {
+            "缺少已提交的 Room v7 schema"
+        }.bufferedReader().use { it.readText() }
+        val schema = JSONObject(content).getJSONObject("database")
+        context.openOrCreateDatabase(name, 0, null).use { database ->
+            val entities = schema.getJSONArray("entities")
+            for (index in 0 until entities.length()) {
+                val entity = entities.getJSONObject(index)
+                val table = entity.getString("tableName")
+                database.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.getJSONArray("indices")
+                for (item in 0 until indices.length()) {
+                    database.execSQL(indices.getJSONObject(item).getString("createSql").replace("\${TABLE_NAME}", table))
+                }
+            }
+            val queries = schema.getJSONArray("setupQueries")
+            for (index in 0 until queries.length()) database.execSQL(queries.getString(index))
+            seed(database)
+            database.version = 7
+        }
+    }
+
     private fun snapshot(database: SupportSQLiteDatabase): Map<String, String> =
         snapshotTables { table -> database.query("SELECT * FROM `$table`") }
 
