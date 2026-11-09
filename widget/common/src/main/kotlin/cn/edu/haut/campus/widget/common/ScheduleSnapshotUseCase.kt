@@ -32,7 +32,7 @@ data class WidgetScheduleSnapshot(
     val config: WidgetInstanceConfig,
     val hasImportedCourses: Boolean,
     val chronometerTargetElapsedRealtime: Long?,
-    val themeAccentArgb: Int = 0xFF0066CC.toInt()
+    val themeAccentArgb: Int = 0xFF053968.toInt()
 )
 
 object WidgetRoomFormatter {
@@ -93,7 +93,7 @@ object ScheduleSnapshotUseCase {
         val active = coordinator.currentSnapshot() ?: return null
         val repository = active.repository
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
-        val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF0066CC.toInt())
+        val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF053968.toInt())
         val data = repository.getDirectScheduleDataSnapshot()
         val today = now.toLocalDate()
 

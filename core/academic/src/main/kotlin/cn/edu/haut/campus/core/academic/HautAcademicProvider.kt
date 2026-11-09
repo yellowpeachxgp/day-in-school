@@ -894,7 +894,7 @@ object HautZfsoftParser {
                   "jcs": "1-2",
                   "jc": "1-2节",
                   "zcd": "1-16周",
-                  "cdmc": "莲2号教学楼2306"
+                  "cdmc": "莲32号32306"
                 },
                 {
                   "kch_id": "JW_AI301",

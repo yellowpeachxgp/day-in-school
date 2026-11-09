@@ -1692,4 +1692,43 @@ class CampusServicesUnitTest {
             }.isFailure
         )
     }
+
+    @Test
+    fun `parseCampusContentJson migrates legacy 8号教学楼 Computer Service Club venue and parses official_channels`() {
+        val legacyCloudPayload = """
+            {
+              "school_id": "haut",
+              "version": 3,
+              "updated_at": "2026-11-10T00:00:00Z",
+              "official_channels": {
+                "user_feedback_qq_group": "987654321",
+                "user_feedback_channel_url": "https://pd.qq.com/s/dayinschool",
+                "wechat_official_account_name": "",
+                "wechat_official_account_status": "PENDING"
+              },
+              "clubs": [
+                {
+                  "id": "club_partner_computer_service",
+                  "name": "计算机服务社",
+                  "category": "TECH_INNOVATION",
+                  "affiliated_unit": "信息科学与工程学院",
+                  "activity_venue": "莲花街校区 8号教学楼",
+                  "qq_group_number": "1043885481",
+                  "enabled": true
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val catalog = CampusCloudOidcHelper.parseCampusContentJsonString(legacyCloudPayload)
+        org.junit.Assert.assertNotNull(catalog)
+        val compClub = catalog!!.clubs.single()
+        assertEquals("莲花街校区 学生宿舍F01 W111", compClub.activityVenue)
+        assertEquals("莲花街校区", compClub.campusName)
+        assertEquals("学生宿舍F01", compClub.buildingName)
+        assertEquals("W111", compClub.roomNumber)
+        assertEquals("987654321", catalog.officialChannels.userFeedbackQqGroup)
+        assertEquals("https://pd.qq.com/s/dayinschool", catalog.officialChannels.userFeedbackChannelUrl)
+        assertEquals("PENDING", catalog.officialChannels.wechatOfficialAccountStatus)
+    }
 }

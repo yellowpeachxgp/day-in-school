@@ -752,6 +752,10 @@ fun HautCampusRootApp(
                                     communityInitialTab = 1
                                     overlayScreen = "community"
                                 },
+                                onNavigateToFeedbackChannels = {
+                                    communityInitialTab = 2
+                                    overlayScreen = "community"
+                                },
                                 onNavigateToMoments = { overlayScreen = "moments" },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },

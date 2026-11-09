@@ -100,10 +100,9 @@ object CampusMapNavigator {
     const val CAMPUS_CENTER_LNG = 113.544200
     private const val CAMPUS_GEOFENCE_RADIUS_METERS = 3000
 
-    // 河南工业大学嵩山路校区真实中心点（WGS-84，对应郑州市中原区嵩山南路140号 / 伊河路南侧 GCJ-02 34.740717,113.626113）
-    const val SONGSHANLU_CENTER_LAT = 34.741905
-    const val SONGSHANLU_CENTER_LNG = 113.620066
-    private const val SONGSHANLU_GEOFENCE_RADIUS_METERS = 750
+    // 河南工业大学嵩山路校区真实中心点（WGS-84，对应郑州市中原区嵩山南路140号×伊河路西南象限院区）
+    const val SONGSHANLU_CENTER_LAT = 34.74045
+    const val SONGSHANLU_CENTER_LNG = 113.61895
 
     private const val EARTH_RADIUS_M = 6378245.0
     private const val EE = 0.00669342162296594323
@@ -627,7 +626,11 @@ object CampusMapNavigator {
             timestampMillis = maxOf(time, emittedAtMs),
             isInsideLianhuajieCampus = distToCampus <= CAMPUS_GEOFENCE_RADIUS_METERS,
             distanceToCampusCenterMeters = distToCampus,
-            isInsideSongshanluCampus = distToSongshanlu <= SONGSHANLU_GEOFENCE_RADIUS_METERS,
+            isInsideSongshanluCampus = cn.edu.haut.campus.core.model.CustomCampusZone.isPointInPolygon(
+                latitude,
+                longitude,
+                cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
+            ),
             distanceToSongshanluCenterMeters = distToSongshanlu
         )
     }

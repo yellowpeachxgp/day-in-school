@@ -456,6 +456,22 @@ object CompetitionCompassEngine {
 }
 
 /**
+ * 官方反馈渠道与公众号云端配置。
+ */
+data class CampusOfficialChannelsConfig(
+    val userFeedbackQqGroup: String = "",
+    val userFeedbackChannelUrl: String = "https://github.com/yellowpeachxgp/day-in-school/issues",
+    val wechatOfficialAccountName: String = "",
+    val wechatOfficialAccountStatus: String = "PENDING"
+)
+
+data class CampusPublicWechatAccount(
+    val name: String,
+    val unit: String,
+    val summary: String
+)
+
+/**
  * 校园频道、合作社团与学科竞赛云端配置目录快照。
  */
 data class CampusCommunityCloudCatalog(
@@ -463,6 +479,7 @@ data class CampusCommunityCloudCatalog(
     val version: Long = 3L,
     val updatedAtIso: String = "",
     val bulletin: CampusCommunityBulletin = CampusCommunityBulletin(),
+    val officialChannels: CampusOfficialChannelsConfig = CampusOfficialChannelsConfig(),
     val channels: List<PresetQqChannelItem> = PresetCampusCommunityCatalog.defaultQqChannels,
     val clubs: List<CampusClubItem> = PresetCampusCommunityCatalog.defaultCampusClubs,
     val competitions: List<CampusCompetitionItem> = PresetCampusCommunityCatalog.defaultCompetitions,
@@ -470,6 +487,29 @@ data class CampusCommunityCloudCatalog(
 )
 
 object PresetCampusCommunityCatalog {
+
+    val verifiedSchoolWechatAccounts: List<CampusPublicWechatAccount> = listOf(
+        CampusPublicWechatAccount(
+            name = "河南工业大学",
+            unit = "党委宣传部官方公众号",
+            summary = "学校权威通知、校历放假安排、校园要闻与服务导航"
+        ),
+        CampusPublicWechatAccount(
+            name = "河南工业大学教务处",
+            unit = "教务处官方公众号",
+            summary = "选课通知、考试报名、学籍管理与教学运行公告"
+        ),
+        CampusPublicWechatAccount(
+            name = "河南工业大学图书馆",
+            unit = "图书馆官方公众号",
+            summary = "座位预约规则、开闭馆时间、馆藏检索与讲座通知"
+        ),
+        CampusPublicWechatAccount(
+            name = "河工大青年",
+            unit = "校团委官方公众号",
+            summary = "第二课堂、社会实践、志愿服务与校园社团活动资讯"
+        )
+    )
 
     /**
      * 预置 QQ 频道列表：

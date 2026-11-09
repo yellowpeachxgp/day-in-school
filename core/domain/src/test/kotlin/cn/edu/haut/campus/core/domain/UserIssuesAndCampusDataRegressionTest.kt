@@ -26,13 +26,31 @@ import java.time.LocalTime
 class UserIssuesAndCampusDataRegressionTest {
 
     @Test
-    fun `Issue 5 - closed 2nd and 3rd canteens are excluded from operating recommendations`() {
+    fun `Issue 5 - closed 2nd and 3rd canteens and Lianhuajie 2nd building are completely removed`() {
+        val allCanteenIds = CampusDiningRecommender.CANTEENS.map { it.buildingId }.toSet()
         val operatingIds = CampusDiningRecommender.OPERATING_CANTEENS.map { it.buildingId }.toSet()
+        assertFalse("2nd canteen must not exist in CANTEENS", "b_canteen2" in allCanteenIds)
+        assertFalse("3rd canteen must not exist in CANTEENS", "b_canteen3" in allCanteenIds)
         assertFalse("2nd canteen must not be in operating canteens", "b_canteen2" in operatingIds)
         assertFalse("3rd canteen must not be in operating canteens", "b_canteen3" in operatingIds)
         assertTrue("1st canteen must remain operating", "b_canteen1" in operatingIds)
         assertTrue("4th canteen must remain operating", "b_canteen4" in operatingIds)
         assertTrue("Small canteen must remain operating", "b_canteen_small" in operatingIds)
+        assertTrue(
+            "DEFAULT_DISH_CATALOG must have zero dishes from closed canteens",
+            CampusDiningRecommender.DEFAULT_DISH_CATALOG.none {
+                it.canteenBuildingId in setOf("b_canteen2", "b_canteen3") ||
+                    it.canteenShortName in setOf("二餐厅", "三餐厅") ||
+                    it.sampleComment.contains("2教")
+            }
+        )
+        assertTrue(
+            "PresetCampusMomentsCatalog.QUICK_LOCATIONS must not mention 二餐厅/三餐厅/2号楼",
+            cn.edu.haut.campus.core.model.PresetCampusMomentsCatalog.QUICK_LOCATIONS.none {
+                it in setOf("二餐厅", "三餐厅", "2号楼", "2号教学楼")
+            }
+        )
+        assertEquals(null, ClassroomBuildingResolver.detectCampusHint(listOf("2号教学楼2106")))
 
         val rec = CampusDiningRecommender.buildRecommendation(
             date = LocalDate.of(2026, 11, 9),
@@ -118,11 +136,20 @@ class UserIssuesAndCampusDataRegressionTest {
 
     @Test
     fun `Issue 10 and 16 - Songshan Road Campus geofence and Computer Service Club F01 W111 venue`() {
-        // #10: Songshan Road Campus WGS-84 center (34.741905, 113.620066) must be inside HAUT_SONGSHANLU_POLYGON
+        // #10: Songshan Road Campus WGS-84 center (34.74045, 113.61895) must be inside HAUT_SONGSHANLU_POLYGON,
+        // and points east of Songshan South Road (e.g. lon 113.62120) must be strictly OUTSIDE!
         assertTrue(
             CustomCampusZone.isPointInPolygon(
-                34.741905,
-                113.620066,
+                34.74045,
+                113.61895,
+                ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
+            )
+        )
+        assertFalse(
+            "Points east across Songshan South Road must NOT be inside Songshanlu polygon",
+            CustomCampusZone.isPointInPolygon(
+                34.74045,
+                113.62120,
                 ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
             )
         )
@@ -181,6 +208,13 @@ class UserIssuesAndCampusDataRegressionTest {
         assertTrue(songshanMap.containsKey("嵩山路1号教学楼"))
         assertTrue(songshanMap.containsKey("嵩山路2号教学楼"))
         assertTrue(songshanMap.values.flatten().isNotEmpty())
+        assertFalse(
+            "Normalized Songshanlu JW classroom string must mark study room busy",
+            CampusStudyRoomCatalog.isRoomFree("嵩山1教101", listOf("嵩山路校区1号教学楼101"))
+        )
+        assertTrue(
+            CampusStudyRoomCatalog.isRoomFree("嵩山1教103", listOf("嵩山路校区1号教学楼101"))
+        )
     }
 
     @Test

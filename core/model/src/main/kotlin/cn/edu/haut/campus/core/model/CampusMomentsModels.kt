@@ -226,10 +226,11 @@ object PresetCampusMomentsCatalog {
     val QUICK_LOCATIONS = listOf(
         "图书馆",
         "一餐厅",
-        "二餐厅",
-        "三餐厅",
+        "四餐厅",
+        "小食堂",
         "1号楼",
-        "2号楼",
+        "31号楼",
+        "32号楼",
         "8号楼",
         "北苑驿站",
         "操场"

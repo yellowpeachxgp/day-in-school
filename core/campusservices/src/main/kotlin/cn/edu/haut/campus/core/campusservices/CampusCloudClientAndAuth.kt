@@ -2234,13 +2234,43 @@ object CampusCloudOidcHelper {
                                 }
                             }
                         }
+                        val presetClub = PresetCampusCommunityCatalog.defaultCampusClubs.firstOrNull { it.id == id }
+                        val rawVenue = cl.optCleanString(
+                            "activity_venue",
+                            cl.optCleanString("activityVenue", presetClub?.activityVenue ?: "大学生活动中心")
+                        ).ifBlank { "大学生活动中心" }
+                        val isLegacyComputerServiceVenue = id == "club_partner_computer_service" &&
+                            rawVenue.contains("8号教学楼")
+                        val normalizedVenue = if (isLegacyComputerServiceVenue) {
+                            "莲花街校区 学生宿舍F01 W111"
+                        } else {
+                            rawVenue
+                        }
+                        val normalizedCampusName = if (isLegacyComputerServiceVenue) {
+                            "莲花街校区"
+                        } else {
+                            cl.optCleanString("campus_name", cl.optCleanString("campusName", presetClub?.campusName.orEmpty()))
+                        }
+                        val normalizedBuildingName = if (isLegacyComputerServiceVenue) {
+                            "学生宿舍F01"
+                        } else {
+                            cl.optCleanString("building_name", cl.optCleanString("buildingName", presetClub?.buildingName.orEmpty()))
+                        }
+                        val normalizedRoomNumber = if (isLegacyComputerServiceVenue) {
+                            "W111"
+                        } else {
+                            cl.optCleanString("room_number", cl.optCleanString("roomNumber", presetClub?.roomNumber.orEmpty()))
+                        }
                         add(
                             CampusClubItem(
                                 id = id,
                                 name = name,
                                 category = CampusClubCategory.fromWireName(cl.optCleanString("category")),
                                 affiliatedUnit = cl.optCleanString("affiliated_unit", cl.optCleanString("affiliatedUnit", "校团委")).ifBlank { "校团委" },
-                                activityVenue = cl.optCleanString("activity_venue", cl.optCleanString("activityVenue", "大学生活动中心")).ifBlank { "大学生活动中心" },
+                                activityVenue = normalizedVenue,
+                                campusName = normalizedCampusName,
+                                buildingName = normalizedBuildingName,
+                                roomNumber = normalizedRoomNumber,
                                 summary = cl.optCleanString("summary", ""),
                                 qqGroupNumber = cl.optCleanString("qq_group_number", cl.optCleanString("qqGroupNumber", "")),
                                 highlights = highlights,
@@ -2365,15 +2395,46 @@ object CampusCloudOidcHelper {
                 PresetCampusCommunityCatalog.defaultCompetitions
             }
 
+            val offObj = data.optJSONObject("official_channels") ?: data.optJSONObject("officialChannels")
+            val officialChannels = if (offObj != null) {
+                val rawChUrl = offObj.optCleanString(
+                    "user_feedback_channel_url",
+                    offObj.optCleanString("userFeedbackChannelUrl", "https://github.com/yellowpeachxgp/day-in-school/issues")
+                )
+                val safeChUrl = if (rawChUrl.startsWith("https://", ignoreCase = true)) {
+                    rawChUrl
+                } else {
+                    "https://github.com/yellowpeachxgp/day-in-school/issues"
+                }
+                cn.edu.haut.campus.core.model.CampusOfficialChannelsConfig(
+                    userFeedbackQqGroup = offObj.optCleanString(
+                        "user_feedback_qq_group",
+                        offObj.optCleanString("userFeedbackQqGroup", "")
+                    ),
+                    userFeedbackChannelUrl = safeChUrl,
+                    wechatOfficialAccountName = offObj.optCleanString(
+                        "wechat_official_account_name",
+                        offObj.optCleanString("wechatOfficialAccountName", "")
+                    ),
+                    wechatOfficialAccountStatus = offObj.optCleanString(
+                        "wechat_official_account_status",
+                        offObj.optCleanString("wechatOfficialAccountStatus", "PENDING")
+                    ).ifBlank { "PENDING" }
+                )
+            } else {
+                cn.edu.haut.campus.core.model.CampusOfficialChannelsConfig()
+            }
+
             CampusCommunityCloudCatalog(
                 schoolId = schoolId,
                 version = version,
                 updatedAtIso = updatedAt,
                 bulletin = bulletin,
+                officialChannels = officialChannels,
                 channels = if (chArr != null) parsedChannels else PresetCampusCommunityCatalog.defaultQqChannels,
                 clubs = if (clArr != null) parsedClubs else PresetCampusCommunityCatalog.defaultCampusClubs,
                 competitions = effectiveCompetitions,
-                isFromCloud = chArr != null || clArr != null || compArr != null
+                isFromCloud = chArr != null || clArr != null || compArr != null || offObj != null
             )
         }.getOrNull()
     }

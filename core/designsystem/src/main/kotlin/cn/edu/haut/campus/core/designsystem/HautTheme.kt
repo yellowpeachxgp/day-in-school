@@ -959,7 +959,7 @@ object WallpaperThemeEngine {
                 emptyList()
             }
             mergeDistinctSwatches(osColors + bitmapColors).ifEmpty {
-                listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF0066CCL)
+                listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF053968L)
             }
         }
     }
@@ -1064,7 +1064,7 @@ object WallpaperThemeEngine {
             }
         }
         return mergeDistinctSwatches(rawCandidates).ifEmpty {
-            listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF0066CCL)
+            listOf(0xFF0EA5E9L, 0xFF6366F1L, 0xFF0D9488L, 0xFF7C3AEDL, 0xFF053968L)
         }
     }
 
@@ -1182,7 +1182,7 @@ object WallpaperThemeEngine {
     fun extractPaletteSwatchesFromBitmap(bitmap: Bitmap): List<Long> {
         val w = bitmap.width
         val h = bitmap.height
-        if (w <= 0 || h <= 0) return listOf(0xFF0066CCL)
+        if (w <= 0 || h <= 0) return listOf(0xFF053968L)
 
         val stepX = (w / 48).coerceAtLeast(1)
         val stepY = (h / 48).coerceAtLeast(1)
@@ -1247,7 +1247,7 @@ object WallpaperThemeEngine {
 
         if (extracted.isEmpty()) {
             extracted.add(0xFF0EA5E9L)
-            extracted.add(0xFF0066CCL)
+            extracted.add(0xFF053968L)
             extracted.add(0xFF0D9488L)
         }
         return extracted
@@ -1450,7 +1450,7 @@ fun HautCampusTheme(
     uiDesignStyleKey: String = "FLUTTER_M3",
     dynamicColor: Boolean = false,
     themePaletteKey: String = "HAUT_BLUE",
-    customSeedArgb: Long = 0xFF0066CC,
+    customSeedArgb: Long = 0xFF053968,
     customWallpaperPath: String? = null,
     wallpaperAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA,
     wallpaperBlurDp: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP,
@@ -1473,7 +1473,7 @@ fun HautCampusTheme(
 
     val resolvedSeedArgb = when (themePaletteKey) {
         "CUSTOM" -> customSeedArgb
-        else -> PresetThemePalette.fromKey(themePaletteKey)?.seedArgb ?: 0xFF0066CC
+        else -> PresetThemePalette.fromKey(themePaletteKey)?.seedArgb ?: 0xFF053968
     }
 
     var wallpaperBitmap by remember(customWallpaperPath) {

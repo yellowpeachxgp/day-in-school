@@ -38,7 +38,7 @@ class ReminderSystemDomainTest {
 
     private fun buildSampleEvent(
         startAt: java.time.Instant = classStart,
-        location: String = "2号教学楼2204",
+        location: String = "32号楼32204",
         isCancelled: Boolean = false
     ): ReminderEvent {
         val rev = ReminderRevision.computeEventRevision(
@@ -174,7 +174,7 @@ class ReminderSystemDomainTest {
     @Test
     fun `UT-07 and UT-08 cancelled event or modified classroom rejects old snooze`() {
         val now = ReminderRevision.schoolInstant(sampleDate, LocalTime.of(9, 50))
-        val originalEvent = buildSampleEvent(location = "2号教学楼2204")
+        val originalEvent = buildSampleEvent(location = "32号楼32204")
         val task = buildFiredTask(originalEvent)
         val policy = ReminderPolicyEngine.resolveEffectivePolicy(originalEvent, ReminderGlobalConfig(enabled = true))
         val candidate = ReminderPolicyEngine.resolveRequestedTime(SnoozeChoice.Plus5Minutes, now, originalEvent.startAt)

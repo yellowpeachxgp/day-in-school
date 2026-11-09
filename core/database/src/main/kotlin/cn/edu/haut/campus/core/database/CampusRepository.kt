@@ -257,6 +257,7 @@ class CampusRepository internal constructor(
         val GIS_DICTIONARY_SYNCED_V15 = booleanPreferencesKey("official_gis_dictionary_synced_v15")
         val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
         val GIS_DICTIONARY_SYNCED_V17 = booleanPreferencesKey("official_gis_dictionary_synced_v17")
+        val GIS_DICTIONARY_SYNCED_V18 = booleanPreferencesKey("official_gis_dictionary_synced_v18")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val LAST_SEASONAL_ROLLOVER_TERM_ID = stringPreferencesKey("last_seasonal_rollover_term_id_v1")
         val USER_MANUAL_TERM_SEASON = stringPreferencesKey("user_manual_term_override_season_v1")
@@ -664,14 +665,20 @@ class CampusRepository internal constructor(
                 prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
             )
             val customBuildings = customZones.flatMap { it.buildings }
-            (base + songshan + customBuildings).distinctBy { it.id }
+            (songshan + base.filter { it.campusId != "songshanlu" && it.id !in setOf("b_canteen2", "b_canteen3") } + customBuildings)
+                .distinctBy { it.id }
         }
 
     val buildingAliasesFlow: Flow<List<BuildingAlias>> =
         dao.observeBuildingAliases().map { list ->
-            val base = list.map { it.toDomain() }
+            val removedAliasIds = setOf(
+                "al_4", "al_4b", "al_4c", "al_5",
+                "al_cant2_a", "al_cant2_b", "al_cant2_c",
+                "al_cant3_a", "al_cant3_b", "al_cant3_c"
+            )
+            val base = list.map { it.toDomain() }.filter { it.id !in removedAliasIds }
             val songshan = if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES else emptyList()
-            (base + songshan).distinctBy { it.id }
+            (songshan + base).distinctBy { it.id }
         }
 
     val widgetConfigsFlow: Flow<List<WidgetInstanceConfig>> =
@@ -740,7 +747,10 @@ class CampusRepository internal constructor(
                     it[PrefKeys.ONBOARDING_COMPLETED] = true
                     it[PrefKeys.AUTO_SYNC_ENABLED] = false
                     it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
+                    it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
                 }
+            } else if (supportsHautServices && prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V18] != true) {
+                syncCampusDictionaryV18Internal()
             }
             ensureSeasonalTermRolloverIfNeeded()
             return
@@ -762,28 +772,15 @@ class CampusRepository internal constructor(
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
+                it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
             }
         } else if (
             prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true ||
             prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V16] != true ||
-            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V17] != true
+            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V17] != true ||
+            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V18] != true
         ) {
-            database.withTransaction {
-                dao.deleteBuildingAliasesByIds(listOf("al_4", "al_4b", "al_4c", "al_5"))
-                dao.upsertBuildings(
-                    (HautMockSeedData.lianhuajieBuildings + ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS)
-                        .map { it.toEntity() }
-                )
-                dao.upsertBuildingAliases(
-                    (HautMockSeedData.defaultBuildingAliases + ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES)
-                        .map { it.toEntity() }
-                )
-            }
-            preferences.edit {
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
-            }
+            syncCampusDictionaryV18Internal()
         }
         if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
             database.withTransaction {
@@ -927,11 +924,44 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("RESET_DEMO_SEED_DATA")
     }
 
+    private suspend fun syncCampusDictionaryV18Internal() {
+        database.withTransaction {
+            dao.deleteBuildingsByIds(listOf("b_canteen2", "b_canteen3"))
+            dao.deleteBuildingAliasesByIds(
+                listOf(
+                    "al_4", "al_4b", "al_4c", "al_5",
+                    "al_cant2_a", "al_cant2_b", "al_cant2_c",
+                    "al_cant3_a", "al_cant3_b", "al_cant3_c"
+                )
+            )
+            dao.upsertBuildings(
+                (HautMockSeedData.lianhuajieBuildings + ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS)
+                    .map { it.toEntity() }
+            )
+            dao.upsertBuildingAliases(
+                (HautMockSeedData.defaultBuildingAliases + ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES)
+                    .map { it.toEntity() }
+            )
+        }
+        preferences.edit {
+            it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+            it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
+            it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
+            it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
+        }
+    }
+
     private suspend fun seedBaseCampusDictionaryInternal() {
         dao.upsertTerms(HautMockSeedData.defaultTerms.map { it.toEntity() })
         dao.upsertPeriodTimes(HautMockSeedData.defaultPeriodTimes.map { it.toEntity() })
-        dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
-        dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+        dao.upsertBuildings(
+            (HautMockSeedData.lianhuajieBuildings + ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS)
+                .map { it.toEntity() }
+        )
+        dao.upsertBuildingAliases(
+            (HautMockSeedData.defaultBuildingAliases + ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES)
+                .map { it.toEntity() }
+        )
         dao.upsertCalendarOverrides(HautMockSeedData.defaultCalendarOverrides.map { it.toEntity() })
     }
 
@@ -2283,8 +2313,8 @@ class CampusRepository internal constructor(
 
     suspend fun getActiveThemeAccentArgb(): Int {
         val prefs = preferences.data.first()
-        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "MINT_BREEZE"
-        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF10B981
+        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
+        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF053968
         val seedLong = when (key) {
             "MINT_BREEZE" -> 0xFF10B981
             "SKY_SODA" -> 0xFF0EA5E9
@@ -2302,7 +2332,7 @@ class CampusRepository internal constructor(
             "SAKURA_PINK" -> 0xFFDB2777
             "SLATE_INK" -> 0xFF334155
             "CUSTOM" -> custom
-            else -> 0xFF10B981
+            else -> 0xFF053968
         }
         return seedLong.toInt()
     }

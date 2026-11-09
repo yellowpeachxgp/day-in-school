@@ -220,34 +220,6 @@ object CampusDiningRecommender {
             lateDishes = listOf("砂锅麻辣烫", "铁板炒饭", "酸辣粉")
         ),
         CampusCanteenProfile(
-            buildingId = "b_canteen2",
-            campusId = "lianhuajie",
-            name = "原第二餐厅（已停业）",
-            shortName = "原二餐厅(停业)",
-            areaLabel = "北区中心湖畔 · 现已停业",
-            latitude = 34.833950,
-            longitude = 113.544600,
-            nearbyBuildingIds = setOf("b_t1", "b_t2", "b_library", "b_dorm_ab", "b_dorm_gh", "b_admin"),
-            brunchDishes = listOf("八宝粥配小笼包", "山东杂粮煎饼", "潼关肉夹馍"),
-            lunchDinnerDishes = listOf("两荤一素自选菜", "广式脆皮烧鸭饭", "卤香猪脚饭", "老坛酸菜鱼米饭", "滇味过桥米线"),
-            lateDishes = listOf("川味冒菜", "鲜肉馄饨", "炸串卷饼"),
-            isOperating = false
-        ),
-        CampusCanteenProfile(
-            buildingId = "b_canteen3",
-            campusId = "lianhuajie",
-            name = "原第三餐厅（已停业）",
-            shortName = "原三餐厅(停业)",
-            areaLabel = "西生活区 · 现已停业",
-            latitude = 34.832950,
-            longitude = 113.539600,
-            nearbyBuildingIds = setOf("b_t5", "b_t6", "b_t7", "b_t8", "b_t9", "b_t25", "b_stadium", "b_dorm_klm"),
-            brunchDishes = listOf("清真牛肉包配油茶", "豆腐脑配油条", "东北烤冷面"),
-            lunchDinnerDishes = listOf("新疆大盘鸡拌面", "兰州牛肉拉面", "牛羊肉泡馍", "韩式石锅拌饭", "孜然烤肉拌饭"),
-            lateDishes = listOf("烤肉筋配热馕", "牛肉炒刀削", "鸡蛋炒米粉"),
-            isOperating = false
-        ),
-        CampusCanteenProfile(
             buildingId = "b_canteen4",
             campusId = "lianhuajie",
             name = "第四餐厅",
@@ -343,86 +315,6 @@ object CampusDiningRecommender {
             baseReviewCount = 91,
             defaultTags = listOf("性价比高", "味道正"),
             sampleComment = "早八前喝一碗热胡辣汤配焦底水煎包很顶饱。"
-        ),
-        // 二餐厅
-        CampusDishCatalogItem(
-            id = "c2_shaoya",
-            canteenBuildingId = "b_canteen2",
-            canteenShortName = "二餐厅",
-            stallLocation = "一楼烧腊档",
-            dishName = "广式脆皮烧鸭饭",
-            priceYuan = 13,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER),
-            baseStars = 4.8f,
-            baseReviewCount = 77,
-            defaultTags = listOf("味道正", "分量足"),
-            sampleComment = "鸭皮酥脆，酸梅酱解腻，去晚了容易卖完。"
-        ),
-        CampusDishCatalogItem(
-            id = "c2_suancaiyu",
-            canteenBuildingId = "b_canteen2",
-            canteenShortName = "二餐厅",
-            stallLocation = "二楼特色档",
-            dishName = "老坛酸菜鱼米饭",
-            priceYuan = 14,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER),
-            baseStars = 4.6f,
-            baseReviewCount = 49,
-            defaultTags = listOf("分量足", "味道正"),
-            sampleComment = "无刺巴沙鱼片嫩滑，酸汤泡饭一绝。"
-        ),
-        CampusDishCatalogItem(
-            id = "c2_zixuan",
-            canteenBuildingId = "b_canteen2",
-            canteenShortName = "二餐厅",
-            stallLocation = "一楼自选区",
-            dishName = "两荤一素自选菜",
-            priceYuan = 10,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER),
-            baseStars = 4.5f,
-            baseReviewCount = 63,
-            defaultTags = listOf("出餐快", "性价比高"),
-            sampleComment = "离1教2教和图书馆近，菜品每天换样。"
-        ),
-        // 三餐厅
-        CampusDishCatalogItem(
-            id = "c3_dapanji",
-            canteenBuildingId = "b_canteen3",
-            canteenShortName = "三餐厅",
-            stallLocation = "一楼清真档",
-            dishName = "新疆大盘鸡拌面",
-            priceYuan = 13,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER),
-            baseStars = 4.9f,
-            baseReviewCount = 112,
-            defaultTags = listOf("分量足", "味道正", "性价比高"),
-            sampleComment = "裤带面筋道裹满汤汁，土豆软糯，西区口碑王。"
-        ),
-        CampusDishCatalogItem(
-            id = "c3_lamian",
-            canteenBuildingId = "b_canteen3",
-            canteenShortName = "三餐厅",
-            stallLocation = "一楼拉面档",
-            dishName = "兰州牛肉拉面",
-            priceYuan = 10,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER, DiningMealSlot.LATE_DINNER),
-            baseStars = 4.7f,
-            baseReviewCount = 69,
-            defaultTags = listOf("出餐快", "味道正"),
-            sampleComment = "现拉面条，牛骨清汤很鲜。"
-        ),
-        CampusDishCatalogItem(
-            id = "c3_shiguo",
-            canteenBuildingId = "b_canteen3",
-            canteenShortName = "三餐厅",
-            stallLocation = "二楼风味档",
-            dishName = "韩式石锅拌饭",
-            priceYuan = 12,
-            mealSlots = setOf(DiningMealSlot.LUNCH, DiningMealSlot.DINNER),
-            baseStars = 4.5f,
-            baseReviewCount = 44,
-            defaultTags = listOf("分量足"),
-            sampleComment = "锅巴焦香，甜辣酱可以自己控制用量。"
         ),
         // 四餐厅
         CampusDishCatalogItem(
@@ -897,7 +789,7 @@ object CampusDiningRecommender {
                 isNearbyTeaching && walkMinutes != null -> "距上课教学楼最近 · 步行约 ${walkMinutes} 分钟"
                 hasNextClassSoon && profile.buildingId == "b_canteen_small" -> "近教学区 · 出餐快不耽误下节课"
                 walkMinutes != null && walkMinutes <= 5 -> "下课顺路 · 步行约 ${walkMinutes} 分钟"
-                profile.buildingId in setOf("b_canteen1", "b_canteen2") -> "下课顺路回寝 · 档口选择多"
+                profile.buildingId in setOf("b_canteen1", "b_canteen4") -> "下课顺路回寝 · 档口选择多"
                 else -> profile.areaLabel
             }
 

@@ -684,7 +684,7 @@ class ReminderCoordinator internal constructor(
                 context = appContext,
                 accountScope = accountScope,
                 event = liveCandidate,
-                nextEventTitleAndRoom = "计算机网络 · 2号教学楼2302",
+                nextEventTitleAndRoom = "计算机网络 · 32号楼32302",
                 lockscreenPrivate = config.lockscreenPrivate,
                 now = now
             )

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 钟楼尖顶与拱门剪影（位于 66dp 安全区内） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,23L62,33H46L54,23ZM44,35H64V65H58V51C58,48.8 56.2,47 54,47C51.8,47 50,48.8 50,51V65H44V35Z" />
+    <!-- 钟面金色点缀 -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M54,39.5A3.2,3.2 0 1,1 53.99,39.5Z" />
+    <!-- 展开的书页/日程底座弧线 -->
+    <path
+        android:fillColor="#E0F2FE"
+        android:pathData="M29,63C37,63 45,65.5 52,70V79C45,74.8 37,72.5 29,72.5V63ZM79,63C71,63 63,65.5 56,70V79C63,74.8 71,72.5 79,72.5V63Z" />
+</vector>

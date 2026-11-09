@@ -122,10 +122,10 @@ fun EmptyClassroomScreen(
         currentTerm?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }
 
-    var selectedCampusKey by remember(prefs.selectedCampusId) {
+    var selectedCampusKey by remember(prefs.selectedCampusId, rules.size) {
         mutableStateOf(
             if (prefs.selectedCampusId.contains("songshan", ignoreCase = true) ||
-                rules.any { it.rawRoom.contains("嵩山") }
+                rules.any { it.rawRoom.contains("嵩山") || it.rawRoom.contains("齐礼阎") }
             ) "songshanlu" else "lianhuajie"
         )
     }
@@ -940,7 +940,11 @@ fun CampusCommunityScreen(
             } else {
                 // 1. App 用户交流群、QQ 频道与问题反馈专卡（与校内社团招新群严格区分）
                 val appUserQqGroup = prefs.customClubGroupNumbers["__app_user_feedback_qq_group__"]?.takeIf { it.isNotBlank() }
+                    ?: catalog.officialChannels.userFeedbackQqGroup.takeIf { it.isNotBlank() }
                 val appUserChannelUrl = prefs.customChannelUrls["__app_user_feedback_channel__"]?.takeIf { it.isNotBlank() }
+                    ?: catalog.officialChannels.userFeedbackChannelUrl.takeIf {
+                        it.isNotBlank() && !it.contains("github.com", ignoreCase = true)
+                    }
                 var showEditAppFeedbackGroupDialog by remember { mutableStateOf(false) }
 
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
@@ -1022,8 +1026,31 @@ fun CampusCommunityScreen(
                                 }
                             )
                         }
+                        if (appUserChannelUrl != null) {
+                            XPeachFilterPill(
+                                label = "打开QQ频道",
+                                selected = true,
+                                compact = true,
+                                onClick = {
+                                    feedbackText = openPresetQqChannel(
+                                        context = context,
+                                        channelTitle = "Day in School 官方QQ频道",
+                                        inviteUrl = appUserChannelUrl
+                                    )
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "复制频道链接",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    copyCommunityText(context, "用户交流QQ频道", appUserChannelUrl)
+                                    feedbackText = "已复制 QQ 频道链接：$appUserChannelUrl"
+                                }
+                            )
+                        }
                         XPeachFilterPill(
-                            label = if (appUserQqGroup != null) "修改群号/频道" else "配置交流群/频道",
+                            label = if (appUserQqGroup != null || appUserChannelUrl != null) "修改群号/频道" else "配置交流群/频道",
                             selected = false,
                             compact = true,
                             onClick = { showEditAppFeedbackGroupDialog = true }
@@ -1097,7 +1124,10 @@ fun CampusCommunityScreen(
                     )
                 }
 
-                // 2. 微信公众号与服务渠道说明卡（诚实标注待开通，不伪造未上线二维码）
+                // 2. 微信公众号与学校权威公共号导航（诚实标注 App 自有号状态，同时提供校内公开认证号检索）
+                val cloudWechatName = catalog.officialChannels.wechatOfficialAccountName.trim()
+                val isAppWechatActive = catalog.officialChannels.wechatOfficialAccountStatus.equals("ACTIVE", ignoreCase = true) &&
+                    cloudWechatName.isNotEmpty()
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1114,15 +1144,15 @@ fun CampusCommunityScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "规划用于课表简报、版本更新公告与使用指南推送",
+                                text = "App 通知服务状态说明与河工大校内权威公众号检索",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         XPeachStatusBadge(
-                            text = "待开通",
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (isAppWechatActive) "已开通" else "待开通",
+                            containerColor = if (isAppWechatActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (isAppWechatActive) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1130,11 +1160,76 @@ fun CampusCommunityScreen(
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
                     ) {
-                        Text(
-                            text = "状态说明：Day in School 官方微信公众号目前处于筹备与资质审核阶段，暂未开放关注或账号绑定。正式上线后将通过云端配置在本栏公布认证名称，请注意甄别，切勿向非官方公众号提交教务密码。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = if (isAppWechatActive) {
+                                    "Day in School 官方公众号：$cloudWechatName（可在微信搜索关注；官方绝不会索要您的教务密码）"
+                                } else {
+                                    "状态说明：Day in School 官方微信公众号目前处于筹备与资质审核阶段，暂未开放关注或账号绑定。正式上线后将通过云端配置在本栏公布认证名称，切勿向非官方公众号提交教务密码。"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (isAppWechatActive) {
+                                XPeachFilterPill(
+                                    label = "复制公众号名称",
+                                    selected = true,
+                                    compact = true,
+                                    onClick = {
+                                        copyCommunityText(context, "官方微信公众号", cloudWechatName)
+                                        feedbackText = "已复制公众号名称：$cloudWechatName"
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "校内常用公开公众号（点击复制名称前往微信搜索）",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (wx in cn.edu.haut.campus.core.model.PresetCampusCommunityCatalog.verifiedSchoolWechatAccounts) {
+                            XPeachWell(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        copyCommunityText(context, "学校公众号", wx.name)
+                                        feedbackText = "已复制「${wx.name}」，可前往微信搜索关注"
+                                    },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                        Text(
+                                            text = "${wx.name} · ${wx.unit}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = wx.summary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Text(
+                                        text = "复制 ›",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1368,7 +1463,16 @@ fun CampusHospitalPharmacyDialog(
                                 text = "资料贡献者：@${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE}",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = XPeachTheme.readablePrimary
+                                color = XPeachTheme.readablePrimary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        onOpenUrl(
+                                            "@${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE} GitHub",
+                                            CampusHospitalPharmacyCatalog.CONTRIBUTOR_GITHUB_URL
+                                        )
+                                    }
+                                    .padding(vertical = 2.dp)
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 XPeachFilterPill(
@@ -1449,12 +1553,12 @@ fun CampusHospitalPharmacyDialog(
                 }
 
                 Text(
-                    text = "匹配结果：${filteredItems.size} 项（显示前 ${minOf(filteredItems.size, 60)} 项，输入关键词可精确检索）",
+                    text = "匹配结果：共 ${filteredItems.size} 项（可输入关键词按药名、规格、厂家或准字号检索）",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                for (item in filteredItems.take(60)) {
+                for (item in filteredItems) {
                     XPeachWell(
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)

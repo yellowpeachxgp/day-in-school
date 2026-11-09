@@ -165,6 +165,7 @@ fun SettingsScreen(
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
+    onNavigateToFeedbackChannels: () -> Unit = onNavigateToCommunity,
     onNavigateToMoments: () -> Unit = onNavigateToCommunity,
     onNavigateToSchoolCenter: () -> Unit = {},
     onNavigateToParcelHub: () -> Unit = {},
@@ -860,6 +861,41 @@ fun SettingsScreen(
                         }
                         Text(
                             text = "社团名录 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToFeedbackChannels)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "用户交流群、QQ频道与公众号",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "问题反馈、官方通知状态说明与校内权威公众号检索",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "反馈与频道 ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )
@@ -2047,6 +2083,9 @@ fun SettingsScreen(
 
             // 8. 外观、隐私安全与数据管理
             var showHospitalDialogInSettings by remember { mutableStateOf(false) }
+            val defaultAliasComponent = remember(context) {
+                ComponentName(context.packageName, "cn.edu.haut.campus.MainActivityDefaultIconAlias")
+            }
             val animeAliasComponent = remember(context) {
                 ComponentName(context.packageName, "cn.edu.haut.campus.MainActivityAnimeIconAlias")
             }
@@ -2081,9 +2120,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("启用可选二次元时尚桌面图标", style = MaterialTheme.typography.bodyMedium)
+                        Text("切换二次元星芒桌面图标", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "默认保持工大深蓝主图标，开启后在桌面新增粉色星芒候选图标入口",
+                            text = "默认使用工大深蓝钟楼自适应图标，开启后切换为粉色星芒桌面图标（互斥单图标）",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2098,11 +2137,17 @@ fun SettingsScreen(
                                     else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                                     PackageManager.DONT_KILL_APP
                                 )
+                                context.packageManager.setComponentEnabledSetting(
+                                    defaultAliasComponent,
+                                    if (enabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                                    else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                                    PackageManager.DONT_KILL_APP
+                                )
                                 animeLauncherAliasEnabled = enabled
                                 feedbackText = if (enabled) {
-                                    "已启用可选二次元时尚桌面图标（返回桌面稍等片刻即可看到）"
+                                    "已切换为粉色星芒桌面图标（返回桌面稍等片刻即可刷新）"
                                 } else {
-                                    "已关闭可选桌面图标，仅保留默认主图标"
+                                    "已恢复默认工大深蓝钟楼桌面图标"
                                 }
                             }.onFailure {
                                 feedbackText = "当前系统桌面不支持动态切换应用图标别名"

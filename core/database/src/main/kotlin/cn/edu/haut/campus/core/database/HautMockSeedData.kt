@@ -339,28 +339,6 @@ object HautMockSeedData {
             verifiedAt = LocalDate.of(2026, 11, 5)
         ),
         Building(
-            id = "b_canteen2",
-            name = "原第二餐厅（已停业）",
-            shortName = "原二餐厅(停业)",
-            latitude = 34.833950,
-            longitude = 113.544600,
-            category = CampusCategory.CANTEEN,
-            entrances = listOf("南侧入口", "东侧入口"),
-            description = "莲花街校区北区原第二餐厅建筑（现已停业，就餐请前往第一餐厅、第四餐厅或小食堂）",
-            verifiedAt = LocalDate.of(2026, 11, 9)
-        ),
-        Building(
-            id = "b_canteen3",
-            name = "原第三餐厅（已停业）",
-            shortName = "原三餐厅(停业)",
-            latitude = 34.832950,
-            longitude = 113.539600,
-            category = CampusCategory.CANTEEN,
-            entrances = listOf("南门入口", "东侧门"),
-            description = "莲花街校区西生活区原第三餐厅建筑（现已停业，就餐请前往第四餐厅、第一餐厅或小食堂）",
-            verifiedAt = LocalDate.of(2026, 11, 9)
-        ),
-        Building(
             id = "b_canteen4",
             name = "第四餐厅",
             shortName = "四餐厅",
@@ -555,12 +533,6 @@ object HautMockSeedData {
         BuildingAlias("al_cant1_a", "b_canteen1", "第一餐厅", 1.0f, true),
         BuildingAlias("al_cant1_b", "b_canteen1", "一餐厅", 1.0f, true),
         BuildingAlias("al_cant1_c", "b_canteen1", "一餐", 0.96f, true),
-        BuildingAlias("al_cant2_a", "b_canteen2", "第二餐厅", 1.0f, true),
-        BuildingAlias("al_cant2_b", "b_canteen2", "二餐厅", 1.0f, true),
-        BuildingAlias("al_cant2_c", "b_canteen2", "二餐", 0.96f, true),
-        BuildingAlias("al_cant3_a", "b_canteen3", "第三餐厅", 1.0f, true),
-        BuildingAlias("al_cant3_b", "b_canteen3", "三餐厅", 1.0f, true),
-        BuildingAlias("al_cant3_c", "b_canteen3", "三餐", 0.96f, true),
         BuildingAlias("al_cant4_a", "b_canteen4", "第四餐厅", 1.0f, true),
         BuildingAlias("al_cant4_b", "b_canteen4", "四餐厅", 1.0f, true),
         BuildingAlias("al_cant4_c", "b_canteen4", "四餐", 0.96f, true),
@@ -582,10 +554,10 @@ object HautMockSeedData {
     val defaultRules = listOf(
         // 周一
         CourseScheduleRule("r_mon_1", "c_ds", CURRENT_TERM_ID, DayOfWeek.MONDAY, 1, 2, (1..16).toSet(), "1号教学楼1204", "b_t1"),
-        CourseScheduleRule("r_mon_2", "c_prob", CURRENT_TERM_ID, DayOfWeek.MONDAY, 3, 4, (1..16).toSet(), "2号教学楼2106", "b_t2"),
+        CourseScheduleRule("r_mon_2", "c_prob", CURRENT_TERM_ID, DayOfWeek.MONDAY, 3, 4, (1..16).toSet(), "32号楼32106", "b_t2"),
         CourseScheduleRule("r_mon_3", "c_net", CURRENT_TERM_ID, DayOfWeek.MONDAY, 5, 6, (1..15).filter { it % 2 == 1 }.toSet(), "3号教学楼3302", "b_t3"),
         // 周二
-        CourseScheduleRule("r_tue_1", "c_os", CURRENT_TERM_ID, DayOfWeek.TUESDAY, 1, 2, (1..16).toSet(), "2号教学楼2306", "b_t2"),
+        CourseScheduleRule("r_tue_1", "c_os", CURRENT_TERM_ID, DayOfWeek.TUESDAY, 1, 2, (1..16).toSet(), "32号楼32306", "b_t2"),
         CourseScheduleRule("r_tue_2", "c_db", CURRENT_TERM_ID, DayOfWeek.TUESDAY, 5, 6, (1..16).toSet(), "4号教学楼4208", "b_t4"),
         CourseScheduleRule("r_tue_3", "c_grain", CURRENT_TERM_ID, DayOfWeek.TUESDAY, 9, 10, (2..16).filter { it % 2 == 0 }.toSet(), "钟楼报告厅201", "b_bell"),
         // 周三（含下午 5-6 节选修冲突演示）
@@ -593,15 +565,15 @@ object HautMockSeedData {
         CourseScheduleRule("r_wed_2", "c_net", CURRENT_TERM_ID, DayOfWeek.WEDNESDAY, 5, 6, (1..16).toSet(), "3号教学楼3302", "b_t3"),
         CourseScheduleRule("r_wed_conflict", "c_grain", CURRENT_TERM_ID, DayOfWeek.WEDNESDAY, 6, 7, setOf(4, 8, 12), "A座204", null),
         // 周四
-        CourseScheduleRule("r_thu_1", "c_prob", CURRENT_TERM_ID, DayOfWeek.THURSDAY, 1, 2, (1..14).toSet(), "2号教学楼2106", "b_t2"),
-        CourseScheduleRule("r_thu_2", "c_os", CURRENT_TERM_ID, DayOfWeek.THURSDAY, 3, 4, (1..16).toSet(), "2号教学楼2306", "b_t2"),
+        CourseScheduleRule("r_thu_1", "c_prob", CURRENT_TERM_ID, DayOfWeek.THURSDAY, 1, 2, (1..14).toSet(), "32号楼32106", "b_t2"),
+        CourseScheduleRule("r_thu_2", "c_os", CURRENT_TERM_ID, DayOfWeek.THURSDAY, 3, 4, (1..16).toSet(), "32号楼32306", "b_t2"),
         CourseScheduleRule("r_thu_3", "c_pe", CURRENT_TERM_ID, DayOfWeek.THURSDAY, 7, 8, (1..16).toSet(), "中心体育场与体育馆", "b_stadium"),
         // 周五
         CourseScheduleRule("r_fri_1", "c_db", CURRENT_TERM_ID, DayOfWeek.FRIDAY, 1, 2, (1..16).toSet(), "4号教学楼4208", "b_t4"),
         CourseScheduleRule("r_fri_2", "c_ds", CURRENT_TERM_ID, DayOfWeek.FRIDAY, 5, 6, (2..16).filter { it % 2 == 0 }.toSet(), "4号教学楼4310机房", "b_t4"),
         // 周六（使 2026-10-31 第 8 教学周周六打开即呈现完整已结束/正在上/未开始时间轴！）
         CourseScheduleRule("r_sat_1", "c_grain", CURRENT_TERM_ID, DayOfWeek.SATURDAY, 1, 2, (1..16).toSet(), "1号教学楼1104", "b_t1"),
-        CourseScheduleRule("r_sat_2", "c_ds", CURRENT_TERM_ID, DayOfWeek.SATURDAY, 3, 4, (1..16).toSet(), "2号教学楼2204", "b_t2"),
+        CourseScheduleRule("r_sat_2", "c_ds", CURRENT_TERM_ID, DayOfWeek.SATURDAY, 3, 4, (1..16).toSet(), "32号楼32204", "b_t2"),
         CourseScheduleRule("r_sat_3", "c_os", CURRENT_TERM_ID, DayOfWeek.SATURDAY, 5, 6, (2..16).filter { it % 2 == 0 }.toSet(), "4号教学楼4102机房", "b_t4"),
         CourseScheduleRule("r_sat_4", "c_pol", CURRENT_TERM_ID, DayOfWeek.SATURDAY, 9, 10, setOf(4, 8, 12, 16), "钟楼报告厅101", "b_bell")
     )

@@ -71,7 +71,7 @@ class ScheduleTimelineAndConflictTest {
                 startPeriod = 3,
                 endPeriod = 4,
                 weeks = setOf(2, 4, 6, 8, 10, 12, 14, 16), // 双周课，第8周有课
-                rawRoom = "2号教学楼A204"
+                rawRoom = "32号楼32204"
             )
         )
 

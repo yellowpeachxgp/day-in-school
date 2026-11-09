@@ -101,6 +101,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -129,7 +130,9 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.core.domain.CampusHospitalPharmacyCatalog
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
+import cn.edu.haut.campus.core.domain.HospitalMedicineCategory
 import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusGeofenceRecognizer
 import cn.edu.haut.campus.core.location.CampusMapNavigator
@@ -178,10 +181,42 @@ import kotlin.math.sinh
 import kotlin.math.tan
 
 private object CampusTileCache {
-    private val memoryCache = LruCache<String, ImageBitmap>(160)
+    private val memoryCache = LruCache<String, ImageBitmap>(360)
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
 
+    fun isWithinHaut25dRasterBounds(z: Int, x: Int, y: Int): Boolean {
+        if (z !in 16..18) return false
+        val n = 2.0.pow(z.toDouble())
+        val minX = floor((113.533 + 180.0) / 360.0 * n).toInt()
+        val maxX = ceil((113.562 + 180.0) / 360.0 * n).toInt()
+        val minY = floor((1.0 - asinh(tan(Math.toRadians(34.841))) / PI) / 2.0 * n).toInt()
+        val maxY = ceil((1.0 - asinh(tan(Math.toRadians(34.824))) / PI) / 2.0 * n).toInt()
+        return x in minX..maxX && y in minY..maxY
+    }
+
+    fun resolveEffectiveTileStyle(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): GisMapStyleMode =
+        if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026 && isWithinHaut25dRasterBounds(z, x, y)) {
+            GisMapStyleMode.OFFICIAL_25D_2026
+        } else {
+            GisMapStyleMode.STREET_STANDARD
+        }
+
+    fun tileKey(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): String {
+        val effective = resolveEffectiveTileStyle(styleMode, z, x, y)
+        val stylePrefix = if (effective == GisMapStyleMode.OFFICIAL_25D_2026) "haut25d" else "street"
+        return "${stylePrefix}_${z}_${x}_${y}"
+    }
+
     fun get(key: String): ImageBitmap? = synchronized(memoryCache) { memoryCache.get(key) }
+
+    fun getWithStreetFallback(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): ImageBitmap? {
+        val primaryKey = tileKey(styleMode, z, x, y)
+        get(primaryKey)?.let { return it }
+        if (primaryKey.startsWith("haut25d_")) {
+            return get("street_${z}_${x}_${y}")
+        }
+        return null
+    }
 
     fun put(key: String, bitmap: ImageBitmap) = synchronized(memoryCache) {
         memoryCache.put(key, bitmap)
@@ -195,30 +230,39 @@ private object CampusTileCache {
         y: Int,
         onLoaded: () -> Unit
     ) {
-        val stylePrefix = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) "haut25d" else "street"
-        val key = "${stylePrefix}_${z}_${x}_${y}"
-        if (get(key) != null) return
-        if (!inFlight.add(key)) return
+        val effectiveStyle = resolveEffectiveTileStyle(styleMode, z, x, y)
+        val primaryKey = tileKey(effectiveStyle, z, x, y)
+        val streetKey = "street_${z}_${x}_${y}"
+        if (get(primaryKey) != null) return
+        if (effectiveStyle == GisMapStyleMode.OFFICIAL_25D_2026 && get(streetKey) != null) return
+        if (!inFlight.add(primaryKey)) return
 
         try {
-            val bitmap = withContext(Dispatchers.IO) {
+            val loadedPair = withContext(Dispatchers.IO) {
                 val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
-                val diskFile = File(dir, "$key.png")
+                val diskFile = File(dir, "$primaryKey.png")
                 if (diskFile.exists() && diskFile.length() > 256L) {
                     runCatching {
                         BitmapFactory.decodeFile(diskFile.absolutePath)?.asImageBitmap()
-                    }.getOrNull()?.let { return@withContext it }
+                    }.getOrNull()?.let { return@withContext primaryKey to it }
                 }
 
                 val subdomain = ((x + y) % 4 + 4) % 4 + 1
-                val urls = buildList {
-                    if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) {
-                        add("https://gis.haut.edu.cn/cmgis-server/upload/raster/3/$z/$x/$y.png")
+                val candidates = buildList {
+                    if (effectiveStyle == GisMapStyleMode.OFFICIAL_25D_2026) {
+                        add(primaryKey to "https://gis.haut.edu.cn/cmgis-server/upload/raster/3/$z/$x/$y.png")
                     }
-                    add("https://webrd0$subdomain.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=$x&y=$y&z=$z")
-                    add("https://tile.openstreetmap.org/$z/$x/$y.png")
+                    add(streetKey to "https://webrd0$subdomain.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=$x&y=$y&z=$z")
+                    add(streetKey to "https://tile.openstreetmap.org/$z/$x/$y.png")
                 }
-                for (urlStr in urls) {
+                for ((targetKey, urlStr) in candidates) {
+                    val targetDiskFile = File(dir, "$targetKey.png")
+                    if (targetDiskFile.exists() && targetDiskFile.length() > 256L) {
+                        val cachedBmp = runCatching {
+                            BitmapFactory.decodeFile(targetDiskFile.absolutePath)?.asImageBitmap()
+                        }.getOrNull()
+                        if (cachedBmp != null) return@withContext targetKey to cachedBmp
+                    }
                     val downloaded = runCatching {
                         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                             instanceFollowRedirects = false
@@ -245,21 +289,21 @@ private object CampusTileCache {
                                 out.toByteArray()
                             }
                             if (bytes.size > 256) {
-                                diskFile.writeBytes(bytes)
+                                targetDiskFile.writeBytes(bytes)
                                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                             } else null
                         } else null
                     }.getOrNull()
-                    if (downloaded != null) return@withContext downloaded
+                    if (downloaded != null) return@withContext targetKey to downloaded
                 }
                 null
             }
-            if (bitmap != null) {
-                put(key, bitmap)
+            if (loadedPair != null) {
+                put(loadedPair.first, loadedPair.second)
                 onLoaded()
             }
         } finally {
-            inFlight.remove(key)
+            inFlight.remove(primaryKey)
         }
     }
 }
@@ -303,6 +347,7 @@ fun CampusMapScreen(
         mutableStateOf(!initialClassroomQuery.isNullOrBlank())
     }
     var showOfficialWebGisDialog by remember { mutableStateOf(false) }
+    var showMapHospitalPharmacyDialog by remember { mutableStateOf(false) }
 
     BackHandler(enabled = isFullScreenMap) {
         isFullScreenMap = false
@@ -529,7 +574,7 @@ fun CampusMapScreen(
         }
     }
 
-    LaunchedEffect(resolution, campusBuildings) {
+    LaunchedEffect(resolution?.building?.id, searchQuery) {
         if (resolution?.building != null) {
             val b = resolution.building!!
             selectedBuilding = b
@@ -545,7 +590,10 @@ fun CampusMapScreen(
                 mapZoom = mapZoom.coerceAtLeast(17.4f)
             }
             inAppNavigationActive = true
-        } else if (selectedBuilding == null && campusBuildings.isNotEmpty()) {
+        }
+    }
+    LaunchedEffect(campusBuildings.size) {
+        if (selectedBuilding == null && campusBuildings.isNotEmpty()) {
             selectedBuilding = campusBuildings.first()
         }
     }
@@ -764,6 +812,21 @@ fun CampusMapScreen(
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
+                }
+            }
+        )
+    }
+
+    if (showMapHospitalPharmacyDialog) {
+        MapHospitalPharmacyDialog(
+            onDismiss = { showMapHospitalPharmacyDialog = false },
+            onOpenUrl = { url ->
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
                 }
             }
         )
@@ -1337,7 +1400,7 @@ fun CampusMapScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(228.dp)
+                            .height(268.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .border(
                                 width = 0.8.dp,
@@ -1569,6 +1632,38 @@ fun CampusMapScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                }
+
+                if (activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID) {
+                    XPeachCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                        onClick = { showMapHospitalPharmacyDialog = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "校医院药品价格公示与医保说明",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "收录 ${CampusHospitalPharmacyCatalog.ITEMS.size} 项西药/中成药公示单价 · 致谢 @${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            XPeachStatusDotText(
+                                text = "检索 ›",
+                                dotColor = XPeachTheme.readablePrimary
+                            )
+                        }
                     }
                 }
 
@@ -2250,7 +2345,9 @@ fun CampusMapScreen(
                         manualOriginBuilding = null
                         isFollowingUser = true
                         locationRefreshEpoch++
-                        if (userLocation?.isInsideLianhuajieCampus == true) {
+                        if (userLocation?.isInsideLianhuajieCampus == true ||
+                            userLocation?.isInsideSongshanluCampus == true
+                        ) {
                             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
                                 userLocation!!.latitude,
                                 userLocation!!.longitude
@@ -2312,7 +2409,8 @@ fun CampusMapScreen(
                     activeFootprint = activeBuildingFootprint,
                     selectedIndoorRoom = selectedIndoorRoom,
                     allBuildings = buildings,
-                    hasLiveGps = userLocation?.isInsideLianhuajieCampus == true,
+                    hasLiveGps = userLocation?.isInsideLianhuajieCampus == true ||
+                        userLocation?.isInsideSongshanluCampus == true,
                     deviceHeadingDegrees = effectiveHeadingDegrees,
                     manualOriginBuilding = manualOriginBuilding,
                     inAppNavigationActive = inAppNavigationActive,
@@ -2798,13 +2896,14 @@ private fun RealCampusTileMap(
     onSelectBuilding: (Building) -> Unit
 ) {
     val context = LocalContext.current
+    val hostView = LocalView.current
     val scope = rememberCoroutineScope()
     val isDarkMap = XPeachTheme.isDark
     var tileLoadGeneration by remember { mutableIntStateOf(0) }
     var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
     var canvasHeightPx by remember { mutableFloatStateOf(1920f) }
 
-    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) {
+    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026 && zoom >= 15.5f) {
         zoom.roundToInt().coerceIn(16, 18)
     } else {
         zoom.roundToInt().coerceIn(14, 18)
@@ -2917,6 +3016,7 @@ private fun RealCampusTileMap(
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val anyPressed = event.changes.any { it.pressed }
+                        hostView.parent?.requestDisallowInterceptTouchEvent(anyPressed)
                         currentOnTouchActiveChange(anyPressed)
                     }
                 }
@@ -3026,13 +3126,11 @@ private fun RealCampusTileMap(
         val minTy = floor(centerTileY - halfTilesH).toInt()
         val maxTy = ceil(centerTileY + halfTilesH).toInt()
 
-        val stylePrefix = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) "haut25d" else "street"
         for (tx in minTx..maxTx) {
             for (ty in minTy..maxTy) {
                 val leftPx = (size.width / 2f) + ((tx - centerTileX).toFloat() * baseTileRenderPx)
                 val topPx = (size.height / 2f) + ((ty - centerTileY).toFloat() * baseTileRenderPx)
-                val key = "${stylePrefix}_${tileZ}_${tx}_${ty}"
-                val bmp = CampusTileCache.get(key)
+                val bmp = CampusTileCache.getWithStreetFallback(styleMode, tileZ, tx, ty)
                 if (bmp != null) {
                     drawImage(
                         image = bmp,
@@ -3226,7 +3324,7 @@ private fun RealCampusTileMap(
             }
             drawPath(
                 path = polyPath,
-                color = if (isDrawingZoneMode) Color(0xFF0284C7) else Color(0x550066CC),
+                color = if (isDrawingZoneMode) Color(0xFF0284C7) else Color(0x55053968),
                 style = Stroke(
                     width = if (isDrawingZoneMode) 5f else 2.2f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
@@ -3491,4 +3589,117 @@ private fun RealCampusTileMap(
             )
         }
     }
+}
+
+@Composable
+private fun MapHospitalPharmacyDialog(
+    onDismiss: () -> Unit,
+    onOpenUrl: (String) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<HospitalMedicineCategory?>(null) }
+    val filteredItems = remember(searchQuery, selectedCategory) {
+        CampusHospitalPharmacyCatalog.search(
+            query = searchQuery,
+            categoryFilter = selectedCategory
+        )
+    }
+    XPeachAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("校医院药品价格公示", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "共 ${CampusHospitalPharmacyCatalog.ITEMS.size} 项公示单价 · 致谢 @${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = XPeachTheme.readablePrimary,
+                    modifier = Modifier.clickable {
+                        onOpenUrl(CampusHospitalPharmacyCatalog.CONTRIBUTOR_GITHUB_URL)
+                    }
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "本表为校医院现场价格公示册离线转录（医保报销前基准单价），不代表实时库存，实际报销金额以校医院窗口结算为准。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("搜索药名、规格、厂家或准字号") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    XPeachFilterPill(
+                        label = "全部 (${CampusHospitalPharmacyCatalog.ITEMS.size})",
+                        selected = selectedCategory == null,
+                        compact = true,
+                        onClick = { selectedCategory = null }
+                    )
+                    for (cat in HospitalMedicineCategory.entries) {
+                        XPeachFilterPill(
+                            label = cat.label,
+                            selected = selectedCategory == cat,
+                            compact = true,
+                            onClick = { selectedCategory = if (selectedCategory == cat) null else cat }
+                        )
+                    }
+                }
+                Text(
+                    text = "匹配结果：共 ${filteredItems.size} 项",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                for (item in filteredItems) {
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                Text(
+                                    text = "${item.name} (${item.category.label})",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "${item.specification} · ${item.dosageForm} · ${item.manufacturer}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = "¥${item.disclosedPriceYuan}/${item.unit}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
 }

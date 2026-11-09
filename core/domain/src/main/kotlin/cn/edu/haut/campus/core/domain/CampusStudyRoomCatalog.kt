@@ -94,8 +94,27 @@ object CampusStudyRoomCatalog {
         }.map { it.rawRoom }
     }
 
-    fun isRoomFree(roomCode: String, busyRawRooms: List<String>): Boolean =
-        busyRawRooms.none { raw -> raw.contains(roomCode) }
+    private val ROOM_DIGITS_REGEX = Regex("(\\d{3,5})$")
+
+    private fun normalizeSongshanRoomKey(raw: String): String? {
+        val text = raw.replace(" ", "").trim()
+        if (!text.contains("嵩") && !text.contains("实验与综合楼") && !text.contains("综合楼")) return null
+        val roomDigits = ROOM_DIGITS_REGEX.find(text)?.groupValues?.getOrNull(1) ?: return null
+        return when {
+            text.contains("1教") || text.contains("1号教学楼") || text.contains("1号楼") -> "ss_t1_$roomDigits"
+            text.contains("2教") || text.contains("2号教学楼") || text.contains("2号楼") -> "ss_t2_$roomDigits"
+            text.contains("综合楼") || text.contains("实验") -> "ss_lab_$roomDigits"
+            else -> null
+        }
+    }
+
+    fun isRoomFree(roomCode: String, busyRawRooms: List<String>): Boolean {
+        val targetSongshanKey = normalizeSongshanRoomKey(roomCode)
+        return busyRawRooms.none { raw ->
+            raw.contains(roomCode) ||
+                (targetSongshanKey != null && normalizeSongshanRoomKey(raw) == targetSongshanKey)
+        }
+    }
 
     fun computeFreeRoomsCount(
         rules: List<CourseScheduleRule>,

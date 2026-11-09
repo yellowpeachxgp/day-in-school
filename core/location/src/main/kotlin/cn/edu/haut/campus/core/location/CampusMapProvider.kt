@@ -175,7 +175,7 @@ object CampusGeofenceRecognizer {
                     userLocation.latitude,
                     userLocation.longitude,
                     ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON
-                ) || (userLocation.isInsideSongshanluCampus && !lowAcc)
+                )
             ) {
                 return DetectedCampusResult(
                     campusId = SchoolDirectory.HAUT_SONGSHANLU_CAMPUS_ID.value,
