@@ -84,8 +84,10 @@ import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.core.domain.CampusHospitalPharmacyCatalog
 import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.domain.ChineseLabel
+import cn.edu.haut.campus.core.domain.HospitalMedicineCategory
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CampusClubCategory
 import cn.edu.haut.campus.core.model.CampusClubItem
@@ -381,6 +383,7 @@ fun CampusCommunityScreen(
         )
     }
     var selectedCompetitionDetail by remember { mutableStateOf<CampusCompetitionItem?>(null) }
+    var showHospitalPharmacyDialog by remember { mutableStateOf(false) }
     var feedbackText by remember { mutableStateOf<String?>(null) }
     var editingChannelItem by remember { mutableStateOf<PresetQqChannelItem?>(null) }
     var editingClubItem by remember { mutableStateOf<CampusClubItem?>(null) }
@@ -481,11 +484,50 @@ fun CampusCommunityScreen(
                 }
             }
 
+            XPeachCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showHospitalPharmacyDialog = true }
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "校医院药品价格公示与医保参考",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            XPeachStatusDotText(text = "${CampusHospitalPharmacyCatalog.ITEMS.size} 项")
+                        }
+                        Text(
+                            text = "西药/中成药公示单价检索 · 大学生医保报销规则说明 · 致谢 @${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachStatusBadge(
+                        text = "查药价 ›",
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = XPeachTheme.readablePrimary
+                    )
+                }
+            }
+
             XPeachSegmentedTabs(
                 items = listOf(
                     "合作社团 (${catalog.clubs.size})",
                     "竞赛指南 (${catalog.competitions.size})",
-                    "校园频道 (${catalog.channels.size})"
+                    "交流与反馈"
                 ),
                 selectedIndex = selectedTab,
                 onSelect = { selectedTab = it }
@@ -896,15 +938,206 @@ fun CampusCommunityScreen(
                     )
                 }
             } else {
-                if (catalog.channels.isEmpty()) {
-                    XPeachEmptyState(
-                        title = "暂无校园频道",
-                        subtitle = "可前往「失物招领与二手教材」发布寻物招领、转让闲置课本或生成随身防丢码",
-                        icon = Icons.Rounded.Forum,
-                        actionLabel = "打开失物招领与二手书",
-                        onAction = onOpenMoments
+                // 1. App 用户交流群、QQ 频道与问题反馈专卡（与校内社团招新群严格区分）
+                val appUserQqGroup = prefs.customClubGroupNumbers["__app_user_feedback_qq_group__"]?.takeIf { it.isNotBlank() }
+                val appUserChannelUrl = prefs.customChannelUrls["__app_user_feedback_channel__"]?.takeIf { it.isNotBlank() }
+                var showEditAppFeedbackGroupDialog by remember { mutableStateOf(false) }
+
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "Day in School 用户交流与问题反馈",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "用于软件使用交流、课表/地图勘误与新功能建议（独立于校内社团招新群）",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = "官方反馈",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = XPeachTheme.readablePrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = if (appUserQqGroup != null) {
+                                    "用户交流 QQ 群：$appUserQqGroup"
+                                } else {
+                                    "用户交流 QQ 群：待云端同步或点击下方绑定群号"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (appUserChannelUrl != null) {
+                                    "QQ 频道链接：$appUserChannelUrl"
+                                } else {
+                                    "GitHub Issue 反馈：https://github.com/yellowpeachxgp/day-in-school/issues"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = XPeachTheme.readablePrimary
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (appUserQqGroup != null) {
+                            XPeachFilterPill(
+                                label = "复制交流群号",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    copyCommunityText(context, "用户交流QQ群", appUserQqGroup)
+                                    feedbackText = "已复制用户交流群号：$appUserQqGroup"
+                                }
+                            )
+                            XPeachFilterPill(
+                                label = "打开QQ加群",
+                                selected = true,
+                                compact = true,
+                                onClick = {
+                                    feedbackText = openOrCopyClubQqGroup(context, "Day in School 用户交流群", appUserQqGroup)
+                                }
+                            )
+                        }
+                        XPeachFilterPill(
+                            label = if (appUserQqGroup != null) "修改群号/频道" else "配置交流群/频道",
+                            selected = false,
+                            compact = true,
+                            onClick = { showEditAppFeedbackGroupDialog = true }
+                        )
+                        XPeachFilterPill(
+                            label = "提交 GitHub Issue",
+                            selected = appUserQqGroup == null,
+                            compact = true,
+                            onClick = {
+                                feedbackText = openCompetitionWebsite(
+                                    context = context,
+                                    title = "GitHub Issues 反馈",
+                                    url = "https://github.com/yellowpeachxgp/day-in-school/issues"
+                                )
+                            }
+                        )
+                    }
+                }
+
+                if (showEditAppFeedbackGroupDialog) {
+                    var qqInput by remember(appUserQqGroup) { mutableStateOf(appUserQqGroup.orEmpty()) }
+                    var chInput by remember(appUserChannelUrl) { mutableStateOf(appUserChannelUrl.orEmpty()) }
+                    XPeachAlertDialog(
+                        onDismissRequest = { showEditAppFeedbackGroupDialog = false },
+                        title = { Text("配置用户交流 QQ 群与频道") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "可填入已建立的 Day in School 用户交流 QQ 群号或 QQ 频道邀请链接，保存后支持一键复制与呼起客户端。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedTextField(
+                                    value = qqInput,
+                                    onValueChange = { qqInput = it },
+                                    label = { Text("用户交流 QQ 群号（选填）") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = chInput,
+                                    onValueChange = { chInput = it },
+                                    label = { Text("QQ 频道邀请链接（选填）") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        repository.saveCustomClubGroupNumber("__app_user_feedback_qq_group__", qqInput.trim())
+                                        repository.saveCustomChannelUrl("__app_user_feedback_channel__", chInput.trim())
+                                        showEditAppFeedbackGroupDialog = false
+                                        feedbackText = "已保存用户交流群与频道配置"
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("保存")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showEditAppFeedbackGroupDialog = false }) {
+                                Text("取消")
+                            }
+                        }
                     )
                 }
+
+                // 2. 微信公众号与服务渠道说明卡（诚实标注待开通，不伪造未上线二维码）
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "微信公众号与通知服务",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "规划用于课表简报、版本更新公告与使用指南推送",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachStatusBadge(
+                            text = "待开通",
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = "状态说明：Day in School 官方微信公众号目前处于筹备与资质审核阶段，暂未开放关注或账号绑定。正式上线后将通过云端配置在本栏公布认证名称，请注意甄别，切勿向非官方公众号提交教务密码。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
                 for (channel in catalog.channels) {
                     val effectiveUrl = prefs.customChannelUrls[channel.id]?.takeIf { it.isNotBlank() }
                         ?: channel.defaultInviteUrl
@@ -1066,6 +1299,224 @@ fun CampusCommunityScreen(
             }
         )
     }
+
+    if (showHospitalPharmacyDialog) {
+        CampusHospitalPharmacyDialog(
+            onDismiss = { showHospitalPharmacyDialog = false },
+            onOpenUrl = { title, url ->
+                feedbackText = openCompetitionWebsite(context, title, url)
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CampusHospitalPharmacyDialog(
+    onDismiss: () -> Unit,
+    onOpenUrl: (String, String) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf<HospitalMedicineCategory?>(null) }
+    var showPolicyRules by remember { mutableStateOf(false) }
+
+    val filteredItems = remember(searchQuery, selectedCategory) {
+        CampusHospitalPharmacyCatalog.search(
+            query = searchQuery,
+            categoryFilter = selectedCategory
+        )
+    }
+
+    XPeachAlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "校医院药品价格公示目录",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = "共收录 ${CampusHospitalPharmacyCatalog.ITEMS.size} 项西药/中成药 · 采集于 ${CampusHospitalPharmacyCatalog.CAPTURED_DATE_ISO}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                XPeachWell(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "重要说明：本表为校医院现场价格公示册离线转录（医保报销前基准单价），不代表当前实时在售或库存，也不提供在线买药或处方指导；并非所有药品均可走医保，实际报销金额以校医院收费窗口实时医保结算为准。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "资料贡献者：@${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                XPeachFilterPill(
+                                    label = "贡献者主页",
+                                    selected = false,
+                                    compact = true,
+                                    onClick = {
+                                        onOpenUrl(
+                                            "@${CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE} GitHub",
+                                            CampusHospitalPharmacyCatalog.CONTRIBUTOR_GITHUB_URL
+                                        )
+                                    }
+                                )
+                                XPeachFilterPill(
+                                    label = if (showPolicyRules) "收起医保说明" else "医保规则说明",
+                                    selected = showPolicyRules,
+                                    compact = true,
+                                    onClick = { showPolicyRules = !showPolicyRules }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (showPolicyRules) {
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for ((title, desc) in CampusHospitalPharmacyCatalog.MEDICAL_INSURANCE_NOTES) {
+                                Text(
+                                    text = "• $title：$desc",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "查看学校医保政策原文",
+                                selected = true,
+                                compact = true,
+                                onClick = {
+                                    onOpenUrl("大学生医保政策说明", CampusHospitalPharmacyCatalog.POLICY_WECHAT_URL)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                XPeachSearchField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = "搜索药名、规格、剂型、厂家或准字号"
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    XPeachFilterPill(
+                        label = "全部 (${CampusHospitalPharmacyCatalog.ITEMS.size})",
+                        selected = selectedCategory == null,
+                        compact = true,
+                        onClick = { selectedCategory = null }
+                    )
+                    for (cat in HospitalMedicineCategory.entries) {
+                        XPeachFilterPill(
+                            label = cat.label,
+                            selected = selectedCategory == cat,
+                            compact = true,
+                            onClick = {
+                                selectedCategory = if (selectedCategory == cat) null else cat
+                            }
+                        )
+                    }
+                }
+
+                Text(
+                    text = "匹配结果：${filteredItems.size} 项（显示前 ${minOf(filteredItems.size, 60)} 项，输入关键词可精确检索）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                for (item in filteredItems.take(60)) {
+                    XPeachWell(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    XPeachStatusDotText(text = item.category.label)
+                                }
+                                Text(
+                                    text = "规格：${item.specification} · 剂型：${item.dosageForm}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${item.manufacturer} · ${item.approvalNumber} · 公示第${item.sourcePage}页",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "¥${item.disclosedPriceYuan}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                Text(
+                                    text = "每${item.unit} · 医保前",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

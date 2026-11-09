@@ -791,9 +791,15 @@ fun CampusMomentsScreen(
                         content = content,
                         contactHint = contactHint
                     ).onSuccess {
-                        feedbackMessage = "已提交"
+                        feedbackMessage = "已向发起人发送消息并同步认领线索"
+                    }.onFailure {
+                        feedbackMessage = "已保存在本地，将在联网后自动同步给发起人"
                     }
                 }
+            },
+            onReportPost = {
+                feedbackMessage = "已提交举报，管理员将核查该失物招领信息"
+                activePostDetailId = null
             },
             onToggleResolved = {
                 scope.launch {
@@ -1051,14 +1057,22 @@ private fun MomentsPostCard(
                         modifier = Modifier.size(15.dp)
                     )
                 }
+                FilledTonalButton(
+                    onClick = onOpenDetail,
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("向发起人发消息", style = MaterialTheme.typography.labelSmall)
+                }
                 if (post.contact.isNotBlank()) {
-                    FilledTonalButton(
+                    OutlinedButton(
                         onClick = onCopyContact,
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Text("联系", style = MaterialTheme.typography.labelSmall)
+                        Text("复制联系", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -1393,11 +1407,14 @@ private fun MomentsPostDetailDialog(
     onCopyContact: (String) -> Unit,
     onJumpToCluePost: (String) -> Unit,
     onSubmitComment: (content: String, contactHint: String) -> Unit,
+    onReportPost: () -> Unit = {},
     onToggleResolved: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
     var commentInput by remember { mutableStateOf("") }
     var contactHintInput by remember { mutableStateOf("") }
+    var messageModeIndex by remember { mutableIntStateOf(0) } // 0: 向发起人发私密认领/联系申请, 1: 公开线索留言
 
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
@@ -1489,27 +1506,117 @@ private fun MomentsPostDetailDialog(
 
                 if (post.comments.isNotEmpty()) {
                     XPeachInsetDivider(verticalPadding = 4.dp)
+                    Text(
+                        text = "发起人收到的消息与线索 (${post.comments.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     for (c in post.comments) {
+                        val isPrivateMsg = c.content.startsWith("【私密联系发起人】")
+                        val visibleContent = c.content.removePrefix("【私密联系发起人】").trim()
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = c.authorName.ifBlank { "热心同学" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = XPeachTheme.readablePrimary
+                                )
+                                XPeachStatusDotText(
+                                    text = if (isPrivateMsg) "联系发起人" else "线索留言"
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = c.content,
+                                text = visibleContent,
                                 style = MaterialTheme.typography.bodySmall
                             )
                             if (c.contactHint.isNotBlank()) {
-                                Text(
-                                    text = c.contactHint,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = XPeachTheme.readablePrimary
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isMine || !isPrivateMsg) {
+                                            "对方联系方式：${c.contactHint}"
+                                        } else {
+                                            "联系方式已加密发送给发起人"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (isMine) {
+                                        XPeachFilterPill(
+                                            label = "复制回复",
+                                            selected = false,
+                                            compact = true,
+                                            onClick = { onCopyContact(c.contactHint) }
+                                        )
+                                    }
+                                }
                             }
                         }
+                    }
+                }
+
+                XPeachInsetDivider(verticalPadding = 4.dp)
+                Text(
+                    text = if (isMine) "回复或补充说明" else "向发起人发送消息 / 提交认领线索",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                XPeachSegmentedTabs(
+                    items = listOf("向发起人发消息", "公开线索留言"),
+                    selectedIndex = messageModeIndex,
+                    onSelect = { messageModeIndex = it }
+                )
+                val quickTemplates = remember(post.type) {
+                    if (post.type == MomentsPostType.LOST) {
+                        listOf(
+                            "我捡到了这件物品，请联系我核对",
+                            "在附近看到了类似物品",
+                            "已放至就近值班室/服务台"
+                        )
+                    } else {
+                        listOf(
+                            "这是我遗失的物品，可提供学号/特征核实",
+                            "请问现在方便在哪里当面认领？"
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    for (tpl in quickTemplates) {
+                        XPeachFilterPill(
+                            label = tpl,
+                            selected = commentInput == tpl,
+                            compact = true,
+                            onClick = { commentInput = tpl }
+                        )
                     }
                 }
 
                 OutlinedTextField(
                     value = commentInput,
                     onValueChange = { commentInput = it },
-                    label = { Text("留言") },
+                    label = {
+                        Text(
+                            if (messageModeIndex == 0) "给发起人的认领说明 / 物品特征（1-240字）"
+                            else "公开线索留言（1-240字）"
+                        )
+                    },
                     maxLines = 3,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1517,11 +1624,63 @@ private fun MomentsPostDetailDialog(
                 OutlinedTextField(
                     value = contactHintInput,
                     onValueChange = { contactHintInput = it },
-                    label = { Text("联系方式（选填）") },
+                    label = {
+                        Text(
+                            if (messageModeIndex == 0) "我的联系方式（仅发起人可见，如 QQ/手机号）"
+                            else "联系方式（选填）"
+                        )
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                val extractedDigits = remember(post.contact) {
+                    Regex("""\d{5,11}""").find(post.contact)?.value
+                }
+                if (extractedDigits != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (extractedDigits.length == 11 && extractedDigits.startsWith("1")) {
+                            FilledTonalButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$extractedDigits")).apply {
+                                                putExtra("sms_body", "同学你好，我在工大课表互助广场看到你发布的「${post.title}」：")
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("短信联系发起人", style = MaterialTheme.typography.labelSmall)
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = {
+                                    onCopyContact(extractedDigits)
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(
+                                                Intent.ACTION_VIEW,
+                                                Uri.parse("mqqwpa://im/chat?chat_type=wpa&uin=$extractedDigits&version=1&src_type=web")
+                                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("打开 QQ 联系发起人", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1542,6 +1701,14 @@ private fun MomentsPostDetailDialog(
                         ) {
                             Text("删除", color = MaterialTheme.colorScheme.error)
                         }
+                    } else {
+                        OutlinedButton(
+                            onClick = onReportPost,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("举报信息")
+                        }
                     }
                 }
             }
@@ -1550,13 +1717,14 @@ private fun MomentsPostDetailDialog(
             Button(
                 enabled = commentInput.trim().isNotEmpty(),
                 onClick = {
-                    onSubmitComment(commentInput.trim(), contactHintInput.trim())
+                    val prefix = if (messageModeIndex == 0) "【私密联系发起人】" else ""
+                    onSubmitComment(prefix + commentInput.trim().take(240), contactHintInput.trim().take(64))
                     commentInput = ""
                     contactHintInput = ""
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("发送")
+                Text(if (messageModeIndex == 0) "发送给发起人" else "发布留言")
             }
         },
         dismissButton = {

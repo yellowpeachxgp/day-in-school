@@ -1,6 +1,9 @@
 package cn.edu.haut.campus.feature.settings
 
 import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -2038,9 +2041,94 @@ fun SettingsScreen(
             )
 
             // 8. 外观、隐私安全与数据管理
+            var showHospitalDialogInSettings by remember { mutableStateOf(false) }
+            val animeAliasComponent = remember(context) {
+                ComponentName(context.packageName, "cn.edu.haut.campus.MainActivityAnimeIconAlias")
+            }
+            var animeLauncherAliasEnabled by remember(context) {
+                mutableStateOf(
+                    runCatching {
+                        context.packageManager.getComponentEnabledSetting(animeAliasComponent) ==
+                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                    }.getOrDefault(false)
+                )
+            }
+            if (showHospitalDialogInSettings) {
+                CampusHospitalPharmacyDialog(
+                    onDismiss = { showHospitalDialogInSettings = false },
+                    onOpenUrl = { _, url ->
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
+                        }
+                    }
+                )
+            }
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Text("外观、隐私与数据", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text("启用可选二次元时尚桌面图标", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "默认保持工大深蓝主图标，开启后在桌面新增粉色星芒候选图标入口",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    XPeachSwitch(
+                        checked = animeLauncherAliasEnabled,
+                        onCheckedChange = { enabled ->
+                            runCatching {
+                                context.packageManager.setComponentEnabledSetting(
+                                    animeAliasComponent,
+                                    if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                                    else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                                    PackageManager.DONT_KILL_APP
+                                )
+                                animeLauncherAliasEnabled = enabled
+                                feedbackText = if (enabled) {
+                                    "已启用可选二次元时尚桌面图标（返回桌面稍等片刻即可看到）"
+                                } else {
+                                    "已关闭可选桌面图标，仅保留默认主图标"
+                                }
+                            }.onFailure {
+                                feedbackText = "当前系统桌面不支持动态切换应用图标别名"
+                            }
+                        }
+                    )
+                }
+                if (isHautCampus) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text("校医院药品价格公示与医保参考", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = "查询 198 项西药/中成药公示单价与医保报销注意事项",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        XPeachFilterPill(
+                            label = "查看目录",
+                            selected = false,
+                            compact = true,
+                            onClick = { showHospitalDialogInSettings = true }
+                        )
+                    }
+                }
                 if (isHautCampus) Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

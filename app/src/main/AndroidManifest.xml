@@ -71,6 +71,21 @@
             </intent-filter>
         </activity>
 
+        <!-- 可选桌面候选图标别名（默认关闭，用户可在「设置 → 外观、隐私与数据」中按需开启） -->
+        <activity-alias
+            android:name=".MainActivityAnimeIconAlias"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher_anime_vector"
+            android:roundIcon="@drawable/ic_launcher_anime_vector"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- 在线拉取 GitHub Release APK 覆盖安装 FileProvider -->
         <provider
             android:name="androidx.core.content.FileProvider"
