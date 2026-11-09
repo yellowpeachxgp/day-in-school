@@ -138,7 +138,8 @@ class CampusDiningRecommenderTest {
         assertEquals(55L, rec0.minutesUntilClassEnd)
         assertEquals(DiningMealSlot.LUNCH, rec0.mealSlot)
         assertEquals("b_canteen4", rec0.primaryCandidate.profile.buildingId)
-        assertEquals(5, rec0.allCandidates.size)
+        assertEquals(3, rec0.allCandidates.size)
+        assertTrue(rec0.allCandidates.none { it.profile.buildingId in setOf("b_canteen2", "b_canteen3") })
         assertNotNull(rec0.primaryCandidate.walkMinutes)
         assertTrue(rec0.notificationTitle.contains("距下课还有 55 分钟"))
 

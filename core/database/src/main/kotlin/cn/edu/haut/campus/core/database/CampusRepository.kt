@@ -760,8 +760,14 @@ class CampusRepository internal constructor(
         ) {
             database.withTransaction {
                 dao.deleteBuildingAliasesByIds(listOf("al_4", "al_4b", "al_4c", "al_5"))
-                dao.upsertBuildings(HautMockSeedData.defaultBuildings.map { it.toEntity() })
-                dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+                dao.upsertBuildings(
+                    (HautMockSeedData.lianhuajieBuildings + ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS)
+                        .map { it.toEntity() }
+                )
+                dao.upsertBuildingAliases(
+                    (HautMockSeedData.defaultBuildingAliases + ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES)
+                        .map { it.toEntity() }
+                )
             }
             preferences.edit {
                 it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
@@ -1074,7 +1080,7 @@ class CampusRepository internal constructor(
             val existingCourse = dao.getCoursesSnapshot()
                 .map { it.toDomain() }
                 .firstOrNull { c ->
-                    (unscheduled.sourceKey.isNotBlank() && c.externalId == unscheduled.sourceKey) ||
+                    (!unscheduled.sourceId.isNullOrBlank() && c.externalId == unscheduled.sourceId) ||
                         c.name == unscheduled.name
                 }
             val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
@@ -1085,7 +1091,7 @@ class CampusRepository internal constructor(
                 lastSyncAt = now
             ) ?: Course(
                 id = courseId,
-                externalId = unscheduled.sourceKey.takeIf { it.isNotBlank() },
+                externalId = unscheduled.sourceId?.takeIf { it.isNotBlank() },
                 name = unscheduled.name,
                 teacher = unscheduled.teacher?.takeIf { it.isNotBlank() },
                 colorArgb = colorArgb,
@@ -1108,7 +1114,7 @@ class CampusRepository internal constructor(
             )
             dao.upsertCourse(course.toEntity())
             dao.upsertRule(rule.toEntity())
-            dao.deleteUnscheduledCourseById(unscheduled.id)
+            dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
     }

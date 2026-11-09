@@ -182,8 +182,8 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertUnscheduledCourses(items: List<UnscheduledAcademicCourseEntity>)
 
-    @Query("DELETE FROM unscheduled_academic_courses WHERE id = :id")
-    suspend fun deleteUnscheduledCourseById(id: String)
+    @Query("DELETE FROM unscheduled_academic_courses WHERE termId = :termId AND sourceKey = :sourceKey")
+    suspend fun deleteUnscheduledCourseByKey(termId: String, sourceKey: String)
 
     @Query("DELETE FROM unscheduled_academic_courses WHERE termId = :termId")
     suspend fun clearUnscheduledCoursesForTerm(termId: String)

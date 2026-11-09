@@ -184,10 +184,10 @@ class UserIssuesAndCampusDataRegressionTest {
     }
 
     @Test
-    fun `Issue 17 - CampusHospitalPharmacyCatalog has 198 verified items and contributor attribution`() {
+    fun `Issue 17 - CampusHospitalPharmacyCatalog has 202 verified items and contributor attribution`() {
         assertEquals("Lollipop2233", CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE)
         assertEquals("https://github.com/Lollipop2233", CampusHospitalPharmacyCatalog.CONTRIBUTOR_GITHUB_URL)
-        assertEquals(198, CampusHospitalPharmacyCatalog.ITEMS.size)
+        assertEquals(202, CampusHospitalPharmacyCatalog.ITEMS.size)
 
         val ibuprofen = CampusHospitalPharmacyCatalog.search("布洛芬")
         assertEquals(2, ibuprofen.size)
