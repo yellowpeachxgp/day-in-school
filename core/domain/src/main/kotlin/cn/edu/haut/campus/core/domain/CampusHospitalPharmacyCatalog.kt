@@ -6,6 +6,13 @@ enum class HospitalMedicineCategory(val label: String) {
     BIOLOGICAL("生物制品")
 }
 
+object PharmacyVerificationStatus {
+    /** 来源于校医院现场价格公示册实拍原图转录，批准文号格式完整，但尚未与当期政府正式医保目录逐项核对 */
+    const val SOURCE_TRANSCRIBED_UNVERIFIED = "SOURCE_TRANSCRIBED_UNVERIFIED"
+    /** 现场公示原图原文如此，但批准文号/剂型/规格与药监或政府医保标准清单存在来源差异，待核实 */
+    const val PENDING_OFFICIAL_VERIFICATION = "PENDING_OFFICIAL_VERIFICATION"
+}
+
 data class HospitalMedicineDisclosureItem(
     val id: String,
     val name: String,
@@ -19,8 +26,15 @@ data class HospitalMedicineDisclosureItem(
     val capturedDateIso: String = "2026-06-23",
     val contributorHandle: String = "Lollipop2233",
     val contributorGithubUrl: String = "https://github.com/Lollipop2233",
-    val verificationStatus: String = "VERIFIED"
+    val verificationStatus: String = PharmacyVerificationStatus.SOURCE_TRANSCRIBED_UNVERIFIED,
+    val verificationNote: String? = null
 ) {
+    val hasRegistryDiscrepancy: Boolean
+        get() = verificationStatus == PharmacyVerificationStatus.PENDING_OFFICIAL_VERIFICATION
+
+    val provenanceBadgeText: String
+        get() = if (hasRegistryDiscrepancy) "文号/规格待核实" else "原图转录·待核实"
+
     val category: HospitalMedicineCategory
         get() = when {
             approvalNumber.contains("Z", ignoreCase = true) -> HospitalMedicineCategory.TRADITIONAL_CHINESE
@@ -33,7 +47,9 @@ data class HospitalMedicineDisclosureItem(
  * 河南工业大学校医院在售西药/中成药价格公示只读目录（来源于校医院现场价格公示册实拍）。
  * - 资料贡献者：@Lollipop2233 (https://github.com/Lollipop2233)
  * - 采集日期：2026-06-23
- * - 严守边界：仅作历史公示价格与医保政策参考，不代表实时库存，不提供在线购药或处方指导，不虚构单品固定医保结算价。
+ * - 严守边界：
+ *   1) 完整保留贡献者实拍原图的原始转录值，绝不将公示册与政府药监/医保清单之间的来源差异当作 OCR 错字擅自篡改；
+ *   2) 全部条目均诚实标注为「现场公示原图转录·待核实」，对文号/规格与国家药监及地方医保清单存在差异的条目单独标注差异说明，绝不伪装成已核验政府医保政策。
  */
 object CampusHospitalPharmacyCatalog {
 
@@ -42,11 +58,26 @@ object CampusHospitalPharmacyCatalog {
     const val CAPTURED_DATE_ISO = "2026-06-23"
     const val POLICY_WECHAT_URL = "https://mp.weixin.qq.com/s/QEVe1IvkyiyIfjttGhzKJQ"
 
+    private val STANDARD_NMPA_APPROVAL_REGEX =
+        Regex("^国药准字(H|Z|S|B|F|J|HJ|ZJ|SJ)\\d{8}$")
+
+    private val KNOWN_SOURCE_DISCREPANCY_NOTES: Map<String, String> = mapOf(
+        "1_9" to "现场公示册原图登记文号为「H10960167」（未印“国药准字”前缀），与政府标准目录格式存在来源差异，保留原值待核实",
+        "1_25" to "现场公示册原图登记文号为 7 位「国药准字Z0103068」，与国家药监 8 位标准批准文号清单存在来源差异，保留原值待核实",
+        "3_4" to "现场公示册原图登记文号为 9 位「国药准字Z213020797」，与政府标准药品目录文号位数存在来源差异，保留原值待核实",
+        "3_27" to "现场公示册原图仅印「进口药品注册证」而未列具体注册证号，待与当期医保及药监目录核实",
+        "4_28" to "现场公示册原图品名印为「肾上腺素注射液」，但同列规格/剂型/文号印为「5mg*21片 / 片剂 / 国药准字H32023286」，存在来源行项差异，保留原图转录值待核实",
+        "5_20" to "现场公示册原图品名为「消炎利胆胶囊」而规格/剂型列印为「片剂」，与标准目录存在来源差异，保留原值待核实",
+        "6_16" to "现场公示册原图登记文号为 7 位「国药准字H2000471」，与政府标准药品目录 8 位文号存在来源差异，保留原值待核实",
+        "6_33" to "现场公示册原图登记文号为「H20140052」（进口分包装/注册证前缀差异），待与官方目录核实"
+    )
+
     val MEDICAL_INSURANCE_NOTES: List<Pair<String, String>> = listOf(
-        "价格性质说明" to "本目录所列「单价」均为校医院公示的医保报销前基准单价（采集于 2026-06-23），仅作价格透明参考，不代表校医院当前实时库存或在售状态。",
-        "并非所有药品均可医保报销" to "校医院药品能否使用大学生城乡居民医保统筹/门诊报销，取决于该药品是否纳入河南省基本医疗保险药品目录（甲类/乙类）及挂号门诊统筹结算规则。",
-        "为何不展示固定“医保后价格”" to "实际窗口结算金额受参保状态、本年度门诊统筹额度剩余情况、甲/乙类自付比例、起付线及单次处方限额共同影响，不存在全员统一的固定折后单价，请以校医院收费窗口实时医保结算为准。",
-        "就医与报销提示" to "前往校医院就诊购药时请携带校园一卡通或提前激活电子医保凭证（支付宝/微信医保码）；具体大学生医保报销细则可查阅学校医保政策说明。"
+        "来源与核实状态说明" to "本目录忠实转录自 @Lollipop2233 于 2026-06-23 拍摄的校医院现场价格公示册原图；部分公示文号或规格与国家药监/政府医保目录清单存在来源差异，系统完整保留原图记录并标注「待核实」，不代表已核验的政府现行医保政策。",
+        "价格性质说明" to "本目录所列「单价」均为校医院公示册登记的医保报销前基准单价，仅作历史公示参考，不代表校医院当前实时库存或在售状态。",
+        "并非所有药品均可医保报销" to "校医院药品能否使用大学生城乡居民医保统筹/门诊报销，须以当期政府正式发布的河南省基本医疗保险药品目录及校医院医保结算系统认定为准。",
+        "为何不展示固定“医保后价格”" to "实际窗口结算金额受参保状态、本年度门诊统筹额度剩余情况、甲/乙类自付比例、起付线及单次处方限额共同影响，请以校医院收费窗口实时医保结算为准。",
+        "校园指南参考提示" to "下方校园公众号推文仅供校内就医流程参考，非政府医保局正式规范性文件，政策变动请以郑州市/河南省医保部门最新文件及校医院窗口公示为准。"
     )
 
     private fun row(
@@ -59,19 +90,35 @@ object CampusHospitalPharmacyCatalog {
         price: String,
         maker: String,
         approval: String,
-        status: String = "VERIFIED"
-    ) = HospitalMedicineDisclosureItem(
-        id = "med_p${page}_$index",
-        name = name,
-        specification = spec,
-        dosageForm = form,
-        unit = unit,
-        disclosedPriceYuan = price,
-        manufacturer = maker,
-        approvalNumber = approval,
-        sourcePage = page,
-        verificationStatus = status
-    )
+        status: String? = null
+    ): HospitalMedicineDisclosureItem {
+        val rowKey = "${page}_${index}"
+        val knownNote = KNOWN_SOURCE_DISCREPANCY_NOTES[rowKey]
+        val matchesStandardNmpa = STANDARD_NMPA_APPROVAL_REGEX.matches(approval.trim())
+        val resolvedStatus = status ?: if (knownNote != null || !matchesStandardNmpa) {
+            PharmacyVerificationStatus.PENDING_OFFICIAL_VERIFICATION
+        } else {
+            PharmacyVerificationStatus.SOURCE_TRANSCRIBED_UNVERIFIED
+        }
+        val resolvedNote = knownNote ?: if (!matchesStandardNmpa) {
+            "现场公示原图文号「$approval」与标准国药准字格式存在差异，保留原值待与官方清单核实"
+        } else {
+            null
+        }
+        return HospitalMedicineDisclosureItem(
+            id = "med_p${page}_$index",
+            name = name,
+            specification = spec,
+            dosageForm = form,
+            unit = unit,
+            disclosedPriceYuan = price,
+            manufacturer = maker,
+            approvalNumber = approval,
+            sourcePage = page,
+            verificationStatus = resolvedStatus,
+            verificationNote = resolvedNote
+        )
+    }
 
     val ITEMS: List<HospitalMedicineDisclosureItem> = listOf(
         // Page 1 (IMG_20260623_175053.jpg)

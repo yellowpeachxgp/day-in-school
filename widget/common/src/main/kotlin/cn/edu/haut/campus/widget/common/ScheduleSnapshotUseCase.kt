@@ -126,9 +126,9 @@ object ScheduleSnapshotUseCase {
             emptyMap()
         }
 
-        // 计算基于 SystemClock.elapsedRealtime() 的 Chronometer 目标基准时间
+        // 计算基于 SystemClock.elapsedRealtime() 的 Chronometer 目标基准时间（若缺少作息时间定义则禁止伪造倒计时）
         val activeOrNext = daySnapshot.activeOrNextClass
-        val chronometerBase = if (activeOrNext != null) {
+        val chronometerBase = if (activeOrNext != null && activeOrNext.occurrence.hasResolvedTime) {
             val targetTime = when (activeOrNext.status) {
                 ClassStatus.UPCOMING -> activeOrNext.occurrence.startTime
                 ClassStatus.IN_PROGRESS -> activeOrNext.occurrence.endTime
@@ -169,9 +169,11 @@ object ScheduleSnapshotUseCase {
         now: ZonedDateTime = ZonedDateTime.now(HAUT_ZONE_ID)
     ): Long? {
         val nowTime = now.toLocalTime()
-        val candidateTimes = daySnapshot.items.flatMap {
-            listOf(it.occurrence.startTime, it.occurrence.endTime)
-        }.filter { it.isAfter(nowTime) }.sorted()
+        val candidateTimes = daySnapshot.items
+            .filter { it.occurrence.hasResolvedTime }
+            .flatMap { listOf(it.occurrence.startTime, it.occurrence.endTime) }
+            .filter { it.isAfter(nowTime) }
+            .sorted()
 
         val nextBoundaryLocalTime = candidateTimes.firstOrNull() ?: return null
         return now.with(nextBoundaryLocalTime).toInstant().toEpochMilli()

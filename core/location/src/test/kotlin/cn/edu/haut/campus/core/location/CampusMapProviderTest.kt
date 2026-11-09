@@ -93,4 +93,128 @@ class CampusMapProviderTest {
         assertEquals(GisIndoorRoomCategory.CLASSROOM, HautOfficialGisClient.classifyRoomCategory("classroom", "3101"))
         assertEquals(GisIndoorRoomCategory.LABORATORY, HautOfficialGisClient.classifyRoomCategory("laboratory", "机房5204"))
     }
+
+    @Test
+    fun tileCoordinator_separatesStreetPlaceholderFrom25dTargetAndHandlesDiskAndRetry() {
+        kotlinx.coroutines.runBlocking {
+            val coordinator = CampusTileCacheCoordinator<String>(maxMemoryEntries = 32, failureCooldownMs = 10_000L)
+            // Pick a valid z=17 tile strictly inside Lianhuajie bounds (lat=34.831, lon=113.545 -> x=106878, y=51996)
+            val z = 17
+            val tx = 106878
+            val ty = 51996
+            assertTrue(coordinator.isWithinHaut25dRasterBounds(z, tx, ty))
+
+            val diskStore = mutableMapOf<String, String>()
+            val requestedUrls = mutableListOf<String>()
+
+            // 1) Standard -> 2.5D: viewing STREET_STANDARD caches street_17_tx_ty, then switching to OFFICIAL_25D_2026
+            //    MUST return street as placeholder AND still trigger official 2.5D fetch!
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.STREET_STANDARD,
+                z = z,
+                x = tx,
+                y = ty,
+                nowMs = 1_000L,
+                readDiskTile = { diskStore[it] },
+                fetchRemoteTile = { key, url ->
+                    requestedUrls += url
+                    "STREET_TILE".also { diskStore[key] = it }
+                },
+                onLoaded = {}
+            )
+            assertEquals("STREET_TILE", coordinator.lookupForRender(GisMapStyleMode.STREET_STANDARD, z, tx, ty, 1_100L).tile)
+
+            val lookup25dWhileOnlyStreetCached = coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx, ty, 1_200L)
+            assertEquals("STREET_TILE", lookup25dWhileOnlyStreetCached.tile)
+            assertTrue(lookup25dWhileOnlyStreetCached.isPlaceholder)
+            assertTrue("Having street placeholder MUST NOT suppress 2.5D target load!", lookup25dWhileOnlyStreetCached.shouldTriggerTargetLoad)
+
+            var reloadedCount = 0
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                z = z,
+                x = tx,
+                y = ty,
+                nowMs = 1_200L,
+                readDiskTile = { diskStore[it] },
+                fetchRemoteTile = { key, url ->
+                    requestedUrls += url
+                    assertTrue(url.contains("gis.haut.edu.cn/cmgis-server/upload/raster/3"))
+                    "OFFICIAL_25D_TILE".also { diskStore[key] = it }
+                },
+                onLoaded = { reloadedCount++ }
+            )
+            assertEquals(1, reloadedCount)
+            val lookupAfter25dLoaded = coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx, ty, 1_300L)
+            assertEquals("OFFICIAL_25D_TILE", lookupAfter25dLoaded.tile)
+            assertFalse(lookupAfter25dLoaded.isPlaceholder)
+            assertFalse(lookupAfter25dLoaded.shouldTriggerTargetLoad)
+
+            // 2) 2.5D -> Standard: switching back to STREET_STANDARD serves STREET_TILE, never OFFICIAL_25D_TILE!
+            val lookupBackToStreet = coordinator.lookupForRender(GisMapStyleMode.STREET_STANDARD, z, tx, ty, 1_400L)
+            assertEquals("STREET_TILE", lookupBackToStreet.tile)
+            assertFalse(lookupBackToStreet.shouldTriggerTargetLoad)
+
+            // 3) Disk hot cache: clearing memory cache while diskStore retains haut25d loads from disk with zero network requests!
+            coordinator.clearAll()
+            val netBeforeDiskHit = requestedUrls.size
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                z = z,
+                x = tx,
+                y = ty,
+                nowMs = 2_000L,
+                readDiskTile = { diskStore[it] },
+                fetchRemoteTile = { _, url ->
+                    requestedUrls += url
+                    "SHOULD_NOT_FETCH"
+                },
+                onLoaded = {}
+            )
+            assertEquals(netBeforeDiskHit, requestedUrls.size)
+            assertEquals("OFFICIAL_25D_TILE", coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx, ty, 2_100L).tile)
+
+            // 4) Failure & retry: when official 2.5D fails on tile (tx+1, ty), falls back to street placeholder, cools down, and retries cleanly after cooldown/reset!
+            val tx2 = tx + 1
+            var officialFail = true
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                z = z,
+                x = tx2,
+                y = ty,
+                nowMs = 5_000L,
+                readDiskTile = { diskStore[it] },
+                fetchRemoteTile = { key, url ->
+                    if (url.contains("gis.haut.edu.cn")) {
+                        if (officialFail) null else "RECOVERED_25D".also { diskStore[key] = it }
+                    } else {
+                        "FALLBACK_STREET".also { diskStore[key] = it }
+                    }
+                },
+                onLoaded = {}
+            )
+            val duringCooldown = coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx2, ty, 6_000L)
+            assertEquals("FALLBACK_STREET", duringCooldown.tile)
+            assertTrue(duringCooldown.isPlaceholder)
+            assertFalse("Must respect failure cooldown to avoid per-frame retry storm", duringCooldown.shouldTriggerTargetLoad)
+
+            // After mode re-toggle (clearFailureCooldowns) or cooldown expiry, retry succeeds and upgrades to RECOVERED_25D!
+            officialFail = false
+            coordinator.clearFailureCooldowns()
+            assertTrue(coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx2, ty, 6_500L).shouldTriggerTargetLoad)
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                z = z,
+                x = tx2,
+                y = ty,
+                nowMs = 6_500L,
+                readDiskTile = { diskStore[it] },
+                fetchRemoteTile = { key, url ->
+                    if (url.contains("gis.haut.edu.cn")) "RECOVERED_25D".also { diskStore[key] = it } else null
+                },
+                onLoaded = {}
+            )
+            assertEquals("RECOVERED_25D", coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx2, ty, 6_600L).tile)
+        }
+    }
 }

@@ -119,7 +119,7 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                 )
                 views.setTextViewText(
                     R.id.tv_focus_time,
-                    "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
+                    occ.formatTimeOrPeriodRange(TIME_FMT)
                 )
                 views.setTextViewText(
                     R.id.tv_focus_title,
@@ -153,9 +153,10 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
 
                 if (sub1 != null) {
                     val o1 = sub1.occurrence
+                    val t1 = if (o1.hasResolvedTime) o1.startTime.format(TIME_FMT) else o1.periodRangeText
                     views.setTextViewText(
                         R.id.tv_sub_1,
-                        "${o1.startTime.format(TIME_FMT)} ${if (snapshot.config.privacyMode) "课程" else o1.courseName}"
+                        "$t1 ${if (snapshot.config.privacyMode) "课程" else o1.courseName}"
                     )
                     views.setTextViewText(
                         R.id.tv_sub_1_room,
@@ -168,9 +169,10 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
 
                 if (sub2 != null) {
                     val o2 = sub2.occurrence
+                    val t2 = if (o2.hasResolvedTime) o2.startTime.format(TIME_FMT) else o2.periodRangeText
                     views.setTextViewText(
                         R.id.tv_sub_2,
-                        "${o2.startTime.format(TIME_FMT)} ${if (snapshot.config.privacyMode) "课程" else o2.courseName}"
+                        "$t2 ${if (snapshot.config.privacyMode) "课程" else o2.courseName}"
                     )
                     views.setTextViewText(
                         R.id.tv_sub_2_room,
@@ -205,7 +207,8 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
                         "登录教务系统即可一键同步课表与考试"
                     } else {
                         hint?.let {
-                            "下次课：${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}"
+                            val ht = if (it.hasResolvedStartTime) it.firstCourseStartTime.format(TIME_FMT) else it.firstCoursePeriodRangeText
+                            "下次课：${it.nextDate.format(DATE_FMT)} $ht"
                         } ?: (day.calendarNotice ?: "自主安排学习与休息")
                     }
                 )

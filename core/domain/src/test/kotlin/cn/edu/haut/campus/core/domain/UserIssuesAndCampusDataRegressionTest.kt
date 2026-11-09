@@ -218,10 +218,30 @@ class UserIssuesAndCampusDataRegressionTest {
     }
 
     @Test
-    fun `Issue 17 - CampusHospitalPharmacyCatalog has 202 verified items and contributor attribution`() {
+    fun issue17AndItem12_pharmacyCatalogPreservesRawSourceAndMarksDiscrepanciesPending() {
         assertEquals("Lollipop2233", CampusHospitalPharmacyCatalog.CONTRIBUTOR_HANDLE)
         assertEquals("https://github.com/Lollipop2233", CampusHospitalPharmacyCatalog.CONTRIBUTOR_GITHUB_URL)
         assertEquals(202, CampusHospitalPharmacyCatalog.ITEMS.size)
+
+        // Zero items may claim government-verified policy status ("VERIFIED")
+        assertTrue(
+            "No on-site board transcription may claim VERIFIED policy status",
+            CampusHospitalPharmacyCatalog.ITEMS.none { it.verificationStatus == "VERIFIED" }
+        )
+
+        // Raw contributed transcription values with government-catalog discrepancies must be preserved verbatim AND marked PENDING_OFFICIAL_VERIFICATION
+        val azithro = CampusHospitalPharmacyCatalog.ITEMS.single { it.id == "med_p1_9" }
+        assertEquals("H10960167", azithro.approvalNumber)
+        assertTrue(azithro.hasRegistryDiscrepancy)
+        assertNotNull(azithro.verificationNote)
+
+        val huoxiang = CampusHospitalPharmacyCatalog.ITEMS.single { it.id == "med_p3_4" }
+        assertEquals("国药准字Z213020797", huoxiang.approvalNumber)
+        assertTrue(huoxiang.hasRegistryDiscrepancy)
+
+        val acetyl = CampusHospitalPharmacyCatalog.ITEMS.single { it.id == "med_p6_16" }
+        assertEquals("国药准字H2000471", acetyl.approvalNumber)
+        assertTrue(acetyl.hasRegistryDiscrepancy)
 
         val ibuprofen = CampusHospitalPharmacyCatalog.search("布洛芬")
         assertEquals(2, ibuprofen.size)

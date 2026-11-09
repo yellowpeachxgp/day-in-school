@@ -218,10 +218,18 @@ data class ClassOccurrence(
     val conflictColumnIndex: Int = 0,
     val conflictColumnCount: Int = 1,
     val internalBreaks: List<InternalPeriodBreak> = emptyList(),
-    val mergedRuleIds: List<String> = listOfNotNull(ruleId)
+    val mergedRuleIds: List<String> = listOfNotNull(ruleId),
+    val hasResolvedTime: Boolean = true
 ) {
     val periodRangeText: String
         get() = if (startPeriod == endPeriod) "第${startPeriod}节" else "${startPeriod}-${endPeriod}节"
+
+    fun formatTimeOrPeriodRange(formatter: java.time.format.DateTimeFormatter): String =
+        if (hasResolvedTime) {
+            "${startTime.format(formatter)}–${endTime.format(formatter)}"
+        } else {
+            "$periodRangeText（作息待设）"
+        }
 
     val internalBreaksSummary: String?
         get() {
@@ -258,7 +266,9 @@ data class NextClassDayHint(
     val daysUntil: Long,
     val firstCourseName: String,
     val firstCourseStartTime: LocalTime,
-    val firstCourseRoom: String
+    val firstCourseRoom: String,
+    val hasResolvedStartTime: Boolean = true,
+    val firstCoursePeriodRangeText: String = ""
 )
 
 data class DayTimelineSnapshot(

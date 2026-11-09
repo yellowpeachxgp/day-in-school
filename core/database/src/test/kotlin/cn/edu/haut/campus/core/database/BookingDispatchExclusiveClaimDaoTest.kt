@@ -897,4 +897,194 @@ class BookingDispatchExclusiveClaimDaoTest {
         assertEquals(0, stoppedExec?.remainingDays)
         repo.cloudHttpTransportForTest = null
     }
+
+    @Test
+    fun mergedCourseEdit_coversAllMergedRuleIds_andUpgradedPeriodTimesBackfill11To12() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val dataStoreFile = java.io.File.createTempFile("merged_edit_periods_", ".preferences_pb")
+        dataStoreFile.deleteOnExit()
+        val testDataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
+            produceFile = { dataStoreFile }
+        )
+        val storage = isolatedAccountStoragePartition("prof_merged_periods_01")
+        val repo = CampusRepository(
+            appContext = context,
+            database = database,
+            preferences = testDataStore,
+            accountProfile = AccountProfileEntity(
+                id = "prof_merged_periods_01",
+                accountId = "acct_merged_01",
+                schoolId = "haut",
+                schoolName = "河南工业大学",
+                province = "河南省",
+                city = "郑州市",
+                campusId = "lianhuajie",
+                campusName = "莲花街校区",
+                timeZoneId = "Asia/Shanghai",
+                label = "连堂编辑与11-12节补齐测试",
+                isLegacy = false,
+                databaseName = storage.databaseName,
+                preferencesName = storage.preferencesName,
+                createdAtEpochMs = 1_000L
+            )
+        )
+        repo.activateSession(1L)
+
+        val campusDao = database.campusDao()
+        // Simulate upgraded user whose DB only had periods 1..10 (with a customized p1 start time 08:25 that must NOT be overwritten!)
+        val legacyTenPeriods = HautMockSeedData.defaultPeriodTimes
+            .filter { it.periodNo <= 10 }
+            .map { if (it.periodNo == 1) it.copy(startLocalTime = java.time.LocalTime.of(8, 25)) else it }
+        campusDao.upsertPeriodTimes(legacyTenPeriods.map { it.toEntity() })
+        campusDao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+        campusDao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+        val term = cn.edu.haut.campus.core.model.Term(
+            id = "2026-2027-1",
+            academicYear = "2026-2027",
+            termNumber = 1,
+            startDate = java.time.LocalDate.of(2026, 8, 31),
+            weekCount = 20,
+            timeTableId = HautMockSeedData.DEFAULT_TIMETABLE_ID,
+            current = true
+        )
+        campusDao.upsertTerms(listOf(term.toEntity()))
+
+        // Item #10: Backfill periods 11 & 12 without overwriting customized period 1!
+        repo.ensureExtendedPeriodTimes11To12IfNeeded()
+        val upgradedPeriods = campusDao.observePeriodTimes().first().map { it.toDomain() }.associateBy { it.periodNo }
+        assertEquals(12, upgradedPeriods.size)
+        assertEquals(java.time.LocalTime.of(8, 25), upgradedPeriods[1]?.startLocalTime)
+        assertEquals(java.time.LocalTime.of(21, 15), upgradedPeriods[11]?.startLocalTime)
+        assertEquals(java.time.LocalTime.of(22, 50), upgradedPeriods[12]?.endLocalTime)
+
+        // Item #9: Merged 1-4节 course (r_m1: 1-2节 + r_m2: 3-4节)
+        val course = cn.edu.haut.campus.core.model.Course(
+            id = "c_merged_lab",
+            name = "计算机组成实验",
+            teacher = "刘老师",
+            colorArgb = 0xFF053968,
+            source = cn.edu.haut.campus.core.model.CourseSource.OFFICIAL_JW
+        )
+        val r1 = cn.edu.haut.campus.core.model.CourseScheduleRule(
+            id = "r_m1",
+            courseId = course.id,
+            termId = term.id,
+            weekday = java.time.DayOfWeek.TUESDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            weeks = (1..16).toSet(),
+            rawRoom = "4号教学楼4102",
+            buildingId = "b_t4"
+        )
+        val r2 = r1.copy(id = "r_m2", startPeriod = 3, endPeriod = 4)
+        campusDao.upsertCourse(course.toEntity())
+        campusDao.upsertRules(listOf(r1.toEntity(), r2.toEntity()))
+
+        val tuesdayW2 = java.time.LocalDate.of(2026, 9, 8)
+        val tuesdayW3 = java.time.LocalDate.of(2026, 9, 15)
+        val allPeriods = upgradedPeriods.values.toList()
+
+        // 9a: Single-day edit of merged 1-4节 on W2 to 5-8节 @ 5号教学楼5201 -> MUST NOT leave r_m2 (3-4节) overlapping on W2, while W3 stays 1-4节!
+        val initialW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods
+        ).single()
+        assertEquals(listOf("r_m1", "r_m2"), initialW2.mergedRuleIds)
+
+        repo.saveSingleDayOccurrenceEdit(
+            occ = initialW2,
+            termId = term.id,
+            newStartPeriod = 5,
+            newEndPeriod = 8,
+            newRoom = "5号教学楼5201"
+        )
+        val editedW2List = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals("Must have ONLY 5-8节 on W2 with zero residual 3-4节 overlap", 1, editedW2List.size)
+        assertEquals(5, editedW2List.single().startPeriod)
+        assertEquals(8, editedW2List.single().endPeriod)
+        assertEquals("5号教学楼5201", editedW2List.single().rawRoom)
+
+        // Internal MERGED_INTO suppression must NOT pollute resolveCanceledOccurrencesForDate while editedW2 is active!
+        val fakeCanceledDuringActiveEdit = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveCanceledOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals(0, fakeCanceledDuringActiveEdit.size)
+
+        // 9b: Canceling the single-day edited 5-8节 occurrence cancels BOTH r_m1 and r_m2, and restoring brings back full 1-4节!
+        repo.cancelClassOccurrenceOnDate(editedW2List.single(), term.id, "临时停课")
+        val afterCancelW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals(0, afterCancelW2.size)
+        val canceledListW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveCanceledOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals(1, canceledListW2.size)
+        assertEquals(listOf("r_m1", "r_m2"), canceledListW2.single().mergedRuleIds)
+
+        repo.restoreCanceledOccurrence(
+            date = tuesdayW2,
+            ruleId = canceledListW2.single().ruleId,
+            overrideId = canceledListW2.single().overrideId,
+            mergedRuleIds = canceledListW2.single().mergedRuleIds
+        )
+        val restoredW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = tuesdayW2,
+            term = term,
+            courses = listOf(course),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = allPeriods,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals(1, restoredW2.size)
+        assertEquals(1, restoredW2.single().startPeriod)
+        assertEquals(4, restoredW2.single().endPeriod)
+
+        // 9c: Full-semester edit of merged 1-4节 to 11-12节 @ 3号教学楼3201 removes residual r_m2 and schedules cleanly at 21:15–22:50!
+        repo.saveUserMergedCourseRuleEdit(
+            course = course,
+            primaryRule = r1.copy(startPeriod = 11, endPeriod = 12, rawRoom = "3号教学楼3201"),
+            mergedRuleIds = restoredW2.single().mergedRuleIds
+        )
+        val remainingRules = campusDao.getRulesSnapshot().map { it.toDomain() }
+        assertEquals(1, remainingRules.size)
+        val afterFullEditW3 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = tuesdayW3,
+            term = term,
+            courses = listOf(course),
+            rules = remainingRules,
+            periodTimes = allPeriods
+        )
+        assertEquals(1, afterFullEditW3.size)
+        assertEquals(11, afterFullEditW3.single().startPeriod)
+        assertEquals(12, afterFullEditW3.single().endPeriod)
+        assertEquals(java.time.LocalTime.of(21, 15), afterFullEditW3.single().startTime)
+        assertEquals(java.time.LocalTime.of(22, 50), afterFullEditW3.single().endTime)
+    }
 }

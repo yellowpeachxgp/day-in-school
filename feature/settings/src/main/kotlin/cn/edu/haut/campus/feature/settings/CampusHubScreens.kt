@@ -1585,6 +1585,14 @@ fun CampusHospitalPharmacyDialog(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     XPeachStatusDotText(text = item.category.label)
+                                    XPeachStatusDotText(
+                                        text = item.provenanceBadgeText,
+                                        dotColor = if (item.hasRegistryDiscrepancy) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        }
+                                    )
                                 }
                                 Text(
                                     text = "规格：${item.specification} · 剂型：${item.dosageForm}",
@@ -1596,6 +1604,13 @@ fun CampusHospitalPharmacyDialog(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                item.verificationNote?.let { vNote ->
+                                    Text(
+                                        text = vNote,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(

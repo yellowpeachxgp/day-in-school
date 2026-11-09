@@ -410,4 +410,81 @@ class ScheduleTimelineAndConflictTest {
         assertEquals("sjk:2026-2027-1:deadbeef", preservedPractical.existingCourse?.externalId)
         assertTrue(preservedPractical.keepUserEditByDefault)
     }
+
+    @Test
+    fun periods11To12_neverFabricateMorningTimeWhenPeriodDefinitionsAreMissing() {
+        // periods fixture only defines 1..10; adding an 11-12节 evening course MUST NOT fall back to 08:00 AM!
+        val monday = LocalDate.of(2026, 9, 7)
+        val eveningRules = listOf(
+            CourseScheduleRule(
+                id = "r_morning_1_2",
+                courseId = "c_algo",
+                termId = term.id,
+                weekday = DayOfWeek.MONDAY,
+                startPeriod = 1,
+                endPeriod = 2,
+                weeks = setOf(1, 2),
+                rawRoom = "31号楼31101"
+            ),
+            CourseScheduleRule(
+                id = "r_evening_11_12",
+                courseId = "c_elective",
+                termId = term.id,
+                weekday = DayOfWeek.MONDAY,
+                startPeriod = 11,
+                endPeriod = 12,
+                weeks = setOf(1, 2),
+                rawRoom = "3号教学楼3201"
+            )
+        )
+        val tenPeriods = periods + listOf(
+            PeriodTime("p7", "haut_default", 7, LocalTime.of(16, 25), LocalTime.of(17, 10)),
+            PeriodTime("p8", "haut_default", 8, LocalTime.of(17, 15), LocalTime.of(18, 0)),
+            PeriodTime("p9", "haut_default", 9, LocalTime.of(19, 30), LocalTime.of(20, 15)),
+            PeriodTime("p10", "haut_default", 10, LocalTime.of(20, 25), LocalTime.of(21, 10))
+        )
+        val occs = ScheduleEngine.resolveOccurrencesForDate(
+            date = monday,
+            term = term,
+            courses = courses,
+            rules = eveningRules,
+            periodTimes = tenPeriods // only 1..10!
+        )
+        assertEquals(2, occs.size)
+        val morningOcc = occs.first { it.ruleId == "r_morning_1_2" }
+        val unresolved1112 = occs.first { it.ruleId == "r_evening_11_12" }
+        assertTrue(morningOcc.hasResolvedTime)
+        org.junit.Assert.assertFalse("Missing 11-12 period times must set hasResolvedTime = false", unresolved1112.hasResolvedTime)
+        assertTrue("Unresolved 11-12 anchor must sort AFTER period 10, never at 08:00", unresolved1112.startTime.isAfter(LocalTime.of(21, 10)))
+        assertTrue(unresolved1112.formatTimeOrPeriodRange(java.time.format.DateTimeFormatter.ofPattern("HH:mm")).contains("作息待设"))
+
+        // At 08:45 AM, timeline MUST NOT mark unresolved 11-12节 as IN_PROGRESS or conflicting with 1-2节!
+        val snapMorning = ScheduleEngine.buildDayTimelineSnapshot(
+            date = monday,
+            now = ZonedDateTime.of(monday, LocalTime.of(8, 45), HAUT_ZONE_ID),
+            term = term,
+            courses = courses,
+            rules = eveningRules,
+            periodTimes = tenPeriods
+        )
+        val item1112 = snapMorning.items.single { it.occurrence.ruleId == "r_evening_11_12" }
+        assertEquals(cn.edu.haut.campus.core.model.ClassStatus.UPCOMING, item1112.status)
+        assertEquals(null, item1112.minutesUntilStart)
+        assertTrue(item1112.statusText.contains("节次时间待设置"))
+
+        // ReminderPlanner MUST NOT schedule a bogus morning alarm for unresolved 11-12节!
+        val windowEvents = ReminderPlanner.buildWindowEvents(
+            now = ReminderRevision.schoolInstant(monday, LocalTime.of(7, 30)),
+            horizonDays = 0L,
+            term = term,
+            courses = courses,
+            rules = eveningRules,
+            periodTimes = tenPeriods,
+            calendarOverrides = emptyList(),
+            occurrenceOverrides = emptyList(),
+            buildings = emptyList()
+        )
+        assertEquals("Only resolved 1-2节 should produce a ReminderEvent", 1, windowEvents.size)
+        assertTrue(windowEvents.single().eventKey.endsWith("r_morning_1_2"))
+    }
 }

@@ -715,7 +715,8 @@ fun TodayScreen(
                                                         repository.restoreCanceledOccurrence(
                                                             date = canceledOcc.date,
                                                             ruleId = canceledOcc.ruleId,
-                                                            overrideId = canceledOcc.overrideId
+                                                            overrideId = canceledOcc.overrideId,
+                                                            mergedRuleIds = canceledOcc.mergedRuleIds
                                                         )
                                                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                                         dynamicSyncBanner = "已恢复「${canceledOcc.courseName}」当日排课与提醒"
@@ -1024,7 +1025,7 @@ private fun CourseDetailAndSnoozeDialog(
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(occ.courseName, style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}",
+                    text = "${occ.formatTimeOrPeriodRange(TIME_FMT)} · ${occ.periodRangeText}",
                     style = MaterialTheme.typography.labelMedium,
                     color = XPeachTheme.readablePrimary
                 )

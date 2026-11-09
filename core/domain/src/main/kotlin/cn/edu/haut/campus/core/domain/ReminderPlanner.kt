@@ -76,6 +76,17 @@ object ReminderPlanner {
     }
 
     /**
+     * 数据质量守卫：若某节次未配置作息时间（`hasResolvedTime == false`），返回 `null`，绝不伪造晨间提醒闹钟。
+     */
+    fun projectClassOccurrenceToEventOrNull(
+        termId: String,
+        occurrence: ClassOccurrence
+    ): ReminderEvent? {
+        if (!occurrence.hasResolvedTime) return null
+        return projectClassOccurrenceToEvent(termId, occurrence)
+    }
+
+    /**
      * 将考试安排（ExamScheduleItem）投影为标准化 ReminderEvent。
      * 数据质量守卫：若考试日期或开始时间为空（如“随堂待定”），返回 null，绝不生成错误定时任务。
      */
@@ -148,7 +159,7 @@ object ReminderPlanner {
                     buildings = buildings
                 )
                 for (occ in occurrences) {
-                    events.add(projectClassOccurrenceToEvent(term.id, occ))
+                    projectClassOccurrenceToEventOrNull(term.id, occ)?.let(events::add)
                 }
             }
         }

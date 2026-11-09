@@ -125,7 +125,9 @@ object HautMockSeedData {
         PeriodTime("pt_7", DEFAULT_TIMETABLE_ID, 7, LocalTime.of(16, 25), LocalTime.of(17, 10), "下午"),
         PeriodTime("pt_8", DEFAULT_TIMETABLE_ID, 8, LocalTime.of(17, 15), LocalTime.of(18, 0), "下午"),
         PeriodTime("pt_9", DEFAULT_TIMETABLE_ID, 9, LocalTime.of(19, 30), LocalTime.of(20, 15), "晚间"),
-        PeriodTime("pt_10", DEFAULT_TIMETABLE_ID, 10, LocalTime.of(20, 25), LocalTime.of(21, 10), "晚间")
+        PeriodTime("pt_10", DEFAULT_TIMETABLE_ID, 10, LocalTime.of(20, 25), LocalTime.of(21, 10), "晚间"),
+        PeriodTime("pt_11", DEFAULT_TIMETABLE_ID, 11, LocalTime.of(21, 15), LocalTime.of(22, 0), "晚间"),
+        PeriodTime("pt_12", DEFAULT_TIMETABLE_ID, 12, LocalTime.of(22, 5), LocalTime.of(22, 50), "晚间")
     )
 
     val lianhuajieBuildings = listOf(

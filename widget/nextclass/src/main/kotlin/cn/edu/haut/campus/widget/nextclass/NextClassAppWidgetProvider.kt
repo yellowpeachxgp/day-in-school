@@ -120,7 +120,9 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                     R.id.tv_course_name,
                     if (snapshot.config.privacyMode) "课程已隐藏" else occ.courseName
                 )
-                val timeText = if (isNarrow) {
+                val timeText = if (!occ.hasResolvedTime) {
+                    "${occ.periodRangeText} · 作息待设"
+                } else if (isNarrow) {
                     "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
                 } else {
                     "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)} · ${occ.periodRangeText}"
@@ -156,9 +158,14 @@ class NextClassAppWidgetProvider : AppWidgetProvider() {
                 val hint = day.nextClassDayHint
                 if (hint != null) {
                     views.setTextViewText(R.id.tv_course_name, if (snapshot.config.privacyMode) "课程已隐藏" else hint.firstCourseName)
+                    val hintTime = if (hint.hasResolvedStartTime) {
+                        hint.firstCourseStartTime.format(TIME_FMT)
+                    } else {
+                        hint.firstCoursePeriodRangeText.ifBlank { "作息待设" }
+                    }
                     views.setTextViewText(
                         R.id.tv_time_range,
-                        "下次课 ${hint.nextDate.format(DATE_FMT)} ${hint.nextDate.dayOfWeek.ChineseLabel} ${hint.firstCourseStartTime.format(TIME_FMT)}"
+                        "下次课 ${hint.nextDate.format(DATE_FMT)} ${hint.nextDate.dayOfWeek.ChineseLabel} $hintTime"
                     )
                     views.setTextViewText(
                         R.id.tv_room_and_teacher,

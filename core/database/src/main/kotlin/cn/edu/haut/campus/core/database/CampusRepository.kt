@@ -258,6 +258,7 @@ class CampusRepository internal constructor(
         val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
         val GIS_DICTIONARY_SYNCED_V17 = booleanPreferencesKey("official_gis_dictionary_synced_v17")
         val GIS_DICTIONARY_SYNCED_V18 = booleanPreferencesKey("official_gis_dictionary_synced_v18")
+        val PERIOD_TIMES_11_12_SYNCED_V1 = booleanPreferencesKey("period_times_11_12_synced_v1")
         val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
         val LAST_SEASONAL_ROLLOVER_TERM_ID = stringPreferencesKey("last_seasonal_rollover_term_id_v1")
         val USER_MANUAL_TERM_SEASON = stringPreferencesKey("user_manual_term_override_season_v1")
@@ -752,6 +753,7 @@ class CampusRepository internal constructor(
             } else if (supportsHautServices && prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V18] != true) {
                 syncCampusDictionaryV18Internal()
             }
+            ensureExtendedPeriodTimes11To12IfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
@@ -824,7 +826,69 @@ class CampusRepository internal constructor(
                 it.remove(PrefKeys.LAST_AUTO_SYNC_MS)
             }
         }
+        ensureExtendedPeriodTimes11To12IfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
+    }
+
+    /**
+     * 为升级老用户补齐 11–12 节晚间默认作息时间（不覆盖用户已自定义编辑的 1–10 节作息）：
+     * - 莲花街默认作息表（`haut_lianhuajie_default`）：21:15–22:00、22:05–22:50（若第 10 节被改晚则自动顺延）；
+     * - 通用离线作息表（`manual_default` 或自定义表）：紧接已有最晚节次顺延 10 分钟，每节 45 分钟。
+     */
+    internal suspend fun ensureExtendedPeriodTimes11To12IfNeeded() {
+        val prefs = preferences.data.first()
+        val existingEntities = dao.observePeriodTimes().first()
+        val byTimetable = existingEntities.map { it.toDomain() }.groupBy { it.timeTableId }
+        val toInsert = mutableListOf<PeriodTimeEntity>()
+
+        for ((ttId, list) in byTimetable) {
+            if (ttId.isBlank()) continue
+            val existingNos = list.map { it.periodNo }.toSet()
+            if (11 in existingNos && 12 in existingNos) continue
+            val p10End = list.filter { it.periodNo <= 10 }.maxByOrNull { it.periodNo }?.endLocalTime
+            val defaultP11Start = if (ttId == HautMockSeedData.DEFAULT_TIMETABLE_ID) {
+                val base = LocalTime.of(21, 15)
+                if (p10End != null && !p10End.isBefore(base)) {
+                    val mins = (p10End.hour * 60 + p10End.minute + 5).coerceAtMost(22 * 60 + 10)
+                    LocalTime.of(mins / 60, mins % 60)
+                } else base
+            } else {
+                val base = p10End ?: LocalTime.of(20, 40)
+                val mins = (base.hour * 60 + base.minute + 10).coerceAtMost(22 * 60 + 10)
+                LocalTime.of(mins / 60, mins % 60)
+            }
+            val p11EndMins = (defaultP11Start.hour * 60 + defaultP11Start.minute + 45).coerceAtMost(23 * 60 + 5)
+            val p11End = LocalTime.of(p11EndMins / 60, p11EndMins % 60)
+            val p12StartMins = (p11EndMins + 5).coerceAtMost(23 * 60 + 10)
+            val p12Start = LocalTime.of(p12StartMins / 60, p12StartMins % 60)
+            val p12EndMins = (p12StartMins + 45).coerceAtMost(23 * 60 + 55)
+            val p12End = LocalTime.of(p12EndMins / 60, p12EndMins % 60)
+
+            val idPrefix = if (ttId == HautMockSeedData.DEFAULT_TIMETABLE_ID) "pt" else "${ttId}_period"
+            if (11 !in existingNos) {
+                toInsert += PeriodTime("${idPrefix}_11", ttId, 11, defaultP11Start, p11End, "晚间").toEntity()
+            }
+            if (12 !in existingNos) {
+                val actual11End = list.firstOrNull { it.periodNo == 11 }?.endLocalTime ?: p11End
+                val s12Mins = (actual11End.hour * 60 + actual11End.minute + 5).coerceAtMost(23 * 60 + 10)
+                val e12Mins = (s12Mins + 45).coerceAtMost(23 * 60 + 55)
+                toInsert += PeriodTime(
+                    "${idPrefix}_12",
+                    ttId,
+                    12,
+                    LocalTime.of(s12Mins / 60, s12Mins % 60),
+                    LocalTime.of(e12Mins / 60, e12Mins % 60),
+                    "晚间"
+                ).toEntity()
+            }
+        }
+
+        if (toInsert.isNotEmpty()) {
+            dao.upsertPeriodTimes(toInsert)
+        }
+        if (prefs[PrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] != true) {
+            preferences.edit { it[PrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] = true }
+        }
     }
 
     private fun parseTermSortKey(termId: String): Pair<Int, Int>? {
@@ -976,7 +1040,11 @@ class CampusRepository internal constructor(
             id = "$year-${year + 1}-$termNo", academicYear = "$year-${year + 1}", termNumber = termNo,
             startDate = monday, weekCount = 20, timeTableId = timetableId, current = true
         ).toEntity()))
-        val starts = listOf("08:00", "08:55", "10:00", "10:55", "14:00", "14:55", "16:00", "16:55", "19:00", "19:55")
+        val starts = listOf(
+            "08:00", "08:55", "10:00", "10:55",
+            "14:00", "14:55", "16:00", "16:55",
+            "19:00", "19:55", "20:50", "21:45"
+        )
         dao.upsertPeriodTimes(starts.mapIndexed { index, raw ->
             val start = LocalTime.parse(raw)
             PeriodTime("manual_period_${index + 1}", timetableId, index + 1, start, start.plusMinutes(45)).toEntity()
@@ -1060,23 +1128,58 @@ class CampusRepository internal constructor(
         course: Course,
         rule: CourseScheduleRule
     ) {
+        saveUserMergedCourseRuleEdit(
+            course = course,
+            primaryRule = rule,
+            mergedRuleIds = listOf(rule.id)
+        )
+    }
+
+    /**
+     * 编辑可能由多条相邻规则纵向合并（如 1-2节 + 3-4节 合并显示为 1-4节）的全学期排课规则：
+     * - 更新主规则为目标星期、起止节次、教室与周次；
+     * - 对其余被合并的子规则，减去本次编辑覆盖的周次集合（若剩余周次为空则移除子规则及其孤立单日覆盖），彻底消除残余 3-4节 重叠！
+     */
+    suspend fun saveUserMergedCourseRuleEdit(
+        course: Course,
+        primaryRule: CourseScheduleRule,
+        mergedRuleIds: List<String>
+    ) {
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
-        val resolvedBuilding = ClassroomBuildingResolver.resolve(rule.rawRoom, buildings, aliases)
+        val resolvedBuilding = ClassroomBuildingResolver.resolve(primaryRule.rawRoom, buildings, aliases)
         val verifiedBuildingId = if (resolvedBuilding.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED) {
             resolvedBuilding.building?.id
         } else {
-            rule.buildingId
+            primaryRule.buildingId
         }
+        val extraRuleIds = mergedRuleIds.distinct().filter { it.isNotBlank() && it != primaryRule.id }
 
         database.withTransaction {
+            val allRulesById = dao.getRulesSnapshot().associateBy { it.id }
             dao.upsertCourse(course.copy(userModified = true).toEntity())
             dao.upsertRule(
-                rule.copy(
+                primaryRule.copy(
                     buildingId = verifiedBuildingId,
                     userModified = true
                 ).toEntity()
             )
+            for (extraId in extraRuleIds) {
+                val extraEntity = allRulesById[extraId] ?: continue
+                val extraDomain = extraEntity.toDomain()
+                val remainingWeeks = extraDomain.weeks - primaryRule.weeks
+                if (remainingWeeks.isEmpty()) {
+                    dao.deleteRuleById(extraId)
+                    dao.deleteOccurrenceOverridesByRuleId(extraId)
+                } else {
+                    dao.upsertRule(
+                        extraDomain.copy(
+                            weeks = remainingWeeks,
+                            userModified = true
+                        ).toEntity()
+                    )
+                }
+            }
         }
         notifyScheduleOrPolicyChanged("USER_COURSE_EDIT")
     }
@@ -1148,15 +1251,127 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
     }
 
+    /**
+     * 对单次课程（含由多条相邻规则合并而成的 1-4 节连堂课）执行当日改教室/改节次：
+     * - 主规则写入修改后的起止节次与教室；
+     * - 其余被合并的子规则在同一天写入 `MERGED_INTO:<primaryRuleId>` 吸收抑制记录，防止原 3-4 节残留在当日课表造成重叠。
+     */
+    suspend fun saveSingleDayOccurrenceEdit(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        newStartPeriod: Int,
+        newEndPeriod: Int,
+        newRoom: String,
+        reason: String = "单次调课"
+    ) {
+        val cleanRoom = newRoom.trim().ifBlank { occ.rawRoom }
+        val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
+        val resolved = ClassroomBuildingResolver.resolve(cleanRoom, buildings, aliases)
+        val verifiedBuildingId = if (resolved.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED) {
+            resolved.building?.id
+        } else if (cleanRoom == occ.rawRoom) {
+            occ.buildingId
+        } else null
+
+        val sp = newStartPeriod.coerceIn(1, 12)
+        val ep = newEndPeriod.coerceIn(sp, 12)
+        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+
+        database.withTransaction {
+            if (ruleIds.isNotEmpty()) {
+                val primaryRuleId = ruleIds.first()
+                dao.deleteOccurrenceOverridesForRuleOnDate(primaryRuleId, occ.date.toString())
+                dao.upsertOccurrenceOverride(
+                    OccurrenceOverride(
+                        id = occ.overrideId ?: "ov_mod_${occ.date}_$primaryRuleId",
+                        termId = termId,
+                        courseId = occ.courseId,
+                        courseRuleId = primaryRuleId,
+                        date = occ.date,
+                        startPeriod = sp,
+                        endPeriod = ep,
+                        room = cleanRoom,
+                        buildingId = verifiedBuildingId,
+                        canceled = false,
+                        reason = reason
+                    ).toEntity()
+                )
+                for (extraRuleId in ruleIds.drop(1)) {
+                    dao.deleteOccurrenceOverridesForRuleOnDate(extraRuleId, occ.date.toString())
+                    dao.upsertOccurrenceOverride(
+                        OccurrenceOverride(
+                            id = "ov_merged_sup_${occ.date}_$extraRuleId",
+                            termId = termId,
+                            courseId = occ.courseId,
+                            courseRuleId = extraRuleId,
+                            date = occ.date,
+                            canceled = true,
+                            reason = "MERGED_INTO:$primaryRuleId"
+                        ).toEntity()
+                    )
+                }
+            } else {
+                dao.upsertOccurrenceOverride(
+                    OccurrenceOverride(
+                        id = occ.overrideId ?: "ov_mod_${occ.date}_${UUID.randomUUID().toString().take(8)}",
+                        termId = termId,
+                        courseId = occ.courseId,
+                        courseRuleId = null,
+                        date = occ.date,
+                        startPeriod = sp,
+                        endPeriod = ep,
+                        room = cleanRoom,
+                        buildingId = verifiedBuildingId,
+                        canceled = false,
+                        reason = reason
+                    ).toEntity()
+                )
+            }
+        }
+        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
+    }
+
+    suspend fun resetSingleDayOccurrenceEdit(occ: cn.edu.haut.campus.core.model.ClassOccurrence) {
+        val dateIso = occ.date.toString()
+        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }.toSet()
+        database.withTransaction {
+            if (!occ.overrideId.isNullOrBlank()) {
+                dao.deleteOccurrenceOverrideById(occ.overrideId!!)
+            }
+            for (rId in ruleIds) {
+                dao.deleteOccurrenceOverridesForRuleOnDate(rId, dateIso)
+            }
+            val companions = dao.getOccurrenceOverridesSnapshot().filter { ov ->
+                ov.dateIso == dateIso &&
+                    ruleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" }
+            }
+            for (comp in companions) {
+                dao.deleteOccurrenceOverrideById(comp.id)
+            }
+        }
+        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
+    }
+
     suspend fun cancelClassOccurrenceOnDate(
         occ: cn.edu.haut.campus.core.model.ClassOccurrence,
         termId: String,
         reason: String = "单次停课"
     ) {
-        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+        val explicitRuleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
         database.withTransaction {
-            if (ruleIds.isNotEmpty()) {
-                for (rId in ruleIds) {
+            val companionRuleIds = if (explicitRuleIds.isNotEmpty()) {
+                dao.getOccurrenceOverridesSnapshot()
+                    .filter { ov ->
+                        ov.dateIso == occ.date.toString() &&
+                            ov.courseRuleId != null &&
+                            explicitRuleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" }
+                    }
+                    .mapNotNull { it.courseRuleId }
+            } else emptyList()
+            val allRuleIds = (explicitRuleIds + companionRuleIds).distinct()
+            if (allRuleIds.isNotEmpty()) {
+                for (rId in allRuleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
                     dao.upsertOccurrenceOverride(
                         OccurrenceOverride(
@@ -1180,8 +1395,8 @@ class CampusRepository internal constructor(
                         date = occ.date,
                         startPeriod = occ.startPeriod,
                         endPeriod = occ.endPeriod,
-                        startAt = occ.startTime,
-                        endAt = occ.endTime,
+                        startAt = if (occ.hasResolvedTime) occ.startTime else null,
+                        endAt = if (occ.hasResolvedTime) occ.endTime else null,
                         room = occ.rawRoom,
                         buildingId = occ.buildingId,
                         canceled = true,
@@ -1260,8 +1475,10 @@ class CampusRepository internal constructor(
     suspend fun restoreCanceledOccurrence(
         date: LocalDate,
         ruleId: String?,
-        overrideId: String? = null
+        overrideId: String? = null,
+        mergedRuleIds: List<String> = emptyList()
     ) {
+        val allRuleIds = (mergedRuleIds + listOfNotNull(ruleId)).distinct().filter { it.isNotBlank() }
         database.withTransaction {
             if (!overrideId.isNullOrBlank()) {
                 val existing = dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == overrideId }
@@ -1271,28 +1488,41 @@ class CampusRepository internal constructor(
                     dao.deleteOccurrenceOverrideById(overrideId)
                 }
             }
-            if (!ruleId.isNullOrBlank()) {
-                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId, date.toString())
+            for (rId in allRuleIds) {
+                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(rId, date.toString())
             }
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
     }
 
     suspend fun deleteCourseScheduleRule(ruleId: String) {
+        deleteCourseScheduleRules(listOf(ruleId))
+    }
+
+    suspend fun deleteCourseScheduleRules(ruleIds: List<String>) {
+        val cleanIds = ruleIds.distinct().filter { it.isNotBlank() }.toSet()
+        if (cleanIds.isEmpty()) return
         database.withTransaction {
             val rules = dao.getRulesSnapshot()
-            val targetRule = rules.firstOrNull { it.id == ruleId } ?: return@withTransaction
-            dao.deleteRuleById(ruleId)
-            dao.deleteOccurrenceOverridesByRuleId(ruleId)
-            val remainingForCourse = rules.count { it.courseId == targetRule.courseId && it.id != ruleId }
-            if (remainingForCourse == 0) {
-                val course = dao.getCoursesSnapshot().firstOrNull { it.id == targetRule.courseId }
-                if (course != null && (
-                        course.source == CourseSource.MANUAL.name ||
-                            course.externalId?.startsWith("sjk:") == true
-                        )
-                ) {
-                    dao.deleteCourseById(course.id)
+            val targetRules = rules.filter { it.id in cleanIds }
+            if (targetRules.isEmpty()) return@withTransaction
+            val affectedCourseIds = targetRules.map { it.courseId }.toSet()
+            for (rId in cleanIds) {
+                dao.deleteRuleById(rId)
+                dao.deleteOccurrenceOverridesByRuleId(rId)
+            }
+            val coursesById = dao.getCoursesSnapshot().associateBy { it.id }
+            for (cId in affectedCourseIds) {
+                val remainingForCourse = rules.count { it.courseId == cId && it.id !in cleanIds }
+                if (remainingForCourse == 0) {
+                    val course = coursesById[cId]
+                    if (course != null && (
+                            course.source == CourseSource.MANUAL.name ||
+                                course.externalId?.startsWith("sjk:") == true
+                            )
+                    ) {
+                        dao.deleteCourseById(course.id)
+                    }
                 }
             }
         }

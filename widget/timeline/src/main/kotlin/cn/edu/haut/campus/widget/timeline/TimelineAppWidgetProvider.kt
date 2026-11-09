@@ -122,7 +122,10 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
 
                 views.setTextViewText(
                     R.id.tv_tl_time_2,
-                    hint?.let { "${it.nextDate.format(DATE_FMT)} ${it.firstCourseStartTime.format(TIME_FMT)}" } ?: "下次课"
+                    hint?.let {
+                        val ht = if (it.hasResolvedStartTime) it.firstCourseStartTime.format(TIME_FMT) else it.firstCoursePeriodRangeText
+                        "${it.nextDate.format(DATE_FMT)} $ht"
+                    } ?: "下次课"
                 )
                 views.setTextViewText(
                     R.id.tv_tl_slot_2,
@@ -166,7 +169,7 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
                         views.setTextColor(grp.roomId, if (isFinished) secondaryColor else accentColor)
                         views.setTextViewText(
                             grp.timeId,
-                            "${occ.startTime.format(TIME_FMT)}–${occ.endTime.format(TIME_FMT)}"
+                            occ.formatTimeOrPeriodRange(TIME_FMT)
                         )
                         views.setTextViewText(
                             grp.titleId,

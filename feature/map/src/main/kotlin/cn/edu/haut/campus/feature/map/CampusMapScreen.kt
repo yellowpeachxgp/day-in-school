@@ -137,6 +137,8 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusGeofenceRecognizer
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
+import cn.edu.haut.campus.core.location.CampusTileCacheCoordinator
+import cn.edu.haut.campus.core.location.TileRenderLookup
 import cn.edu.haut.campus.core.location.GisBuildingFootprint
 import cn.edu.haut.campus.core.location.GisCampusVectorDataset
 import cn.edu.haut.campus.core.location.GisGeoPoint
@@ -181,46 +183,14 @@ import kotlin.math.sinh
 import kotlin.math.tan
 
 private object CampusTileCache {
-    private val memoryCache = LruCache<String, ImageBitmap>(360)
-    private val inFlight = ConcurrentHashMap.newKeySet<String>()
+    private val coordinator = CampusTileCacheCoordinator<ImageBitmap>(maxMemoryEntries = 360)
 
-    fun isWithinHaut25dRasterBounds(z: Int, x: Int, y: Int): Boolean {
-        if (z !in 16..18) return false
-        val n = 2.0.pow(z.toDouble())
-        val minX = floor((113.533 + 180.0) / 360.0 * n).toInt()
-        val maxX = ceil((113.562 + 180.0) / 360.0 * n).toInt()
-        val minY = floor((1.0 - asinh(tan(Math.toRadians(34.841))) / PI) / 2.0 * n).toInt()
-        val maxY = ceil((1.0 - asinh(tan(Math.toRadians(34.824))) / PI) / 2.0 * n).toInt()
-        return x in minX..maxX && y in minY..maxY
+    fun clearFailureCooldowns() {
+        coordinator.clearFailureCooldowns()
     }
 
-    fun resolveEffectiveTileStyle(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): GisMapStyleMode =
-        if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026 && isWithinHaut25dRasterBounds(z, x, y)) {
-            GisMapStyleMode.OFFICIAL_25D_2026
-        } else {
-            GisMapStyleMode.STREET_STANDARD
-        }
-
-    fun tileKey(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): String {
-        val effective = resolveEffectiveTileStyle(styleMode, z, x, y)
-        val stylePrefix = if (effective == GisMapStyleMode.OFFICIAL_25D_2026) "haut25d" else "street"
-        return "${stylePrefix}_${z}_${x}_${y}"
-    }
-
-    fun get(key: String): ImageBitmap? = synchronized(memoryCache) { memoryCache.get(key) }
-
-    fun getWithStreetFallback(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): ImageBitmap? {
-        val primaryKey = tileKey(styleMode, z, x, y)
-        get(primaryKey)?.let { return it }
-        if (primaryKey.startsWith("haut25d_")) {
-            return get("street_${z}_${x}_${y}")
-        }
-        return null
-    }
-
-    fun put(key: String, bitmap: ImageBitmap) = synchronized(memoryCache) {
-        memoryCache.put(key, bitmap)
-    }
+    fun lookupForRender(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): TileRenderLookup<ImageBitmap> =
+        coordinator.lookupForRender(styleMode = styleMode, z = z, x = x, y = y)
 
     suspend fun loadTileIfNeeded(
         cacheDir: File,
@@ -230,40 +200,27 @@ private object CampusTileCache {
         y: Int,
         onLoaded: () -> Unit
     ) {
-        val effectiveStyle = resolveEffectiveTileStyle(styleMode, z, x, y)
-        val primaryKey = tileKey(effectiveStyle, z, x, y)
-        val streetKey = "street_${z}_${x}_${y}"
-        if (get(primaryKey) != null) return
-        if (effectiveStyle == GisMapStyleMode.OFFICIAL_25D_2026 && get(streetKey) != null) return
-        if (!inFlight.add(primaryKey)) return
-
-        try {
-            val loadedPair = withContext(Dispatchers.IO) {
-                val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
-                val diskFile = File(dir, "$primaryKey.png")
-                if (diskFile.exists() && diskFile.length() > 256L) {
-                    runCatching {
-                        BitmapFactory.decodeFile(diskFile.absolutePath)?.asImageBitmap()
-                    }.getOrNull()?.let { return@withContext primaryKey to it }
-                }
-
-                val subdomain = ((x + y) % 4 + 4) % 4 + 1
-                val candidates = buildList {
-                    if (effectiveStyle == GisMapStyleMode.OFFICIAL_25D_2026) {
-                        add(primaryKey to "https://gis.haut.edu.cn/cmgis-server/upload/raster/3/$z/$x/$y.png")
-                    }
-                    add(streetKey to "https://webrd0$subdomain.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=2&style=8&x=$x&y=$y&z=$z")
-                    add(streetKey to "https://tile.openstreetmap.org/$z/$x/$y.png")
-                }
-                for ((targetKey, urlStr) in candidates) {
-                    val targetDiskFile = File(dir, "$targetKey.png")
-                    if (targetDiskFile.exists() && targetDiskFile.length() > 256L) {
-                        val cachedBmp = runCatching {
-                            BitmapFactory.decodeFile(targetDiskFile.absolutePath)?.asImageBitmap()
+        coordinator.loadTileIfNeeded(
+            styleMode = styleMode,
+            z = z,
+            x = x,
+            y = y,
+            readDiskTile = { targetKey ->
+                withContext(Dispatchers.IO) {
+                    val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
+                    val diskFile = File(dir, "$targetKey.png")
+                    if (diskFile.exists() && diskFile.length() > 256L) {
+                        runCatching {
+                            BitmapFactory.decodeFile(diskFile.absolutePath)?.asImageBitmap()
                         }.getOrNull()
-                        if (cachedBmp != null) return@withContext targetKey to cachedBmp
-                    }
-                    val downloaded = runCatching {
+                    } else null
+                }
+            },
+            fetchRemoteTile = { targetKey, urlStr ->
+                withContext(Dispatchers.IO) {
+                    val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
+                    val targetDiskFile = File(dir, "$targetKey.png")
+                    runCatching {
                         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                             instanceFollowRedirects = false
                             connectTimeout = 6000
@@ -294,17 +251,10 @@ private object CampusTileCache {
                             } else null
                         } else null
                     }.getOrNull()
-                    if (downloaded != null) return@withContext targetKey to downloaded
                 }
-                null
-            }
-            if (loadedPair != null) {
-                put(loadedPair.first, loadedPair.second)
-                onLoaded()
-            }
-        } finally {
-            inFlight.remove(primaryKey)
-        }
+            },
+            onLoaded = onLoaded
+        )
     }
 }
 
@@ -1390,7 +1340,12 @@ fun CampusMapScreen(
                                 XPeachFilterPill(
                                     label = mode.shortLabel,
                                     selected = gisStyleMode == mode,
-                                    onClick = { gisStyleMode = mode }
+                                    onClick = {
+                                        if (mode == GisMapStyleMode.OFFICIAL_25D_2026) {
+                                            CampusTileCache.clearFailureCooldowns()
+                                        }
+                                        gisStyleMode = mode
+                                    }
                                 )
                             }
                         }
@@ -2011,7 +1966,12 @@ fun CampusMapScreen(
                             label = mode.shortLabel,
                             selected = gisStyleMode == mode,
                             compact = true,
-                            onClick = { gisStyleMode = mode }
+                            onClick = {
+                                if (mode == GisMapStyleMode.OFFICIAL_25D_2026) {
+                                    CampusTileCache.clearFailureCooldowns()
+                                }
+                                gisStyleMode = mode
+                            }
                         )
                     }
                     XPeachFilterPill(
@@ -3130,14 +3090,16 @@ private fun RealCampusTileMap(
             for (ty in minTy..maxTy) {
                 val leftPx = (size.width / 2f) + ((tx - centerTileX).toFloat() * baseTileRenderPx)
                 val topPx = (size.height / 2f) + ((ty - centerTileY).toFloat() * baseTileRenderPx)
-                val bmp = CampusTileCache.getWithStreetFallback(styleMode, tileZ, tx, ty)
+                val lookup = CampusTileCache.lookupForRender(styleMode, tileZ, tx, ty)
+                val bmp = lookup.tile
                 if (bmp != null) {
                     drawImage(
                         image = bmp,
                         dstOffset = IntOffset(leftPx.roundToInt(), topPx.roundToInt()),
                         dstSize = IntSize(ceil(baseTileRenderPx).toInt(), ceil(baseTileRenderPx).toInt())
                     )
-                } else {
+                }
+                if (lookup.shouldTriggerTargetLoad) {
                     scope.launch {
                         CampusTileCache.loadTileIfNeeded(
                             cacheDir = context.cacheDir,
@@ -3625,7 +3587,7 @@ private fun MapHospitalPharmacyDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "本表为校医院现场价格公示册离线转录（医保报销前基准单价），不代表实时库存，实际报销金额以校医院窗口结算为准。",
+                    text = "本表忠实转录自校医院现场价格公示册原图（医保报销前基准单价），部分文号或规格与政府目录存在来源差异，已原样保留并标注待核实，不代表已核验现行医保政策。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3675,15 +3637,22 @@ private fun MapHospitalPharmacyDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Text(
-                                    text = "${item.name} (${item.category.label})",
+                                    text = "${item.name} (${item.category.label}) · ${item.provenanceBadgeText}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "${item.specification} · ${item.dosageForm} · ${item.manufacturer}",
+                                    text = "${item.specification} · ${item.dosageForm} · ${item.manufacturer} · ${item.approvalNumber}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                item.verificationNote?.let { vNote ->
+                                    Text(
+                                        text = vNote,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
                             }
                             Text(
                                 text = "¥${item.disclosedPriceYuan}/${item.unit}",

@@ -151,7 +151,11 @@ fun TimetableScreen(
 
     val termCanceledOverrides = remember(occurrenceOverrides, term?.id) {
         occurrenceOverrides
-            .filter { (term == null || it.termId == term?.id) && it.canceled }
+            .filter {
+                (term == null || it.termId == term?.id) &&
+                    it.canceled &&
+                    it.reason?.startsWith("MERGED_INTO:") != true
+            }
             .sortedByDescending { it.date }
     }
 
@@ -960,7 +964,7 @@ fun TimetableScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "${occToEdit.date} (${occToEdit.weekday.ChineseLabel}) · ${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
+                        text = "${occToEdit.date} (${occToEdit.weekday.ChineseLabel}) · ${occToEdit.formatTimeOrPeriodRange(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
                         style = MaterialTheme.typography.bodyMedium,
                         color = XPeachTheme.readablePrimary
                     )
@@ -1158,7 +1162,7 @@ fun TimetableScreen(
                             TextButton(
                                 onClick = {
                                     scope.launch {
-                                        repository.deleteOccurrenceOverride(occToEdit.overrideId!!)
+                                        repository.resetSingleDayOccurrenceEdit(occToEdit)
                                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                         editingOccurrence = null
                                     }
@@ -1213,7 +1217,9 @@ fun TimetableScreen(
                         TextButton(
                             onClick = {
                                 scope.launch {
-                                    repository.deleteCourseScheduleRule(targetRule.id)
+                                    repository.deleteCourseScheduleRules(
+                                        occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) }
+                                    )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     editingOccurrence = null
                                 }
@@ -1253,19 +1259,12 @@ fun TimetableScreen(
                                         newRoom = cleanRoom
                                     )
                                 } else {
-                                    repository.saveOccurrenceOverride(
-                                        OccurrenceOverride(
-                                            id = occToEdit.overrideId ?: "ov_mod_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
-                                            termId = activeTermId,
-                                            courseRuleId = occToEdit.ruleId,
-                                            courseId = occToEdit.courseId,
-                                            date = occToEdit.date,
-                                            startPeriod = sp,
-                                            endPeriod = ep,
-                                            room = cleanRoom,
-                                            canceled = false,
-                                            reason = "单次调课"
-                                        )
+                                    repository.saveSingleDayOccurrenceEdit(
+                                        occ = occToEdit,
+                                        termId = activeTermId,
+                                        newStartPeriod = sp,
+                                        newEndPeriod = ep,
+                                        newRoom = cleanRoom
                                     )
                                 }
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
@@ -1275,19 +1274,20 @@ fun TimetableScreen(
                             scope.launch {
                                 if (targetCourse != null) {
                                     val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { targetRule.weeks }
-                                    repository.saveUserCourseEdit(
+                                    repository.saveUserMergedCourseRuleEdit(
                                         course = targetCourse.copy(
                                             name = editedName.trim().ifEmpty { targetCourse.name },
                                             teacher = editedTeacher.trim().ifEmpty { null },
                                             colorArgb = selectedColor
                                         ),
-                                        rule = targetRule.copy(
+                                        primaryRule = targetRule.copy(
                                             weekday = DayOfWeek.of(editedWeekday.coerceIn(1, 7)),
                                             startPeriod = sp,
                                             endPeriod = ep,
                                             rawRoom = editedRoom.trim().ifEmpty { targetRule.rawRoom },
                                             weeks = parsedWeeks
-                                        )
+                                        ),
+                                        mergedRuleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) }
                                     )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 }
@@ -2084,7 +2084,7 @@ private fun TimetableWeekListView(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${occ.periodRangeText} · ${occ.startTime.format(PERIOD_TIME_FMT)}–${occ.endTime.format(PERIOD_TIME_FMT)}",
+                                    text = "${occ.periodRangeText} · ${occ.formatTimeOrPeriodRange(PERIOD_TIME_FMT)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Medium,
                                     color = accentColor,
