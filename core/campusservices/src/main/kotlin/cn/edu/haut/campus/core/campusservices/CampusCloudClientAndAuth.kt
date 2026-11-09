@@ -1594,17 +1594,12 @@ object CampusCloudOidcHelper {
 
                 val isEligible = when {
                     // 无可验证授权来源（recordedAuthVer <= 0 或缺少明确 binding/consent 归属）的计划：
-                    // 一旦服务端已存在绑定或处于重授权世代（serverVer > 1），一律禁止借绑定级确认通过，必须显式重新确认该计划！
-                    recordedAuthVer <= 0 ->
-                        serverVer <= 1 && serverBindId.isNullOrBlank() && serverConsentId.isNullOrBlank()
-                    serverVer <= 1 ->
-                        recordedAuthVer == 1 &&
-                            (serverBindId == null || recordedBindId == serverBindId) &&
-                            (serverConsentId == null || recordedConsentId == serverConsentId)
-                    // 严禁把旧授权版本下创建的计划自动贴上新 auth_version 重放
-                    recordedAuthVer != serverVer -> false
-                    recordedBindId.isNullOrBlank() || serverBindId.isNullOrBlank() || recordedBindId != serverBindId -> false
-                    recordedConsentId.isNullOrBlank() || serverConsentId.isNullOrBlank() || recordedConsentId != serverConsentId -> false
+                    // 一律暂停并要求显式重新确认，绝不通过当前绑定或默认版本猜测授权！
+                    recordedAuthVer <= 0 || recordedBindId.isNullOrBlank() || recordedConsentId.isNullOrBlank() -> false
+                    recordedAuthVer != serverVer.coerceAtLeast(1) -> false
+                    !serverBindId.isNullOrBlank() && recordedBindId != serverBindId -> false
+                    !serverConsentId.isNullOrBlank() && recordedConsentId != serverConsentId -> false
+                    serverVer <= 1 -> true
                     planScopeMeta?.confirmedByClientAction == true -> true
                     else -> false
                 }

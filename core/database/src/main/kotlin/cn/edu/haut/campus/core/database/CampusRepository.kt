@@ -3891,7 +3891,9 @@ class CampusRepository internal constructor(
                             rawToken = token,
                             targetDate = entity.targetLocalDate,
                             preferredAreaName = entity.preferredAreaName,
-                            preferredSeatLabel = entity.preferredSeatLabel
+                            preferredSeatLabel = entity.preferredSeatLabel,
+                            planId = entity.id,
+                            planVersion = entity.generation
                         )
                     }
                 }
@@ -3966,7 +3968,9 @@ class CampusRepository internal constructor(
                             rawToken = sessionState.snapshot.rawToken,
                             targetDate = current.targetLocalDate,
                             preferredAreaName = current.preferredAreaName,
-                            preferredSeatLabel = current.preferredSeatLabel
+                            preferredSeatLabel = current.preferredSeatLabel,
+                            planId = current.id,
+                            planVersion = current.generation
                         )
                     }
                 }
@@ -3992,7 +3996,9 @@ class CampusRepository internal constructor(
                             rawToken = sessionState.snapshot.rawToken,
                             targetDate = current.targetLocalDate,
                             preferredAreaName = current.preferredAreaName,
-                            preferredSeatLabel = current.preferredSeatLabel
+                            preferredSeatLabel = current.preferredSeatLabel,
+                            planId = current.id,
+                            planVersion = current.generation
                         )
                     }
                 }
@@ -4062,6 +4068,38 @@ class CampusRepository internal constructor(
                                     outcomeState = "RESULT_UNKNOWN"
                                 )
                             } else {
+                                val checkStillActive: () -> Boolean = {
+                                    val latest = kotlinx.coroutines.runBlocking {
+                                        cloudAndParcelDao.getLibraryBookingPlanById(current.id)
+                                    }
+                                    latest != null &&
+                                        latest.executionMode == current.executionMode &&
+                                        latest.generation == current.generation &&
+                                        latest.status !in setOf(
+                                            "CANCELLED",
+                                            "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                                            "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                                            "NEEDS_RECONFIRMATION"
+                                        )
+                                }
+                                val beforeWriteGuard: () -> Unit = {
+                                    if (!checkStillActive()) {
+                                        throw java.util.concurrent.CancellationException("计划已取消、切换引擎或代次变更，已在学校写入前终止")
+                                    }
+                                }
+                                val onBeforeWriteIntent: () -> Unit = {
+                                    kotlinx.coroutines.runBlocking {
+                                        val latest = cloudAndParcelDao.getLibraryBookingPlanById(current.id) ?: current
+                                        cloudAndParcelDao.upsertLibraryBookingPlan(
+                                            latest.copy(
+                                                status = "EXECUTING",
+                                                fireStatus = "DISPATCH_INTENT",
+                                                stateVersion = latest.stateVersion + 1,
+                                                updatedAtEpochMillis = System.currentTimeMillis()
+                                            )
+                                        )
+                                    }
+                                }
                                 // 若 T-5m (FINAL_CHECK) 已在最近 15 分钟内刷新过 Token，直接使用缓存 Token 零延迟开抢，省去 07:00:00 的在线校验往返
                                 val recentCachedSnap = readCachedLibrarySeatSession()?.takeIf {
                                     it.rawToken.isNotBlank() && (nowEpochMillis - it.updatedAtEpochMs) in 0L..(15 * 60 * 1000L)
@@ -4076,7 +4114,12 @@ class CampusRepository internal constructor(
                                         rawToken = token0,
                                         targetDate = current.targetLocalDate,
                                         preferredAreaName = current.preferredAreaName,
-                                        preferredSeatLabel = current.preferredSeatLabel
+                                        preferredSeatLabel = current.preferredSeatLabel,
+                                        planId = current.id,
+                                        planVersion = current.generation,
+                                        beforeEachWriteCheck = beforeWriteGuard,
+                                        onBeforeExternalWrite = onBeforeWriteIntent,
+                                        isStillActiveForPlan = checkStillActive
                                     )
                                 } else {
                                     null
@@ -4086,6 +4129,18 @@ class CampusRepository internal constructor(
                                 // 若首轮已正常执行（含因未知写结果熔断停止），严禁二次调用 executeAutomatedSeatBooking 造成重复写入
                                 if (firstAttempt != null) {
                                     firstAttempt
+                                } else if (firstAttemptResult?.exceptionOrNull() is java.util.concurrent.CancellationException) {
+                                    AutomatedSeatBookingResult(
+                                        confirmed = false,
+                                        bookingId = current.id,
+                                        seatTitle = "",
+                                        evidenceSha256 = "",
+                                        diagnosticMessage = "已在发起学校预约写入前安全停止本机任务",
+                                        outcomeState = "DELEGATION_STOPPED",
+                                        userIntentState = "STOP_REQUESTED",
+                                        externalExecutionState = "NOT_DISPATCHED",
+                                        billingState = "NOT_BILLED"
+                                    )
                                 } else if (token0.isBlank() || firstAttemptResult?.exceptionOrNull() is LibrarySeatSessionExpiredException) {
                                     val refreshedState = ensureLibrarySeatSession(forceRefresh = true)
                                     val token1 = (refreshedState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken.orEmpty()
@@ -4094,7 +4149,12 @@ class CampusRepository internal constructor(
                                             rawToken = token1,
                                             targetDate = current.targetLocalDate,
                                             preferredAreaName = current.preferredAreaName,
-                                            preferredSeatLabel = current.preferredSeatLabel
+                                            preferredSeatLabel = current.preferredSeatLabel,
+                                            planId = current.id,
+                                            planVersion = current.generation,
+                                            beforeEachWriteCheck = beforeWriteGuard,
+                                            onBeforeExternalWrite = onBeforeWriteIntent,
+                                            isStillActiveForPlan = checkStillActive
                                         ).getOrNull()
                                     } else {
                                         null
@@ -4243,16 +4303,45 @@ class CampusRepository internal constructor(
     suspend fun cancelDualEngineBookingPlan(planId: String) {
         val current = cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: return
         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, planId)
-        if (!current.externalBookingId.isNullOrBlank() || current.status == "CONFIRMED") {
-            runCatching {
+        if (!current.externalBookingId.isNullOrBlank() ||
+            current.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")
+        ) {
+            val cancelRes = runCatching {
                 cancelActiveLibrarySeatBooking(planId = planId, bookingId = current.externalBookingId)
             }
+            if (cancelRes.isFailure) {
+                cloudAndParcelDao.upsertLibraryBookingPlan(
+                    current.copy(
+                        status = "CANCEL_RESULT_UNKNOWN",
+                        stateVersion = current.stateVersion + 1,
+                        lastDiagnosticMessage = "已请求取消预约，但学校端退座结果待核对（核实前不宣称已释放座位）",
+                        updatedAtEpochMillis = System.currentTimeMillis()
+                    )
+                )
+                repoScope.launch { runCatching { syncWithCampusCloud() } }
+                return
+            }
+        }
+        // 若请求正在派发中或结果未知，仅标记已请求停止委托并保留待核对状态，绝不直接覆盖为 CANCELLED 抹去在途请求事实
+        if (current.status in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") ||
+            current.fireStatus == "DISPATCH_INTENT"
+        ) {
+            cloudAndParcelDao.upsertLibraryBookingPlan(
+                current.copy(
+                    status = "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                    stateVersion = current.stateVersion + 1,
+                    lastDiagnosticMessage = "委托已停止，但此前已发出的抢座请求正在执行或结果待核对",
+                    updatedAtEpochMillis = System.currentTimeMillis()
+                )
+            )
+            repoScope.launch { runCatching { syncWithCampusCloud() } }
+            return
         }
         cloudAndParcelDao.upsertLibraryBookingPlan(
             current.copy(
                 status = "CANCELLED",
                 stateVersion = current.stateVersion + 1,
-                lastDiagnosticMessage = "用户已取消该预约计划并释放座位",
+                lastDiagnosticMessage = "已停止委托并取消排队中的预约计划",
                 updatedAtEpochMillis = System.currentTimeMillis()
             )
         )
@@ -4295,7 +4384,7 @@ class CampusRepository internal constructor(
                 LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
                 cloudAndParcelDao.upsertLibraryBookingPlan(
                     plan.copy(
-                        status = "CANCELLED",
+                        status = "SCHOOL_CANCELLED",
                         stateVersion = plan.stateVersion + 1,
                         lastDiagnosticMessage = msg,
                         updatedAtEpochMillis = System.currentTimeMillis()
@@ -4307,9 +4396,25 @@ class CampusRepository internal constructor(
     }
 
     suspend fun rescheduleActiveLocalBookingPlans() {
+        val now = System.currentTimeMillis()
         val all = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
         for (plan in all) {
-            if (plan.status !in setOf("CONFIRMED", "FAILED", "CANCELLED", "EXPIRED")) {
+            // 崩溃恢复：若进程中断前计划处于 EXECUTING 或 DISPATCH_INTENT，立即恢复为 RESULT_UNKNOWN 并取消重复闹钟
+            if (plan.status == "EXECUTING" || plan.fireStatus == "DISPATCH_INTENT") {
+                LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
+                cloudAndParcelDao.upsertLibraryBookingPlan(
+                    plan.copy(
+                        status = "RESULT_UNKNOWN",
+                        fireStatus = "RESULT_UNKNOWN",
+                        remainingDays = 0,
+                        stateVersion = plan.stateVersion + 1,
+                        lastDiagnosticMessage = "进程中断恢复：此前抢座请求可能已发出，已转入结果待核对状态（禁止重复提交）",
+                        updatedAtEpochMillis = now
+                    )
+                )
+                continue
+            }
+            if (plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
                 LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan)
             }
         }

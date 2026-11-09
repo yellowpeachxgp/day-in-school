@@ -1204,6 +1204,9 @@ object HautLibrarySeatAuthClient {
      * 4. 再次调用 `/seatbook/user/my/crrentbooking` 确认选座结果。
      */
     data class PrewarmedSeatTargetCacheEntry(
+        val accountScope: String,
+        val planId: String,
+        val planVersion: Int,
         val regionId: Long,
         val regionName: String,
         val startFull: String,
@@ -1212,34 +1215,64 @@ object HautLibrarySeatAuthClient {
         val prewarmedAtEpochMs: Long
     )
 
+    private const val MAX_PREWARM_TTL_MS = 35 * 60 * 1000L
+
     private val prewarmedTargetsCache =
         java.util.concurrent.ConcurrentHashMap<String, PrewarmedSeatTargetCacheEntry>()
 
-    private fun buildPrewarmCacheKey(
+    private fun computeTokenScopeDigest(cleanToken: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256")
+            .digest(cleanToken.trim().toByteArray(StandardCharsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
+    internal fun buildPrewarmCacheKey(
+        rawToken: String,
         targetDate: String,
         preferredAreaName: String,
-        preferredSeatLabel: String
+        preferredSeatLabel: String,
+        preferredSlotWindow: String? = null,
+        planId: String = "",
+        planVersion: Int = 1
     ): String {
+        val cleanToken = normalizeRawToken(rawToken)
+        val accountScope = if (cleanToken.isBlank()) "anon" else computeTokenScopeDigest(cleanToken)
         val normSeats = preferredSeatLabel
             .split(",", "，", "、", "/", "|", ";", "；")
             .map { it.trim().removeSuffix("号座").removeSuffix("号") }
             .filter { it.isNotEmpty() }
             .joinToString(",")
-        return "${targetDate.trim()}|${preferredAreaName.trim()}|$normSeats"
+        val normSlot = preferredSlotWindow?.trim().orEmpty()
+        return "$accountScope|${planId.trim()}|v$planVersion|${targetDate.trim()}|${preferredAreaName.trim()}|$normSeats|$normSlot"
+    }
+
+    internal fun clearPrewarmedTargetsCacheForTest() {
+        prewarmedTargetsCache.clear()
     }
 
     /**
      * 在 T-30m (PRECHECK)、T-5m (FINAL_CHECK) 或创建预约计划时提前解析并缓存目标自习室 `regionId` 与候选座位 `seatId`，
-     * 避免在 07:00:00 早高峰开抢瞬间串行发起 8~10 次查询请求造成 40~50 秒延迟。
+     * 按账号、计划版本、日期、区域、时段严格隔离，并在刷新失败或候选为空时自动失效旧缓存。
      */
     suspend fun prewarmAutomatedSeatTargets(
         rawToken: String,
         targetDate: String,
         preferredAreaName: String,
         preferredSeatLabel: String,
-        preferredSlotWindow: String? = null
+        preferredSlotWindow: String? = null,
+        planId: String = "",
+        planVersion: Int = 1
     ): PrewarmedSeatTargetCacheEntry? = withContext(Dispatchers.IO) {
-        runCatching {
+        val cacheKey = buildPrewarmCacheKey(
+            rawToken = rawToken,
+            targetDate = targetDate,
+            preferredAreaName = preferredAreaName,
+            preferredSeatLabel = preferredSeatLabel,
+            preferredSlotWindow = preferredSlotWindow,
+            planId = planId,
+            planVersion = planVersion
+        )
+        val entry = runCatching {
             val cleanToken = normalizeRawToken(rawToken)
             if (cleanToken.isBlank() || targetDate.isBlank()) return@runCatching null
             val candidateSeatNames = preferredSeatLabel
@@ -1284,7 +1317,10 @@ object HautLibrarySeatAuthClient {
             val distinctCandidates = orderedCandidates.distinctBy { it.id }.take(5)
             if (distinctCandidates.isEmpty()) return@runCatching null
 
-            val entry = PrewarmedSeatTargetCacheEntry(
+            PrewarmedSeatTargetCacheEntry(
+                accountScope = computeTokenScopeDigest(cleanToken),
+                planId = planId.trim(),
+                planVersion = planVersion,
                 regionId = matchedRegion.id,
                 regionName = matchedRegion.regionName,
                 startFull = expectedStartFull,
@@ -1292,26 +1328,32 @@ object HautLibrarySeatAuthClient {
                 candidateSeats = distinctCandidates,
                 prewarmedAtEpochMs = System.currentTimeMillis()
             )
-            prewarmedTargetsCache[buildPrewarmCacheKey(targetDate, preferredAreaName, preferredSeatLabel)] = entry
-            entry
         }.getOrNull()
+
+        if (entry != null) {
+            prewarmedTargetsCache[cacheKey] = entry
+        } else {
+            // 刷新失败或候选为空时立即使旧缓存失效
+            prewarmedTargetsCache.remove(cacheKey)
+        }
+        entry
     }
 
     /**
      * 执行自动选座并核实结果。
-     *
-     * 流程：
-     * 1. 若已在 T-30m / T-5m 预热缓存了目标自习室 `regionId` 与候选 `seatId`（且处于早高峰开抢窗口），直接以零前置查询进入极速选座通道；
-     * 2. 否则自动根据所选自习室 (`preferredAreaName`) 与座位号 (`preferredSeatLabel`) 查询真实 `regionId`、开放时段及下属空闲 `seatId`；
-     * 3. 严格按首选、备选顺序向 `/seatbook/user/addbooking?channel=1003&seatid=...&starttime=...&endtime=...` 提交选座（首选仅在已被他人占用时才顺延备选，1122 临时锁等待解锁重试首选）；
-     * 4. 再次调用 `/seatbook/user/my/crrentbooking` 确认选座结果。
      */
     suspend fun executeAutomatedSeatBooking(
         rawToken: String,
         targetDate: String,
         preferredAreaName: String,
         preferredSeatLabel: String,
-        preferredSlotWindow: String? = null
+        preferredSlotWindow: String? = null,
+        planId: String = "",
+        planVersion: Int = 1,
+        beforeEachWriteCheck: (() -> Unit)? = null,
+        onBeforeExternalWrite: (() -> Unit)? = null,
+        onAfterExternalWrite: ((Boolean, Long?) -> Unit)? = null,
+        isStillActiveForPlan: (() -> Boolean)? = null
     ): Result<AutomatedSeatBookingResult> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanToken = normalizeRawToken(rawToken)
@@ -1322,16 +1364,30 @@ object HautLibrarySeatAuthClient {
                 .map { it.trim().removeSuffix("号座").removeSuffix("号") }
                 .filter { it.isNotEmpty() }
 
+            val nowEpochMs = System.currentTimeMillis()
             val nowShTime = java.time.ZonedDateTime.now(ZoneId.of("Asia/Shanghai")).toLocalTime()
             val isMorningOpeningWindow = nowShTime.hour == 7 && nowShTime.minute < 20
-            val cachedPrewarm = prewarmedTargetsCache[
-                buildPrewarmCacheKey(targetDate, preferredAreaName, preferredSeatLabel)
-            ]?.takeIf { it.candidateSeats.isNotEmpty() }
+            val cacheKey = buildPrewarmCacheKey(
+                rawToken = cleanToken,
+                targetDate = targetDate,
+                preferredAreaName = preferredAreaName,
+                preferredSeatLabel = preferredSeatLabel,
+                preferredSlotWindow = preferredSlotWindow,
+                planId = planId,
+                planVersion = planVersion
+            )
+            val cachedPrewarm = prewarmedTargetsCache[cacheKey]?.takeIf { entry ->
+                entry.candidateSeats.isNotEmpty() &&
+                    entry.accountScope == computeTokenScopeDigest(cleanToken) &&
+                    entry.planId == planId.trim() &&
+                    entry.planVersion == planVersion &&
+                    (nowEpochMs - entry.prewarmedAtEpochMs) in 0L..MAX_PREWARM_TTL_MS
+            }
 
             val matchedRegion: LibraryStudyRegionItem?
             val expectedStartFull: String
             val expectedEndFull: String
-            var preOverview: LibrarySeatOverviewSnapshot? = null
+            val preOverview: LibrarySeatOverviewSnapshot?
 
             if (cachedPrewarm != null && isMorningOpeningWindow) {
                 matchedRegion = LibraryStudyRegionItem(
@@ -1346,6 +1402,7 @@ object HautLibrarySeatAuthClient {
                 )
                 expectedStartFull = s
                 expectedEndFull = e
+                preOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
             } else {
                 // 1. 先解析实时区域列表与期望预约起止时段（用户显式指定时段优先于学校默认开放时段），供预检、写后核验与历史回退统一约束
                 val regions = fetchLibraryStudyRegions(cleanToken, targetDate).getOrNull().orEmpty()
@@ -1369,51 +1426,51 @@ object HautLibrarySeatAuthClient {
                 )
                 expectedStartFull = s
                 expectedEndFull = e
-
                 preOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
-                val preActiveList = (listOfNotNull(preOverview?.currentBooking) + preOverview?.inProgressBookings.orEmpty())
-                    .filter { it.isActive }
-                    .distinctBy { it.bookingId }
-                val matchingPreActive = preActiveList.firstOrNull {
-                    isBookingRecordMatchingTarget(
-                        record = it,
-                        targetDate = targetDate,
-                        preferredAreaName = matchedRegion?.regionName?.ifBlank { preferredAreaName } ?: preferredAreaName,
-                        candidateSeatNames = candidateSeatNames,
-                        expectedStartFull = expectedStartFull,
-                        expectedEndFull = expectedEndFull,
-                        expectedRegionId = matchedRegion?.id
-                    )
-                }
-                if (matchingPreActive != null) {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                        .digest("haut_active_${matchingPreActive.bookingId}_${matchingPreActive.seatName}".toByteArray(StandardCharsets.UTF_8))
-                        .joinToString("") { "%02x".format(it) }
-                    return@runCatching AutomatedSeatBookingResult(
-                        confirmed = true,
-                        bookingId = matchingPreActive.bookingId.toString(),
-                        seatTitle = matchingPreActive.displaySeatTitle,
-                        evidenceSha256 = digest,
-                        diagnosticMessage = "您已有生效中的目标座位：${matchingPreActive.displaySeatTitle}（时段 ${matchingPreActive.timeWindowText}）",
-                        outcomeState = "CONFIRMED"
-                    )
-                }
-                val sameDayUnrelatedPreActive = preActiveList.firstOrNull {
-                    targetDate.isNotBlank() && it.startDate.trim().startsWith(targetDate.trim())
-                }
-                if (sameDayUnrelatedPreActive != null) {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                        .digest("haut_unrelated_${sameDayUnrelatedPreActive.bookingId}_${sameDayUnrelatedPreActive.seatName}".toByteArray(StandardCharsets.UTF_8))
-                        .joinToString("") { "%02x".format(it) }
-                    return@runCatching AutomatedSeatBookingResult(
-                        confirmed = false,
-                        bookingId = sameDayUnrelatedPreActive.bookingId.toString(),
-                        seatTitle = sameDayUnrelatedPreActive.displaySeatTitle,
-                        evidenceSha256 = digest,
-                        diagnosticMessage = "当前账号在该日期已有其他非目标座位预约（${sameDayUnrelatedPreActive.displaySeatTitle}），已停止抢座",
-                        outcomeState = "FAILED"
-                    )
-                }
+            }
+
+            val preActiveList = (listOfNotNull(preOverview?.currentBooking) + preOverview?.inProgressBookings.orEmpty())
+                .filter { it.isActive }
+                .distinctBy { it.bookingId }
+            val matchingPreActive = preActiveList.firstOrNull {
+                isBookingRecordMatchingTarget(
+                    record = it,
+                    targetDate = targetDate,
+                    preferredAreaName = matchedRegion?.regionName?.ifBlank { preferredAreaName } ?: preferredAreaName,
+                    candidateSeatNames = candidateSeatNames,
+                    expectedStartFull = expectedStartFull,
+                    expectedEndFull = expectedEndFull,
+                    expectedRegionId = matchedRegion?.id
+                )
+            }
+            if (matchingPreActive != null) {
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest("haut_active_${matchingPreActive.bookingId}_${matchingPreActive.seatName}".toByteArray(StandardCharsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }
+                return@runCatching AutomatedSeatBookingResult(
+                    confirmed = true,
+                    bookingId = matchingPreActive.bookingId.toString(),
+                    seatTitle = matchingPreActive.displaySeatTitle,
+                    evidenceSha256 = digest,
+                    diagnosticMessage = "您已有生效中的目标座位：${matchingPreActive.displaySeatTitle}（时段 ${matchingPreActive.timeWindowText}）",
+                    outcomeState = "CONFIRMED"
+                )
+            }
+            val sameDayUnrelatedPreActive = preActiveList.firstOrNull {
+                targetDate.isNotBlank() && it.startDate.trim().startsWith(targetDate.trim())
+            }
+            if (sameDayUnrelatedPreActive != null) {
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest("haut_unrelated_${sameDayUnrelatedPreActive.bookingId}_${sameDayUnrelatedPreActive.seatName}".toByteArray(StandardCharsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }
+                return@runCatching AutomatedSeatBookingResult(
+                    confirmed = false,
+                    bookingId = sameDayUnrelatedPreActive.bookingId.toString(),
+                    seatTitle = sameDayUnrelatedPreActive.displaySeatTitle,
+                    evidenceSha256 = digest,
+                    diagnosticMessage = "当前账号在该日期已有其他非目标座位预约（${sameDayUnrelatedPreActive.displaySeatTitle}），已停止抢座",
+                    outcomeState = "FAILED"
+                )
             }
 
             var apiRawMessage = ""
@@ -1495,15 +1552,48 @@ object HautLibrarySeatAuthClient {
                                 hasLockedCandidate = true
                                 break
                             }
+                            beforeEachWriteCheck?.invoke()
+                            onBeforeExternalWrite?.invoke()
                             val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=${seat.id}&starttime=$encodedStart&endtime=$encodedEnd"
                             val respText = try {
                                 executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
                             } catch (authEx: LibrarySeatSessionExpiredException) {
+                                onAfterExternalWrite?.invoke(false, null)
                                 throw authEx
                             } catch (_: Exception) {
                                 ""
                             }
                             val respObj = runCatching { JSONObject(respText) }.getOrNull()
+                            val returnedIdImmediate = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
+                            onAfterExternalWrite?.invoke(true, returnedIdImmediate)
+
+                            // 若写请求发出后，用户在在途期间取消了计划或停止了委托，不得丢弃学校已返回的预约 ID 或未知状态
+                            val stillActiveAfterWrite = isStillActiveForPlan?.invoke() ?: true
+                            if (!stillActiveAfterWrite) {
+                                val codeAfterStop = respObj?.optInt("code", -1) ?: -1
+                                if (codeAfterStop == 200 && returnedIdImmediate != null) {
+                                    val digest = MessageDigest.getInstance("SHA-256")
+                                        .digest("haut_stopped_confirmed_${returnedIdImmediate}_${seat.seatName}".toByteArray(StandardCharsets.UTF_8))
+                                        .joinToString("") { "%02x".format(it) }
+                                    return@runCatching AutomatedSeatBookingResult(
+                                        confirmed = false,
+                                        bookingId = returnedIdImmediate.toString(),
+                                        seatTitle = "${matchedRegion.regionName} ${seat.seatName}",
+                                        evidenceSha256 = digest,
+                                        diagnosticMessage = "委托已停止，但学校预约已成功（座位：${matchedRegion.regionName} ${seat.seatName}，预约号：$returnedIdImmediate）",
+                                        outcomeState = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                                        userIntentState = "STOP_REQUESTED",
+                                        externalExecutionState = "SCHOOL_CONFIRMED",
+                                        schoolCancellationState = "MANUAL_ACTION_REQUIRED",
+                                        billingState = "NOT_BILLED"
+                                    )
+                                }
+                                unknownWriteStopped = true
+                                resultIsUnknown = true
+                                apiRawMessage = "委托已停止，但此前已发出的学校预约请求结果待核对"
+                                break
+                            }
+
                             if (respObj == null || !respObj.has("code")) {
                                 // 写请求结果未知：执行一次严格按目标座位与日期的只读回查，若未确认或回查失败则立即停止所有后续写入与重试
                                 unknownWriteStopped = true
@@ -1541,7 +1631,7 @@ object HautLibrarySeatAuthClient {
                             apiRawMessage = translateWslibDiagnosticMessage(rawMsg)
                             if (code == 200) {
                                 unknownWriteStopped = true
-                                val returnedId = respObj.optLong("bookingid", -1L).takeIf { it > 0L }
+                                val returnedId = returnedIdImmediate
                                 bookedIdFromApi = returnedId
                                 val rbOverview = fetchSeatBookingOverview(cleanToken).getOrNull()
                                 val rbActiveList = (listOfNotNull(rbOverview?.currentBooking) + rbOverview?.inProgressBookings.orEmpty())
@@ -1669,14 +1759,26 @@ object HautLibrarySeatAuthClient {
 
                 val targetSeatId = matchedHistorical?.seatId
                 if (targetSeatId != null && targetSeatId > 0L) {
+                    beforeEachWriteCheck?.invoke()
+                    onBeforeExternalWrite?.invoke()
                     val fallbackStartFull = expectedStartFull
                     val fallbackEndFull = expectedEndFull
                     val bookingUrl = "$WSLIB_API_BASE_URL/seatbook/user/addbooking?channel=1003&seatid=$targetSeatId&starttime=${URLEncoder.encode(fallbackStartFull, "UTF-8")}&endtime=${URLEncoder.encode(fallbackEndFull, "UTF-8")}"
-                    val respText = runCatching {
+                    val respText = try {
                         executeAuthenticatedApiGet(url = bookingUrl, cleanToken = cleanToken)
-                    }.getOrDefault("")
+                    } catch (authEx: LibrarySeatSessionExpiredException) {
+                        onAfterExternalWrite?.invoke(false, null)
+                        throw authEx
+                    } catch (_: Exception) {
+                        ""
+                    }
                     val respObj = runCatching { JSONObject(respText) }.getOrNull()
+                    if (respObj?.optInt("code", -1) == 401) {
+                        onAfterExternalWrite?.invoke(false, null)
+                        throw LibrarySeatSessionExpiredException()
+                    }
                     val returnedId = respObj?.optLong("bookingid", -1L)?.takeIf { it > 0L }
+                    onAfterExternalWrite?.invoke(true, returnedId)
                     if (apiRawMessage.isBlank()) {
                         apiRawMessage = translateWslibDiagnosticMessage(respObj?.optString("msg").orEmpty())
                     }
