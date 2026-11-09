@@ -58,19 +58,6 @@ internal class AccountDatabaseFactory(private val context: Context) {
                     MIGRATION_5_6,
                     MIGRATION_6_7
                 )
-                .addCallback(
-                    object : RoomDatabase.Callback() {
-                        override fun onOpen(db: SupportSQLiteDatabase) {
-                            super.onOpen(db)
-                            runCatching {
-                                db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `repeatDays` INTEGER NOT NULL DEFAULT 1")
-                            }
-                            runCatching {
-                                db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `remainingDays` INTEGER NOT NULL DEFAULT 1")
-                            }
-                        }
-                    }
-                )
                 .build()
             val preferences = PreferenceDataStoreFactory.create(
                 produceFile = { context.preferencesDataStoreFile(profile.preferencesName) }

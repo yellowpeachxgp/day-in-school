@@ -341,5 +341,96 @@ class BookingDispatchExclusiveClaimDaoTest {
 
         val storedJsonAfterSwitchToB = testDataStore.data.first()[rawMomentsKey].orEmpty()
         org.junit.Assert.assertFalse(storedJsonAfterSwitchToB.contains("secret_wx_for_account_A"))
+
+        // 4. Unlink cloud account MUST preserve DELEGATION_STOPPED_SCHOOL_CONFIRMED & RESULT_UNKNOWN (never overwrite to CANCELLED!),
+        //    MANUAL_REMINDER fires as REMINDER_SENT (never CONFIRMED), and wipeAllPersonalData clears Moments cache completely!
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_cloud_stopped_confirmed",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-15",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "05桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_real_uuid_01",
+                externalBookingId = "88776655",
+                evidenceSha256 = "sha256_proof",
+                priceMicropeach = 10_000L,
+                paymentState = "HELD_PENDING_REVIEW",
+                status = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                stateVersion = 3,
+                generation = 1,
+                lastDiagnosticMessage = "委托已停但学校已约成功",
+                createdAtEpochMillis = 500L,
+                updatedAtEpochMillis = 3_000L,
+                repeatDays = 1,
+                remainingDays = 0
+            )
+        )
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_manual_reminder_01",
+                schoolId = "haut",
+                executionMode = "MANUAL_REMINDER",
+                targetLocalDate = "2026-11-16",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "01桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "ARMED",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = null,
+                createdAtEpochMillis = 500L,
+                updatedAtEpochMillis = 500L
+            )
+        )
+
+        repo.unlinkXpeachCloudAccountAndRevokeCloudPlans()
+        val stoppedAfterUnlink = dao.getLibraryBookingPlanById("plan_cloud_stopped_confirmed")!!
+        assertEquals("DELEGATION_STOPPED_SCHOOL_CONFIRMED", stoppedAfterUnlink.status)
+        assertEquals("88776655", stoppedAfterUnlink.externalBookingId)
+
+        // Same-day duplicate booking on 2026-11-15 is STILL blocked after unlink!
+        val dupSameDay = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 15),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "02桌 B座"
+        )
+        org.junit.Assert.assertTrue(dupSameDay.isFailure)
+
+        // MANUAL_REMINDER fires as REMINDER_SENT, NOT CONFIRMED!
+        val firedReminder = repo.advanceBookingPlanStage(
+            planId = "plan_manual_reminder_01",
+            stage = cn.edu.haut.campus.core.campusservices.TripleScheduleStage.FIRE
+        ).getOrThrow()
+        assertEquals("REMINDER_SENT", firedReminder.status)
+
+        // Wipe removes all Moments snapshot & personal keys from DataStore
+        repo.wipeAllPersonalData()
+        org.junit.Assert.assertEquals(null, testDataStore.data.first()[rawMomentsKey])
     }
 }

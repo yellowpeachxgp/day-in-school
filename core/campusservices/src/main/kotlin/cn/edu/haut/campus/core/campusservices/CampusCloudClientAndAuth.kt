@@ -1086,25 +1086,6 @@ object CampusCloudOidcHelper {
                     bearerToken = accessToken
                 )
             }
-            recordScopedAuthMetadata(
-                cloudBaseUrl = cleanBase,
-                accessToken = accessToken,
-                schoolId = "haut",
-                studentNo = studentNo,
-                authVersion = consentAuthVer,
-                bindingId = bindId,
-                consentId = consentId,
-                confirmedByClientAction = true
-            )
-            recordScopedPlanProvenance(
-                cloudBaseUrl = cleanBase,
-                accessToken = accessToken,
-                planId = planIdempotencyKey,
-                studentNo = studentNo,
-                authVersion = consentAuthVer.coerceAtLeast(1),
-                bindingId = bindId,
-                consentId = consentId
-            )
             val localTime = targetExecuteAtIso.trim().let { raw ->
                 when {
                     raw.matches(Regex("^\\d{2}:\\d{2}:\\d{2}$")) -> raw
@@ -1150,9 +1131,35 @@ object CampusCloudOidcHelper {
                 bearerToken = accessToken,
                 extraHeaders = mapOf("Idempotency-Key" to planIdempotencyKey)
             )
-            val planData = JSONObject(planRaw).optJSONObject("data")
-            planData?.optString("job_id")?.takeIf { it.isNotBlank() }
-                ?: planData?.optString("plan_id")
+            val planRoot = JSONObject(planRaw)
+            if (!planRoot.optBoolean("ok", false)) {
+                return@runCatching null
+            }
+            val planData = planRoot.optJSONObject("data") ?: return@runCatching null
+            val resolvedRemoteId = planData.optString("job_id").takeIf { it.isNotBlank() }
+                ?: planData.optString("plan_id").takeIf { it.isNotBlank() }
+                ?: return@runCatching null
+
+            recordScopedAuthMetadata(
+                cloudBaseUrl = cleanBase,
+                accessToken = accessToken,
+                schoolId = "haut",
+                studentNo = studentNo,
+                authVersion = consentAuthVer,
+                bindingId = bindId,
+                consentId = consentId,
+                confirmedByClientAction = true
+            )
+            recordScopedPlanProvenance(
+                cloudBaseUrl = cleanBase,
+                accessToken = accessToken,
+                planId = planIdempotencyKey,
+                studentNo = studentNo,
+                authVersion = consentAuthVer.coerceAtLeast(1),
+                bindingId = bindId,
+                consentId = consentId
+            )
+            resolvedRemoteId
         }.getOrNull()
     }
 
@@ -1487,20 +1494,49 @@ object CampusCloudOidcHelper {
         BLOCKED_OFFLINE_UNCOORDINATED
     }
 
+    data class EngineSwitchCloudCheckResult(
+        val outcome: EngineSwitchCloudCheckOutcome,
+        val reason: String,
+        val resolvedStatus: String = "CANCELLED",
+        val externalBookingId: String? = null,
+        val evidenceSha256: String? = null,
+        val bookedSeatAlias: String? = null,
+        val bookedRegionAlias: String? = null
+    )
+
+    fun logoutAllCloudSessions(
+        accessToken: String,
+        unlinkXpeach: Boolean = true,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Boolean {
+        if (accessToken.isBlank()) return false
+        return runCatching {
+            val cleanBase = cloudBaseUrl.trimEnd('/')
+            val raw = httpJsonRequest(
+                method = "POST",
+                url = "$cleanBase/api/v1/auth/logout-all",
+                bodyJson = JSONObject().put("unlink_xpeach", unlinkXpeach).toString(),
+                bearerToken = accessToken
+            )
+            JSONObject(raw).optBoolean("ok", false)
+        }.getOrDefault(false)
+    }
+
     /**
-     * 在从云端抢座切换为本机抢座前，先向云端停止旧计划/任务并核实是否已有在途或已完成的学校预约请求。
-     * 若离线无法与云端协调，或云端任务已进入派发/待核对/已确认状态，则拒绝切换以防止本机与云端重复预约。
+     * 在从云端抢座切换为本机抢座前，先向云端查询该日期关联的真实任务与计划 ID、执行停止并复核是否已有在途或已完成的学校预约请求。
      */
-    fun coordinateStopCloudJobBeforeEngineSwitch(
+    fun coordinateStopCloudJobBeforeEngineSwitchDetailed(
         accessToken: String,
         cloudJobId: String?,
         planId: String,
         targetLocalDate: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
-    ): Pair<EngineSwitchCloudCheckOutcome, String> {
+    ): EngineSwitchCloudCheckResult {
         if (accessToken.isBlank()) {
-            return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
-                "当前未连接云端会话，无法核实并停止已排队的云端任务；为避免本机与云端重复预约，已阻止自动切换，请联网核实后再操作"
+            return EngineSwitchCloudCheckResult(
+                outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                reason = "当前未连接云端会话，无法核实并停止已排队的云端任务；为避免本机与云端重复预约，已阻止自动切换，请联网核实后再操作"
+            )
         }
         return try {
             val cleanBase = cloudBaseUrl.trimEnd('/')
@@ -1515,57 +1551,150 @@ object CampusCloudOidcHelper {
                     )
                 }
             }
-            if (planId.isNotBlank()) {
-                runCatching {
-                    httpJsonRequest(
-                        method = "DELETE",
-                        url = "$cleanBase/api/v1/reservation-plans/${planId.removePrefix("plan_")}",
-                        bodyJson = null,
-                        bearerToken = accessToken
-                    )
-                }
-            }
-            val snapRaw = httpJsonRequest(
+            val firstSnapRaw = httpJsonRequest(
                 method = "GET",
                 url = "$cleanBase/api/v1/sync/snapshot",
                 bodyJson = null,
                 bearerToken = accessToken
             )
-            val root = JSONObject(snapRaw)
-            if (!root.optBoolean("ok", false)) {
-                return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
-                    "无法从云端核实当前任务状态，不能确保云端未发起预约，已阻止切换为本机抢座"
+            val firstRoot = JSONObject(firstSnapRaw)
+            if (!firstRoot.optBoolean("ok", false)) {
+                return EngineSwitchCloudCheckResult(
+                    outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                    reason = "无法从云端核实当前任务状态，不能确保云端未发起预约，已阻止切换为本机抢座"
+                )
             }
-            val data = root.optJSONObject("data") ?: JSONObject()
-            val jobsArr = data.optJSONArray("reservation_jobs") ?: JSONArray()
-            for (i in 0 until jobsArr.length()) {
-                val j = jobsArr.optJSONObject(i) ?: continue
+            val firstData = firstRoot.optJSONObject("data") ?: JSONObject()
+            val firstJobs = firstData.optJSONArray("reservation_jobs") ?: JSONArray()
+            var needsFollowUpSnapshot = false
+            for (i in 0 until firstJobs.length()) {
+                val j = firstJobs.optJSONObject(i) ?: continue
                 val jId = j.optCleanString("id")
+                val remotePlanId = j.optCleanString("plan_id")
                 val jDate = j.optCleanString("booking_local_date")
-                if ((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate) {
-                    val st = j.optCleanString("state", "ARMED")
-                    val extExec = j.optCleanString("external_execution_state", "NOT_DISPATCHED")
-                    if (extExec == "SCHOOL_CONFIRMED" || st in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")) {
-                        return EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED to
-                            "云端或另一台设备已完成该日期的学校座位预约，无需再切换为本机重复预约"
+                val st = j.optCleanString("state", "ARMED")
+                if (((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate) &&
+                    st in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "NEEDS_RECONFIRMATION")
+                ) {
+                    if (jId.isNotBlank()) {
+                        runCatching {
+                            httpJsonRequest(
+                                method = "POST",
+                                url = "$cleanBase/api/v1/reservation-jobs/$jId/cancel",
+                                bodyJson = "{}",
+                                bearerToken = accessToken
+                            )
+                        }
+                        needsFollowUpSnapshot = true
                     }
-                    if (extExec in setOf("DISPATCH_INTENT", "RESULT_UNKNOWN") ||
-                        st in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN")
-                    ) {
-                        return EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN to
-                            "云端抢座请求已发出或结果待核对，为避免本机与云端重复预约，已阻止切换至本机引擎"
-                    }
-                    if (st !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")) {
-                        return EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
-                            "云端排队任务尚未确认停止（状态：$st），已阻止切换以避免重复预约"
+                    if (remotePlanId.isNotBlank()) {
+                        runCatching {
+                            httpJsonRequest(
+                                method = "DELETE",
+                                url = "$cleanBase/api/v1/reservation-plans/$remotePlanId",
+                                bodyJson = null,
+                                bearerToken = accessToken
+                            )
+                        }
+                        needsFollowUpSnapshot = true
                     }
                 }
             }
-            EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED to "已停止云端排队任务并核实无在途请求"
+
+            val finalJobs = if (needsFollowUpSnapshot) {
+                val secondSnapRaw = httpJsonRequest(
+                    method = "GET",
+                    url = "$cleanBase/api/v1/sync/snapshot",
+                    bodyJson = null,
+                    bearerToken = accessToken
+                )
+                val secondRoot = JSONObject(secondSnapRaw)
+                if (!secondRoot.optBoolean("ok", false)) {
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "云端停止指令发出后无法复核最终状态，已阻止切换以避免重复预约"
+                    )
+                }
+                secondRoot.optJSONObject("data")?.optJSONArray("reservation_jobs") ?: JSONArray()
+            } else {
+                firstJobs
+            }
+
+            for (i in 0 until finalJobs.length()) {
+                val j = finalJobs.optJSONObject(i) ?: continue
+                val jId = j.optCleanString("id")
+                val jDate = j.optCleanString("booking_local_date")
+                if ((cleanJobId != null && jId == cleanJobId) || jDate == targetLocalDate) {
+                    val sr = j.optJSONObject("school_reservation") ?: j.optJSONObject("schoolReservation")
+                    val norm = normalizeCloudJobConfirmation(
+                        jobId = jId,
+                        job = j,
+                        sr = sr,
+                        orderObj = null,
+                        defaultStateWhenMissing = "ARMED"
+                    )
+                    if (norm.hasCompleteConfirmedData) {
+                        val resolvedSt = if (norm.isDelegationStopped) "DELEGATION_STOPPED_SCHOOL_CONFIRMED" else "CONFIRMED"
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED,
+                            reason = "云端或另一台设备已完成该日期的学校座位预约（预约号：${norm.verifiedBookingId}），无需再切换为本机重复预约",
+                            resolvedStatus = resolvedSt,
+                            externalBookingId = norm.verifiedBookingId,
+                            evidenceSha256 = norm.evidenceSha256,
+                            bookedSeatAlias = norm.seatAlias,
+                            bookedRegionAlias = norm.regionAlias
+                        )
+                    }
+                    if (norm.externalExecutionState in setOf("DISPATCH_INTENT", "RESULT_UNKNOWN") ||
+                        norm.state in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN", "CANCEL_RESULT_UNKNOWN")
+                    ) {
+                        val resolvedSt = when {
+                            norm.state == "CANCEL_RESULT_UNKNOWN" || norm.schoolCancellationState == "CANCEL_RESULT_UNKNOWN" ->
+                                "CANCEL_RESULT_UNKNOWN"
+                            norm.isDelegationStopped -> "DELEGATION_STOPPED_RESULT_UNKNOWN"
+                            else -> "RESULT_UNKNOWN"
+                        }
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN,
+                            reason = "云端抢座请求已发出或结果待核对（状态：$resolvedSt），为避免本机与云端重复预约，已阻止切换至本机引擎",
+                            resolvedStatus = resolvedSt
+                        )
+                    }
+                    if (norm.state !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")) {
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                            reason = "云端排队任务尚未确认停止（状态：${norm.state}），已阻止切换以避免重复预约"
+                        )
+                    }
+                }
+            }
+            EngineSwitchCloudCheckResult(
+                outcome = EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED,
+                reason = "已停止云端排队任务并核实无在途请求"
+            )
         } catch (_: Exception) {
-            EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED to
-                "当前网络离线或无法与云端协调停止旧任务，不能承诺避免重复预约，已阻止自动切换；请联网核实后再操作"
+            EngineSwitchCloudCheckResult(
+                outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                reason = "当前网络离线或无法与云端协调停止旧任务，不能承诺避免重复预约，已阻止自动切换；请联网核实后再操作"
+            )
         }
+    }
+
+    fun coordinateStopCloudJobBeforeEngineSwitch(
+        accessToken: String,
+        cloudJobId: String?,
+        planId: String,
+        targetLocalDate: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): Pair<EngineSwitchCloudCheckOutcome, String> {
+        val res = coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = accessToken,
+            cloudJobId = cloudJobId,
+            planId = planId,
+            targetLocalDate = targetLocalDate,
+            cloudBaseUrl = cloudBaseUrl
+        )
+        return res.outcome to res.reason
     }
 
     internal fun isCloudSeatCancelConfirmed(raw: String): Boolean {
@@ -2598,8 +2727,10 @@ object CampusCloudOidcHelper {
 
     fun publishMomentsBookToCloud(
         book: MomentsTextbookListing,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null
     ): MomentsTextbookListing? = runCatching {
+        if (bearerToken.isNullOrBlank()) return null
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
             .put("id", book.id)
@@ -2620,7 +2751,7 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/books",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = bearerToken
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -2630,22 +2761,25 @@ object CampusCloudOidcHelper {
     fun mutateMomentsBookOnCloud(
         bookId: String,
         action: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null
     ): Boolean = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val raw = httpJsonRequest(
             method = "POST",
             url = "$cleanBase/api/v1/moments/books/${Uri.encode(bookId)}/action",
             bodyJson = JSONObject().put("action", action).toString(),
-            bearerToken = null
+            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
         )
         JSONObject(raw).optBoolean("ok", false)
     }.getOrDefault(false)
 
     fun upsertAntiLostTagOnCloud(
         tag: AntiLostTagItem,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null
     ): AntiLostTagItem? = runCatching {
+        if (bearerToken.isNullOrBlank()) return null
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
             .put("tag_code", tag.tagCode)
@@ -2661,7 +2795,7 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/anti-lost-tags",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = bearerToken
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -2675,7 +2809,7 @@ object CampusCloudOidcHelper {
         finderContact: String,
         message: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
-    ): AntiLostTagItem? = runCatching {
+    ): Boolean = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
             .put("finder_name", finderName)
@@ -2690,9 +2824,8 @@ object CampusCloudOidcHelper {
             bearerToken = null
         )
         val root = JSONObject(raw)
-        if (!root.optBoolean("ok", false)) return null
-        parseAntiLostTagJson(root.optJSONObject("data") ?: return null)
-    }.getOrNull()
+        root.optBoolean("ok", false)
+    }.getOrDefault(false)
 
     fun parseMomentsSnapshotJsonString(rawJson: String?): CampusMomentsSnapshot? {
         if (rawJson.isNullOrBlank()) return null
@@ -2718,19 +2851,34 @@ object CampusCloudOidcHelper {
                 post.contact
             }
             val safeComments = post.comments.filterNot { isLegacyPrivateMomentsCommentContent(it.content) }
+            val safeMatchedClues = post.matchedClues.map { clue ->
+                if (clue.contact.contains("申请") || clue.contact == cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT) {
+                    clue
+                } else {
+                    clue
+                }
+            }
             post.copy(
                 contact = safeContact,
                 hasProtectedContact = isProtectedContact,
                 comments = safeComments,
+                matchedClues = safeMatchedClues,
                 isOwner = false,
                 canManage = false,
                 canClaimLegacy = false,
                 viewerRole = "GUEST"
             )
         }
+        val scrubbedBooks = snapshot.bookListings.map { book ->
+            book.copy(isOwner = false, canManage = false)
+        }
         return snapshot.copy(
             posts = scrubbedPosts,
-            myPostIds = emptySet()
+            bookListings = scrubbedBooks,
+            antiLostTags = emptyList(),
+            myPostIds = emptySet(),
+            myBookIds = emptySet(),
+            myTagCodes = emptySet()
         )
     }
 
@@ -2801,6 +2949,8 @@ object CampusCloudOidcHelper {
                     .put("seller_name", b.sellerName)
                     .put("status", b.status)
                     .put("likes_count", b.likesCount)
+                    .put("is_owner", b.isOwner)
+                    .put("can_manage", b.canManage)
                     .put("created_at", b.createdAt)
             )
         }
@@ -2831,12 +2981,28 @@ object CampusCloudOidcHelper {
                     .put("owner_contact", t.ownerContact)
                     .put("return_note", t.returnNote)
                     .put("status", t.status)
+                    .put("is_owner", t.isOwner)
+                    .put("can_manage", t.canManage)
                     .put("reports", repArr)
                     .put("created_at", t.createdAt)
                     .put("updated_at", t.updatedAt)
             )
         }
         root.put("anti_lost_tags", tagsArr)
+
+        val isbnArr = JSONArray()
+        for (entry in snapshot.isbnCatalog) {
+            isbnArr.put(
+                JSONObject()
+                    .put("isbn", entry.isbn)
+                    .put("title", entry.title)
+                    .put("author_publisher", entry.authorPublisher)
+                    .put("course_name", entry.courseName)
+                    .put("major_track", entry.majorTrack.name)
+                    .put("original_price_yuan", entry.originalPriceYuan)
+            )
+        }
+        root.put("isbn_catalog", isbnArr)
         return root.toString()
     }
 
@@ -2941,6 +3107,8 @@ object CampusCloudOidcHelper {
         val id = obj.optCleanString("id")
         val title = obj.optCleanString("title")
         if (id.isEmpty() || title.isEmpty()) return null
+        val isOwner = obj.optBoolean("is_owner", false)
+        val canManage = obj.optBoolean("can_manage", isOwner)
         return MomentsTextbookListing(
             id = id,
             title = title,
@@ -2957,7 +3125,9 @@ object CampusCloudOidcHelper {
             sellerName = obj.optCleanString("seller_name", "河工大同学"),
             status = obj.optCleanString("status", "AVAILABLE"),
             likesCount = obj.optInt("likes_count", 0).coerceAtLeast(0),
-            createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" }
+            createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" },
+            isOwner = isOwner,
+            canManage = canManage
         )
     }
 
@@ -2965,6 +3135,8 @@ object CampusCloudOidcHelper {
         val tagCode = obj.optCleanString("tag_code").uppercase()
         val itemName = obj.optCleanString("item_name")
         if (tagCode.isEmpty() || itemName.isEmpty()) return null
+        val isOwner = obj.optBoolean("is_owner", true)
+        val canManage = obj.optBoolean("can_manage", isOwner)
         val repArr = obj.optJSONArray("reports")
         val reports = buildList {
             if (repArr != null) {
@@ -2997,7 +3169,9 @@ object CampusCloudOidcHelper {
             status = obj.optCleanString("status", "NORMAL"),
             reports = reports,
             createdAt = obj.optCleanString("created_at").substringBefore("T").ifBlank { "今天" },
-            updatedAt = obj.optCleanString("updated_at")
+            updatedAt = obj.optCleanString("updated_at"),
+            isOwner = isOwner,
+            canManage = canManage
         )
     }
 

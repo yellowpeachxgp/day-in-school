@@ -60,6 +60,26 @@ class UniversalDatabaseMigrationTest {
     @Test
     fun `从 v6 升级到 v7 正常校验 identityHash 并为 library_booking_plans 补齐连续抢座字段`() {
         createVersionSixDatabase()
+        SQLiteDatabase.openDatabase(context.getDatabasePath(databaseName).path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.execSQL(
+                """
+                INSERT INTO `library_booking_plans` VALUES (
+                    'plan_v6_armed', 'haut', 'LOCAL_DEVICE', '2026-11-12', '07:00:00', 'Asia/Shanghai',
+                    1000, 2000, 3000, 'ARMED', 'ARMED', 'ARMED', '五层中区', '05桌 A座', 1,
+                    NULL, NULL, NULL, 0, 'NOT_REQUIRED', 'ARMED', 1, 1, 'v6 armed', 500, 500
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                INSERT INTO `library_booking_plans` VALUES (
+                    'plan_v6_confirmed', 'haut', 'LOCAL_DEVICE', '2026-11-11', '07:00:00', 'Asia/Shanghai',
+                    1000, 2000, 3000, 'PRECHECK_OK', 'FINAL_CHECK_OK', 'CONFIRMED', '五层中区', '06桌 B座', 1,
+                    NULL, '88990011', 'sha_ok', 0, 'NOT_REQUIRED', 'CONFIRMED', 2, 1, 'v6 confirmed', 500, 600
+                )
+                """.trimIndent()
+            )
+        }
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
             assertEquals(7, sqlite.version)
@@ -72,6 +92,18 @@ class UniversalDatabaseMigrationTest {
             }
             assertTrue("repeatDays" in cols)
             assertTrue("remainingDays" in cols)
+
+            val armed = kotlinx.coroutines.runBlocking {
+                database.cloudAndParcelDao().getLibraryBookingPlanById("plan_v6_armed")
+            }
+            val confirmed = kotlinx.coroutines.runBlocking {
+                database.cloudAndParcelDao().getLibraryBookingPlanById("plan_v6_confirmed")
+            }
+            assertEquals(1, armed?.repeatDays)
+            assertEquals(1, armed?.remainingDays)
+            assertEquals(1, confirmed?.repeatDays)
+            assertEquals(0, confirmed?.remainingDays)
+            assertEquals("88990011", confirmed?.externalBookingId)
         }
     }
 

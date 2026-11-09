@@ -501,10 +501,22 @@ fun CampusMomentsScreen(
                             MomentsTextbookCard(
                                 book = book,
                                 isFavorited = book.id in snapshot.favoriteBookIds,
-                                isMine = book.id in snapshot.myBookIds,
+                                isMine = book.isOwner || book.canManage,
                                 onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                onToggleSold = {
+                                    scope.launch {
+                                        repository.toggleMomentsBookSold(book.id).onFailure { err ->
+                                            feedbackMessage = err.message ?: "更新失败"
+                                        }
+                                    }
+                                },
+                                onDelete = {
+                                    scope.launch {
+                                        repository.deleteMomentsBookListing(book.id).onFailure { err ->
+                                            feedbackMessage = err.message ?: "删除失败"
+                                        }
+                                    }
+                                },
                                 onCopyContact = {
                                     copyTextToClipboard(context, "联系方式", book.contact)
                                     feedbackMessage = "已复制"
@@ -540,17 +552,21 @@ fun CampusMomentsScreen(
                         }
                     }
 
-                    if (snapshot.antiLostTags.isEmpty()) {
+                    val ownedTags = remember(snapshot.antiLostTags, cloudBinding?.cloudUserId) {
+                        if (cloudBinding == null) emptyList()
+                        else snapshot.antiLostTags.filter { it.isOwner || it.canManage }
+                    }
+                    if (ownedTags.isEmpty()) {
                         XPeachEmptyState(
                             title = "暂无防丢码",
-                            subtitle = "可为随身物品生成专属防丢码",
+                            subtitle = if (cloudBinding != null) "可为随身物品生成专属防丢码" else "登录云端账号后可生成并管理个人专属防丢码",
                             icon = Icons.Rounded.QrCode2,
                             actionLabel = "生成防丢码",
                             onAction = { showCreateTagDialog = true }
                         )
                     }
 
-                    for (tag in snapshot.antiLostTags) {
+                    for (tag in ownedTags) {
                         val claimUrl = remember(tag.tagCode, prefs.networkProxyConfig.customCloudApiBaseUrl) {
                             tag.claimWebUrl(prefs.networkProxyConfig.customCloudApiBaseUrl)
                         }
@@ -602,7 +618,7 @@ fun CampusMomentsScreen(
                     when (mySubTab) {
                         0 -> {
                             val myPosts = snapshot.posts.filter { it.isOwner || it.canManage }
-                            val myBooks = snapshot.bookListings.filter { it.id in snapshot.myBookIds }
+                            val myBooks = snapshot.bookListings.filter { it.isOwner || it.canManage }
                             if (myPosts.isEmpty() && myBooks.isEmpty()) {
                                 XPeachEmptyState(
                                     title = "暂无发布记录",
@@ -635,8 +651,20 @@ fun CampusMomentsScreen(
                                     isFavorited = book.id in snapshot.favoriteBookIds,
                                     isMine = true,
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                    onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                    onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                    onToggleSold = {
+                                        scope.launch {
+                                            repository.toggleMomentsBookSold(book.id).onFailure { err ->
+                                                feedbackMessage = err.message ?: "更新失败"
+                                            }
+                                        }
+                                    },
+                                    onDelete = {
+                                        scope.launch {
+                                            repository.deleteMomentsBookListing(book.id).onFailure { err ->
+                                                feedbackMessage = err.message ?: "删除失败"
+                                            }
+                                        }
+                                    },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
                                         feedbackMessage = "已复制"
@@ -678,10 +706,22 @@ fun CampusMomentsScreen(
                                 MomentsTextbookCard(
                                     book = book,
                                     isFavorited = true,
-                                    isMine = book.id in snapshot.myBookIds,
+                                    isMine = book.isOwner || book.canManage,
                                     onToggleFavorite = { scope.launch { repository.toggleMomentsBookFavorite(book.id) } },
-                                    onToggleSold = { scope.launch { repository.toggleMomentsBookSold(book.id) } },
-                                    onDelete = { scope.launch { repository.deleteMomentsBookListing(book.id) } },
+                                    onToggleSold = {
+                                        scope.launch {
+                                            repository.toggleMomentsBookSold(book.id).onFailure { err ->
+                                                feedbackMessage = err.message ?: "更新失败"
+                                            }
+                                        }
+                                    },
+                                    onDelete = {
+                                        scope.launch {
+                                            repository.deleteMomentsBookListing(book.id).onFailure { err ->
+                                                feedbackMessage = err.message ?: "删除失败"
+                                            }
+                                        }
+                                    },
                                     onCopyContact = {
                                         copyTextToClipboard(context, "联系方式", book.contact)
                                         feedbackMessage = "已复制"
@@ -691,10 +731,12 @@ fun CampusMomentsScreen(
                         }
 
                         2 -> {
-                            val allTagReports = snapshot.antiLostTags.flatMap { tag ->
-                                tag.reports.map { tag to it }
+                            val allTagReports = snapshot.antiLostTags
+                                .filter { it.isOwner || it.canManage }
+                                .flatMap { tag -> tag.reports.map { tag to it } }
+                            val postsWithComments = snapshot.posts.filter {
+                                (it.isOwner || it.canManage) && it.comments.isNotEmpty()
                             }
-                            val postsWithComments = snapshot.posts.filter { it.comments.isNotEmpty() }
                             if (allTagReports.isEmpty() && postsWithComments.isEmpty()) {
                                 XPeachEmptyState(
                                     title = "暂无通知",
@@ -804,8 +846,17 @@ fun CampusMomentsScreen(
                     contactRequestsResult.isOwner ||
                     contactRequestsResult.canManage
             )
+        val isBlockedInLatestRequests = contactRequestsResult.requests.any { it.status == "BLOCKED" } && !canManageActivePost
+        val effectiveDetailPost = if (isBlockedInLatestRequests && activeDetailPost.contactVisibility.equals("ON_REQUEST", ignoreCase = true)) {
+            activeDetailPost.copy(
+                contact = cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT,
+                hasProtectedContact = true
+            )
+        } else {
+            activeDetailPost
+        }
         MomentsPostDetailDialog(
-            post = activeDetailPost,
+            post = effectiveDetailPost,
             matchedClues = matchedClues,
             contactRequests = contactRequestsResult.requests,
             isMine = canManageActivePost,

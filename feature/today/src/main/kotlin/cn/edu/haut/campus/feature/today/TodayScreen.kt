@@ -437,7 +437,18 @@ fun TodayScreen(
             // 1.6 动态今日图书馆座位 / 自动抢座状态卡（有已约座位或待执行抢座计划时自动展示）
             val activeSeatPlans = remember(bookingPlans) {
                 bookingPlans.filter {
-                    it.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "CONFIRMED")
+                    it.status in setOf(
+                        "ARMED",
+                        "PRECHECK_OK",
+                        "FINAL_CHECK_OK",
+                        "EXECUTING",
+                        "CONFIRMED",
+                        "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                        "RESULT_UNKNOWN",
+                        "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                        "CANCEL_RESULT_UNKNOWN",
+                        "NEEDS_RECONFIRMATION"
+                    )
                 }
             }
             AnimatedVisibility(
@@ -1714,7 +1725,12 @@ private fun TodayLibrarySeatDynamicCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     XPeachStatusBadge(
-                        text = if (activePlans.any { it.status == "CONFIRMED" }) "已预约" else "待预约",
+                        text = when {
+                            activePlans.any { it.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") } -> "已预约"
+                            activePlans.any { it.status in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN", "CANCEL_RESULT_UNKNOWN") } -> "待核实"
+                            activePlans.any { it.status == "NEEDS_RECONFIRMATION" } -> "待确认授权"
+                            else -> "待预约"
+                        },
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
@@ -1741,6 +1757,11 @@ private fun TodayLibrarySeatDynamicCard(
                     .firstOrNull { it.isNotEmpty() } ?: "自动选座"
                 val statusLabel = when (plan.status) {
                     "CONFIRMED" -> "预约成功"
+                    "DELEGATION_STOPPED_SCHOOL_CONFIRMED" -> "委托已停 · 学校预约已成功"
+                    "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "结果待核对"
+                    "CANCEL_RESULT_UNKNOWN" -> "退座结果待核对"
+                    "NEEDS_RECONFIRMATION" -> "需重新确认授权"
+                    "EXECUTING" -> "正在执行"
                     "FINAL_CHECK_OK" -> "即将预约"
                     "PRECHECK_OK" -> "等待预约"
                     else -> "已设定时预约"

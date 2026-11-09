@@ -2806,6 +2806,17 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 FilledTonalButton(
                     enabled = !isRunningImmediateBooking && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
+                        val sameDayBlockingPlan = bookingPlans.firstOrNull {
+                            it.targetLocalDate == targetDate.toString() &&
+                                it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "REMINDER_SENT")
+                        }
+                        if (sameDayBlockingPlan != null) {
+                            onFeedback(
+                                false,
+                                "该日期（$targetDate）已有生效、排队或待核对的预约任务（状态：${sameDayBlockingPlan.status}），为防止重复预约，请先在下方任务列表核实或停止现有任务"
+                            )
+                            return@FilledTonalButton
+                        }
                         isRunningImmediateBooking = true
                         scope.launch {
                             val sessionRes = repository.ensureLibrarySeatSession(forceRefresh = false)
@@ -2873,10 +2884,19 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         val friendlyStatus = when (plan.status) {
                             "ARMED" -> "等待开抢"
                             "PRECHECK_OK", "FINAL_CHECK_OK" -> "就绪待抢"
+                            "EXECUTING" -> "正在执行"
                             "CONFIRMED" -> "抢座成功"
+                            "DELEGATION_STOPPED_SCHOOL_CONFIRMED" -> "委托已停·预约已成"
+                            "SCHOOL_CANCELLED" -> "已退座释放"
+                            "CANCEL_RESULT_UNKNOWN" -> "退座待核对"
+                            "RESULT_UNKNOWN" -> "结果待核对"
+                            "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "已停委托·待核对"
+                            "NEEDS_RECONFIRMATION" -> "待重确认授权"
+                            "REMINDER_SENT" -> "已发送提醒"
+                            "EXPIRED" -> "已过窗口"
                             "FAILED" -> "未抢到"
                             "CANCELLED" -> "已取消"
-                            else -> plan.status
+                            else -> "状态待核实"
                         }
                         val friendlyMode = when (plan.executionMode) {
                             "CLOUD_HOSTED" -> "云端代抢(测试版)"
@@ -2886,7 +2906,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
                         val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")
                         val cleanDiag = plan.lastDiagnosticMessage.cleanNullableLiteral() ?: "等待到点自动抢座"
-                        val repeatBadge = if (plan.repeatDays > 1) {
+                        val repeatBadge = if (plan.repeatDays > 1 && plan.remainingDays > 0) {
                             " · 连续${plan.repeatDays}天(剩${plan.remainingDays}天)"
                         } else {
                             ""
@@ -2905,13 +2925,19 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             XPeachStatusBadge(
                                 text = friendlyStatus,
                                 containerColor = when (plan.status) {
-                                    "CONFIRMED" -> XPeachTheme.successContainer
-                                    "FAILED", "CANCELLED" -> XPeachTheme.dangerContainer
+                                    "CONFIRMED", "REMINDER_SENT" -> XPeachTheme.successContainer
+                                    "DELEGATION_STOPPED_SCHOOL_CONFIRMED", "NEEDS_RECONFIRMATION",
+                                    "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN", "CANCEL_RESULT_UNKNOWN" ->
+                                        MaterialTheme.colorScheme.tertiaryContainer
+                                    "FAILED", "CANCELLED", "SCHOOL_CANCELLED", "EXPIRED" -> XPeachTheme.dangerContainer
                                     else -> MaterialTheme.colorScheme.secondaryContainer
                                 },
                                 contentColor = when (plan.status) {
-                                    "CONFIRMED" -> XPeachTheme.onSuccessContainer
-                                    "FAILED", "CANCELLED" -> XPeachTheme.onDangerContainer
+                                    "CONFIRMED", "REMINDER_SENT" -> XPeachTheme.onSuccessContainer
+                                    "DELEGATION_STOPPED_SCHOOL_CONFIRMED", "NEEDS_RECONFIRMATION",
+                                    "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN", "CANCEL_RESULT_UNKNOWN" ->
+                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                    "FAILED", "CANCELLED", "SCHOOL_CANCELLED", "EXPIRED" -> XPeachTheme.onDangerContainer
                                     else -> MaterialTheme.colorScheme.onSecondaryContainer
                                 }
                             )
@@ -2926,76 +2952,140 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             style = MaterialTheme.typography.labelSmall,
                             color = XPeachTheme.readablePrimary
                         )
-                        if (plan.status == "CONFIRMED") {
-                            Row(
-                                modifier = Modifier.padding(top = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            repository.cancelActiveLibrarySeatBooking(
-                                                planId = plan.id,
-                                                bookingId = plan.externalBookingId
-                                            ).fold(
-                                                onSuccess = { msg ->
-                                                    onFeedback(true, msg)
-                                                    onRefreshSeatOverview()
-                                                    selectedRegion?.let { reloadSeatsForRegion(it) }
-                                                },
-                                                onFailure = { err ->
-                                                    onFeedback(false, err.message ?: "退座失败")
-                                                }
-                                            )
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(30.dp)
+                        when {
+                            plan.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED", "CANCEL_RESULT_UNKNOWN") -> {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text("退座释放", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.cancelActiveLibrarySeatBooking(
+                                                    planId = plan.id,
+                                                    bookingId = plan.externalBookingId
+                                                ).fold(
+                                                    onSuccess = { msg ->
+                                                        onFeedback(true, msg)
+                                                        onRefreshSeatOverview()
+                                                        selectedRegion?.let { reloadSeatsForRegion(it) }
+                                                    },
+                                                    onFailure = { err ->
+                                                        onFeedback(false, err.message ?: "退座待核对")
+                                                    }
+                                                )
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text(
+                                            text = if (plan.status == "CANCEL_RESULT_UNKNOWN") "重新核实/退座" else "退座释放",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
                             }
-                        } else if (plan.status !in setOf("CONFIRMED", "CANCELLED", "FAILED")) {
-                            Row(
-                                modifier = Modifier.padding(top = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilledTonalButton(
-                                    onClick = {
-                                        scope.launch {
-                                            val updated = repository.advanceBookingPlanStage(
-                                                plan.id,
-                                                TripleScheduleStage.FIRE
-                                            ).getOrNull()
-                                            if (updated != null) {
-                                                onFeedback(
-                                                    updated.status == "CONFIRMED",
-                                                    updated.lastDiagnosticMessage ?: "已尝试抢座"
+                            plan.status == "NEEDS_RECONFIRMATION" -> {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.reconfirmAndRestoreCloudBookingPlans().fold(
+                                                    onSuccess = {
+                                                        onFeedback(true, "已重新确认云端授权并恢复同步")
+                                                    },
+                                                    onFailure = { err ->
+                                                        onFeedback(false, err.message ?: "重新确认授权失败")
+                                                    }
                                                 )
-                                                if (updated.status == "CONFIRMED") {
-                                                    onRefreshSeatOverview()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("重新确认授权", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.cancelDualEngineBookingPlan(plan.id)
+                                                onFeedback(true, "已取消该待确认任务")
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("取消任务", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                            plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK") -> {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val updated = repository.advanceBookingPlanStage(
+                                                    plan.id,
+                                                    TripleScheduleStage.FIRE
+                                                ).getOrNull()
+                                                if (updated != null) {
+                                                    onFeedback(
+                                                        updated.status in setOf("CONFIRMED", "REMINDER_SENT"),
+                                                        updated.lastDiagnosticMessage ?: "已尝试抢座"
+                                                    )
+                                                    if (updated.status == "CONFIRMED") {
+                                                        onRefreshSeatOverview()
+                                                    }
                                                 }
                                             }
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(30.dp)
-                                ) {
-                                    Text("立即执行", style = MaterialTheme.typography.labelSmall)
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("立即执行", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.cancelDualEngineBookingPlan(plan.id)
+                                                onFeedback(true, "已停止该排队抢座任务")
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("取消任务", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    }
                                 }
-                                TextButton(
-                                    onClick = {
-                                        scope.launch {
-                                            repository.cancelDualEngineBookingPlan(plan.id)
-                                            onFeedback(true, "已取消该抢座任务")
-                                        }
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(30.dp)
+                            }
+                            plan.status in setOf("RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") -> {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text("取消任务", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                    OutlinedButton(
+                                        onClick = {
+                                            onRefreshSeatOverview()
+                                            scope.launch { runCatching { repository.syncWithCampusCloud() } }
+                                            onFeedback(true, "已发起状态核实，请查看当前有效预约与列表状态")
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("刷新核实状态", style = MaterialTheme.typography.labelSmall)
+                                    }
                                 }
                             }
                         }

@@ -447,5 +447,12 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
         if ("remainingDays" !in existingColumns) {
             db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `remainingDays` INTEGER NOT NULL DEFAULT 1")
         }
+        db.execSQL(
+            """
+            UPDATE `library_booking_plans`
+            SET `remainingDays` = 0
+            WHERE `status` NOT IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
+            """.trimIndent()
+        )
     }
 }

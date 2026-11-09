@@ -127,7 +127,7 @@ object LibrarySeatAlarmSubsystem {
 
     fun schedulePlanAlarms(context: Context, plan: LibraryBookingPlanEntity) {
         val appContext = context.applicationContext
-        if (plan.status in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED")) {
+        if (plan.status !in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
             cancelPlanAlarms(appContext, plan.id)
             return
         }
@@ -135,6 +135,10 @@ object LibrarySeatAlarmSubsystem {
         ensureNotificationChannel(appContext)
         val alarmManager = appContext.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val nowMs = System.currentTimeMillis()
+        if (plan.fireAtEpochMillis <= nowMs - 15 * 60_000L) {
+            cancelPlanAlarms(appContext, plan.id)
+            return
+        }
         val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             alarmManager.canScheduleExactAlarms()
         } else {
@@ -327,25 +331,20 @@ class LibrarySeatAlarmReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                if (executionMode.equals("MANUAL_REMINDER", ignoreCase = true) && stage == "FIRE") {
-                    LibrarySeatAlarmSubsystem.postNotification(
-                        context = appContext,
-                        notificationId = (planId.hashCode() and 0x7FFFFFFF),
-                        title = "⏰ 图书馆抢座时间已到",
-                        body = "目标座位：$areaName · $seatLabel，点击立即打开「日在校园」一键选座！"
-                    )
-                }
                 val parsedStage = runCatching { TripleScheduleStage.valueOf(stage) }.getOrNull() ?: return@launch
                 val repo = CampusRepository.getInstance(appContext)
                 val updated = repo.advanceBookingPlanStage(planId = planId, stage = parsedStage).getOrNull()
-                if (updated != null) {
+                if (updated != null && updated.status != "CANCELLED") {
                     val (title, body) = when (stage) {
                         "PRECHECK" -> "图书馆抢座 T-30m 预检完成" to (updated.lastDiagnosticMessage ?: "已验证登录态与选座会话")
                         "FINAL_CHECK" -> "图书馆抢座 T-5m 临战就绪" to (updated.lastDiagnosticMessage ?: "距离准点抢座还有 5 分钟")
-                        "FIRE" -> if (updated.status == "CONFIRMED") {
-                            "🎉 图书馆自动抢座成功" to (updated.lastDiagnosticMessage ?: "已成功锁定 $areaName · $seatLabel")
-                        } else {
-                            "⚠️ 图书馆抢座结果提醒" to (updated.lastDiagnosticMessage ?: "请打开 App 查看选座详情")
+                        "FIRE" -> when (updated.status) {
+                            "REMINDER_SENT" ->
+                                "⏰ 图书馆抢座时间已到" to "目标座位：$areaName · $seatLabel，点击立即打开「日在校园」一键选座！"
+                            "CONFIRMED" ->
+                                "🎉 图书馆自动抢座成功" to (updated.lastDiagnosticMessage ?: "已成功锁定 $areaName · $seatLabel")
+                            else ->
+                                "⚠️ 图书馆抢座结果提醒" to (updated.lastDiagnosticMessage ?: "请打开 App 查看选座详情")
                         }
                         else -> "图书馆抢座状态更新" to (updated.lastDiagnosticMessage ?: "")
                     }

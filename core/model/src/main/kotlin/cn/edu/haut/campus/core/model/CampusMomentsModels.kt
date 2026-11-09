@@ -111,7 +111,9 @@ data class MomentsTextbookListing(
     val sellerName: String = "",
     val status: String = "AVAILABLE",
     val likesCount: Int = 0,
-    val createdAt: String = ""
+    val createdAt: String = "",
+    val isOwner: Boolean = false,
+    val canManage: Boolean = false
 ) {
     val isSold: Boolean
         get() = status.equals("SOLD", ignoreCase = true)
@@ -147,7 +149,9 @@ data class AntiLostTagItem(
     val status: String = "NORMAL",
     val reports: List<AntiLostTagReport> = emptyList(),
     val createdAt: String = "",
-    val updatedAt: String = ""
+    val updatedAt: String = "",
+    val isOwner: Boolean = false,
+    val canManage: Boolean = false
 ) {
     val isLostOrReported: Boolean
         get() = status.equals("LOST", ignoreCase = true) || status.equals("FOUND_REPORTED", ignoreCase = true)
