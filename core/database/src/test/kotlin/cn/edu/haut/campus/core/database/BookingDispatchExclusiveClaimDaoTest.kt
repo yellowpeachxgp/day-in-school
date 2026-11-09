@@ -595,4 +595,306 @@ class BookingDispatchExclusiveClaimDaoTest {
         )
         assertEquals(0, mergedAfterCancel.size)
     }
+
+    @Test
+    fun accountSwitchIsolation_localToCloudHandoff_andInFlightStop() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val dataStoreFile = java.io.File.createTempFile("booking_handoff_isolation_", ".preferences_pb")
+        dataStoreFile.deleteOnExit()
+        val testDataStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
+            produceFile = { dataStoreFile }
+        )
+        val storage = isolatedAccountStoragePartition("prof_handoff_isolation_01")
+        val repo = CampusRepository(
+            appContext = context,
+            database = database,
+            preferences = testDataStore,
+            accountProfile = AccountProfileEntity(
+                id = "prof_handoff_isolation_01",
+                accountId = "acct_handoff_01",
+                schoolId = "haut",
+                schoolName = "河南工业大学",
+                province = "河南省",
+                city = "郑州市",
+                campusId = "lianhuajie",
+                campusName = "莲花街校区",
+                timeZoneId = "Asia/Shanghai",
+                label = "交接与换号隔离测试",
+                isLegacy = false,
+                databaseName = storage.databaseName,
+                preferencesName = storage.preferencesName,
+                createdAtEpochMs = 1_000L
+            )
+        )
+        repo.activateSession(1L)
+
+        // Build non-expired synthetic JWTs for user_A and user_B so resolveValidCloudAccessToken accepts them offline
+        fun fakeJwt(sub: String): String {
+            val header = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("""{"alg":"HS256","typ":"JWT"}""".toByteArray())
+            val payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("""{"sub":"$sub","exp":4102444800}""".toByteArray())
+            return "ctseal1:$header.$payload.sig"
+        }
+        val jwtA = fakeJwt("cloud_user_A")
+        val jwtB = fakeJwt("cloud_user_B")
+
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_A",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_A",
+                displayName = "User A",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtA,
+                refreshToken = "ctseal1:ref_A",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+
+        // --- Item #4: User A has CONFIRMED, RESULT_UNKNOWN, and EXECUTING plans; switching to User B MUST NOT delete User A's records or evidence! ---
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_userA_confirmed",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-21",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "01桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_A_conf",
+                externalBookingId = "bk_A_990011",
+                evidenceSha256 = "sha_A_990011",
+                priceMicropeach = 10_000L,
+                paymentState = "PAID",
+                status = "CONFIRMED",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "A已确认",
+                createdAtEpochMillis = 500L,
+                updatedAtEpochMillis = 1_000L,
+                repeatDays = 1,
+                remainingDays = 0,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_userA_executing",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-22",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "DISPATCH_INTENT:att_A1",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "02桌 B座",
+                allowAlternativeSeat = true,
+                cloudJobId = "job_A_exec",
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "EXECUTING",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "A执行中",
+                createdAtEpochMillis = 500L,
+                updatedAtEpochMillis = 1_000L,
+                repeatDays = 2,
+                remainingDays = 2,
+                ownerCloudUserId = "cloud_user_A",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // Switch directly from User A to User B!
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_B",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_B",
+                displayName = "User B",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtB,
+                refreshToken = "ctseal1:ref_B",
+                linkedAtEpochMillis = 2_000L
+            )
+        )
+
+        // User B's active UI flow does NOT see User A's plans:
+        val visibleForB = repo.libraryBookingPlansFlow.first()
+        org.junit.Assert.assertTrue(visibleForB.none { it.id.startsWith("plan_userA_") })
+
+        // Audit snapshot retains 100% of User A's plans & evidence (EXECUTING transitioned to DELEGATION_STOPPED_RESULT_UNKNOWN, CONFIRMED untouched):
+        val auditAll = repo.getAllLibraryBookingPlansForAuditSnapshot()
+        val preservedAConf = auditAll.single { it.id == "plan_userA_confirmed" }
+        assertEquals("CONFIRMED", preservedAConf.status)
+        assertEquals("bk_A_990011", preservedAConf.externalBookingId)
+        assertEquals("sha_A_990011", preservedAConf.evidenceSha256)
+        assertEquals("cloud_user_A", preservedAConf.ownerCloudUserId)
+
+        val preservedAExec = auditAll.single { it.id == "plan_userA_executing" }
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", preservedAExec.status)
+        assertEquals("cloud_user_A", preservedAExec.ownerCloudUserId)
+
+        // Restart recovery (rescheduleActiveLocalBookingPlans) preserves both records intact:
+        repo.rescheduleActiveLocalBookingPlans()
+        assertEquals("bk_A_990011", dao.getLibraryBookingPlanById("plan_userA_confirmed")?.externalBookingId)
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", dao.getLibraryBookingPlanById("plan_userA_executing")?.status)
+
+        // --- Item #5: Local -> Cloud handoff order, failure closure & compensation ---
+        val nowCreateMs = java.time.ZonedDateTime.of(2026, 11, 24, 21, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
+        val targetDate25 = java.time.LocalDate.of(2026, 11, 25)
+
+        // 5a: If local plan on 2026-11-25 is ALREADY EXECUTING / DISPATCH_INTENT, switching to Cloud MUST abort BEFORE making ANY cloud HTTP request!
+        var cloudHttpCalls = 0
+        repo.cloudHttpTransportForTest = { _, _, _, _, _ ->
+            cloudHttpCalls += 1
+            throw IllegalStateException("Should not call cloud when local is already dispatched")
+        }
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_local_inflight_25",
+                schoolId = "haut",
+                executionMode = "LOCAL_DEVICE",
+                targetLocalDate = "2026-11-25",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = nowCreateMs + 10_000L,
+                finalCheckAtEpochMillis = nowCreateMs + 20_000L,
+                fireAtEpochMillis = nowCreateMs + 30_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "DISPATCH_INTENT:att_local_25",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "03桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "EXECUTING",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "本机派发中",
+                createdAtEpochMillis = nowCreateMs,
+                updatedAtEpochMillis = nowCreateMs
+            )
+        )
+        val blockedByLocalInFlight = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = targetDate25,
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "03桌 A座",
+            nowEpochMillis = nowCreateMs
+        )
+        org.junit.Assert.assertTrue(blockedByLocalInFlight.isFailure)
+        assertEquals(0, cloudHttpCalls)
+
+        // 5b: Queued local plan on 2026-11-26 -> Cloud POST /reservation-plans succeeds on server BUT response drops (timeout), and follow-up snapshot also fails ->
+        //     MUST keep local plan CANCELLED and record Cloud RESULT_UNKNOWN (NEVER leaving both local and cloud active!)
+        val targetDate26 = java.time.LocalDate.of(2026, 11, 26)
+        val localQueued26 = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = targetDate26,
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "06桌 A座",
+            nowEpochMillis = nowCreateMs
+        ).getOrThrow()
+        assertEquals("ARMED", localQueued26.status)
+
+        var localStatusObservedDuringCloudPost = ""
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"con_B_01","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_B_01"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{"status":"DELEGATED_ACTIVE"}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    // Verify local plan was ALREADY stopped BEFORE Cloud POST /reservation-plans was invoked!
+                    localStatusObservedDuringCloudPost =
+                        kotlinx.coroutines.runBlocking { dao.getLibraryBookingPlanById(localQueued26.id)?.status.orEmpty() }
+                    throw java.net.SocketTimeoutException("Read timed out after server accepted plan")
+                }
+                else -> throw java.net.SocketTimeoutException("Still offline during reconciliation")
+            }
+        }
+        val lostRespSwitch = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = targetDate26,
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "06桌 A座",
+            nowEpochMillis = nowCreateMs + 1_000L
+        )
+        org.junit.Assert.assertTrue(lostRespSwitch.isFailure)
+        assertEquals("CANCELLED", localStatusObservedDuringCloudPost)
+        assertEquals("CANCELLED", dao.getLibraryBookingPlanById(localQueued26.id)?.status)
+        val plansOn26 = repo.libraryBookingPlansFlow.first().filter { it.targetLocalDate == "2026-11-26" }
+        val unknownCloud26 = plansOn26.single { it.executionMode == "CLOUD_HOSTED" }
+        assertEquals("RESULT_UNKNOWN", unknownCloud26.status)
+
+        // 5c: Queued local plan on 2026-11-27 -> Cloud explicitly rejects with 400 BAD_REQUEST before persisting -> safely compensates & restores local ARMED plan!
+        val targetDate27 = java.time.LocalDate.of(2026, 11, 27)
+        val localQueued27 = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = targetDate27,
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "08桌 B座",
+            nowEpochMillis = nowCreateMs
+        ).getOrThrow()
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"con_B_01","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_B_01"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{"status":"DELEGATED_ACTIVE"}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") ->
+                    """{"ok":false,"error":{"code":"BAD_REQUEST","message":"invalid slot"}}"""
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        val explicitRejectSwitch = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = targetDate27,
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "08桌 B座",
+            nowEpochMillis = nowCreateMs + 2_000L
+        )
+        org.junit.Assert.assertTrue(explicitRejectSwitch.isFailure)
+        assertEquals("ARMED", dao.getLibraryBookingPlanById(localQueued27.id)?.status)
+
+        // --- Item #6: Stopping an EXECUTING plan stops future retries/rollover (DELEGATION_STOPPED_RESULT_UNKNOWN) and NEVER fakes SCHOOL_CANCELLED ---
+        val stoppedExec = repo.stopInFlightOrQueuedDelegation("plan_local_inflight_25")
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", stoppedExec?.status)
+        assertEquals(0, stoppedExec?.remainingDays)
+        repo.cloudHttpTransportForTest = null
+    }
 }

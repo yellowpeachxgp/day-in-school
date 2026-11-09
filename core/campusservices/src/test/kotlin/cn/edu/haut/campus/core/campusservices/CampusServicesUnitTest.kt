@@ -1731,4 +1731,170 @@ class CampusServicesUnitTest {
         assertEquals("https://pd.qq.com/s/dayinschool", catalog.officialChannels.userFeedbackChannelUrl)
         assertEquals("PENDING", catalog.officialChannels.wechatOfficialAccountStatus)
     }
+
+    @Test
+    fun `Item 3, 6 & 7 - parent plan rollover check blocks stale FAILED job bypass, EXECUTING exposes STOP_IN_FLIGHT_DELEGATION, and legacy anti-lost tag omits owner rights`() {
+        // Item #7: Legacy anti-lost tag JSON missing is_owner / can_manage MUST fail closed to false
+        val legacyMomentsJson = """
+            {
+              "updated_at": "2026-11-10T03:00:00Z",
+              "posts": [],
+              "book_listings": [],
+              "anti_lost_tags": [
+                {
+                  "id": "tag_old_1",
+                  "tag_code": "HAUT-TAG-OLD001",
+                  "item_name": "旧版缓存防丢牌",
+                  "owner_name": "张三",
+                  "owner_contact": "13800001111",
+                  "status": "NORMAL"
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsedMoments = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(legacyMomentsJson)!!
+        val legacyTag = parsedMoments.antiLostTags.single()
+        assertFalse("Missing is_owner must NOT grant ownership", legacyTag.isOwner)
+        assertFalse("Missing can_manage must NOT grant management", legacyTag.canManage)
+        val resetMoments = CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(parsedMoments)
+        assertTrue("Viewer reset must scrub cached antiLostTags", resetMoments.antiLostTags.isEmpty())
+
+        // Item #6: UI action reachability across all states — EXECUTING/DISPATCH_INTENT MUST expose STOP_IN_FLIGHT_DELEGATION, distinct from CANCEL_SCHOOL_SEAT
+        val execAction = CampusCloudOidcHelper.resolveBookingPlanActions(
+            status = "EXECUTING",
+            fireStatus = "DISPATCH_INTENT:att_01"
+        )
+        assertEquals(
+            listOf(CampusCloudOidcHelper.BookingPlanPrimaryAction.STOP_IN_FLIGHT_DELEGATION),
+            execAction.actions
+        )
+        assertEquals("停止委托", execAction.primaryButtonLabel)
+        assertTrue(execAction.cautionCaption.orEmpty().contains("不代表学校已退座"))
+
+        val confirmedAction = CampusCloudOidcHelper.resolveBookingPlanActions(
+            status = "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+            hasExternalBookingId = true
+        )
+        assertEquals(
+            listOf(CampusCloudOidcHelper.BookingPlanPrimaryAction.CANCEL_SCHOOL_SEAT),
+            confirmedAction.actions
+        )
+        assertEquals("学校退座", confirmedAction.primaryButtonLabel)
+
+        // Item #3: Old job_day1 is FAILED (returns 409 on cancel), while parent plan_multi_01 rolled over job_day2!
+        // Case A: job_day2 is RESULT_UNKNOWN (in-flight/dispatched) -> MUST block engine switch even though job_day1 is FAILED!
+        val checkBlockedUnknownChild = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_test_valid",
+            cloudJobId = "job_day1_failed",
+            planId = "plan_local_01",
+            targetLocalDate = "2026-11-21",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/reservation-jobs/job_day1_failed/cancel") ->
+                    """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"Job is FAILED"}}"""
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_multi_01") ->
+                    """{"ok":true,"data":{"plan_id":"plan_multi_01","enabled":false}}"""
+                method == "POST" && url.endsWith("/reservation-jobs/job_day2_unknown/cancel") ->
+                    """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"Child job unknown"}}"""
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "reservation_plans": [
+                          { "id": "plan_multi_01", "enabled": false, "user_intent_state": "STOP_REQUESTED", "target_local_date": "2026-11-21" }
+                        ],
+                        "reservation_jobs": [
+                          { "id": "job_day1_failed", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-20", "state": "FAILED", "external_execution_state": "SCHOOL_REJECTED" },
+                          { "id": "job_day2_unknown", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-21", "state": "RESULT_UNKNOWN", "user_intent_state": "STOP_REQUESTED", "external_execution_state": "RESULT_UNKNOWN" }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN,
+            checkBlockedUnknownChild.outcome
+        )
+
+        // Case B: Old job_day1 is EXPIRED, parent plan_multi_01 STILL has enabled=true (DELETE failed to disable parent plan) -> MUST block!
+        val checkBlockedParentStillEnabled = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_test_valid",
+            cloudJobId = "job_day1_expired",
+            planId = "plan_local_02",
+            targetLocalDate = "2026-11-21",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "reservation_plans": [
+                          { "id": "plan_multi_01", "enabled": true, "user_intent_state": "ACTIVE", "target_local_date": "2026-11-22" }
+                        ],
+                        "reservation_jobs": [
+                          { "id": "job_day1_expired", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-20", "state": "EXPIRED", "external_execution_state": "NOT_DISPATCHED" },
+                          { "id": "job_day3_armed", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-22", "state": "ARMED", "external_execution_state": "NOT_DISPATCHED" }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                else -> """{"ok":false,"error":{"code":"INTERNAL_ERROR","message":"timeout"}}"""
+            }
+        }
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+            checkBlockedParentStillEnabled.outcome
+        )
+
+        // Case C: Old job_day1 is FAILED, parent plan_multi_01 disabled AND rolled-over job_day2 cancelled -> SAFE_TO_SWITCH_STOPPED!
+        var planDeleted = false
+        var childCancelled = false
+        val checkSafeAfterStoppingRolledChild = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_test_valid",
+            cloudJobId = "job_day1_failed",
+            planId = "plan_local_03",
+            targetLocalDate = "2026-11-21",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "DELETE" && url.endsWith("/reservation-plans/plan_multi_01") -> {
+                    planDeleted = true
+                    """{"ok":true,"data":{"plan_id":"plan_multi_01","enabled":false}}"""
+                }
+                method == "POST" && url.endsWith("/reservation-jobs/job_day2_armed/cancel") -> {
+                    childCancelled = true
+                    """{"ok":true,"data":{"id":"job_day2_armed","state":"CANCELLED"}}"""
+                }
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    val en = !planDeleted
+                    val childState = if (planDeleted || childCancelled) "CANCELLED" else "ARMED"
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "reservation_plans": [
+                          { "id": "plan_multi_01", "enabled": $en, "user_intent_state": "${if (en) "ACTIVE" else "STOP_REQUESTED"}", "target_local_date": "2026-11-22" }
+                        ],
+                        "reservation_jobs": [
+                          { "id": "job_day1_failed", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-20", "state": "FAILED", "external_execution_state": "SCHOOL_REJECTED" },
+                          { "id": "job_day2_armed", "plan_id": "plan_multi_01", "booking_local_date": "2026-11-22", "state": "$childState", "external_execution_state": "NOT_DISPATCHED" }
+                        ]
+                      }
+                    }
+                    """.trimIndent()
+                }
+                else -> """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"FAILED"}}"""
+            }
+        }
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED,
+            checkSafeAfterStoppingRolledChild.outcome
+        )
+    }
 }

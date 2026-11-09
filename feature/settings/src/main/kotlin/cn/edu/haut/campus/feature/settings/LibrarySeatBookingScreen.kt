@@ -2952,6 +2952,20 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             style = MaterialTheme.typography.labelSmall,
                             color = XPeachTheme.readablePrimary
                         )
+                        val actionPresentation = remember(plan.status, plan.fireStatus, plan.externalBookingId) {
+                            cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.resolveBookingPlanActions(
+                                status = plan.status,
+                                fireStatus = plan.fireStatus,
+                                hasExternalBookingId = !plan.externalBookingId.isNullOrBlank()
+                            )
+                        }
+                        actionPresentation.cautionCaption?.let { caution ->
+                            Text(
+                                text = caution,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         when {
                             plan.status in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED", "CANCEL_RESULT_UNKNOWN") -> {
                                 Row(
@@ -2981,7 +2995,34 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                         modifier = Modifier.height(30.dp)
                                     ) {
                                         Text(
-                                            text = if (plan.status == "CANCEL_RESULT_UNKNOWN") "重新核实/退座" else "退座释放",
+                                            text = actionPresentation.primaryButtonLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                            plan.status == "EXECUTING" || plan.fireStatus.startsWith("DISPATCH_INTENT") -> {
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val stopped = repository.stopInFlightOrQueuedDelegation(plan.id)
+                                                onFeedback(
+                                                    true,
+                                                    stopped?.lastDiagnosticMessage ?: "已停止后续尝试与续期；若单次请求已发出请核实学校端记录"
+                                                )
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text(
+                                            text = actionPresentation.primaryButtonLabel,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.error
                                         )
@@ -3010,19 +3051,23 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("重新确认授权", style = MaterialTheme.typography.labelSmall)
+                                        Text(actionPresentation.primaryButtonLabel, style = MaterialTheme.typography.labelSmall)
                                     }
                                     TextButton(
                                         onClick = {
                                             scope.launch {
-                                                repository.cancelDualEngineBookingPlan(plan.id)
+                                                repository.stopInFlightOrQueuedDelegation(plan.id)
                                                 onFeedback(true, "已取消该待确认任务")
                                             }
                                         },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("取消任务", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                        Text(
+                                            text = actionPresentation.secondaryButtonLabel ?: "取消排队委托",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
                                     }
                                 }
                             }
@@ -3053,19 +3098,23 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("立即执行", style = MaterialTheme.typography.labelSmall)
+                                        Text(actionPresentation.primaryButtonLabel, style = MaterialTheme.typography.labelSmall)
                                     }
                                     TextButton(
                                         onClick = {
                                             scope.launch {
-                                                repository.cancelDualEngineBookingPlan(plan.id)
-                                                onFeedback(true, "已停止该排队抢座任务")
+                                                repository.stopInFlightOrQueuedDelegation(plan.id)
+                                                onFeedback(true, "已停止该排队抢座委托")
                                             }
                                         },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("取消任务", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                                        Text(
+                                            text = actionPresentation.secondaryButtonLabel ?: "取消排队委托",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
                                     }
                                 }
                             }
@@ -3084,7 +3133,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Text("刷新核实状态", style = MaterialTheme.typography.labelSmall)
+                                        Text(actionPresentation.primaryButtonLabel, style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
                             }

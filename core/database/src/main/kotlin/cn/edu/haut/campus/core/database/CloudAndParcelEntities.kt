@@ -28,7 +28,8 @@ data class CloudIdentityBindingEntity(
     tableName = "library_booking_plans",
     indices = [
         Index(value = ["targetLocalDate", "executionMode"]),
-        Index(value = ["status"])
+        Index(value = ["status"]),
+        Index(value = ["ownerCloudUserId"])
     ]
 )
 data class LibraryBookingPlanEntity(
@@ -59,7 +60,9 @@ data class LibraryBookingPlanEntity(
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
     val repeatDays: Int = 1,
-    val remainingDays: Int = 1
+    val remainingDays: Int = 1,
+    val ownerCloudUserId: String? = null,
+    val ownerStudentId: String? = null
 )
 
 @Entity(
@@ -452,6 +455,43 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
             UPDATE `library_booking_plans`
             SET `remainingDays` = 0
             WHERE `status` NOT IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
+            """.trimIndent()
+        )
+    }
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        val existingColumns = mutableSetOf<String>()
+        db.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            while (cursor.moveToNext()) {
+                if (nameIndex >= 0) {
+                    existingColumns += cursor.getString(nameIndex)
+                }
+            }
+        }
+        if ("ownerCloudUserId" !in existingColumns) {
+            db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `ownerCloudUserId` TEXT")
+        }
+        if ("ownerStudentId" !in existingColumns) {
+            db.execSQL("ALTER TABLE `library_booking_plans` ADD COLUMN `ownerStudentId` TEXT")
+        }
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_library_booking_plans_ownerCloudUserId` ON `library_booking_plans` (`ownerCloudUserId`)"
+        )
+        db.execSQL(
+            """
+            UPDATE `library_booking_plans`
+            SET `ownerCloudUserId` = (SELECT `cloudUserId` FROM `cloud_identity_binding` LIMIT 1)
+            WHERE `executionMode` = 'CLOUD_HOSTED' AND `ownerCloudUserId` IS NULL
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            UPDATE `library_booking_plans`
+            SET `ownerStudentId` = (SELECT `schoolId` FROM `student_profile` LIMIT 1)
+            WHERE `ownerStudentId` IS NULL
             """.trimIndent()
         )
     }

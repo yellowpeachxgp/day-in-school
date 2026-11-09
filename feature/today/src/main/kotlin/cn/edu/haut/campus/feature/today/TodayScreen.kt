@@ -1804,9 +1804,12 @@ private fun TodayLibrarySeatDynamicCard(
                             compact = true,
                             onClick = onOpenLibrarySeats
                         )
-                        if (plan.status != "CONFIRMED") {
+                        val isExecutingInFlight = plan.status == "EXECUTING" || plan.fireStatus.startsWith("DISPATCH_INTENT")
+                        val canStopDelegationFromCard = isExecutingInFlight ||
+                            plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "NEEDS_RECONFIRMATION")
+                        if (canStopDelegationFromCard) {
                             XPeachFilterPill(
-                                label = "取消",
+                                label = if (isExecutingInFlight) "停止委托" else "取消委托",
                                 selected = false,
                                 compact = true,
                                 onClick = { onCancelPlan(plan.id) }
