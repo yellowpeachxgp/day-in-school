@@ -248,4 +248,102 @@ class UserIssuesAndCampusDataRegressionTest {
         val tcmItems = CampusHospitalPharmacyCatalog.search("", categoryFilter = HospitalMedicineCategory.TRADITIONAL_CHINESE)
         assertTrue(tcmItems.size >= 40)
     }
+
+    @Test
+    fun numericRoomsRequireCampusContextAndNeverCrossNavigate() {
+        val lianhuajieBuildings = listOf(
+            Building(
+                id = "b_t1",
+                campusId = "lianhuajie",
+                name = "1号教学楼",
+                shortName = "1号楼",
+                latitude = 34.83135,
+                longitude = 113.54710,
+                category = cn.edu.haut.campus.core.model.CampusCategory.TEACHING_BUILDING,
+                entrances = listOf("南门"),
+                description = "莲花街1教",
+                verifiedAt = LocalDate.of(2026, 11, 5)
+            ),
+            Building(
+                id = "b_t2",
+                campusId = "lianhuajie",
+                name = "32号楼（理科组团楼）",
+                shortName = "32号楼",
+                latitude = 34.83195,
+                longitude = 113.54820,
+                category = cn.edu.haut.campus.core.model.CampusCategory.TEACHING_BUILDING,
+                entrances = listOf("南门"),
+                description = "莲花街32号楼（无2号教学楼）",
+                verifiedAt = LocalDate.of(2026, 11, 5)
+            ),
+            Building(
+                id = "b_t3",
+                campusId = "lianhuajie",
+                name = "3号教学楼",
+                shortName = "3号楼",
+                latitude = 34.83210,
+                longitude = 113.54905,
+                category = cn.edu.haut.campus.core.model.CampusCategory.TEACHING_BUILDING,
+                entrances = listOf("南门"),
+                description = "莲花街3教",
+                verifiedAt = LocalDate.of(2026, 11, 5)
+            )
+        )
+        val mergedBuildings = lianhuajieBuildings + ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS
+        val mergedAliases = listOf(
+            BuildingAlias("al_t1", "b_t1", "1号教学楼", 1.0f, true),
+            BuildingAlias("al_t3", "b_t3", "3号教学楼", 1.0f, true),
+            BuildingAlias("al_t3_rx", "b_t3", "^3[1-6]\\d{2}$", 0.96f, true)
+        ) + ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES
+
+        // 1) "2201" across Lianhuajie, Songshanlu, and no-context:
+        //    - Lianhuajie has NO 2号楼 (only 32号楼) -> MUST NOT fall onto Songshanlu b_ss_t2 or 32号楼!
+        val r2201Lhj = ClassroomBuildingResolver.resolve("2201", mergedBuildings, mergedAliases, campusContext = "lianhuajie")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r2201Lhj.status)
+        org.junit.Assert.assertNull("2201 on Lianhuajie must NEVER jump to Songshanlu b_ss_t2", r2201Lhj.building)
+
+        val r2201Ss = ClassroomBuildingResolver.resolve("2201", mergedBuildings, mergedAliases, campusContext = "songshanlu")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r2201Ss.status)
+        assertEquals("b_ss_t2", r2201Ss.building?.id)
+
+        val r2201None = ClassroomBuildingResolver.resolve("2201", mergedBuildings, mergedAliases, campusContext = null)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r2201None.status)
+        org.junit.Assert.assertNull("2201 without campus context must remain unconfirmed without auto-navigation", r2201None.building)
+
+        // 2) "1104" across Lianhuajie, Songshanlu, and no-context:
+        val r1104Lhj = ClassroomBuildingResolver.resolve("1104", mergedBuildings, mergedAliases, campusContext = "lianhuajie")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r1104Lhj.status)
+        assertEquals("b_t1", r1104Lhj.building?.id)
+
+        val r1104Ss = ClassroomBuildingResolver.resolve("1104", mergedBuildings, mergedAliases, campusContext = "songshanlu")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r1104Ss.status)
+        assertEquals("b_ss_t1", r1104Ss.building?.id)
+
+        val r1104None = ClassroomBuildingResolver.resolve("1104", mergedBuildings, mergedAliases, campusContext = null)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r1104None.status)
+        org.junit.Assert.assertNull("1104 without campus context must NOT pick Lianhuajie over Songshanlu", r1104None.building)
+        assertTrue(r1104None.candidateBuildings.map { it.id }.containsAll(listOf("b_t1", "b_ss_t1")))
+
+        // 3) "3206" across Lianhuajie, Songshanlu, and no-context:
+        val r3206Lhj = ClassroomBuildingResolver.resolve("3206", mergedBuildings, mergedAliases, campusContext = "lianhuajie")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r3206Lhj.status)
+        assertEquals("b_t3", r3206Lhj.building?.id)
+
+        val r3206Ss = ClassroomBuildingResolver.resolve("3206", mergedBuildings, mergedAliases, campusContext = "songshanlu")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r3206Ss.status)
+        org.junit.Assert.assertNull("3206 on Songshanlu must NEVER jump across campuses to Lianhuajie b_t3", r3206Ss.building)
+
+        val r3206None = ClassroomBuildingResolver.resolve("3206", mergedBuildings, mergedAliases, campusContext = null)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, r3206None.status)
+        org.junit.Assert.assertNull("3206 without campus context must NOT auto-bind via digit regex", r3206None.building)
+    }
+
+    @Test
+    fun songshanCanteenSharesSingleCoordinateSourceWithMap() {
+        val mapSsCanteen = ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS.single { it.id == "b_ss_canteen" }
+        val diningSsCanteen = CampusDiningRecommender.CANTEENS.single { it.buildingId == "b_ss_canteen" }
+        assertEquals(mapSsCanteen.latitude, diningSsCanteen.latitude, 0.0)
+        assertEquals(mapSsCanteen.longitude, diningSsCanteen.longitude, 0.0)
+        assertTrue(mapSsCanteen.description.contains("近似"))
+    }
 }

@@ -2083,17 +2083,10 @@ fun SettingsScreen(
 
             // 8. 外观、隐私安全与数据管理
             var showHospitalDialogInSettings by remember { mutableStateOf(false) }
-            val defaultAliasComponent = remember(context) {
-                ComponentName(context.packageName, "cn.edu.haut.campus.MainActivityDefaultIconAlias")
-            }
-            val animeAliasComponent = remember(context) {
-                ComponentName(context.packageName, "cn.edu.haut.campus.MainActivityAnimeIconAlias")
-            }
             var animeLauncherAliasEnabled by remember(context) {
                 mutableStateOf(
                     runCatching {
-                        context.packageManager.getComponentEnabledSetting(animeAliasComponent) ==
-                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        cn.edu.haut.campus.core.designsystem.LauncherIconAliasReconciler.reconcile(context)
                     }.getOrDefault(false)
                 )
             }
@@ -2131,17 +2124,9 @@ fun SettingsScreen(
                         checked = animeLauncherAliasEnabled,
                         onCheckedChange = { enabled ->
                             runCatching {
-                                context.packageManager.setComponentEnabledSetting(
-                                    animeAliasComponent,
-                                    if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                                    else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                                    PackageManager.DONT_KILL_APP
-                                )
-                                context.packageManager.setComponentEnabledSetting(
-                                    defaultAliasComponent,
-                                    if (enabled) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                                    else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                                    PackageManager.DONT_KILL_APP
+                                cn.edu.haut.campus.core.designsystem.LauncherIconAliasReconciler.applyUserIconSelection(
+                                    context = context,
+                                    enableAnimeIcon = enabled
                                 )
                                 animeLauncherAliasEnabled = enabled
                                 feedbackText = if (enabled) {

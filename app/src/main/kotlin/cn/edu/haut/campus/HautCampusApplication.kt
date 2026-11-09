@@ -2,6 +2,7 @@ package cn.edu.haut.campus
 
 import android.app.Application
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.designsystem.LauncherIconAliasReconciler
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -20,6 +21,7 @@ class HautCampusApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        LauncherIconAliasReconciler.reconcile(this)
         WidgetRefreshCoordinator.registerWidgetProviders(
             NextClassAppWidgetProvider::class.java,
             TodayAppWidgetProvider::class.java,

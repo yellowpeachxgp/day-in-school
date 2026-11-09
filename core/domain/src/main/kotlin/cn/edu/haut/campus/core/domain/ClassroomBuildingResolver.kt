@@ -29,6 +29,8 @@ object ClassroomBuildingResolver {
         GeoPoint(34.74150, 113.61730)
     )
 
+    // 注：莲花街校区楼宇坐标来自学校官方 gis.haut.edu.cn 矢量质心；
+    // 嵩山路校区尚未接入官方楼宇级 GIS 测绘矢量，以下楼宇坐标为嵩山南路140号院区地块内近似定位点（非官方测绘级坐标），全端地图与就餐推荐统一复用此单一数据源。
     val HAUT_SONGSHANLU_BUILDINGS: List<Building> = listOf(
         Building(
             id = "b_ss_gate_east",
@@ -99,7 +101,7 @@ object ClassroomBuildingResolver {
             longitude = 113.61840,
             category = CampusCategory.CANTEEN,
             entrances = listOf("东入口", "北入口"),
-            description = "嵩山路校区师生综合餐饮中心。",
+            description = "嵩山路校区师生综合餐饮中心（院区地块近似坐标，未接入官方测绘级 GIS 矢量）。",
             verifiedAt = LocalDate.of(2026, 11, 10)
         ),
         Building(
@@ -169,7 +171,7 @@ object ClassroomBuildingResolver {
                     text.contains("训练中心", ignoreCase = true) -> {
                     lianhuajieVotes += 3
                 }
-                Regex("(1|3|4|5|6|7|8|9|18|24|25|31|32|34|35|38|40)号(教学)?楼|[13456789]教|^[13456789]\\d{3}$|^(31|32|34|35|38|40)\\d{3}$").containsMatchIn(text) -> {
+                Regex("(18|24|25|31|32|34|35|38|40)号(教学)?楼|^(31|32|34|35|38|40)\\d{3}$").containsMatchIn(text) -> {
                     lianhuajieVotes += 1
                 }
             }
@@ -181,16 +183,59 @@ object ClassroomBuildingResolver {
         }
     }
 
+    private fun normalizeCampusKey(raw: String?): String? {
+        val clean = raw?.trim().orEmpty()
+        if (clean.isEmpty()) return null
+        return when {
+            clean.contains("songshan", ignoreCase = true) ||
+                clean.contains("嵩山") ||
+                clean.contains("齐礼阎") -> "songshanlu"
+            clean.contains("lianhuajie", ignoreCase = true) ||
+                clean.contains("莲花街") ||
+                clean.contains("钟楼") ||
+                clean.contains("长椿路") -> "lianhuajie"
+            else -> clean.lowercase()
+        }
+    }
+
+    private fun detectExplicitInlineCampus(roomText: String): String? {
+        val clean = roomText.trim()
+        if (clean.isEmpty()) return null
+        return when {
+            clean.contains("嵩山", ignoreCase = true) ||
+                clean.contains("齐礼阎", ignoreCase = true) -> "songshanlu"
+            clean.contains("莲花街", ignoreCase = true) ||
+                clean.contains("钟楼", ignoreCase = true) ||
+                clean.contains("长椿路", ignoreCase = true) ||
+                clean.contains("训练中心", ignoreCase = true) ||
+                Regex("莲0?\\d+号").containsMatchIn(clean) -> "lianhuajie"
+            else -> null
+        }
+    }
+
+    private fun buildingCampusKey(building: Building): String =
+        normalizeCampusKey(building.campusId) ?: "lianhuajie"
+
+    private fun matchesExactBuildingNumber(building: Building, buildingNum: String): Boolean {
+        val normalizedNum = buildingNum.trimStart('0').ifEmpty { buildingNum }
+        val exactNumRegex = Regex("(?<!\\d)0?${Regex.escape(normalizedNum)}(号(教学)?楼|教)")
+        return exactNumRegex.containsMatchIn(building.name) || exactNumRegex.containsMatchIn(building.shortName)
+    }
+
     /**
      * 将教务原始教室字符串（如 "莲花街校区 1号教学楼1104"、"A座204"、"钟楼201"、"3206"）解析为校区建筑。
-     * - 精确匹配已核验别名 -> EXACT_VERIFIED
-     * - 模糊匹配或未核验低置信度别名 -> FUZZY_NEEDS_CONFIRMATION（需用户确认，不可装作已识别成功）
+     * - 精确匹配已核验带明确校区归属的名称/别名 -> EXACT_VERIFIED
+     * - 纯数字编号（如 2201、1104、3206）不足以单独证明校区：
+     *   - 有明确校区上下文且该校区存在唯一对应教学楼 -> FUZZY_NEEDS_CONFIRMATION（仅限同校区候选，绝不跨校区跳楼）
+     *   - 无校区上下文或与当前校区冲突 -> FUZZY_NEEDS_CONFIRMATION 且 building = null（保持待确认，禁止自动跨校区导航）
      * - 无法识别 -> UNRESOLVED
      */
+    @JvmOverloads
     fun resolve(
         rawRoom: String,
         buildings: List<Building>,
-        aliases: List<BuildingAlias>
+        aliases: List<BuildingAlias>,
+        campusContext: String? = null
     ): ResolvedClassroomLocation {
         val trimmed = rawRoom.trim()
         if (trimmed.isEmpty()) {
@@ -200,15 +245,39 @@ object ClassroomBuildingResolver {
             )
         }
 
+        val inlineCampus = detectExplicitInlineCampus(trimmed)
+        val effectiveCampus = inlineCampus ?: normalizeCampusKey(campusContext)
+        val hasExplicitCampusMetadataInPool = buildings.any { it.campusId.isNotBlank() }
+        val distinctCampusesInPool = buildings.map(::buildingCampusKey).toSet()
+        val isMultiCampusPool = distinctCampusesInPool.size > 1
+        val scopedBuildingPool = if (effectiveCampus != null) {
+            buildings.filter { buildingCampusKey(it) == effectiveCampus }
+        } else {
+            buildings
+        }
+
         val buildingMap = buildings.associateBy { it.id }
         val roomNumberHint = ROOM_NUMBER_REGEX.findAll(trimmed).lastOrNull()?.value
 
-        // 1. 直接匹配建筑全称或简称
-        val directBuilding = buildings.firstOrNull { b ->
+        // 1. 直接匹配建筑全称或简称（严格遵循校区边界；无校区上下文且多校区同名时保持待确认且 building = null）
+        val directCandidates = (if (effectiveCampus != null) scopedBuildingPool else buildings).filter { b ->
             trimmed.contains(b.name, ignoreCase = true) ||
                 (b.shortName.length >= 2 && trimmed.contains(b.shortName, ignoreCase = true))
         }
-        if (directBuilding != null) {
+        if (directCandidates.isNotEmpty()) {
+            val directCampuses = directCandidates.map(::buildingCampusKey).toSet()
+            if (inlineCampus == null && effectiveCampus == null && directCampuses.size > 1) {
+                return ResolvedClassroomLocation(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                    building = null,
+                    roomNumberHint = roomNumberHint,
+                    confidence = 0.50f,
+                    matchedAlias = "跨校区同名楼宇待确认",
+                    candidateBuildings = directCandidates.take(4)
+                )
+            }
+            val directBuilding = directCandidates.first()
             return ResolvedClassroomLocation(
                 rawRoom = rawRoom,
                 status = BuildingMatchStatus.EXACT_VERIFIED,
@@ -219,55 +288,155 @@ object ClassroomBuildingResolver {
             )
         }
 
-        // 2. 匹配别名表（按置信度与长度降序）
+        // 2. 匹配别名表（按置信度与长度降序；纯数字正则别名不得在无校区上下文或异校区下越界生效）
         val sortedAliases = aliases.sortedWith(
             compareByDescending<BuildingAlias> { it.verified }
                 .thenByDescending { it.confidence }
                 .thenByDescending { it.rawNameOrPattern.length }
         )
 
+        val matchedAliasEntries = mutableListOf<Pair<BuildingAlias, Building>>()
         for (alias in sortedAliases) {
             val pattern = alias.rawNameOrPattern
-            val matched = if (pattern.startsWith("^")) {
+            val isRegexAlias = pattern.startsWith("^")
+            val matched = if (isRegexAlias) {
                 Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(trimmed)
             } else {
                 trimmed.contains(pattern, ignoreCase = true)
             }
+            if (!matched) continue
+            val targetBuilding = buildingMap[alias.buildingId] ?: continue
+            val targetCampus = buildingCampusKey(targetBuilding)
 
-            if (matched) {
-                val targetBuilding = buildingMap[alias.buildingId] ?: continue
-                val status = if (alias.verified && alias.confidence >= 0.85f) {
-                    BuildingMatchStatus.EXACT_VERIFIED
-                } else {
-                    BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION
-                }
-                return ResolvedClassroomLocation(
-                    rawRoom = rawRoom,
-                    status = status,
-                    building = targetBuilding,
-                    roomNumberHint = roomNumberHint,
-                    confidence = alias.confidence,
-                    matchedAlias = alias.rawNameOrPattern,
-                    candidateBuildings = if (status == BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION) {
-                        listOf(targetBuilding) + buildings.filter { it.id != targetBuilding.id }.take(2)
-                    } else emptyList()
-                )
+            // 已知当前校区时，绝不允许跨校区命中另一校区别名
+            if (effectiveCampus != null && targetCampus != effectiveCampus) {
+                continue
             }
+            // 纯数字教室号正则（如 ^3[1-6]\d{2}$）不含校区文字：在全校多校区合并池且缺少明确校区上下文时跳过，交由 Step 3 统一做待确认隔离
+            if (isRegexAlias && effectiveCampus == null && isMultiCampusPool) {
+                continue
+            }
+            matchedAliasEntries += alias to targetBuilding
         }
 
-        // 3. 常见纯四位/五位数字教室号启发式（如 "3206" 指 3 号楼 206，"31204" 指 31 号楼 204，未经别名验证时标记为模糊待确认）
-        val multiDigitMatch = Regex("^(\\d{1,2})(\\d{3})$").find(trimmed)
-        if (multiDigitMatch != null) {
-            val buildingNum = multiDigitMatch.groupValues[1]
-            val candidate = buildings.firstOrNull {
-                it.name.contains("${buildingNum}号") || it.shortName.contains("${buildingNum}号") || it.shortName == "${buildingNum}教"
-            }
-            if (candidate != null) {
+        if (matchedAliasEntries.isNotEmpty()) {
+            val distinctMatchedBuildings = matchedAliasEntries.map { it.second }.distinctBy { it.id }
+            val distinctMatchedCampuses = distinctMatchedBuildings.map(::buildingCampusKey).toSet()
+            if (inlineCampus == null && effectiveCampus == null && distinctMatchedCampuses.size > 1) {
                 return ResolvedClassroomLocation(
                     rawRoom = rawRoom,
                     status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
-                    building = candidate,
-                    roomNumberHint = multiDigitMatch.groupValues[2],
+                    building = null,
+                    roomNumberHint = roomNumberHint,
+                    confidence = 0.50f,
+                    matchedAlias = "跨校区楼宇待确认",
+                    candidateBuildings = distinctMatchedBuildings.take(4)
+                )
+            }
+            val (bestAlias, targetBuilding) = matchedAliasEntries.first()
+            val isPureDigitRegexWithoutInlineCampus = bestAlias.rawNameOrPattern.startsWith("^") && inlineCampus == null
+            val status = if (!isPureDigitRegexWithoutInlineCampus && bestAlias.verified && bestAlias.confidence >= 0.85f) {
+                BuildingMatchStatus.EXACT_VERIFIED
+            } else {
+                BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION
+            }
+            return ResolvedClassroomLocation(
+                rawRoom = rawRoom,
+                status = status,
+                building = targetBuilding,
+                roomNumberHint = roomNumberHint,
+                confidence = if (isPureDigitRegexWithoutInlineCampus) minOf(bestAlias.confidence, 0.70f) else bestAlias.confidence,
+                matchedAlias = bestAlias.rawNameOrPattern,
+                candidateBuildings = if (status == BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION) {
+                    listOf(targetBuilding) + scopedBuildingPool.filter { it.id != targetBuilding.id }.take(2)
+                } else emptyList()
+            )
+        }
+
+        // 3. 纯四位/五位数字教室号启发式（如 "2201"、"1104"、"3206"、"31204"）：
+        //    纯数字无法自证校区！必须结合明确校区上下文且严禁子串误配（如 2号 不得匹配 32号楼）与跨校区跳楼！
+        val multiDigitMatch = Regex("^(\\d{1,2})(\\d{3})$").find(trimmed)
+        if (multiDigitMatch != null) {
+            val buildingNum = multiDigitMatch.groupValues[1]
+            val roomSuffix = multiDigitMatch.groupValues[2]
+            val allCampusNumberMatches = buildings.filter { matchesExactBuildingNumber(it, buildingNum) }
+
+            if (effectiveCampus != null) {
+                val sameCampusMatches = allCampusNumberMatches.filter { buildingCampusKey(it) == effectiveCampus }
+                if (sameCampusMatches.size == 1) {
+                    val candidate = sameCampusMatches.single()
+                    return ResolvedClassroomLocation(
+                        rawRoom = rawRoom,
+                        status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                        building = candidate,
+                        roomNumberHint = roomSuffix,
+                        confidence = 0.65f,
+                        matchedAlias = "${buildingNum}XXX 同校区编号推断（待确认）",
+                        candidateBuildings = listOf(candidate) + scopedBuildingPool.filter { it.id != candidate.id }.take(3)
+                    )
+                }
+                if (sameCampusMatches.size > 1) {
+                    return ResolvedClassroomLocation(
+                        rawRoom = rawRoom,
+                        status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                        building = null,
+                        roomNumberHint = roomSuffix,
+                        confidence = 0.40f,
+                        matchedAlias = "${buildingNum}XXX 多候选待确认",
+                        candidateBuildings = sameCampusMatches.take(4)
+                    )
+                }
+                // 当前校区无对应楼号（例如莲花街查 2201、嵩山路查 3206）：若其他校区存在该楼号则保持待确认且 building = null，严禁跨校区自动落点！
+                if (allCampusNumberMatches.isNotEmpty()) {
+                    return ResolvedClassroomLocation(
+                        rawRoom = rawRoom,
+                        status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                        building = null,
+                        roomNumberHint = roomSuffix,
+                        confidence = 0.0f,
+                        matchedAlias = "当前校区无${buildingNum}号教学楼（禁止跨校区自动导航，待人工确认）",
+                        candidateBuildings = scopedBuildingPool.take(4)
+                    )
+                }
+                return ResolvedClassroomLocation(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.UNRESOLVED,
+                    building = null,
+                    roomNumberHint = roomSuffix,
+                    candidateBuildings = scopedBuildingPool.take(4)
+                )
+            }
+
+            // 无校区上下文（campusContext == null 且文本无校区词）：多校区合并建筑池严禁凭纯数字猜校区
+            if (isMultiCampusPool) {
+                if (allCampusNumberMatches.isNotEmpty()) {
+                    return ResolvedClassroomLocation(
+                        rawRoom = rawRoom,
+                        status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                        building = null,
+                        roomNumberHint = roomSuffix,
+                        confidence = 0.35f,
+                        matchedAlias = "${buildingNum}XXX 缺少校区上下文（待确认校区）",
+                        candidateBuildings = allCampusNumberMatches.take(4)
+                    )
+                }
+                return ResolvedClassroomLocation(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.UNRESOLVED,
+                    building = null,
+                    roomNumberHint = roomSuffix,
+                    candidateBuildings = buildings.take(4)
+                )
+            }
+
+            // 兼容仅含单一未标记校区的纯单测数据
+            val singlePoolCandidate = allCampusNumberMatches.firstOrNull()
+            if (singlePoolCandidate != null) {
+                return ResolvedClassroomLocation(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                    building = singlePoolCandidate,
+                    roomNumberHint = roomSuffix,
                     confidence = 0.55f,
                     matchedAlias = "${buildingNum}XXX 编号推断",
                     candidateBuildings = buildings.take(4)
@@ -278,8 +447,9 @@ object ClassroomBuildingResolver {
         return ResolvedClassroomLocation(
             rawRoom = rawRoom,
             status = BuildingMatchStatus.UNRESOLVED,
+            building = null,
             roomNumberHint = roomNumberHint,
-            candidateBuildings = buildings.take(4)
+            candidateBuildings = scopedBuildingPool.take(4)
         )
     }
 }

@@ -434,9 +434,14 @@ fun CampusMapScreen(
         }
     }
 
-    val resolution = remember(searchQuery, buildings, aliases) {
+    val resolution = remember(searchQuery, buildings, aliases, detectedCampus.campusId) {
         if (searchQuery.isBlank()) null
-        else ClassroomBuildingResolver.resolve(searchQuery, buildings, aliases)
+        else ClassroomBuildingResolver.resolve(
+            rawRoom = searchQuery,
+            buildings = buildings,
+            aliases = aliases,
+            campusContext = detectedCampus.campusId
+        )
     }
 
     // 真实地图视口中心（GCJ-02 坐标）与缩放级别
@@ -524,9 +529,12 @@ fun CampusMapScreen(
         }
     }
 
-    LaunchedEffect(resolution?.building?.id, searchQuery) {
-        if (resolution?.building != null) {
-            val b = resolution.building!!
+    LaunchedEffect(resolution?.building?.id, resolution?.status, searchQuery, campusBuildings) {
+        val b = resolution?.building
+        if (resolution?.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED &&
+            b != null &&
+            campusBuildings.any { it.id == b.id }
+        ) {
             selectedBuilding = b
             isFollowingUser = false
             val inferredFloor = HautOfficialGisClient.inferFloorIndexFromRoomQuery(searchQuery)

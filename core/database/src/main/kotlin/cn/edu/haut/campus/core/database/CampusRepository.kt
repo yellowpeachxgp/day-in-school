@@ -1220,7 +1220,9 @@ class CampusRepository internal constructor(
             endPeriod = endPeriod,
             weeks = weeks,
             rawRoom = rawRoom,
-            buildingId = resolved.building?.id,
+            buildingId = if (resolved.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED) {
+                resolved.building?.id
+            } else null,
             userModified = true
         )
         database.withTransaction {
@@ -1709,7 +1711,13 @@ class CampusRepository internal constructor(
                                 existingRule.copy(
                                     weeks = candidate.weeks,
                                     rawRoom = candidate.rawRoom,
-                                    buildingId = resolved.building?.id ?: existingRule.buildingId
+                                    buildingId = when {
+                                        resolved.status == cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED ->
+                                            resolved.building?.id
+                                        candidate.rawRoom == existingRule.rawRoom ->
+                                            existingRule.buildingId
+                                        else -> null
+                                    }
                                 ).toEntity()
                             )
                         }

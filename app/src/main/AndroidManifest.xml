@@ -97,6 +97,16 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- 覆盖升级完成即收敛互斥桌面图标别名，防止旧版已开启二次元图标的用户升级后在桌面同时显示两个图标 -->
+        <receiver
+            android:name=".LauncherIconUpgradeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- 在线拉取 GitHub Release APK 覆盖安装 FileProvider -->
         <provider
             android:name="androidx.core.content.FileProvider"

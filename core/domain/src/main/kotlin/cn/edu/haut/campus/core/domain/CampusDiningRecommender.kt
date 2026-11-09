@@ -205,6 +205,9 @@ object CampusDiningRecommender {
         "避雷"
     )
 
+    private val canonicalSongshanCanteenBuilding: Building =
+        ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS.first { it.id == "b_ss_canteen" }
+
     val CANTEENS: List<CampusCanteenProfile> = listOf(
         CampusCanteenProfile(
             buildingId = "b_canteen1",
@@ -245,14 +248,15 @@ object CampusDiningRecommender {
             lunchDinnerDishes = listOf("下课快手盖浇饭", "重庆豌杂小面", "柳州螺蛳粉", "广式腊味煲仔饭", "鸭血粉丝汤"),
             lateDishes = listOf("瓦罐汤配拌粉", "老北京炸酱面", "脆底煎饺")
         ),
+        // 统一复用 ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS 单一坐标源（院区地块近似坐标，与地图导航完全一致）
         CampusCanteenProfile(
-            buildingId = "b_ss_canteen",
-            campusId = "songshanlu",
-            name = "嵩山路学生餐厅",
-            shortName = "嵩山餐厅",
-            areaLabel = "嵩山路生活区 · 近1/2号教学楼",
-            latitude = 34.741150,
-            longitude = 113.620850,
+            buildingId = canonicalSongshanCanteenBuilding.id,
+            campusId = canonicalSongshanCanteenBuilding.campusId,
+            name = canonicalSongshanCanteenBuilding.name,
+            shortName = canonicalSongshanCanteenBuilding.shortName,
+            areaLabel = "嵩山路生活区 · 近1/2号教学楼（地块近似定位）",
+            latitude = canonicalSongshanCanteenBuilding.latitude,
+            longitude = canonicalSongshanCanteenBuilding.longitude,
             nearbyBuildingIds = setOf("b_ss_t1", "b_ss_t2", "b_ss_lab", "b_ss_lib", "b_ss_dorm"),
             brunchDishes = listOf("胡辣汤配油条", "鲜肉包配小米粥", "鸡蛋灌饼"),
             lunchDinnerDishes = listOf("一楼自选快餐", "河南羊肉烩面", "黑椒牛柳盖浇饭", "骨汤麻辣烫"),
@@ -682,7 +686,8 @@ object CampusDiningRecommender {
         shuffleOffset: Int = 0,
         userReviews: List<CanteenDishReview> = emptyList()
     ): ClassEndMealRecommendation {
-        val building = block.buildingId?.let { id -> buildings.firstOrNull { it.id == id } }
+        val buildingsById = buildings.associateBy { it.id }
+        val building = block.buildingId?.let { id -> buildingsById[id] }
             ?: ClassroomBuildingResolver.resolve(block.classroomText, buildings, emptyList()).building
         val mealSlot = resolveMealSlot(block.endTime)
         val minsLeft = Duration.between(now, block.endInstant).toMinutes()
@@ -695,7 +700,8 @@ object CampusDiningRecommender {
             hasNextClassSoon = block.hasNextClassSoon,
             daySeed = daySeed,
             shuffleOffset = shuffleOffset,
-            userReviews = userReviews
+            userReviews = userReviews,
+            buildingsById = buildingsById
         )
         val primary = candidates.first()
         val secondary = candidates.getOrNull(1)
@@ -730,7 +736,8 @@ object CampusDiningRecommender {
         hasNextClassSoon: Boolean,
         daySeed: Int,
         shuffleOffset: Int,
-        userReviews: List<CanteenDishReview>
+        userReviews: List<CanteenDishReview>,
+        buildingsById: Map<String, Building> = emptyMap()
     ): List<DiningCanteenCandidate> {
         val campusId = when {
             classroomBuilding?.campusId == "songshanlu" -> "songshanlu"
@@ -746,8 +753,18 @@ object CampusDiningRecommender {
         )
 
         val scored = pool.mapIndexed { idx, profile ->
+            val mapBuilding = buildingsById[profile.buildingId]
+            val targetLat = mapBuilding?.latitude ?: profile.latitude
+            val targetLon = mapBuilding?.longitude ?: profile.longitude
+            val syncedProfile = if (mapBuilding != null &&
+                (mapBuilding.latitude != profile.latitude || mapBuilding.longitude != profile.longitude)
+            ) {
+                profile.copy(latitude = targetLat, longitude = targetLon)
+            } else {
+                profile
+            }
             val straightMeters = classroomBuilding?.let { bld ->
-                haversineMeters(bld.latitude, bld.longitude, profile.latitude, profile.longitude)
+                haversineMeters(bld.latitude, bld.longitude, targetLat, targetLon)
             }
             val walkMeters = straightMeters?.let { (it * 1.25).roundToInt() }
             val walkMinutes = walkMeters?.let { (it / 75.0).roundToInt().coerceAtLeast(2) }
@@ -815,7 +832,7 @@ object CampusDiningRecommender {
 
             ScoredCanteen(
                 candidate = DiningCanteenCandidate(
-                    profile = profile,
+                    profile = syncedProfile,
                     distanceMeters = walkMeters,
                     walkMinutes = walkMinutes,
                     averageStars = avgStars,

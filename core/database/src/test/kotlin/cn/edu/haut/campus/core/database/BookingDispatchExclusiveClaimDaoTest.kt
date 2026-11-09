@@ -1932,4 +1932,30 @@ class BookingDispatchExclusiveClaimDaoTest {
             fireResSameStu.lastDiagnosticMessage.orEmpty().contains("检测到同一学号/账号在同日存在另一笔")
         )
     }
+
+    @Test
+    fun allDiningCanteensMatchMapSeedBuildingCoordinates() {
+        val allMapBuildings = (HautMockSeedData.lianhuajieBuildings +
+            cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS)
+            .associateBy { it.id }
+
+        for (canteen in cn.edu.haut.campus.core.domain.CampusDiningRecommender.CANTEENS) {
+            val mapBuilding = org.junit.Assert.assertNotNull(
+                "Missing map Building for canteen ${canteen.buildingId}",
+                allMapBuildings[canteen.buildingId]
+            ).let { allMapBuildings.getValue(canteen.buildingId) }
+            assertEquals(
+                "Latitude mismatch on ${canteen.buildingId}",
+                mapBuilding.latitude,
+                canteen.latitude,
+                0.0
+            )
+            assertEquals(
+                "Longitude mismatch on ${canteen.buildingId}",
+                mapBuilding.longitude,
+                canteen.longitude,
+                0.0
+            )
+        }
+    }
 }
