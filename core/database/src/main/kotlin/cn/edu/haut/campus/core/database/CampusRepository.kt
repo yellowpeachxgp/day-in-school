@@ -3402,7 +3402,7 @@ class CampusRepository internal constructor(
                 }
             }
 
-            // 3) 合并云端图书馆预约任务到本地 Room
+            // 3) 合并云端图书馆预约任务到本地 Room（严格匹配同一 targetLocalDate，防止历史旧日期任务覆盖已推进至次日的计划行）
             val localPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
             for (rj in verifiedSnapshot.jobs) {
                 val matchingLocal = localPlans.firstOrNull {
@@ -3410,9 +3410,6 @@ class CampusRepository internal constructor(
                 } ?: localPlans.firstOrNull {
                     it.targetLocalDate == rj.targetLocalDate &&
                         it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
-                } ?: localPlans.firstOrNull {
-                    it.cloudJobId == rj.jobId &&
-                        it.status !in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
                 }
                 val matchingOrder = verifiedSnapshot.orders.firstOrNull { it.jobId == rj.jobId }
                 val cleanAreaName = (rj.bookedRegionAlias ?: rj.areaName).cleanNullLiteral(
@@ -3884,6 +3881,21 @@ class CampusRepository internal constructor(
         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
             repoScope.launch { runCatching { syncWithCampusCloud() } }
+        } else if (executionMode == BookingExecutionMode.LOCAL_DEVICE) {
+            repoScope.launch {
+                runCatching {
+                    val token = readCachedLibrarySeatSession()?.rawToken
+                        ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                    if (!token.isNullOrBlank()) {
+                        HautLibrarySeatAuthClient.prewarmAutomatedSeatTargets(
+                            rawToken = token,
+                            targetDate = entity.targetLocalDate,
+                            preferredAreaName = entity.preferredAreaName,
+                            preferredSeatLabel = entity.preferredSeatLabel
+                        )
+                    }
+                }
+            }
         }
         entity
     }
@@ -3948,9 +3960,19 @@ class CampusRepository internal constructor(
         val updated = when (stage) {
             TripleScheduleStage.PRECHECK -> {
                 val sessionState = ensureLibrarySeatSession(forceRefresh = false)
+                if (sessionState is LibrarySeatSessionState.Authenticated) {
+                    runCatching {
+                        HautLibrarySeatAuthClient.prewarmAutomatedSeatTargets(
+                            rawToken = sessionState.snapshot.rawToken,
+                            targetDate = current.targetLocalDate,
+                            preferredAreaName = current.preferredAreaName,
+                            preferredSeatLabel = current.preferredSeatLabel
+                        )
+                    }
+                }
                 val diag = when (sessionState) {
                     is LibrarySeatSessionState.Authenticated ->
-                        "已提前为您检查登录状态（${sessionState.snapshot.userInfo.userName.ifBlank { sessionState.snapshot.userInfo.userNo }} 已在线）"
+                        "已提前为您检查登录状态并预热候选座位（${sessionState.snapshot.userInfo.userName.ifBlank { sessionState.snapshot.userInfo.userNo }} 已在线）"
                     else ->
                         "已检查抢座时间配置（建议先保存学校账号密码以便自动登录）"
                 }
@@ -3964,9 +3986,19 @@ class CampusRepository internal constructor(
             }
             TripleScheduleStage.FINAL_CHECK -> {
                 val sessionState = ensureLibrarySeatSession(forceRefresh = true)
+                if (sessionState is LibrarySeatSessionState.Authenticated) {
+                    runCatching {
+                        HautLibrarySeatAuthClient.prewarmAutomatedSeatTargets(
+                            rawToken = sessionState.snapshot.rawToken,
+                            targetDate = current.targetLocalDate,
+                            preferredAreaName = current.preferredAreaName,
+                            preferredSeatLabel = current.preferredSeatLabel
+                        )
+                    }
+                }
                 val diag = when (sessionState) {
                     is LibrarySeatSessionState.Authenticated ->
-                        "已为您刷新最新登录状态，等待 ${current.targetLocalTime} 准点开抢"
+                        "已为您刷新最新登录状态并锁定候选座位号，等待 ${current.targetLocalTime} 准点开抢"
                     else ->
                         "倒计时已就绪，等待 ${current.targetLocalTime} 准点开抢"
                 }
@@ -4030,9 +4062,15 @@ class CampusRepository internal constructor(
                                     outcomeState = "RESULT_UNKNOWN"
                                 )
                             } else {
-                                val sessionState = ensureLibrarySeatSession(forceRefresh = false)
-                                val token0 = (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                                    ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
+                                // 若 T-5m (FINAL_CHECK) 已在最近 15 分钟内刷新过 Token，直接使用缓存 Token 零延迟开抢，省去 07:00:00 的在线校验往返
+                                val recentCachedSnap = readCachedLibrarySeatSession()?.takeIf {
+                                    it.rawToken.isNotBlank() && (nowEpochMillis - it.updatedAtEpochMs) in 0L..(15 * 60 * 1000L)
+                                }
+                                val token0 = recentCachedSnap?.rawToken ?: run {
+                                    val sessionState = ensureLibrarySeatSession(forceRefresh = false)
+                                    (sessionState as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                                        ?: readCachedLibrarySeatSession()?.rawToken.orEmpty()
+                                }
                                 val firstAttemptResult = if (token0.isNotBlank()) {
                                     HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
                                         rawToken = token0,

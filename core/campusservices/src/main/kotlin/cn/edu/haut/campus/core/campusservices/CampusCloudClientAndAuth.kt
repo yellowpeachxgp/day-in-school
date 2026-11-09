@@ -903,7 +903,7 @@ object CampusCloudOidcHelper {
             }
         }
         val bindingsArr = data.optJSONArray("school_bindings") ?: JSONArray()
-        val activeBindingsBySchool = mutableMapOf<String, MutableList<ScopedCloudAuthMetadata>>()
+        val activeBindingsBySchool = mutableMapOf<String, MutableList<Pair<String, ScopedCloudAuthMetadata>>>()
         for (i in 0 until bindingsArr.length()) {
             val b = bindingsArr.optJSONObject(i) ?: continue
             val sId = b.optCleanString("school_id", "haut").lowercase()
@@ -931,12 +931,15 @@ object CampusCloudOidcHelper {
             if (bindKey != null) {
                 scopedAuthMetadataCache[bindKey] = meta
             }
-            activeBindingsBySchool.getOrPut(sId) { mutableListOf() }.add(meta)
+            activeBindingsBySchool.getOrPut(sId) { mutableListOf() }.add(sno to meta)
         }
         for ((sId, list) in activeBindingsBySchool) {
-            val distinctBindIds = list.mapNotNull { it.bindingId }.distinct()
-            val wildcardMeta = if (distinctBindIds.size == 1) {
-                list.last()
+            val distinctBindIds = list.mapNotNull { it.second.bindingId }.distinct()
+            val distinctStudentNos = list.map { it.first }.filter { it.isNotEmpty() && !it.contains("***") }.distinct()
+            val isSingleStudentScope =
+                distinctBindIds.size == 1 || (distinctStudentNos.size == 1 && list.all { it.first == distinctStudentNos.first() })
+            val wildcardMeta = if (isSingleStudentScope) {
+                list.last().second
             } else {
                 ScopedCloudAuthMetadata(
                     authVersion = serverAuthVer,
