@@ -44,6 +44,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -89,12 +90,14 @@ import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 private val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("MM/dd")
 private val PERIOD_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
@@ -136,10 +139,21 @@ fun TimetableScreen(
     }
 
     var editingOccurrence by remember { mutableStateOf<ClassOccurrence?>(null) }
+    var editingMasterRule by remember { mutableStateOf<CourseScheduleRule?>(null) }
+    var schedulingPracticalCourse by remember {
+        mutableStateOf<cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity?>(null)
+    }
+    var showCanceledCoursesDialog by remember { mutableStateOf(false) }
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
-    var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 原始课表
+    var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
+
+    val termCanceledOverrides = remember(occurrenceOverrides, term?.id) {
+        occurrenceOverrides
+            .filter { (term == null || it.termId == term?.id) && it.canceled }
+            .sortedByDescending { it.date }
+    }
 
     val weekOccurrencesMap = remember(
         selectedWeek,
@@ -244,13 +258,43 @@ fun TimetableScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${pendingCourses.size} 门实践课时间待定",
+                    text = "${pendingCourses.size} 门实践课时间待定（可自定义排课时间）",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "查看 ▸",
+                    text = "设置时间 ▸",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = XPeachTheme.readablePrimary
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = termCanceledOverrides.isNotEmpty(),
+            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 3.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                    .clickable { showCanceledCoursesDialog = true }
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "本学期有 ${termCanceledOverrides.size} 节课已设为单日停课",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "恢复上课 ▸",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = XPeachTheme.readablePrimary
@@ -262,7 +306,7 @@ fun TimetableScreen(
                 onDismissRequest = { showUnscheduled = false },
                 title = {
                     Text(
-                        text = "时间待定课程 (${pendingCourses.size})",
+                        text = "时间待定实践课程 (${pendingCourses.size})",
                         style = MaterialTheme.typography.titleLarge
                     )
                 },
@@ -272,35 +316,143 @@ fun TimetableScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "以下课程暂未安排固定时间",
+                            text = "以下实践/集中课程教务未安排固定节次，点击「设置时间」可将其排入课表与提醒",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         for (course in pendingCourses) {
                             XPeachWell(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = course.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = listOfNotNull(
-                                        course.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
-                                        course.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
-                                        course.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" },
-                                        course.category.takeIf { it.isNotBlank() }
-                                    ).joinToString(" · "),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = course.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = listOfNotNull(
+                                                course.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                                                course.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
+                                                course.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" },
+                                                course.category.takeIf { it.isNotBlank() }
+                                            ).joinToString(" · "),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    XPeachFilterPill(
+                                        label = "设置时间",
+                                        selected = true,
+                                        compact = true,
+                                        onClick = {
+                                            showUnscheduled = false
+                                            schedulingPracticalCourse = course
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showUnscheduled = false }) {
-                        Text("知道了")
+                        Text("关闭")
+                    }
+                }
+            )
+        }
+        if (showCanceledCoursesDialog) {
+            val courseById = remember(courses) { courses.associateBy { it.id } }
+            val ruleById = remember(rules) { rules.associateBy { it.id } }
+            XPeachAlertDialog(
+                onDismissRequest = { showCanceledCoursesDialog = false },
+                title = {
+                    Text(
+                        text = "单日停课记录 (${termCanceledOverrides.size})",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (termCanceledOverrides.isEmpty()) {
+                            Text(
+                                text = "当前没有已设单日停课的记录",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "点击「恢复上课」可立即恢复该日排课、桌面小组件与课前提醒",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            for (ov in termCanceledOverrides) {
+                                val r = ov.courseRuleId?.let { ruleById[it] }
+                                val c = (ov.courseId ?: r?.courseId)?.let { courseById[it] }
+                                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(end = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text(
+                                                text = c?.name ?: "课程记录",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = buildString {
+                                                    append("${ov.date} (${ov.date.dayOfWeek.ChineseLabel})")
+                                                    if (r != null) {
+                                                        append(" · 第${r.startPeriod}-${r.endPeriod}节 · ${r.rawRoom}")
+                                                    }
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        XPeachFilterPill(
+                                            label = "恢复上课",
+                                            selected = true,
+                                            compact = true,
+                                            onClick = {
+                                                scope.launch {
+                                                    repository.restoreCanceledOccurrence(
+                                                        date = ov.date,
+                                                        ruleId = ov.courseRuleId,
+                                                        overrideId = ov.id
+                                                    )
+                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showCanceledCoursesDialog = false }) {
+                        Text("关闭")
                     }
                 }
             )
@@ -434,6 +586,11 @@ fun TimetableScreen(
                         courses = courses,
                         rules = rules,
                         unscheduledCourses = pendingCourses,
+                        canceledOverridesCount = termCanceledOverrides.size,
+                        onAddManualCourse = { showAddCourseDialog = true },
+                        onEditRule = { editingMasterRule = it },
+                        onScheduleUnscheduledCourse = { schedulingPracticalCourse = it },
+                        onOpenCanceledCourses = { showCanceledCoursesDialog = true },
                         onNavigateToImporter = onNavigateToImporter,
                         onNavigateToMapWithRoom = onNavigateToMapWithRoom
                     )
@@ -767,29 +924,265 @@ fun TimetableScreen(
         val targetCourse = courses.firstOrNull { it.id == occToEdit.courseId }
         val targetRule = rules.firstOrNull { it.id == occToEdit.ruleId }
 
+        var editScopeMode by remember(occToEdit) { mutableIntStateOf(0) } // 0: 全学期规则, 1: 仅本次(单次改教室/节次)
         var editedName by remember(occToEdit) { mutableStateOf(occToEdit.courseName) }
         var editedRoom by remember(occToEdit) { mutableStateOf(occToEdit.rawRoom) }
         var editedTeacher by remember(occToEdit) { mutableStateOf(occToEdit.teacher.orEmpty()) }
         var editedWeeksText by remember(targetRule) {
             mutableStateOf(targetRule?.let { WeeksSetParser.format(it.weeks) } ?: "1-16周")
         }
+        var editedStartPeriod by remember(occToEdit) { mutableStateOf(occToEdit.startPeriod.toString()) }
+        var editedEndPeriod by remember(occToEdit) { mutableStateOf(occToEdit.endPeriod.toString()) }
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
 
         val palette = XPeachCoursePalette.SwatchesArgb
 
         XPeachAlertDialog(
             onDismissRequest = { editingOccurrence = null },
-            title = { Text("编辑课程") },
+            title = { Text("课程调整") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
+                        text = "${occToEdit.date} (${occToEdit.weekday.ChineseLabel}) · ${occToEdit.startTime.format(PERIOD_TIME_FMT)}–${occToEdit.endTime.format(PERIOD_TIME_FMT)} (${occToEdit.periodRangeText})",
                         style = MaterialTheme.typography.bodyMedium,
                         color = XPeachTheme.readablePrimary
                     )
+                    XPeachSegmentedTabs(
+                        items = listOf("修改全学期规则", "仅改本次 (${occToEdit.date.format(SHORT_DATE_FMT)})"),
+                        selectedIndex = editScopeMode,
+                        onSelect = { editScopeMode = it }
+                    )
+                    if (editScopeMode == 0) {
+                        OutlinedTextField(
+                            value = editedName,
+                            onValueChange = { editedName = it },
+                            label = { Text("课程名称") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editedRoom,
+                            onValueChange = { editedRoom = it },
+                            label = { Text("教室") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editedTeacher,
+                            onValueChange = { editedTeacher = it },
+                            label = { Text("教师") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editedWeeksText,
+                            onValueChange = { editedWeeksText = it },
+                            label = { Text("周次") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .padding(top = 4.dp)
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            for (colorHex in palette) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(colorHex))
+                                        .border(
+                                            width = if (selectedColor == colorHex) 2.5.dp else 0.dp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            shape = CircleShape
+                                        )
+                                        .clickable { selectedColor = colorHex }
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "仅对 ${occToEdit.date} 当日生效，不影响其他教学周排课",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = editedRoom,
+                            onValueChange = { editedRoom = it },
+                            label = { Text("当日临时教室") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                                XPeachFilterPill(
+                                    label = "${sp}-${ep}节",
+                                    selected = editedStartPeriod == sp && editedEndPeriod == ep,
+                                    onClick = {
+                                        editedStartPeriod = sp
+                                        editedEndPeriod = ep
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                editingOccurrence = null
+                                onNavigateToMapWithRoom(editedRoom)
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("查看位置", maxLines = 1, softWrap = false)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
+                                scope.launch {
+                                    repository.saveOccurrenceOverride(
+                                        OccurrenceOverride(
+                                            id = occToEdit.overrideId ?: "ov_cancel_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
+                                            termId = activeTermId,
+                                            courseRuleId = occToEdit.ruleId,
+                                            courseId = occToEdit.courseId,
+                                            date = occToEdit.date,
+                                            canceled = true,
+                                            reason = "单次停课"
+                                        )
+                                    )
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    editingOccurrence = null
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("本节停课", maxLines = 1, softWrap = false)
+                        }
+                    }
+                    if (targetRule != null && editScopeMode == 0) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    repository.deleteCourseScheduleRule(targetRule.id)
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    editingOccurrence = null
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "删除该排课时段",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (editScopeMode == 0) {
+                                if (targetCourse != null && targetRule != null) {
+                                    val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { targetRule.weeks }
+                                    repository.saveUserCourseEdit(
+                                        course = targetCourse.copy(
+                                            name = editedName.trim().ifEmpty { targetCourse.name },
+                                            teacher = editedTeacher.trim().ifEmpty { null },
+                                            colorArgb = selectedColor
+                                        ),
+                                        rule = targetRule.copy(
+                                            rawRoom = editedRoom.trim().ifEmpty { targetRule.rawRoom },
+                                            weeks = parsedWeeks
+                                        )
+                                    )
+                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                }
+                            } else {
+                                val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
+                                val sp = (editedStartPeriod.toIntOrNull() ?: occToEdit.startPeriod).coerceIn(1, 12)
+                                val ep = (editedEndPeriod.toIntOrNull() ?: occToEdit.endPeriod).coerceIn(sp, 12)
+                                repository.saveOccurrenceOverride(
+                                    OccurrenceOverride(
+                                        id = occToEdit.overrideId ?: "ov_mod_${occToEdit.date}_${occToEdit.ruleId ?: UUID.randomUUID()}",
+                                        termId = activeTermId,
+                                        courseRuleId = occToEdit.ruleId,
+                                        courseId = occToEdit.courseId,
+                                        date = occToEdit.date,
+                                        startPeriod = sp,
+                                        endPeriod = ep,
+                                        room = editedRoom.trim().ifEmpty { occToEdit.rawRoom },
+                                        canceled = false,
+                                        reason = "单次调课"
+                                    )
+                                )
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            }
+                            editingOccurrence = null
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingOccurrence = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    val masterRuleToEdit = editingMasterRule
+    if (masterRuleToEdit != null) {
+        val targetCourse = courses.firstOrNull { it.id == masterRuleToEdit.courseId }
+        var editedName by remember(masterRuleToEdit, targetCourse) { mutableStateOf(targetCourse?.name ?: "") }
+        var editedRoom by remember(masterRuleToEdit) { mutableStateOf(masterRuleToEdit.rawRoom) }
+        var editedTeacher by remember(masterRuleToEdit, targetCourse) { mutableStateOf(targetCourse?.teacher.orEmpty()) }
+        var editedWeekday by remember(masterRuleToEdit) { mutableIntStateOf(masterRuleToEdit.weekday.value) }
+        var editedStartPeriod by remember(masterRuleToEdit) { mutableStateOf(masterRuleToEdit.startPeriod.toString()) }
+        var editedEndPeriod by remember(masterRuleToEdit) { mutableStateOf(masterRuleToEdit.endPeriod.toString()) }
+        var editedWeeksText by remember(masterRuleToEdit) {
+            mutableStateOf(WeeksSetParser.format(masterRuleToEdit.weeks))
+        }
+        var selectedColor by remember(targetCourse) { mutableLongStateOf(targetCourse?.colorArgb ?: 0xFF0072BC) }
+        val palette = XPeachCoursePalette.SwatchesArgb
+
+        XPeachAlertDialog(
+            onDismissRequest = { editingMasterRule = null },
+            title = { Text("编辑排课规则") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = editedName,
                         onValueChange = { editedName = it },
@@ -801,7 +1194,7 @@ fun TimetableScreen(
                     OutlinedTextField(
                         value = editedRoom,
                         onValueChange = { editedRoom = it },
-                        label = { Text("教室") },
+                        label = { Text("上课教室") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -814,15 +1207,56 @@ fun TimetableScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Text(
+                        text = "星期",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+                        for (d in 1..7) {
+                            XPeachFilterPill(
+                                label = dayLabels[d - 1],
+                                selected = editedWeekday == d,
+                                onClick = { editedWeekday = d }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "节次",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10")) {
+                            XPeachFilterPill(
+                                label = "${sp}-${ep}节",
+                                selected = editedStartPeriod == sp && editedEndPeriod == ep,
+                                onClick = {
+                                    editedStartPeriod = sp
+                                    editedEndPeriod = ep
+                                }
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = editedWeeksText,
                         onValueChange = { editedWeeksText = it },
-                        label = { Text("周次") },
+                        label = { Text("周次范围") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
@@ -844,18 +1278,21 @@ fun TimetableScreen(
                             )
                         }
                     }
-
-                    FilledTonalButton(
+                    TextButton(
                         onClick = {
-                            editingOccurrence = null
-                            onNavigateToMapWithRoom(editedRoom)
+                            scope.launch {
+                                repository.deleteCourseScheduleRule(masterRuleToEdit.id)
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                editingMasterRule = null
+                            }
                         },
-                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("查看教室位置", maxLines = 1, softWrap = false)
+                        Text(
+                            text = "删除该排课时段",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
             },
@@ -863,22 +1300,27 @@ fun TimetableScreen(
                 Button(
                     onClick = {
                         scope.launch {
-                            if (targetCourse != null && targetRule != null) {
-                                val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { targetRule.weeks }
+                            if (targetCourse != null) {
+                                val sp = (editedStartPeriod.toIntOrNull() ?: masterRuleToEdit.startPeriod).coerceIn(1, 10)
+                                val ep = (editedEndPeriod.toIntOrNull() ?: masterRuleToEdit.endPeriod).coerceIn(sp, 10)
+                                val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { masterRuleToEdit.weeks }
                                 repository.saveUserCourseEdit(
                                     course = targetCourse.copy(
                                         name = editedName.trim().ifEmpty { targetCourse.name },
                                         teacher = editedTeacher.trim().ifEmpty { null },
                                         colorArgb = selectedColor
                                     ),
-                                    rule = targetRule.copy(
-                                        rawRoom = editedRoom.trim().ifEmpty { targetRule.rawRoom },
+                                    rule = masterRuleToEdit.copy(
+                                        weekday = DayOfWeek.of(editedWeekday),
+                                        startPeriod = sp,
+                                        endPeriod = ep,
+                                        rawRoom = editedRoom.trim().ifEmpty { masterRuleToEdit.rawRoom },
                                         weeks = parsedWeeks
                                     )
                                 )
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                             }
-                            editingOccurrence = null
+                            editingMasterRule = null
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
@@ -887,7 +1329,159 @@ fun TimetableScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingOccurrence = null }) {
+                TextButton(onClick = { editingMasterRule = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    val pracToSchedule = schedulingPracticalCourse
+    if (pracToSchedule != null) {
+        var pracRoom by remember(pracToSchedule) { mutableStateOf("实践场地") }
+        var pracWeekday by remember(pracToSchedule) { mutableIntStateOf(today.dayOfWeek.value) }
+        var pracStartPeriod by remember(pracToSchedule) { mutableStateOf("1") }
+        var pracEndPeriod by remember(pracToSchedule) { mutableStateOf("2") }
+        var pracWeeks by remember(pracToSchedule) {
+            mutableStateOf(
+                pracToSchedule.rawWeeks.takeIf { it.isNotBlank() && WeeksSetParser.parse(it).isNotEmpty() }
+                    ?: "1-16周"
+            )
+        }
+        XPeachAlertDialog(
+            onDismissRequest = { schedulingPracticalCourse = null },
+            title = { Text("设置实践课时间") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = pracToSchedule.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = XPeachTheme.readablePrimary
+                    )
+                    Text(
+                        text = listOfNotNull(
+                            pracToSchedule.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                            pracToSchedule.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" },
+                            pracToSchedule.rawWeeks.takeIf { it.isNotBlank() }?.let { "教务周次：$it" }
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = pracRoom,
+                        onValueChange = { pracRoom = it },
+                        label = { Text("上课教室 / 实践场地") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "星期",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+                        for (d in 1..7) {
+                            XPeachFilterPill(
+                                label = dayLabels[d - 1],
+                                selected = pracWeekday == d,
+                                onClick = { pracWeekday = d }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "节次",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "1" to "4", "5" to "8")) {
+                            XPeachFilterPill(
+                                label = "${sp}-${ep}节",
+                                selected = pracStartPeriod == sp && pracEndPeriod == ep,
+                                onClick = {
+                                    pracStartPeriod = sp
+                                    pracEndPeriod = ep
+                                }
+                            )
+                        }
+                    }
+                    Text(
+                        text = "周次",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for ((label, expr) in listOf(
+                            "1-16周" to "1-16周",
+                            "单周" to "1,3,5,7,9,11,13,15周",
+                            "双周" to "2,4,6,8,10,12,14,16周",
+                            "前8周" to "1-8周",
+                            "后8周" to "9-16周"
+                        )) {
+                            XPeachFilterPill(
+                                label = label,
+                                selected = pracWeeks == expr,
+                                onClick = { pracWeeks = expr }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = pracWeeks,
+                        onValueChange = { pracWeeks = it },
+                        label = { Text("周次范围（如 14-16周 或 10周）") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            val sp = (pracStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 10)
+                            val ep = (pracEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 10)
+                            val weeks = WeeksSetParser.parse(pracWeeks).ifEmpty { setOf(selectedWeek) }
+                            repository.scheduleUnscheduledPracticalCourse(
+                                unscheduled = pracToSchedule,
+                                rawRoom = pracRoom.trim().ifBlank { "实践场地" },
+                                weekday = DayOfWeek.of(pracWeekday),
+                                startPeriod = sp,
+                                endPeriod = ep,
+                                weeks = weeks
+                            )
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            schedulingPracticalCourse = null
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("排入课表")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { schedulingPracticalCourse = null }) {
                     Text("取消")
                 }
             }
@@ -1361,6 +1955,11 @@ private fun RawMasterTimetableView(
     courses: List<Course>,
     rules: List<CourseScheduleRule>,
     unscheduledCourses: List<cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity> = emptyList(),
+    canceledOverridesCount: Int = 0,
+    onAddManualCourse: () -> Unit = {},
+    onEditRule: (CourseScheduleRule) -> Unit = {},
+    onScheduleUnscheduledCourse: (cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity) -> Unit = {},
+    onOpenCanceledCourses: () -> Unit = {},
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
 ) {
@@ -1588,18 +2187,40 @@ private fun RawMasterTimetableView(
             }
         }
 
-        // 3. 原始排课完整明细清单（含周次、节次、教师、教室、来源）
+        // 3. 原始排课完整明细清单（含周次、节次、教师、教室、来源、编辑与添加）
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = "课程明细 (${sortedRules.size})",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "课程管理与排课明细 (${sortedRules.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (canceledOverridesCount > 0) {
+                        XPeachFilterPill(
+                            label = "已停课($canceledOverridesCount)",
+                            selected = false,
+                            compact = true,
+                            onClick = onOpenCanceledCourses
+                        )
+                    }
+                    XPeachFilterPill(
+                        label = "+ 添加课程",
+                        selected = true,
+                        compact = true,
+                        onClick = onAddManualCourse
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(6.dp))
 
             if (sortedRules.isEmpty()) {
                 Text(
-                    text = "暂无课程，可从教务系统同步",
+                    text = "暂无课程，可从教务系统同步或点击右上角手动添加",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1610,14 +2231,19 @@ private fun RawMasterTimetableView(
                         val rawArgb = course?.colorArgb ?: 0xFF0072BC
                         val accentColor = XPeachTheme.courseAccent(rawArgb)
                         val weeksText = WeeksSetParser.format(rule.weeks)
-                        val sourceLabel = when (course?.source) {
-                            CourseSource.MANUAL -> "手动添加"
+                        val sourceLabel = when {
+                            course?.source == CourseSource.MANUAL -> "手动添加"
+                            course?.userModified == true || rule.userModified -> "已手动调整"
                             else -> "教务同步"
                         }
 
                         XPeachInsetDivider(verticalPadding = if (idx == 0) 4.dp else 8.dp)
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onEditRule(rule) }
+                                .padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1656,13 +2282,21 @@ private fun RawMasterTimetableView(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (rule.rawRoom.isNotBlank() && !rule.rawRoom.contains("待定")) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 XPeachFilterPill(
-                                    label = "定位",
+                                    label = "编辑",
                                     selected = false,
                                     compact = true,
-                                    onClick = { onNavigateToMapWithRoom(rule.rawRoom) }
+                                    onClick = { onEditRule(rule) }
                                 )
+                                if (rule.rawRoom.isNotBlank() && !rule.rawRoom.contains("待定")) {
+                                    XPeachFilterPill(
+                                        label = "定位",
+                                        selected = false,
+                                        compact = true,
+                                        onClick = { onNavigateToMapWithRoom(rule.rawRoom) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1679,7 +2313,7 @@ private fun RawMasterTimetableView(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "暂未安排固定时间",
+                    text = "教务未指定固定节次，点击「设置时间」可排入周课表",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1692,26 +2326,43 @@ private fun RawMasterTimetableView(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = item.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f).padding(end = 8.dp)
-                            )
-                            XPeachStatusDotText(
-                                text = item.category.takeIf { it.isNotBlank() } ?: "实践环节"
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = item.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    XPeachStatusDotText(
+                                        text = item.category.takeIf { it.isNotBlank() } ?: "实践环节"
+                                    )
+                                }
+                                Text(
+                                    text = listOfNotNull(
+                                        item.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
+                                        item.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
+                                        item.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" }
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "设置时间",
+                                selected = true,
+                                compact = true,
+                                onClick = { onScheduleUnscheduledCourse(item) }
                             )
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = listOfNotNull(
-                                item.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
-                                item.rawWeeks.takeIf { it.isNotBlank() }?.let { "周次：$it" },
-                                item.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" }
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }

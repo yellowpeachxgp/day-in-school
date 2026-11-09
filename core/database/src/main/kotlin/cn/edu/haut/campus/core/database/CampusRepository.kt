@@ -776,16 +776,18 @@ class CampusRepository internal constructor(
                 }
                 dao.upsertTerms(mergedTerms)
 
-                // 修复旧版本因 currentTerm 写死 2026-2027-1 导致 2025-2026-2 同步课表被错存到 2026-2027-1 的问题
-                val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
-                val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
-                val expectedTermId = HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
-                val allRules = dao.getRulesSnapshot()
-                val rulesIn26 = allRules.filter { it.termId == "2026-2027-1" && it.id.startsWith("r_imp_") }
-                val rulesInExpected = allRules.filter { it.termId == expectedTermId }
-                if (expectedTermId != "2026-2027-1" && rulesIn26.isNotEmpty() && rulesInExpected.isEmpty()) {
-                    dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
-                    dao.setCurrentTerm(expectedTermId)
+                // 修复旧版本因 currentTerm 写死 2026-2027-1 导致历史学期同步课表被错存到 2026-2027-1 的问题（仅当用户曾显式保存过旧同步学期配置时执行）
+                val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
+                val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+                if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
+                    val expectedTermId = HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
+                    val allRules = dao.getRulesSnapshot()
+                    val rulesIn26 = allRules.filter { it.termId == "2026-2027-1" && it.id.startsWith("r_imp_") }
+                    val rulesInExpected = allRules.filter { it.termId == expectedTermId }
+                    if (expectedTermId != "2026-2027-1" && rulesIn26.isNotEmpty() && rulesInExpected.isEmpty()) {
+                        dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                        dao.setCurrentTerm(expectedTermId)
+                    }
                 }
             }
             preferences.edit {
@@ -993,6 +995,106 @@ class CampusRepository internal constructor(
     suspend fun saveOccurrenceOverride(override: OccurrenceOverride) {
         dao.upsertOccurrenceOverride(override.toEntity())
         notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
+    }
+
+    suspend fun deleteOccurrenceOverride(overrideId: String) {
+        dao.deleteOccurrenceOverrideById(overrideId)
+        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
+    }
+
+    suspend fun restoreCanceledOccurrence(
+        date: LocalDate,
+        ruleId: String?,
+        overrideId: String? = null
+    ) {
+        database.withTransaction {
+            if (!overrideId.isNullOrBlank()) {
+                dao.deleteOccurrenceOverrideById(overrideId)
+            }
+            if (!ruleId.isNullOrBlank()) {
+                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId, date.toString())
+            }
+        }
+        notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+    }
+
+    suspend fun deleteCourseScheduleRule(ruleId: String) {
+        database.withTransaction {
+            val rules = dao.getRulesSnapshot()
+            val targetRule = rules.firstOrNull { it.id == ruleId } ?: return@withTransaction
+            dao.deleteRuleById(ruleId)
+            val remainingForCourse = rules.count { it.courseId == targetRule.courseId && it.id != ruleId }
+            if (remainingForCourse == 0) {
+                val course = dao.getCoursesSnapshot().firstOrNull { it.id == targetRule.courseId }
+                if (course != null && course.source == CourseSource.MANUAL.name) {
+                    dao.deleteCourseById(course.id)
+                }
+            }
+        }
+        notifyScheduleOrPolicyChanged("COURSE_RULE_DELETED")
+    }
+
+    /**
+     * 为「时间待定」的实践环节课程设置排课时间与地点：
+     * - 绑定原课程标识（`sourceKey` / `name`），避免产生无关联的重复课程；
+     * - 标记 `userModified = true`，确保后续教务同步不会静默覆盖或再次退回待定列表。
+     */
+    suspend fun scheduleUnscheduledPracticalCourse(
+        unscheduled: UnscheduledAcademicCourseEntity,
+        rawRoom: String,
+        weekday: DayOfWeek,
+        startPeriod: Int,
+        endPeriod: Int,
+        weeks: Set<Int>,
+        colorArgb: Long = 0xFF0D9488
+    ) {
+        val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
+        val cleanRoom = rawRoom.trim().ifBlank { "实践场地" }
+        val resolved = ClassroomBuildingResolver.resolve(cleanRoom, buildings, aliases)
+        val now = Instant.now()
+
+        database.withTransaction {
+            val existingCourse = dao.getCoursesSnapshot()
+                .map { it.toDomain() }
+                .firstOrNull { c ->
+                    (unscheduled.sourceKey.isNotBlank() && c.externalId == unscheduled.sourceKey) ||
+                        c.name == unscheduled.name
+                }
+            val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
+            val course = existingCourse?.copy(
+                teacher = unscheduled.teacher?.takeIf { it.isNotBlank() } ?: existingCourse.teacher,
+                credit = unscheduled.creditPlain?.toBigDecimalOrNull() ?: existingCourse.credit,
+                userModified = true,
+                lastSyncAt = now
+            ) ?: Course(
+                id = courseId,
+                externalId = unscheduled.sourceKey.takeIf { it.isNotBlank() },
+                name = unscheduled.name,
+                teacher = unscheduled.teacher?.takeIf { it.isNotBlank() },
+                colorArgb = colorArgb,
+                credit = unscheduled.creditPlain?.toBigDecimalOrNull(),
+                source = CourseSource.OFFICIAL_JW,
+                userModified = true,
+                lastSyncAt = now
+            )
+            val rule = CourseScheduleRule(
+                id = "r_prac_${UUID.randomUUID().toString().take(8)}",
+                courseId = courseId,
+                termId = unscheduled.termId,
+                weekday = weekday,
+                startPeriod = startPeriod.coerceIn(1, 12),
+                endPeriod = endPeriod.coerceIn(startPeriod.coerceIn(1, 12), 12),
+                weeks = weeks.ifEmpty { (1..16).toSet() },
+                rawRoom = cleanRoom,
+                buildingId = resolved.building?.id,
+                userModified = true
+            )
+            dao.upsertCourse(course.toEntity())
+            dao.upsertRule(rule.toEntity())
+            dao.deleteUnscheduledCourseById(unscheduled.id)
+        }
+        notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
     }
 
     suspend fun saveCalendarOverride(override: CalendarOverride) {
@@ -1204,11 +1306,20 @@ class CampusRepository internal constructor(
 
     suspend fun saveImportedExams(
         exams: List<ExamScheduleItem>,
-        replaceExisting: Boolean = true
+        replaceExisting: Boolean = true,
+        targetTermId: String? = null
     ) {
         database.withTransaction {
             if (replaceExisting) {
-                dao.clearExamSchedules()
+                if (!targetTermId.isNullOrBlank()) {
+                    dao.clearExamSchedulesForTerm(targetTermId)
+                    val incomingTerms = exams.map { it.termId }.distinct().filter { it.isNotBlank() && it != targetTermId }
+                    for (tId in incomingTerms) {
+                        dao.clearExamSchedulesForTerm(tId)
+                    }
+                } else {
+                    dao.clearExamSchedules()
+                }
             }
             dao.upsertExamSchedules(exams.map { it.toEntity() })
         }
@@ -1312,7 +1423,8 @@ class CampusRepository internal constructor(
         if (syncData.examsComplete) {
             saveImportedExams(
                 exams = syncData.examItems,
-                replaceExisting = true
+                replaceExisting = true,
+                targetTermId = syncData.termId
             )
         }
         for ((sibTermId, sibCandidates) in syncData.additionalTermTimetables) {
@@ -1337,8 +1449,21 @@ class CampusRepository internal constructor(
         }
         val targetTermId = syncData.termId
         database.withTransaction {
+            val scheduledUserCourseIds = dao.getRulesSnapshot()
+                .filter { it.termId == targetTermId && it.userModified }
+                .map { it.courseId }
+                .toSet()
+            val scheduledUserCourseNames = dao.getCoursesSnapshot()
+                .filter { it.id in scheduledUserCourseIds }
+                .map { it.name.trim() }
+                .toSet()
+            val remainingUnscheduled = if (overwriteUserConflicts) {
+                syncData.unscheduledCourses
+            } else {
+                syncData.unscheduledCourses.filter { it.name.trim() !in scheduledUserCourseNames }
+            }
             dao.clearUnscheduledCoursesForTerm(targetTermId)
-            dao.upsertUnscheduledCourses(syncData.unscheduledCourses.toUnscheduledEntities(targetTermId))
+            dao.upsertUnscheduledCourses(remainingUnscheduled.toUnscheduledEntities(targetTermId))
         }
         val fallbackPopulatedSiblingTermId = if (syncData.timetableCandidates.isEmpty()) {
             syncData.additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
@@ -1404,8 +1529,11 @@ class CampusRepository internal constructor(
             return@withLock Result.failure(IllegalStateException("安全凭据已失效，请重新登录；本地课表和成绩已保留"))
         }
 
-        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
-        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
+        val currentTermEntity = dao.getCurrentTerm()
+        val defaultPair = currentTermEntity?.id?.let { HautAcademicEndpoints.fromTermId(it) }
+            ?: (AcademicTermResolver.defaultAcademicYearCode() to AcademicTermResolver.defaultSemesterCode())
+        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
+        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
 
         credentialResult.credentials.use { credentials ->
             val result = HautLiveAcademicClient.fetchLiveAcademicData(
@@ -1581,8 +1709,11 @@ class CampusRepository internal constructor(
             return@withContext LibrarySeatSessionState.AuthError("请输入学号和统一身份认证密码")
         }
         val prefs = preferences.data.first()
-        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: "2025"
-        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: "12"
+        val currentTermEntity = dao.getCurrentTerm()
+        val defaultPair = currentTermEntity?.id?.let { HautAcademicEndpoints.fromTermId(it) }
+            ?: (AcademicTermResolver.defaultAcademicYearCode() to AcademicTermResolver.defaultSemesterCode())
+        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
+        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
         saveAuthorizedSyncCredentials(
             studentId = cleanId,
             passwordPlain = passwordPlain,

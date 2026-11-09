@@ -179,6 +179,78 @@ object ScheduleEngine {
     }
 
     /**
+     * 解析指定日期被「单日停课」(`OccurrenceOverride(canceled = true)`) 屏蔽的课程列表，
+     * 用于在今日页与课表页提供可视化恢复入口。
+     */
+    fun resolveCanceledOccurrencesForDate(
+        date: LocalDate,
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
+        buildings: List<Building> = emptyList()
+    ): List<ClassOccurrence> {
+        val activeTerm = term ?: return emptyList()
+        val courseMap = courses.associateBy { it.id }
+        val periodMap = periodTimes
+            .filter { it.timeTableId == activeTerm.timeTableId }
+            .associateBy { it.periodNo }
+        val buildingMap = buildings.associateBy { it.id }
+
+        val effectiveDate = TeachingWeekCalculator.resolveDate(date, activeTerm, calendarOverrides)
+        if (effectiveDate.status == TermDateStatus.HOLIDAY_NO_CLASS || effectiveDate.teachingWeek == null) {
+            return emptyList()
+        }
+        val activeWeek = effectiveDate.teachingWeek
+        val targetWeekday = effectiveDate.weekdayUsed
+        val dayCanceledOverrides = occurrenceOverrides.filter {
+            it.termId == activeTerm.id && it.date == date && it.canceled && it.courseRuleId != null
+        }.associateBy { it.courseRuleId!! }
+        if (dayCanceledOverrides.isEmpty()) return emptyList()
+
+        val matchingRules = rules.filter { rule ->
+            rule.termId == activeTerm.id &&
+                rule.weekday == targetWeekday &&
+                activeWeek in rule.weeks &&
+                rule.id in dayCanceledOverrides
+        }
+        return matchingRules.mapNotNull { rule ->
+            val course = courseMap[rule.courseId] ?: return@mapNotNull null
+            val ov = dayCanceledOverrides[rule.id] ?: return@mapNotNull null
+            val startTime = rule.customStartTime
+                ?: periodMap[rule.startPeriod]?.startLocalTime
+                ?: LocalTime.of(8, 0)
+            val endTime = rule.customEndTime
+                ?: periodMap[rule.endPeriod]?.endLocalTime
+                ?: startTime.plusMinutes(95)
+            ClassOccurrence(
+                occurrenceId = "canceled_${date}_${rule.id}",
+                courseId = course.id,
+                ruleId = rule.id,
+                overrideId = ov.id,
+                courseName = course.name,
+                teacher = course.teacher,
+                colorArgb = course.colorArgb,
+                date = date,
+                teachingWeek = activeWeek,
+                weekday = date.dayOfWeek,
+                startPeriod = rule.startPeriod,
+                endPeriod = rule.endPeriod,
+                startTime = startTime,
+                endTime = endTime,
+                rawRoom = rule.rawRoom,
+                buildingId = rule.buildingId,
+                buildingName = rule.buildingId?.let { buildingMap[it]?.name },
+                isMakeupOrOverridden = true,
+                overrideReason = ov.reason ?: "单次停课",
+                userModified = true
+            )
+        }.sortedBy { it.startPeriod }
+    }
+
+    /**
      * 自动识别连堂课（如 1-2 节、3-4 节、1-4 节实验课）内部各小节之间的课间时间。
      * 例如 1-2 节（08:30–10:05）包含第 1 节结束（09:15）至第 2 节开始（09:20）的 5 分钟小课间。
      */

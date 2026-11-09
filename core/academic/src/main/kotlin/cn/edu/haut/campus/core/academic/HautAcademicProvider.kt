@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.academic
 
 import android.webkit.CookieManager
 import cn.edu.haut.campus.core.domain.WeeksSetParser
+import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.AttemptType
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.CourseSource
@@ -49,15 +50,18 @@ object HautAcademicEndpoints {
     const val EXAMS_API_PATH = "/jwglxt/kwgl/kscx_cxXsksxxIndex.html?doType=query&gnmkdm=N358105"
 
     fun toTermId(xnm: String, xqm: String): String {
-        val cleanXnm = xnm.trim().take(4).toIntOrNull() ?: 2025
+        val fallbackYear = AcademicTermResolver.defaultAcademicYearCode().toIntOrNull() ?: 2026
+        val cleanXnm = xnm.trim().take(4).toIntOrNull() ?: fallbackYear
         val termNo = if (xqm.trim() == "12" || xqm.trim() == "2") 2 else 1
         return "$cleanXnm-${cleanXnm + 1}-$termNo"
     }
 
     fun fromTermId(termId: String): Pair<String, String> {
         val parts = termId.trim().split("-")
-        val xnm = parts.firstOrNull()?.takeIf { it.length == 4 && it.all(Char::isDigit) } ?: "2025"
-        val termNo = parts.lastOrNull()?.toIntOrNull() ?: 1
+        val xnm = parts.firstOrNull()?.takeIf { it.length == 4 && it.all(Char::isDigit) }
+            ?: AcademicTermResolver.defaultAcademicYearCode()
+        val termNo = parts.lastOrNull()?.toIntOrNull()
+            ?: if (AcademicTermResolver.defaultSemesterCode() == "12") 2 else 1
         val xqm = if (termNo == 2) "12" else "3"
         return xnm to xqm
     }
@@ -117,8 +121,8 @@ object HautLiveAcademicClient {
     suspend fun fetchLiveAcademicData(
         studentId: String,
         passwordPlain: String,
-        xnm: String = "2025",
-        xqm: String = "12"
+        xnm: String = AcademicTermResolver.defaultAcademicYearCode(),
+        xqm: String = AcademicTermResolver.defaultSemesterCode()
     ): Result<HautLiveSyncResult> = withContext(Dispatchers.IO) {
         runCatching {
             val jwCookies = OfficialAcademicCookieJar(HautAcademicUrlPolicy.ACADEMIC_HOST)
@@ -265,7 +269,24 @@ object HautLiveAcademicClient {
                 HautZfsoftParser.parseGradesJson(fetchPagedItems(HautAcademicEndpoints.GRADES_API_PATH, jwCookies))
             }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
             val examsRead = runCatching {
-                HautZfsoftParser.parseExamsJson(fetchPagedItems(HautAcademicEndpoints.EXAMS_API_PATH, jwCookies))
+                val allTermExams = HautZfsoftParser.parseExamsJson(
+                    fetchPagedItems(HautAcademicEndpoints.EXAMS_API_PATH, jwCookies)
+                )
+                val targetTermExams = runCatching {
+                    HautZfsoftParser.parseExamsJson(
+                        fetchPagedItems(
+                            path = HautAcademicEndpoints.EXAMS_API_PATH,
+                            cookieJar = jwCookies,
+                            xnm = xnm,
+                            xqm = xqm
+                        )
+                    )
+                }.getOrDefault(emptyList())
+                (targetTermExams + allTermExams).distinctBy { it.id }.sortedWith(
+                    compareByDescending<ExamScheduleItem> { it.termId }
+                        .thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
+                        .thenBy { it.startTime ?: LocalTime.MIN }
+                )
             }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
             val gradeAttempts = gradesRead.getOrDefault(emptyList())
             val examItems = examsRead.getOrDefault(emptyList())
@@ -356,13 +377,18 @@ object HautLiveAcademicClient {
         }
     }.getOrNull()
 
-    private fun fetchPagedItems(path: String, cookieJar: OfficialAcademicCookieJar): String =
+    private fun fetchPagedItems(
+        path: String,
+        cookieJar: OfficialAcademicCookieJar,
+        xnm: String = "",
+        xqm: String = ""
+    ): String =
         AcademicPageReader.readAll { page, size ->
             val response = request(
                 url = HautAcademicEndpoints.BASE_URL + path,
                 method = "POST", cookieJar = cookieJar,
                 formBody = buildFormBody(
-                    "xnm" to "", "xqm" to "", "_search" to "false",
+                    "xnm" to xnm, "xqm" to xqm, "_search" to "false",
                     "queryModel.showCount" to size.toString(),
                     "queryModel.currentPage" to page.toString(),
                     "queryModel.sortName" to "", "queryModel.sortOrder" to "asc", "time" to "0"

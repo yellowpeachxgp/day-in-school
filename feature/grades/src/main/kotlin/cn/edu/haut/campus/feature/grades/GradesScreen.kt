@@ -122,6 +122,7 @@ fun GradesScreen(
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
+    val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
@@ -131,6 +132,9 @@ fun GradesScreen(
     val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
     val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
     val todayDate = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    val activeTermId = remember(currentTerm?.id) {
+        currentTerm?.id?.takeIf { it.isNotBlank() } ?: AcademicTermResolver.defaultTermId()
+    }
 
     var selectedTermFilter by remember { mutableStateOf<String?>(null) }
     var selectedCategoryFilter by remember { mutableStateOf<CourseCategory?>(null) }
@@ -149,11 +153,15 @@ fun GradesScreen(
         }
     }
 
-    val availableTerms = remember(attempts, examSchedules) {
-        (attempts.map { it.termId } + examSchedules.map { it.termId }).distinct().sortedDescending()
+    val availableTerms = remember(attempts, examSchedules, activeTermId) {
+        (listOf(activeTermId) + attempts.map { it.termId } + examSchedules.map { it.termId })
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sortedDescending()
     }
-    val latestTermId = selectedTermFilter ?: availableTerms.firstOrNull()
+    val latestTermId = selectedTermFilter ?: activeTermId.ifBlank { availableTerms.firstOrNull() ?: "" }
     val latestAcademicYear = attempts.firstOrNull { it.termId == latestTermId }?.academicYear
+        ?: latestTermId.split("-").take(2).joinToString("-").takeIf { it.contains("-") }
 
     val officialSnapshot = remember(prefs.officialGpaValuePlain, prefs.officialGpaNote) {
         val officialVal = prefs.officialGpaValuePlain?.toBigDecimalOrNull()
@@ -184,7 +192,7 @@ fun GradesScreen(
     ) {
         XPeachTopBar(
             title = "学业",
-            subtitle = latestTermId ?: "全部学期",
+            subtitle = selectedTermFilter ?: "当前学期 $activeTermId",
             badgeText = if (privacyMasked) "已隐藏" else null,
             actions = {
                 XPeachIconButton(
@@ -631,10 +639,14 @@ fun GradesScreen(
             }
 
             // 2. 成绩明细 / 考试安排 / 培养进度 / 选课草稿 分段切换 + 学期筛选条
+            val examTabCount = remember(examSchedules, selectedTermFilter, activeTermId) {
+                val targetTerm = selectedTermFilter ?: activeTermId
+                examSchedules.count { it.termId == targetTerm }
+            }
             XPeachSegmentedTabs(
                 items = listOf(
                     "成绩(${gpaReport.auditItems.size})",
-                    "考试(${examSchedules.size})",
+                    "考试($examTabCount)",
                     "培养进度",
                     "选课草稿"
                 ),
@@ -811,82 +823,129 @@ fun GradesScreen(
                             }
                         }
                         1 -> {
-                            // 3B. 考试安排列表（涵盖期初补缓考、期中随堂/分散考试、期末集中考试）
-                            val filteredExams = remember(examSchedules, selectedTermFilter) {
-                                examSchedules.filter { selectedTermFilter == null || it.termId == selectedTermFilter }
+                            // 3B. 考试安排列表：严格区分「当前学期」与「历史学期归档」，绝不将旧学期考试静默冒充本学期考试
+                            val targetExamTerm = selectedTermFilter ?: activeTermId
+                            val primaryTermExams = remember(examSchedules, targetExamTerm) {
+                                examSchedules.filter { it.termId == targetExamTerm }
+                            }
+                            val historicalTermExams = remember(examSchedules, activeTermId, selectedTermFilter) {
+                                if (selectedTermFilter == null) {
+                                    examSchedules.filter { it.termId != activeTermId }
+                                } else {
+                                    emptyList()
+                                }
                             }
 
-                            if (filteredExams.isEmpty()) {
+                            if (primaryTermExams.isEmpty()) {
                                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = "暂无考试安排",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(end = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (selectedTermFilter == null || selectedTermFilter == activeTermId) {
+                                                    "当前学期（$targetExamTerm）暂无考试安排"
+                                                } else {
+                                                    "$targetExamTerm 暂无考试安排"
+                                                },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = if (historicalTermExams.isNotEmpty()) {
+                                                    "本学期暂未发布或尚未同步考试安排；下方保留历史学期考试归档供查阅"
+                                                } else {
+                                                    "本学期暂未发布或尚未同步考试安排，教务公布后可点击同步获取"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        XPeachFilterPill(
+                                            label = "去同步",
+                                            selected = true,
+                                            compact = true,
+                                            onClick = onNavigateToImporter
+                                        )
+                                    }
                                 }
                             } else {
                                 XPeachCard(
                                     modifier = Modifier.fillMaxWidth(),
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                                 ) {
-                                    filteredExams.forEachIndexed { index, exam ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .padding(end = 10.dp),
-                                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Text(
-                                                        text = exam.courseName,
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        modifier = Modifier.weight(1f, fill = false)
-                                                    )
-                                                    XPeachStatusDotText(text = exam.examStageLabel)
-                                                }
-                                                Text(
-                                                    text = exam.rawTimeText,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    color = XPeachTheme.readablePrimary,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = buildString {
-                                                        append(exam.rawRoom)
-                                                        if (!exam.seatNumber.isNullOrBlank()) {
-                                                            append(" · 座位 ${exam.seatNumber}号")
-                                                        }
-                                                        append(" · ${exam.examFormat}")
-                                                    },
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-
-                                            XPeachFilterPill(
-                                                label = "去考场",
-                                                selected = true,
-                                                compact = true,
-                                                onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
-                                            )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 6.dp, bottom = 2.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (targetExamTerm == activeTermId) {
+                                                "当前学期考试安排 ($targetExamTerm)"
+                                            } else {
+                                                "$targetExamTerm 考试安排"
+                                            },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        XPeachStatusDotText(text = "${primaryTermExams.size} 场")
+                                    }
+                                    primaryTermExams.forEachIndexed { index, exam ->
+                                        ExamScheduleRowItem(
+                                            exam = exam,
+                                            showTermBadge = false,
+                                            onNavigateToMapWithRoom = onNavigateToMapWithRoom
+                                        )
+                                        if (index < primaryTermExams.lastIndex) {
+                                            XPeachInsetDivider(verticalPadding = 0.dp)
                                         }
+                                    }
+                                }
+                            }
 
-                                        if (index < filteredExams.lastIndex) {
+                            if (historicalTermExams.isNotEmpty()) {
+                                XPeachCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp, bottom = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "历史学期考试归档",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "共 ${historicalTermExams.size} 场",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    XPeachInsetDivider(verticalPadding = 2.dp)
+                                    historicalTermExams.forEachIndexed { index, exam ->
+                                        ExamScheduleRowItem(
+                                            exam = exam,
+                                            showTermBadge = true,
+                                            onNavigateToMapWithRoom = onNavigateToMapWithRoom
+                                        )
+                                        if (index < historicalTermExams.lastIndex) {
                                             XPeachInsetDivider(verticalPadding = 0.dp)
                                         }
                                     }
@@ -919,6 +978,71 @@ fun GradesScreen(
 
             Spacer(modifier = Modifier.height(92.dp))
         }
+    }
+}
+
+@Composable
+private fun ExamScheduleRowItem(
+    exam: cn.edu.haut.campus.core.model.ExamScheduleItem,
+    showTermBadge: Boolean,
+    onNavigateToMapWithRoom: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = exam.courseName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                XPeachStatusDotText(
+                    text = if (showTermBadge) "${exam.termId} · ${exam.examStageLabel}" else exam.examStageLabel
+                )
+            }
+            Text(
+                text = exam.rawTimeText,
+                style = MaterialTheme.typography.labelMedium,
+                color = XPeachTheme.readablePrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = buildString {
+                    append(exam.rawRoom)
+                    if (!exam.seatNumber.isNullOrBlank()) {
+                        append(" · 座位 ${exam.seatNumber}号")
+                    }
+                    append(" · ${exam.examFormat}")
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        XPeachFilterPill(
+            label = "去考场",
+            selected = true,
+            compact = true,
+            onClick = { onNavigateToMapWithRoom(exam.rawRoom) }
+        )
     }
 }
 

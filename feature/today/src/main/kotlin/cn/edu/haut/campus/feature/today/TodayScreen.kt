@@ -505,9 +505,31 @@ fun TodayScreen(
                             textColor = XPeachTheme.readablePrimary
                         )
                     } else {
+                        val todayCanceledCount = remember(
+                            selectedDate,
+                            term,
+                            courses,
+                            rules,
+                            periodTimes,
+                            calendarOverrides,
+                            occurrenceOverrides,
+                            buildings
+                        ) {
+                            ScheduleEngine.resolveCanceledOccurrencesForDate(
+                                date = selectedDate,
+                                term = term,
+                                courses = courses,
+                                rules = rules,
+                                periodTimes = periodTimes,
+                                calendarOverrides = calendarOverrides,
+                                occurrenceOverrides = occurrenceOverrides,
+                                buildings = buildings
+                            ).size
+                        }
                         Text(
                             text = when {
                                 courses.isEmpty() -> "未导入"
+                                snapshot.items.isEmpty() && todayCanceledCount > 0 -> "已停课 ${todayCanceledCount} 节"
                                 snapshot.items.isEmpty() -> "今日无课"
                                 else -> "共 ${snapshot.items.size} 节已结束"
                             },
@@ -590,26 +612,110 @@ fun TodayScreen(
                             pxPerMinute = effectiveScale
                         )
                     }
-                    if (daySnapshot.items.isEmpty()) {
-                        EmptyDayTimelineBox(
-                            hasAnyCourses = courses.isNotEmpty(),
-                            nextClassHint = daySnapshot.nextClassDayHint,
-                            onJumpToDate = { selectedDate = it },
-                            onOpenImporter = onNavigateToImporter
+                    val canceledOnDate = remember(
+                        dateForView,
+                        term,
+                        courses,
+                        rules,
+                        periodTimes,
+                        calendarOverrides,
+                        occurrenceOverrides,
+                        buildings
+                    ) {
+                        ScheduleEngine.resolveCanceledOccurrencesForDate(
+                            date = dateForView,
+                            term = term,
+                            courses = courses,
+                            rules = rules,
+                            periodTimes = periodTimes,
+                            calendarOverrides = calendarOverrides,
+                            occurrenceOverrides = occurrenceOverrides,
+                            buildings = buildings
                         )
-                    } else {
-                        MinimalistDayScheduleFlow(
-                            items = daySnapshot.items,
-                            breakIntervals = daySnapshot.breakIntervals,
-                            highlightedOccurrenceId = daySnapshot.activeOrNextClass?.occurrence?.occurrenceId,
-                            termId = term?.id ?: "default",
-                            globalReminderEnabled = prefs.reminderConfig.enabled,
-                            defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
-                            tasksByEventKey = tasksByEventKey,
-                            overridesByScope = overridesByScope,
-                            onItemClick = { selectedOccurrenceForDetail = it },
-                            onNavigateRoom = onNavigateToMapWithRoom
-                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (daySnapshot.items.isEmpty() && canceledOnDate.isEmpty()) {
+                            EmptyDayTimelineBox(
+                                hasAnyCourses = courses.isNotEmpty(),
+                                nextClassHint = daySnapshot.nextClassDayHint,
+                                onJumpToDate = { selectedDate = it },
+                                onOpenImporter = onNavigateToImporter
+                            )
+                        } else if (daySnapshot.items.isNotEmpty()) {
+                            MinimalistDayScheduleFlow(
+                                items = daySnapshot.items,
+                                breakIntervals = daySnapshot.breakIntervals,
+                                highlightedOccurrenceId = daySnapshot.activeOrNextClass?.occurrence?.occurrenceId,
+                                termId = term?.id ?: "default",
+                                globalReminderEnabled = prefs.reminderConfig.enabled,
+                                defaultLeadMinutes = prefs.reminderConfig.classLeadMinutes,
+                                tasksByEventKey = tasksByEventKey,
+                                overridesByScope = overridesByScope,
+                                onItemClick = { selectedOccurrenceForDetail = it },
+                                onNavigateRoom = onNavigateToMapWithRoom
+                            )
+                        }
+                        if (canceledOnDate.isNotEmpty()) {
+                            XPeachWell(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "当日已停课 (${canceledOnDate.size} 节) · 可随时恢复上课",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    for (canceledOcc in canceledOnDate) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                Text(
+                                                    text = canceledOcc.courseName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${canceledOcc.periodRangeText} · ${canceledOcc.startTime.format(TIME_FMT)}–${canceledOcc.endTime.format(TIME_FMT)} · ${canceledOcc.rawRoom}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            XPeachFilterPill(
+                                                label = "恢复上课",
+                                                selected = true,
+                                                compact = true,
+                                                onClick = {
+                                                    scope.launch {
+                                                        repository.restoreCanceledOccurrence(
+                                                            date = canceledOcc.date,
+                                                            ruleId = canceledOcc.ruleId,
+                                                            overrideId = canceledOcc.overrideId
+                                                        )
+                                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                        dynamicSyncBanner = "已恢复「${canceledOcc.courseName}」当日排课与提醒"
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -743,6 +849,9 @@ fun TodayScreen(
                 selectedOccurrenceForDetail = null
                 onNavigateToMapWithRoom(room)
             },
+            onCourseSuspended = { courseName ->
+                dynamicSyncBanner = "已将「$courseName」设为单次停课，可在课表卡底部点击「恢复上课」撤销"
+            },
             onDismiss = { selectedOccurrenceForDetail = null }
         )
     }
@@ -871,6 +980,7 @@ private fun CourseDetailAndSnoozeDialog(
     activeTask: ReminderTaskDomain?,
     overridesByScope: Map<String, ReminderEventOverride>,
     onNavigateToMapWithRoom: (String) -> Unit,
+    onCourseSuspended: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1195,6 +1305,7 @@ private fun CourseDetailAndSnoozeDialog(
                                     )
                                 )
                                 WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                onCourseSuspended(occ.courseName)
                                 onDismiss()
                             }
                         },
@@ -1749,17 +1860,20 @@ private fun TodayCampusBentoSection(
         )
     }
 
-    val nearestExam = remember(examSchedules, activeTermId, selectedDate, todayDate) {
-        val sameDate = examSchedules.firstOrNull { it.examDate == selectedDate }
+    val currentTermExams = remember(examSchedules, activeTermId) {
+        if (!activeTermId.isNullOrBlank()) {
+            examSchedules.filter { it.termId == activeTermId }
+        } else {
+            examSchedules
+        }
+    }
+
+    val nearestExam = remember(currentTermExams, selectedDate, todayDate) {
+        val sameDate = currentTermExams.firstOrNull { it.examDate == selectedDate }
         if (sameDate != null) {
             sameDate
         } else {
-            val pool = if (activeTermId != null) {
-                examSchedules.filter { it.termId == activeTermId }.ifEmpty { examSchedules }
-            } else {
-                examSchedules
-            }
-            pool.filter { it.examDate == null || !it.examDate!!.isBefore(todayDate) }
+            currentTermExams.filter { it.examDate == null || !it.examDate!!.isBefore(todayDate) }
                 .minByOrNull { it.examDate ?: LocalDate.of(2099, 12, 31) }
         }
     }
@@ -1836,10 +1950,10 @@ private fun TodayCampusBentoSection(
             id = "EXAM_SUMMARY",
             title = "考试与成绩",
             badgeText = "学业",
-            subtitle = if (examSchedules.isNotEmpty()) {
-                "本学期 ${examSchedules.size} 场考试 · 成绩与绩点"
-            } else {
-                "成绩、绩点与考试安排"
+            subtitle = when {
+                currentTermExams.isNotEmpty() -> "本学期 ${currentTermExams.size} 场考试 · 成绩与绩点"
+                examSchedules.isNotEmpty() -> "本学期暂未发布考试 · 历史 ${examSchedules.size} 场"
+                else -> "本学期暂未发布考试 · 成绩与绩点"
             },
             onClick = onNavigateToGrades
         )

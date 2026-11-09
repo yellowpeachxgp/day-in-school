@@ -89,6 +89,18 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertOccurrenceOverride(item: OccurrenceOverrideEntity)
 
+    @Query("DELETE FROM occurrence_overrides WHERE id = :id")
+    suspend fun deleteOccurrenceOverrideById(id: String)
+
+    @Query("DELETE FROM occurrence_overrides WHERE courseRuleId = :ruleId AND dateIso = :dateIso AND canceled = 1")
+    suspend fun deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId: String, dateIso: String)
+
+    @Query("DELETE FROM courses WHERE id = :courseId")
+    suspend fun deleteCourseById(courseId: String)
+
+    @Query("DELETE FROM course_schedule_rules WHERE courseId = :courseId")
+    suspend fun deleteRulesByCourseId(courseId: String)
+
     @Query("SELECT * FROM grade_attempts ORDER BY academicYear DESC, termNumber DESC, courseKey ASC")
     fun observeGradeAttempts(): Flow<List<GradeAttemptEntity>>
 
@@ -155,11 +167,20 @@ interface CampusDao {
     @Query("DELETE FROM exam_schedules")
     suspend fun clearExamSchedules()
 
+    @Query("DELETE FROM exam_schedules WHERE termId = :termId")
+    suspend fun clearExamSchedulesForTerm(termId: String)
+
     @Query("SELECT * FROM unscheduled_academic_courses ORDER BY termId DESC, name ASC, sourceKey ASC")
     fun observeUnscheduledCourses(): Flow<List<UnscheduledAcademicCourseEntity>>
 
+    @Query("SELECT * FROM unscheduled_academic_courses ORDER BY termId DESC, name ASC, sourceKey ASC")
+    suspend fun getUnscheduledCoursesSnapshot(): List<UnscheduledAcademicCourseEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertUnscheduledCourses(items: List<UnscheduledAcademicCourseEntity>)
+
+    @Query("DELETE FROM unscheduled_academic_courses WHERE id = :id")
+    suspend fun deleteUnscheduledCourseById(id: String)
 
     @Query("DELETE FROM unscheduled_academic_courses WHERE termId = :termId")
     suspend fun clearUnscheduledCoursesForTerm(termId: String)
