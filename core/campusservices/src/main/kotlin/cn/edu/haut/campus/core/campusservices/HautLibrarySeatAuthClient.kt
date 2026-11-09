@@ -1199,34 +1199,41 @@ object HautLibrarySeatAuthClient {
                 }
             }
 
-            // 严格凭学校端明确退座终态白名单（5=已取消、6=已签退）及精确预约号核验，拒绝 UNKNOWN / DEFAULTED / 中间态 / 字段矛盾 / 其他预约号
+            // 严格凭学校端明确退座终态白名单（5=已取消、6=已签退）及精确预约号核验：
+            // 1) 完整校验 crrentbooking 与 mybookingInProgress；
+            // 2) 对历史记录 mybookinghis 执行有界分页回查（拒绝把第一页未找到当成功，亦不因历史总条数 > 单页大小而误杀已命中的明确终态记录）。
             val curBody = executeAuthenticatedApiGet(url = WSLIB_CURRENT_BOOKING_URL, cleanToken = cleanToken)
             val inProgBody = executeAuthenticatedApiGet(
                 url = "$WSLIB_IN_PROGRESS_BOOKINGS_URL?bookingstatus=0&pageSize=50&pageNum=1",
                 cleanToken = cleanToken
             )
-            val histBody = executeAuthenticatedApiGet(
-                url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=20&pageNum=1",
-                cleanToken = cleanToken
-            )
-            verifyAuthoritativeSeatCancellationReadback(
+            verifyAuthoritativeSeatCancellationReadbackPaginated(
                 resolvedId = resolvedId,
                 curBody = curBody,
                 inProgBody = inProgBody,
-                histBody = histBody,
+                pageSize = DEFAULT_HISTORY_VERIFY_PAGE_SIZE,
+                maxPages = MAX_HISTORY_VERIFY_PAGES,
                 lastMsg = lastMsg
-            )
+            ) { pageNum, pageSize ->
+                executeAuthenticatedApiGet(
+                    url = "$WSLIB_HISTORY_BOOKINGS_URL?bookingstatus=0&pageSize=$pageSize&pageNum=$pageNum",
+                    cleanToken = cleanToken
+                )
+            }
         }
     }
 
+    internal const val DEFAULT_HISTORY_VERIFY_PAGE_SIZE = 20
+    internal const val MAX_HISTORY_VERIFY_PAGES = 5
+
     /**
-     * 判断单条学校预约 JSON 记录是否属于有文档依据的明确退座/签退终态（`5 = 已取消`，`6 = 已签退`）。
-     * `UNKNOWN (0)`、`DEFAULTED (7 = 已违约)`、未知状态码、`取消处理中`/`取消失败` 等中间或失败文案、以及状态码与文案矛盾均返回 `false`。
+     * 提取单条学校预约 JSON 记录的明确退座/签退终态代码（仅限 `"5"` = 已取消、`"`6`"` = 已签退）；
+     * 若处于活跃态、`UNKNOWN (0)`、`DEFAULTED (7 = 已违约)`、未知码、`"取消处理中"`/`"取消失败"` 等中间或失败文案、或状态码与文案矛盾，一律返回 `null`。
      */
-    internal fun isConfirmedSeatCancelTerminalJsonObject(obj: JSONObject?): Boolean {
-        if (obj == null) return false
+    internal fun extractConfirmedSeatCancelTerminalCode(obj: JSONObject?): String? {
+        if (obj == null) return null
         val codeText = obj.optCleanString("bookingStatus").trim()
-        if (codeText != "5" && codeText != "6") return false
+        if (codeText != "5" && codeText != "6") return null
         val rawLabel = obj.optCleanString("bookingStatusName")
             .ifBlank { obj.optCleanString("statusName") }
             .trim()
@@ -1236,10 +1243,13 @@ object HautLibrarySeatAuthClient {
             } else {
                 setOf("已签退", "SIGNED_OUT")
             }
-            if (rawLabel !in allowedLabels) return false
+            if (rawLabel !in allowedLabels) return null
         }
-        return true
+        return codeText
     }
+
+    internal fun isConfirmedSeatCancelTerminalJsonObject(obj: JSONObject?): Boolean =
+        extractConfirmedSeatCancelTerminalCode(obj) != null
 
     internal fun verifyAuthoritativeSeatCancellationReadback(
         resolvedId: String,
@@ -1247,13 +1257,39 @@ object HautLibrarySeatAuthClient {
         inProgBody: String,
         histBody: String,
         lastMsg: String = ""
+    ): String = verifyAuthoritativeSeatCancellationReadbackPaginated(
+        resolvedId = resolvedId,
+        curBody = curBody,
+        inProgBody = inProgBody,
+        pageSize = DEFAULT_HISTORY_VERIFY_PAGE_SIZE,
+        maxPages = 1,
+        lastMsg = lastMsg
+    ) { pageNum, _ ->
+        if (pageNum == 1) {
+            histBody
+        } else {
+            throw IllegalStateException("退座结果待核对：单页校验未提供第 $pageNum 页历史记录")
+        }
+    }
+
+    internal fun verifyAuthoritativeSeatCancellationReadbackPaginated(
+        resolvedId: String,
+        curBody: String,
+        inProgBody: String,
+        pageSize: Int = DEFAULT_HISTORY_VERIFY_PAGE_SIZE,
+        maxPages: Int = MAX_HISTORY_VERIFY_PAGES,
+        lastMsg: String = "",
+        fetchHistoryPage: (pageNum: Int, pageSize: Int) -> String
     ): String {
         val exactId = resolvedId.trim()
         if (exactId.isEmpty() || !exactId.all(Char::isDigit)) {
             throw IllegalStateException("退座结果待核对：缺少合法精确预约编号")
         }
+        val effectivePageSize = pageSize.coerceIn(1, 100)
+        val effectiveMaxPages = maxPages.coerceIn(1, 20)
 
         val curRoot = runCatching { JSONObject(curBody.trim()) }.getOrNull()
+        if (curRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
         if (curRoot == null ||
             curRoot.opt("code") !is Number ||
             curRoot.optInt("code", -1) != 200 ||
@@ -1261,9 +1297,18 @@ object HautLibrarySeatAuthClient {
         ) {
             throw IllegalStateException("退座结果待核对：无法校验当前生效预约响应（$lastMsg）")
         }
-        if (curRoot.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
 
-        var confirmedMatchCount = 0
+        var agreedTerminalCode: String? = null
+        fun recordConfirmedTerminalOrThrow(sourceName: String, terminalCode: String?) {
+            if (terminalCode == null) {
+                throw IllegalStateException("退座结果待核对：${sourceName}中预约编号 $exactId 状态非明确已取消/已签退终态或字段矛盾（$lastMsg）")
+            }
+            if (agreedTerminalCode != null && agreedTerminalCode != terminalCode) {
+                throw IllegalStateException("退座结果待核对：预约编号 $exactId 在不同回查记录间存在矛盾终态（$agreedTerminalCode vs $terminalCode）")
+            }
+            agreedTerminalCode = terminalCode
+        }
+
         val curDataRaw = if (curRoot.has("data") && !curRoot.isNull("data")) {
             curRoot.opt("data")
         } else if (curRoot.has("booking") && !curRoot.isNull("booking")) {
@@ -1279,15 +1324,12 @@ object HautLibrarySeatAuthClient {
                 throw IllegalStateException("退座结果待核对：当前预约记录缺少有效编号（$lastMsg）")
             }
             if (curId == exactId) {
-                if (isConfirmedSeatCancelTerminalJsonObject(curObj)) {
-                    confirmedMatchCount++
-                } else {
-                    throw IllegalStateException("退座未确认完成：当前预约回查状态非明确已取消/已签退终态（$lastMsg）")
-                }
+                recordConfirmedTerminalOrThrow("当前生效预约", extractConfirmedSeatCancelTerminalCode(curObj))
             }
         }
 
         val inProgRoot = runCatching { JSONObject(inProgBody.trim()) }.getOrNull()
+        if (inProgRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
         val inProgRows = inProgRoot?.optJSONArray("rows") ?: inProgRoot?.optJSONObject("data")?.optJSONArray("rows")
         val inProgTotalObj = inProgRoot?.opt("total") ?: inProgRoot?.optJSONObject("data")?.opt("total")
         if (inProgRoot == null ||
@@ -1300,6 +1342,7 @@ object HautLibrarySeatAuthClient {
         ) {
             throw IllegalStateException("退座结果待核对：进行中预约列表响应不完整（$lastMsg）")
         }
+        val seenInProgIds = HashSet<String>()
         for (i in 0 until inProgRows.length()) {
             val rowObj = inProgRows.optJSONObject(i)
                 ?: throw IllegalStateException("退座结果待核对：进行中预约列表包含空记录（$lastMsg）")
@@ -1307,45 +1350,98 @@ object HautLibrarySeatAuthClient {
             if (rowId.isEmpty() || !rowId.all(Char::isDigit)) {
                 throw IllegalStateException("退座结果待核对：进行中预约记录缺少有效编号（$lastMsg）")
             }
+            if (!seenInProgIds.add(rowId)) {
+                throw IllegalStateException("退座结果待核对：进行中预约列表存在重复预约编号 $rowId（$lastMsg）")
+            }
             if (rowId == exactId) {
-                if (isConfirmedSeatCancelTerminalJsonObject(rowObj)) {
-                    confirmedMatchCount++
-                } else {
-                    throw IllegalStateException("退座结果待核对：进行中记录编号 $exactId 尚未进入明确已取消/已签退终态（$lastMsg）")
-                }
+                recordConfirmedTerminalOrThrow("进行中预约列表", extractConfirmedSeatCancelTerminalCode(rowObj))
             }
         }
 
-        val histRoot = runCatching { JSONObject(histBody.trim()) }.getOrNull()
-        val histRows = histRoot?.optJSONArray("rows") ?: histRoot?.optJSONObject("data")?.optJSONArray("rows")
-        val histTotalObj = histRoot?.opt("total") ?: histRoot?.optJSONObject("data")?.opt("total")
-        if (histRoot == null ||
-            histRoot.opt("code") !is Number ||
-            histRoot.optInt("code", -1) != 200 ||
-            histRows == null ||
-            (histTotalObj != null && histTotalObj !== JSONObject.NULL &&
-                (histTotalObj !is Number || histTotalObj.toInt() < 0 || histTotalObj.toInt() > histRows.length()))
-        ) {
-            throw IllegalStateException("退座结果待核对：历史预约列表响应不完整（$lastMsg）")
-        }
-        for (i in 0 until histRows.length()) {
-            val rowObj = histRows.optJSONObject(i)
-                ?: throw IllegalStateException("退座结果待核对：历史预约列表包含空记录（$lastMsg）")
-            val rowId = rowObj.optCleanString("id").trim()
-            if (rowId.isEmpty() || !rowId.all(Char::isDigit)) {
-                throw IllegalStateException("退座结果待核对：历史预约记录缺少有效编号（$lastMsg）")
+        // 有界历史分页核验：
+        // - 每页必须返回 code===200、合法 rows 数组与非负数值 total；
+        // - 完整扫描当页全部记录，拦截同页/跨页重复 ID 或状态矛盾；
+        // - 若当页已找到目标 exactId 的明确无矛盾取消/签退终态，即使 total > pageSize 亦无需误拒；
+        // - 若第一页未找到目标，绝不当成取消成功，而是按有界分页继续向后查找，直至命中或耗尽页数后转待核对。
+        val seenHistoryIds = HashSet<String>()
+        var fetchedHistoryRows = 0
+        var declaredHistoryTotal: Int? = null
+        var confirmedInHistory = false
+
+        for (pageNum in 1..effectiveMaxPages) {
+            val pageBody = try {
+                fetchHistoryPage(pageNum, effectivePageSize)
+            } catch (sessionEx: LibrarySeatSessionExpiredException) {
+                throw sessionEx
+            } catch (err: Exception) {
+                throw IllegalStateException(
+                    "退座结果待核对：拉取第 $pageNum 页历史预约记录失败（${err.message ?: lastMsg}）",
+                    err
+                )
             }
-            if (rowId == exactId) {
-                if (isConfirmedSeatCancelTerminalJsonObject(rowObj)) {
-                    confirmedMatchCount++
-                } else {
-                    throw IllegalStateException("退座结果待核对：历史记录编号 $exactId 状态为非取消终态或字段矛盾（$lastMsg）")
+            val histRoot = runCatching { JSONObject(pageBody.trim()) }.getOrNull()
+            if (histRoot?.optInt("code", -1) == 401) throw LibrarySeatSessionExpiredException()
+            val histRows = histRoot?.optJSONArray("rows") ?: histRoot?.optJSONObject("data")?.optJSONArray("rows")
+            val histTotalObj = histRoot?.opt("total") ?: histRoot?.optJSONObject("data")?.opt("total")
+            if (histRoot == null ||
+                histRoot.opt("code") !is Number ||
+                histRoot.optInt("code", -1) != 200 ||
+                histRows == null ||
+                histTotalObj !is Number ||
+                histTotalObj.toInt() < 0
+            ) {
+                throw IllegalStateException("退座结果待核对：第 $pageNum 页历史预约列表响应格式不完整（$lastMsg）")
+            }
+            val pageTotal = histTotalObj.toInt()
+            if (declaredHistoryTotal == null) {
+                declaredHistoryTotal = pageTotal
+            } else if (pageTotal != declaredHistoryTotal) {
+                throw IllegalStateException("退座结果待核对：历史分页期间记录总数发生变化，结果待重新核对（$lastMsg）")
+            }
+            if (pageTotal == 0 && histRows.length() > 0) {
+                throw IllegalStateException("退座结果待核对：历史预约列表 total 与 rows 数量矛盾（$lastMsg）")
+            }
+            if (pageTotal > fetchedHistoryRows && histRows.length() == 0) {
+                throw IllegalStateException("退座结果待核对：第 $pageNum 页历史预约返回空列表但未达总条数 $pageTotal（$lastMsg）")
+            }
+
+            for (i in 0 until histRows.length()) {
+                val rowObj = histRows.optJSONObject(i)
+                    ?: throw IllegalStateException("退座结果待核对：第 $pageNum 页历史预约包含空记录（$lastMsg）")
+                val rowId = rowObj.optCleanString("id").trim()
+                if (rowId.isEmpty() || !rowId.all(Char::isDigit)) {
+                    throw IllegalStateException("退座结果待核对：第 $pageNum 页历史预约记录缺少有效编号（$lastMsg）")
                 }
+                if (!seenHistoryIds.add(rowId)) {
+                    throw IllegalStateException("退座结果待核对：历史预约列表存在重复记录编号 $rowId（$lastMsg）")
+                }
+                if (rowId == exactId) {
+                    recordConfirmedTerminalOrThrow("第 $pageNum 页历史记录", extractConfirmedSeatCancelTerminalCode(rowObj))
+                    confirmedInHistory = true
+                }
+            }
+
+            fetchedHistoryRows += histRows.length()
+            if (fetchedHistoryRows > pageTotal) {
+                throw IllegalStateException("退座结果待核对：历史分页返回记录数超出声明总条数（$lastMsg）")
+            }
+            if (confirmedInHistory) {
+                break
+            }
+            if (fetchedHistoryRows >= pageTotal) {
+                break
             }
         }
 
-        if (confirmedMatchCount <= 0) {
-            throw IllegalStateException("退座结果待核对：尚未在学校预约记录中查到精确预约编号 $exactId 的明确已取消/已签退终态凭据（$lastMsg）")
+        val fullyScannedAllHistory =
+            declaredHistoryTotal != null && fetchedHistoryRows == declaredHistoryTotal
+        val hasAuthoritativeTerminalProof =
+            confirmedInHistory || (agreedTerminalCode != null && fullyScannedAllHistory)
+
+        if (!hasAuthoritativeTerminalProof) {
+            throw IllegalStateException(
+                "退座结果待核对：在学校历史记录（已核查 $fetchedHistoryRows/${declaredHistoryTotal ?: "?"} 条）中未查到精确预约编号 $exactId 的明确已取消/已签退终态凭据（$lastMsg）"
+            )
         }
         return "已成功取消并释放座位（编号 $exactId）"
     }

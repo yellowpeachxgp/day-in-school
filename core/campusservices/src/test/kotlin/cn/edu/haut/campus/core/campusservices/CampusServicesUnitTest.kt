@@ -1506,4 +1506,190 @@ class CampusServicesUnitTest {
         val persistedJson = CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(scrubbed)
         assertFalse(persistedJson.contains("secret_approved_for_A"))
     }
+
+    @Test
+    fun `paginated seat cancellation readback handles total over 20 on page 1, later pages, missing target, pagination failure, and duplicate or contradictory rows`() {
+        val emptyCur = """{"code":200,"data":null}"""
+        val emptyInProg = """{"code":200,"total":0,"rows":[]}"""
+
+        fun buildRow(id: Long, status: Int = 6, statusName: String = "已签退"): String =
+            """{"id":"$id","bookingStatus":$status,"bookingStatusName":"$statusName"}"""
+
+        // 1. >20 historical records (total=65, pageSize=20) with target 99887766 on page 1 -> succeeds in 1 page request!
+        val page1WithTargetAnd19Others = (
+            listOf(buildRow(99887766L, status = 5, statusName = "已取消")) +
+                (1L..19L).map { buildRow(80000000L + it) }
+            ).joinToString(",")
+        var pageFetchCallsCase1 = 0
+        val resPage1Hit = HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+            resolvedId = "99887766",
+            curBody = emptyCur,
+            inProgBody = emptyInProg,
+            pageSize = 20,
+            maxPages = 5
+        ) { pageNum, _ ->
+            pageFetchCallsCase1++
+            assertEquals(1, pageNum)
+            """{"code":200,"total":65,"rows":[$page1WithTargetAnd19Others]}"""
+        }
+        assertTrue(resPage1Hit.contains("99887766"))
+        assertEquals(1, pageFetchCallsCase1)
+
+        // 2. >20 historical records (total=45, pageSize=20) with target 99887766 on page 3 -> does NOT confirm on page 1/2, confirms on page 3!
+        val page1TwentyOthers = (1L..20L).joinToString(",") { buildRow(70000000L + it) }
+        val page2TwentyOthers = (21L..40L).joinToString(",") { buildRow(70000000L + it) }
+        val page3FiveWithTarget = (
+            (41L..44L).map { buildRow(70000000L + it) } +
+                listOf(buildRow(99887766L, status = 6, statusName = "已签退"))
+            ).joinToString(",")
+        val fetchedPagesCase2 = mutableListOf<Int>()
+        val resPage3Hit = HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+            resolvedId = "99887766",
+            curBody = emptyCur,
+            inProgBody = emptyInProg,
+            pageSize = 20,
+            maxPages = 5
+        ) { pageNum, _ ->
+            fetchedPagesCase2 += pageNum
+            when (pageNum) {
+                1 -> """{"code":200,"total":45,"rows":[$page1TwentyOthers]}"""
+                2 -> """{"code":200,"total":45,"rows":[$page2TwentyOthers]}"""
+                3 -> """{"code":200,"total":45,"rows":[$page3FiveWithTarget]}"""
+                else -> error("Unexpected page $pageNum")
+            }
+        }
+        assertTrue(resPage3Hit.contains("99887766"))
+        assertEquals(listOf(1, 2, 3), fetchedPagesCase2)
+
+        // 3. Target does NOT exist across all pages (total=35 across 2 pages, or total=200 exceeding bounded maxPages=5) -> MUST fail!
+        val page2FifteenOthers = (21L..35L).joinToString(",") { buildRow(70000000L + it) }
+        val missingTargetRes = runCatching {
+            HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                resolvedId = "99887766",
+                curBody = emptyCur,
+                inProgBody = emptyInProg,
+                pageSize = 20,
+                maxPages = 5
+            ) { pageNum, _ ->
+                when (pageNum) {
+                    1 -> """{"code":200,"total":35,"rows":[$page1TwentyOthers]}"""
+                    2 -> """{"code":200,"total":35,"rows":[$page2FifteenOthers]}"""
+                    else -> error("Should stop at page 2")
+                }
+            }
+        }
+        assertTrue("Target absent across all 35 rows must fail", missingTargetRes.isFailure)
+
+        val missingBeyondBoundedPagesRes = runCatching {
+            HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                resolvedId = "99887766",
+                curBody = emptyCur,
+                inProgBody = emptyInProg,
+                pageSize = 20,
+                maxPages = 5
+            ) { pageNum, _ ->
+                val rows = (1L..20L).joinToString(",") { buildRow(60000000L + pageNum * 100L + it) }
+                """{"code":200,"total":200,"rows":[$rows]}"""
+            }
+        }
+        assertTrue("Target not found within bounded maxPages=5 must fail closed", missingBeyondBoundedPagesRes.isFailure)
+
+        // 4. Pagination failures on page 2 (network exception, HTTP/code 500, empty rows before total, changing total) -> MUST ALL fail!
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { pageNum, _ ->
+                    if (pageNum == 1) """{"code":200,"total":45,"rows":[$page1TwentyOthers]}"""
+                    else throw java.io.IOException("Socket timeout on page 2")
+                }
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { pageNum, _ ->
+                    if (pageNum == 1) """{"code":200,"total":45,"rows":[$page1TwentyOthers]}"""
+                    else """{"code":500,"msg":"系统繁忙"}"""
+                }
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { pageNum, _ ->
+                    if (pageNum == 1) """{"code":200,"total":45,"rows":[$page1TwentyOthers]}"""
+                    else """{"code":200,"total":45,"rows":[]}""" // premature empty page!
+                }
+            }.isFailure
+        )
+
+        // 5. Duplicate or contradictory records -> MUST ALL fail!
+        // 5a: Same page has target first as CANCELLED(5) and later as FULFILLED(1) (guards against early-exit on first row!)
+        val samePageContradictoryRows = (
+            listOf(buildRow(99887766L, status = 5, statusName = "已取消")) +
+                (1L..18L).map { buildRow(50000000L + it) } +
+                listOf(buildRow(99887766L, status = 1, statusName = "待履约签到"))
+            ).joinToString(",")
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { _, _ -> """{"code":200,"total":60,"rows":[$samePageContradictoryRows]}""" }
+            }.isFailure
+        )
+
+        // 5b: Same page has duplicate identical target ID rows
+        val samePageDuplicateRows = listOf(
+            buildRow(99887766L, status = 5, statusName = "已取消"),
+            buildRow(99887766L, status = 5, statusName = "已取消")
+        ).joinToString(",")
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { _, _ -> """{"code":200,"total":2,"rows":[$samePageDuplicateRows]}""" }
+            }.isFailure
+        )
+
+        // 5c: Cross-endpoint contradiction (inProgress says 5=已取消, history page 2 says 6=已签退 or 1=待履约签到)
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = """{"code":200,"total":1,"rows":[${buildRow(99887766L, 5, "已取消")}]}"""
+                ) { pageNum, _ ->
+                    if (pageNum == 1) """{"code":200,"total":25,"rows":[$page1TwentyOthers]}"""
+                    else """{"code":200,"total":25,"rows":[${buildRow(70000091L)},${buildRow(70000092L)},${buildRow(70000093L)},${buildRow(70000094L)},${buildRow(99887766L, 6, "已签退")}]}"""
+                }
+            }.isFailure
+        )
+
+        // 5d: Cross-page duplicate row ID during pagination
+        assertTrue(
+            runCatching {
+                HautLibrarySeatAuthClient.verifyAuthoritativeSeatCancellationReadbackPaginated(
+                    resolvedId = "99887766",
+                    curBody = emptyCur,
+                    inProgBody = emptyInProg
+                ) { pageNum, _ ->
+                    if (pageNum == 1) """{"code":200,"total":22,"rows":[$page1TwentyOthers]}"""
+                    else """{"code":200,"total":22,"rows":[${buildRow(70000020L)},${buildRow(99887766L, 5, "已取消")}]}"""
+                }
+            }.isFailure
+        )
+    }
 }
