@@ -81,6 +81,8 @@ data class HautLiveSyncResult(
     val additionalTermCalendars: Map<String, Pair<LocalDate, Int>> = emptyMap(),
     val gradesComplete: Boolean = false,
     val examsComplete: Boolean = false,
+    val targetTermExamsComplete: Boolean = examsComplete,
+    val completedExamTermIds: Set<String> = emptySet(),
     val syncWarnings: List<String> = emptyList(),
     val unscheduledCourses: List<UnscheduledAcademicCourse> = emptyList()
 )
@@ -264,35 +266,48 @@ object HautLiveAcademicClient {
                 }
             }
 
-            // 成绩与考试分别收集完整快照；失败项不发布空数据。
+            // 成绩与考试分别收集完整快照；失败项绝不吞掉异常冒充空列表，确保同步失败时保留本地旧缓存。
+            val targetTermId = HautAcademicEndpoints.toTermId(xnm, xqm)
             val gradesRead = runCatching {
                 HautZfsoftParser.parseGradesJson(fetchPagedItems(HautAcademicEndpoints.GRADES_API_PATH, jwCookies))
             }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
-            val examsRead = runCatching {
-                val allTermExams = HautZfsoftParser.parseExamsJson(
+            val allTermExamsRead = runCatching {
+                HautZfsoftParser.parseExamsJson(
                     fetchPagedItems(HautAcademicEndpoints.EXAMS_API_PATH, jwCookies)
                 )
-                val targetTermExams = runCatching {
-                    HautZfsoftParser.parseExamsJson(
-                        fetchPagedItems(
-                            path = HautAcademicEndpoints.EXAMS_API_PATH,
-                            cookieJar = jwCookies,
-                            xnm = xnm,
-                            xqm = xqm
-                        )
+            }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
+            val targetTermExamsRead = runCatching {
+                HautZfsoftParser.parseExamsJson(
+                    fetchPagedItems(
+                        path = HautAcademicEndpoints.EXAMS_API_PATH,
+                        cookieJar = jwCookies,
+                        xnm = xnm,
+                        xqm = xqm
                     )
-                }.getOrDefault(emptyList())
-                (targetTermExams + allTermExams).distinctBy { it.id }.sortedWith(
-                    compareByDescending<ExamScheduleItem> { it.termId }
-                        .thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
-                        .thenBy { it.startTime ?: LocalTime.MIN }
                 )
             }.also { if (it.exceptionOrNull() is CancellationException) throw it.exceptionOrNull()!! }
+
             val gradeAttempts = gradesRead.getOrDefault(emptyList())
-            val examItems = examsRead.getOrDefault(emptyList())
+            val targetTermExamsComplete = targetTermExamsRead.isSuccess
+            val allTermExamsComplete = allTermExamsRead.isSuccess
+            val examsComplete = targetTermExamsComplete && allTermExamsComplete
+            val examItems = (
+                targetTermExamsRead.getOrDefault(emptyList()) +
+                    allTermExamsRead.getOrDefault(emptyList())
+                ).distinctBy { it.id }.sortedWith(
+                compareByDescending<ExamScheduleItem> { it.termId }
+                    .thenBy { it.examDate ?: LocalDate.of(2099, 12, 31) }
+                    .thenBy { it.startTime ?: LocalTime.MIN }
+            )
+            val completedExamTerms = buildSet {
+                if (targetTermExamsComplete) add(targetTermId)
+                if (allTermExamsComplete) {
+                    addAll(allTermExamsRead.getOrDefault(emptyList()).map { it.termId }.filter { it.isNotBlank() })
+                }
+            }
 
             HautLiveSyncResult(
-                termId = HautAcademicEndpoints.toTermId(xnm, xqm),
+                termId = targetTermId,
                 studentProfile = studentProfile,
                 timetableCandidates = primaryBreakdown.allCandidates,
                 gradeAttempts = gradeAttempts,
@@ -304,10 +319,12 @@ object HautLiveAcademicClient {
                 additionalTermTimetables = additionalTimetables,
                 additionalTermCalendars = additionalCalendars,
                 gradesComplete = gradesRead.isSuccess,
-                examsComplete = examsRead.isSuccess,
+                examsComplete = examsComplete,
+                targetTermExamsComplete = targetTermExamsComplete,
+                completedExamTermIds = completedExamTerms,
                 syncWarnings = listOfNotNull(
                     gradesRead.exceptionOrNull()?.let { "成绩同步未完成，已保留原数据" },
-                    examsRead.exceptionOrNull()?.let { "考试同步未完成，已保留原数据" }
+                    if (!examsComplete) "考试同步未完成，已保留未完成学期的原数据" else null
                 ),
                 unscheduledCourses = primaryBreakdown.unscheduledCourses
             )

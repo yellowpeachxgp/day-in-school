@@ -182,6 +182,47 @@ interface CloudAndParcelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLibraryBookingPlan(plan: LibraryBookingPlanEntity)
 
+    @Query(
+        """
+        UPDATE library_booking_plans
+        SET status = 'EXECUTING',
+            fireStatus = 'DISPATCH_INTENT',
+            stateVersion = stateVersion + 1,
+            updatedAtEpochMillis = :nowEpochMillis
+        WHERE id = :planId
+          AND executionMode = :expectedExecutionMode
+          AND generation = :expectedGeneration
+          AND status IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK', 'EXECUTING')
+        """
+    )
+    suspend fun claimBookingPlanForDispatch(
+        planId: String,
+        expectedExecutionMode: String,
+        expectedGeneration: Int,
+        nowEpochMillis: Long
+    ): Int
+
+    @Query(
+        """
+        UPDATE library_booking_plans
+        SET status = 'CANCELLED',
+            fireStatus = 'CANCELLED',
+            generation = generation + 1,
+            stateVersion = stateVersion + 1,
+            remainingDays = 0,
+            lastDiagnosticMessage = :diagnosticMessage,
+            updatedAtEpochMillis = :nowEpochMillis
+        WHERE id = :planId
+          AND status IN ('ARMED', 'PRECHECK_OK', 'FINAL_CHECK_OK')
+          AND fireStatus != 'DISPATCH_INTENT'
+        """
+    )
+    suspend fun cancelQueuedBookingPlanAtomically(
+        planId: String,
+        diagnosticMessage: String,
+        nowEpochMillis: Long
+    ): Int
+
     @Query("DELETE FROM library_booking_plans WHERE id = :id")
     suspend fun deleteLibraryBookingPlan(id: String)
 

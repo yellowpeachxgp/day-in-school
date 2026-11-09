@@ -1483,7 +1483,14 @@ object CampusCloudOidcHelper {
                 bodyJson = "{}",
                 bearerToken = accessToken
             )
-            JSONObject(raw).optBoolean("ok", false)
+            val root = JSONObject(raw)
+            if (!root.optBoolean("ok", false)) return@runCatching false
+            val data = root.optJSONObject("data") ?: return@runCatching false
+            val liveCancel = data.optJSONObject("live_cancel")
+            val jobObj = data.optJSONObject("job")
+            liveCancel?.optBoolean("cancelled", false) == true ||
+                jobObj?.optCleanString("school_cancellation_state") == "SCHOOL_CANCELLED" ||
+                jobObj?.optCleanString("state") == "CANCELLED"
         }.getOrDefault(false)
     }
 
@@ -1760,6 +1767,41 @@ object CampusCloudOidcHelper {
                     val repDays = j.optInt("repeat_days", 1).coerceIn(1, 30)
                     val remDays = j.optInt("remaining_days", repDays).coerceIn(0, 30)
                     val rawState = j.optCleanString("state", "ARMED")
+                    val rawDisplay = j.optCleanString("display_status", rawState)
+                    val userIntent = j.optCleanString("user_intent_state", "ACTIVE")
+                    val extBookingId = sr?.optNullableCleanString("external_booking_id")
+                        ?: j.optNullableCleanString("external_booking_id")
+                    val bookedSeat = sr?.optNullableCleanString("seat_alias")
+                        ?: j.optNullableCleanString("confirmed_seat_name")
+                    val bookedRegion = sr?.optNullableCleanString("region_alias")
+                        ?: j.optNullableCleanString("confirmed_region_name")
+                    val hasCompleteSchoolConfirmation =
+                        !extBookingId.isNullOrBlank() &&
+                            !bookedSeat.isNullOrBlank() &&
+                            !bookedRegion.isNullOrBlank()
+                    val claimsConfirmed =
+                        rawState in setOf("CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                            rawDisplay in setOf("CONFIRMED", "SCHOOL_CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED") ||
+                            j.optCleanString("external_execution_state") == "SCHOOL_CONFIRMED"
+                    val safeState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
+                        if (userIntent in setOf("REVOKED", "STOP_REQUESTED") || rawDisplay == "DELEGATION_STOPPED_SCHOOL_CONFIRMED") {
+                            "DELEGATION_STOPPED_RESULT_UNKNOWN"
+                        } else {
+                            "RESULT_UNKNOWN"
+                        }
+                    } else {
+                        rawState
+                    }
+                    val safeDisplayStatus = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
+                        safeState
+                    } else {
+                        rawDisplay
+                    }
+                    val safeExecState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
+                        "RESULT_UNKNOWN"
+                    } else {
+                        j.optCleanString("external_execution_state", "NOT_DISPATCHED")
+                    }
                     add(
                         CloudSyncedReservationJobDto(
                             jobId = j.optCleanString("id"),
@@ -1770,23 +1812,24 @@ object CampusCloudOidcHelper {
                             slotWindow = j.optCleanString("slot_window", "08:00-22:00"),
                             targetLocalDate = bookingDate,
                             targetLocalTime = j.optCleanString("target_local_time", "07:00:00"),
-                            state = rawState,
-                            externalBookingId = sr?.optNullableCleanString("external_booking_id")
-                                ?: j.optNullableCleanString("external_booking_id"),
+                            state = safeState,
+                            externalBookingId = extBookingId,
                             evidenceSha256 = sr?.optNullableCleanString("evidence_sha256"),
-                            bookedSeatAlias = sr?.optNullableCleanString("seat_alias")
-                                ?: j.optNullableCleanString("confirmed_seat_name"),
-                            bookedRegionAlias = sr?.optNullableCleanString("region_alias")
-                                ?: j.optNullableCleanString("confirmed_region_name"),
+                            bookedSeatAlias = bookedSeat,
+                            bookedRegionAlias = bookedRegion,
                             repeatDays = repDays,
                             remainingDays = remDays,
                             endLocalDate = j.optCleanString("end_local_date", bookingDate).ifBlank { bookingDate },
-                            userIntentState = j.optCleanString("user_intent_state", "ACTIVE"),
-                            externalExecutionState = j.optCleanString("external_execution_state", "NOT_DISPATCHED"),
+                            userIntentState = userIntent,
+                            externalExecutionState = safeExecState,
                             schoolCancellationState = j.optCleanString("school_cancellation_state", "NOT_REQUESTED"),
-                            displayStatus = j.optCleanString("display_status", rawState),
+                            displayStatus = safeDisplayStatus,
                             statusLabel = j.optCleanString("status_label", ""),
-                            billingState = j.optCleanString("billing_state", "NOT_BILLED")
+                            billingState = if (claimsConfirmed && !hasCompleteSchoolConfirmation) {
+                                "HELD_PENDING_REVIEW"
+                            } else {
+                                j.optCleanString("billing_state", "NOT_BILLED")
+                            }
                         )
                     )
                 }
@@ -2185,14 +2228,15 @@ object CampusCloudOidcHelper {
 
     // --- Campus Moments (Lost & Found Plaza, Second-Hand Textbooks, Anti-Lost QR Tags) ---
     fun fetchMomentsSnapshot(
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null
     ): Pair<CampusMomentsSnapshot, String>? = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val raw = httpJsonRequest(
             method = "GET",
             url = "$cleanBase/api/v1/moments/snapshot",
             bodyJson = null,
-            bearerToken = null
+            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -2203,7 +2247,9 @@ object CampusCloudOidcHelper {
 
     fun publishMomentsPostToCloud(
         post: MomentsPostItem,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null,
+        contactVisibility: String = "PUBLIC"
     ): MomentsPostItem? = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
@@ -2218,12 +2264,13 @@ object CampusCloudOidcHelper {
             .put("reward_note", post.rewardNote)
             .put("author_name", post.authorName)
             .put("author_student_no_masked", post.authorStudentNoMasked)
+            .put("contact_visibility", contactVisibility)
             .toString()
         val raw = httpJsonRequest(
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -2235,7 +2282,8 @@ object CampusCloudOidcHelper {
         authorName: String,
         content: String,
         contactHint: String = "",
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null
     ): MomentsPostItem? = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
@@ -2247,7 +2295,7 @@ object CampusCloudOidcHelper {
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/comments",
             bodyJson = body,
-            bearerToken = null
+            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -2257,17 +2305,150 @@ object CampusCloudOidcHelper {
     fun mutateMomentsPostOnCloud(
         postId: String,
         action: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        bearerToken: String? = null,
+        reason: String? = null
     ): Boolean = runCatching {
         val cleanBase = cloudBaseUrl.trimEnd('/')
+        val bodyObj = JSONObject().put("action", action)
+        if (!reason.isNullOrBlank()) {
+            bodyObj.put("reason", reason.trim())
+        }
         val raw = httpJsonRequest(
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/action",
-            bodyJson = JSONObject().put("action", action).toString(),
-            bearerToken = null
+            bodyJson = bodyObj.toString(),
+            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
         )
         JSONObject(raw).optBoolean("ok", false)
     }.getOrDefault(false)
+
+    data class MomentsContactRequestDto(
+        val id: String,
+        val postId: String,
+        val senderUserId: String,
+        val senderName: String,
+        val message: String,
+        val contactInfo: String,
+        val status: String,
+        val replyMessage: String?,
+        val initiatorContact: String?,
+        val createdAt: String
+    )
+
+    fun submitMomentsContactRequestToCloud(
+        postId: String,
+        senderName: String,
+        message: String,
+        contactInfo: String,
+        idempotencyKey: String,
+        bearerToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsContactRequestDto? = runCatching {
+        if (bearerToken.isBlank()) return null
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val body = JSONObject()
+            .put("sender_name", senderName)
+            .put("message", message)
+            .put("contact_info", contactInfo)
+            .put("client_request_id", idempotencyKey)
+            .toString()
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
+            bodyJson = body,
+            bearerToken = bearerToken
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        val d = root.optJSONObject("data") ?: return null
+        MomentsContactRequestDto(
+            id = d.optCleanString("id"),
+            postId = d.optCleanString("post_id", postId),
+            senderUserId = d.optCleanString("sender_user_id"),
+            senderName = d.optCleanString("sender_name", senderName),
+            message = d.optCleanString("message", message),
+            contactInfo = d.optCleanString("contact_info", contactInfo),
+            status = d.optCleanString("status", "PENDING"),
+            replyMessage = d.optNullableCleanString("reply_message"),
+            initiatorContact = d.optNullableCleanString("initiator_contact"),
+            createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+        )
+    }.getOrNull()
+
+    fun fetchMomentsContactRequestsFromCloud(
+        postId: String,
+        bearerToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): List<MomentsContactRequestDto> = runCatching {
+        if (bearerToken.isBlank()) return emptyList()
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val raw = httpJsonRequest(
+            method = "GET",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
+            bodyJson = null,
+            bearerToken = bearerToken
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return emptyList()
+        val arr = root.optJSONObject("data")?.optJSONArray("requests") ?: return emptyList()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val d = arr.optJSONObject(i) ?: continue
+                add(
+                    MomentsContactRequestDto(
+                        id = d.optCleanString("id"),
+                        postId = d.optCleanString("post_id", postId),
+                        senderUserId = d.optCleanString("sender_user_id"),
+                        senderName = d.optCleanString("sender_name", "河工大同学"),
+                        message = d.optCleanString("message"),
+                        contactInfo = d.optCleanString("contact_info"),
+                        status = d.optCleanString("status", "PENDING"),
+                        replyMessage = d.optNullableCleanString("reply_message"),
+                        initiatorContact = d.optNullableCleanString("initiator_contact"),
+                        createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    fun handleMomentsContactRequestActionOnCloud(
+        postId: String,
+        requestId: String,
+        action: String,
+        replyMessage: String? = null,
+        reason: String? = null,
+        bearerToken: String,
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+    ): MomentsContactRequestDto? = runCatching {
+        if (bearerToken.isBlank()) return null
+        val cleanBase = cloudBaseUrl.trimEnd('/')
+        val bodyObj = JSONObject().put("action", action)
+        if (!replyMessage.isNullOrBlank()) bodyObj.put("reply_message", replyMessage.trim())
+        if (!reason.isNullOrBlank()) bodyObj.put("reason", reason.trim())
+        val raw = httpJsonRequest(
+            method = "POST",
+            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests/${Uri.encode(requestId)}/action",
+            bodyJson = bodyObj.toString(),
+            bearerToken = bearerToken
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return null
+        val d = root.optJSONObject("data") ?: return null
+        MomentsContactRequestDto(
+            id = d.optCleanString("id", requestId),
+            postId = d.optCleanString("post_id", postId),
+            senderUserId = d.optCleanString("sender_user_id"),
+            senderName = d.optCleanString("sender_name", "河工大同学"),
+            message = d.optCleanString("message"),
+            contactInfo = d.optCleanString("contact_info"),
+            status = d.optCleanString("status", action),
+            replyMessage = d.optNullableCleanString("reply_message"),
+            initiatorContact = d.optNullableCleanString("initiator_contact"),
+            createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+        )
+    }.getOrNull()
 
     fun publishMomentsBookToCloud(
         book: MomentsTextbookListing,
