@@ -1331,7 +1331,7 @@ object HautLibrarySeatAuthClient {
             val matchedRegion: LibraryStudyRegionItem?
             val expectedStartFull: String
             val expectedEndFull: String
-            var preOverview: LibrarySeatBookingOverview? = null
+            var preOverview: LibrarySeatOverviewSnapshot? = null
 
             if (cachedPrewarm != null && isMorningOpeningWindow) {
                 matchedRegion = LibraryStudyRegionItem(
