@@ -290,4 +290,172 @@ class CampusMapProviderTest {
             assertEquals(null, coordinator.nextCooldownExpiryEpochMs(virtualNowMs))
         }
     }
+
+    @Test
+    fun slowFailureTimelineAndMultiBatchAndBoundedRetryWakeUpCleanly() {
+        kotlinx.coroutines.runBlocking {
+            // Item #4 exact timeline reproduction:
+            // failureCooldownMs = 45_000 -> street cooldown = 15_000.
+            // Request starts at t=1_000; 2 street URLs each fail taking 9_000ms -> finishes at t=19_000!
+            // Unpatched code recorded expiry = 1_000 + 15_000 = 16_000 (< 19_000), then awaitNextCooldownBatchExpiry(19_000) evicted 16_000 and returned FALSE!
+            val coordinator = CampusTileCacheCoordinator<String>(maxMemoryEntries = 32, failureCooldownMs = 45_000L)
+            val z = 16
+            val tx = 53439
+            val ty = 25998
+            var virtualNowMs = 1_000L
+            var networkOnline = false
+            var onLoadedCount = 0
+            var cooldownSignals = 0
+
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.STREET_STANDARD,
+                z = z,
+                x = tx,
+                y = ty,
+                nowMs = virtualNowMs,
+                readDiskTile = { null },
+                fetchRemoteTile = { _, _ ->
+                    virtualNowMs += 9_000L
+                    if (networkOnline) "STREET_RECOVERED_AFTER_SLOW_FAIL" else null
+                },
+                onLoaded = { onLoadedCount += 1 },
+                onCooldownScheduled = { cooldownSignals += 1 }
+            )
+            assertEquals(19_000L, virtualNowMs)
+            assertEquals(0, onLoadedCount)
+            assertEquals(1, cooldownSignals)
+
+            // Network recovers after slow failure while viewport stays completely static:
+            networkOnline = true
+            val wokeUpAfterSlowFail = coordinator.awaitNextCooldownBatchExpiry(
+                nowMsProvider = { virtualNowMs },
+                delayMillis = { waitMs ->
+                    assertTrue("Delay must be positive to prevent busy loop", waitMs > 0L)
+                    virtualNowMs += waitMs
+                }
+            )
+            assertTrue(
+                "Slow failure completing at t=19_000 MUST still produce a wakeup retry signal!",
+                wokeUpAfterSlowFail
+            )
+
+            val retryLookup = coordinator.lookupForRender(GisMapStyleMode.STREET_STANDARD, z, tx, ty, virtualNowMs)
+            assertTrue(retryLookup.shouldTriggerTargetLoad)
+            coordinator.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.STREET_STANDARD,
+                z = z,
+                x = tx,
+                y = ty,
+                nowMs = virtualNowMs,
+                readDiskTile = { null },
+                fetchRemoteTile = { _, _ -> "STREET_RECOVERED_AFTER_SLOW_FAIL" },
+                onLoaded = { onLoadedCount += 1 }
+            )
+            assertEquals(1, onLoadedCount)
+            assertEquals(
+                "STREET_RECOVERED_AFTER_SLOW_FAIL",
+                coordinator.lookupForRender(GisMapStyleMode.STREET_STANDARD, z, tx, ty, virtualNowMs).tile
+            )
+
+            // 2) Multi-batch cooldown wakeup: Tile A (street, 5s cooldown) + Tile B (2.5D, 15s cooldown) wake in 2 ordered batches!
+            val multiCoord = CampusTileCacheCoordinator<String>(
+                maxMemoryEntries = 32,
+                failureCooldownMs = 15_000L,
+                maxAutoRetriesPerTile = 3,
+                minRetryDebounceMs = 200L,
+                defaultClockMs = { virtualNowMs }
+            )
+            virtualNowMs = 10_000L
+            // Tile A (outside 2.5D bounds -> street, cooldown = 15_000/3 = 5_000 -> until 15_000)
+            multiCoord.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.STREET_STANDARD,
+                z = 14,
+                x = 100,
+                y = 100,
+                nowMs = virtualNowMs,
+                nowMsProvider = { virtualNowMs },
+                readDiskTile = { null },
+                fetchRemoteTile = { _, _ -> null },
+                onLoaded = {}
+            )
+            // Tile B (inside 2.5D bounds -> 2.5D, cooldown = 15_000 -> until 25_000)
+            multiCoord.loadTileIfNeeded(
+                styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                z = 17,
+                x = 106878,
+                y = 51996,
+                nowMs = virtualNowMs,
+                nowMsProvider = { virtualNowMs },
+                readDiskTile = { null },
+                fetchRemoteTile = { _, _ -> null },
+                onLoaded = {}
+            )
+            val batchDelays = mutableListOf<Long>()
+            assertTrue(
+                multiCoord.awaitNextCooldownBatchExpiry(
+                    nowMsProvider = { virtualNowMs },
+                    delayMillis = { w -> batchDelays += w; virtualNowMs += w }
+                )
+            )
+            assertEquals(15_000L, virtualNowMs)
+            assertTrue(
+                multiCoord.awaitNextCooldownBatchExpiry(
+                    nowMsProvider = { virtualNowMs },
+                    delayMillis = { w -> batchDelays += w; virtualNowMs += w }
+                )
+            )
+            assertEquals(25_000L, virtualNowMs)
+            assertEquals(listOf(5_000L, 10_000L), batchDelays)
+
+            // 3) Bounded retries (maxAutoRetriesPerTile = 2) prevent infinite busy loop while offline, and onForegroundResume() recovers!
+            val boundedCoord = CampusTileCacheCoordinator<String>(
+                maxMemoryEntries = 32,
+                failureCooldownMs = 6_000L,
+                maxAutoRetriesPerTile = 2,
+                minRetryDebounceMs = 200L,
+                defaultClockMs = { virtualNowMs }
+            )
+            virtualNowMs = 50_000L
+            var loadPassesMade = 0
+            var urlFetchCallsMade = 0
+            while (true) {
+                val lk = boundedCoord.lookupForRender(GisMapStyleMode.STREET_STANDARD, 14, 200, 200, virtualNowMs)
+                if (lk.shouldTriggerTargetLoad) {
+                    loadPassesMade += 1
+                    boundedCoord.loadTileIfNeeded(
+                        styleMode = GisMapStyleMode.STREET_STANDARD,
+                        z = 14,
+                        x = 200,
+                        y = 200,
+                        nowMs = virtualNowMs,
+                        nowMsProvider = { virtualNowMs },
+                        readDiskTile = { null },
+                        fetchRemoteTile = { _, _ ->
+                            urlFetchCallsMade += 1
+                            null
+                        },
+                        onLoaded = {}
+                    )
+                }
+                val woke = boundedCoord.awaitNextCooldownBatchExpiry(
+                    nowMsProvider = { virtualNowMs },
+                    delayMillis = { w -> virtualNowMs += w }
+                )
+                if (!woke) break
+                assertTrue("Must terminate within bounded retries", loadPassesMade <= 5)
+            }
+            // Initial pass (1) + 2 auto retries = 3 bounded load passes total (6 URL calls across primary+fallback), then stops cleanly!
+            assertEquals(3, loadPassesMade)
+            assertEquals(6, urlFetchCallsMade)
+            assertFalse(
+                boundedCoord.lookupForRender(GisMapStyleMode.STREET_STANDARD, 14, 200, 200, virtualNowMs + 60_000L).shouldTriggerTargetLoad
+            )
+
+            // Foreground resume resets exhaustion so returning from background immediately allows fresh load!
+            assertTrue(boundedCoord.onForegroundResume(virtualNowMs + 60_000L))
+            assertTrue(
+                boundedCoord.lookupForRender(GisMapStyleMode.STREET_STANDARD, 14, 200, 200, virtualNowMs + 60_000L).shouldTriggerTargetLoad
+            )
+        }
+    }
 }

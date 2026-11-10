@@ -1668,13 +1668,38 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("CALENDAR_OVERRIDE_DELETED")
     }
 
-    suspend fun confirmBuildingAliasForRoom(rawRoom: String, buildingId: String) {
+    @JvmOverloads
+    suspend fun confirmBuildingAliasForRoom(
+        rawRoom: String,
+        buildingId: String,
+        activeCampusId: String? = null
+    ) {
+        val cleanRoom = rawRoom.trim()
+        if (cleanRoom.isEmpty() || buildingId.isBlank()) return
+        val allBuildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val targetBuilding = allBuildings.firstOrNull { it.id == buildingId } ?: return
+
+        // 1) 跨校区保护：若教室文本或当前上下文具备明确校区，禁止将别名跨校区绑定到另一校区楼宇
+        val inlineCampus = ClassroomBuildingResolver.detectCampusHint(listOf(cleanRoom))?.value
+        val effectiveCampus = inlineCampus ?: activeCampusId?.trim()?.takeIf { it.isNotEmpty() }
+        if (effectiveCampus != null) {
+            val contextIsSongshan = effectiveCampus.contains("songshan", ignoreCase = true) ||
+                effectiveCampus.contains("嵩山") ||
+                effectiveCampus.contains("齐礼阎")
+            val targetIsSongshan = targetBuilding.campusId.contains("songshan", ignoreCase = true)
+            if (contextIsSongshan != targetIsSongshan) {
+                return
+            }
+        }
+
+        // 2) 宿舍片区保护：公寓片区通用点（DORMITORY，如学生公寓E/F区）只能保存为近似参考（verified=false），严禁升级为精确已核验楼栋！
+        val isDormitoryZone = targetBuilding.category == cn.edu.haut.campus.core.model.CampusCategory.DORMITORY
         val alias = BuildingAlias(
-            id = "al_user_${rawRoom.hashCode()}",
+            id = "al_user_${cleanRoom.hashCode()}",
             buildingId = buildingId,
-            rawNameOrPattern = rawRoom.trim(),
-            confidence = 1.0f,
-            verified = true
+            rawNameOrPattern = cleanRoom,
+            confidence = if (isDormitoryZone) 0.74f else 1.0f,
+            verified = !isDormitoryZone
         )
         dao.upsertBuildingAliases(listOf(alias.toEntity()))
     }

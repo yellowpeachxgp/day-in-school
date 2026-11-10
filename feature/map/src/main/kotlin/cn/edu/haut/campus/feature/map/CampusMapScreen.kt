@@ -189,6 +189,9 @@ private object CampusTileCache {
         coordinator.clearFailureCooldowns()
     }
 
+    fun onForegroundResume(): Boolean =
+        coordinator.onForegroundResume()
+
     suspend fun awaitNextCooldownBatchExpiry(delayMillis: suspend (Long) -> Unit): Boolean =
         coordinator.awaitNextCooldownBatchExpiry(delayMillis = delayMillis)
 
@@ -209,6 +212,7 @@ private object CampusTileCache {
             z = z,
             x = x,
             y = y,
+            nowMsProvider = System::currentTimeMillis,
             readDiskTile = { targetKey ->
                 withContext(Dispatchers.IO) {
                     val dir = File(cacheDir, "haut_map_tiles_v3").apply { mkdirs() }
@@ -2221,15 +2225,15 @@ fun CampusMapScreen(
                 }
             }
 
-            // 模糊教室 / 片区近似点人工确认条
+            // 模糊教室 / 未知教室 / 片区近似点人工纠正条（保留推荐短名单，同时完整展示当前校区全部可选楼宇）
             if (resolution != null && resolution.status != BuildingMatchStatus.EXACT_VERIFIED) {
                 val approxTarget = resolution.building
-                val candidatePool = resolution.candidateBuildings.ifEmpty {
-                    campusBuildings.filter {
-                        it.category == CampusCategory.TEACHING_BUILDING ||
-                            it.category == CampusCategory.LAB ||
-                            it.category == CampusCategory.DORMITORY
-                    }
+                val manualOptions = remember(resolution, campusBuildings, detectedCampus.campusId) {
+                    ClassroomBuildingResolver.buildManualConfirmationOptions(
+                        resolution = resolution,
+                        buildings = campusBuildings,
+                        campusContext = detectedCampus.campusId
+                    )
                 }
                 XPeachCard(
                     contentPadding = PaddingValues(10.dp),
@@ -2238,9 +2242,9 @@ fun CampusMapScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             text = if (approxTarget != null) {
-                                "片区近似定位（待核实）：当前仅关联至「${approxTarget.name}」通用点，尚未核实单栋楼宇或房间精确位置"
+                                "片区近似/待确认：推荐「${approxTarget.name}」，也可从下方当前校区全部楼宇中手动纠正"
                             } else {
-                                "位置待人工确认：请手动选择所属楼宇或片区"
+                                "位置待人工确认：已列出推荐项与当前校区全部可选教学/实验楼宇"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2253,21 +2257,29 @@ fun CampusMapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "选择候选点：",
+                                text = "确认楼宇：",
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 softWrap = false
                             )
-                            for (candidate in candidatePool) {
+                            for (candidate in manualOptions.orderedChoices) {
                                 val isDormZone = candidate.category == CampusCategory.DORMITORY
+                                val isRecommended = candidate.id in manualOptions.recommendedIds
+                                val pillLabel = when {
+                                    isDormZone -> "${candidate.shortName}(片区近似)"
+                                    isRecommended -> "推荐·${candidate.shortName}"
+                                    else -> candidate.shortName
+                                }
                                 XPeachFilterPill(
-                                    label = if (isDormZone) "${candidate.shortName}(片区)" else candidate.shortName,
+                                    label = pillLabel,
                                     selected = selectedBuilding?.id == candidate.id,
                                     onClick = {
                                         scope.launch {
-                                            if (!isDormZone) {
-                                                repository.confirmBuildingAliasForRoom(searchQuery, candidate.id)
-                                            }
+                                            repository.confirmBuildingAliasForRoom(
+                                                rawRoom = searchQuery,
+                                                buildingId = candidate.id,
+                                                activeCampusId = detectedCampus.campusId
+                                            )
                                             selectedBuilding = candidate
                                             isFollowingUser = false
                                             val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
@@ -2894,6 +2906,7 @@ private fun RealCampusTileMap(
     onSelectBuilding: (Building) -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val hostView = LocalView.current
     val scope = rememberCoroutineScope()
     val isDarkMap = XPeachTheme.isDark
@@ -2901,6 +2914,18 @@ private fun RealCampusTileMap(
     var cooldownScheduleEpoch by remember { mutableIntStateOf(0) }
     var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
     var canvasHeightPx by remember { mutableFloatStateOf(1920f) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (CampusTileCache.onForegroundResume()) {
+                    tileLoadGeneration++
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // 有生命周期的最早冷却截止唤醒：静止视口下瓦片加载失败进入冷却后，到期自动唤醒重绘并重试（无逐帧风暴）
     LaunchedEffect(styleMode, tileLoadGeneration, cooldownScheduleEpoch) {

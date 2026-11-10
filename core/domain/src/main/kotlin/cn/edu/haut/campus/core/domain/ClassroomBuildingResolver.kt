@@ -222,6 +222,56 @@ object ClassroomBuildingResolver {
         return exactNumRegex.containsMatchIn(building.name) || exactNumRegex.containsMatchIn(building.shortName)
     }
 
+    data class ManualBuildingConfirmationOptions(
+        val recommendedIds: Set<String>,
+        val orderedChoices: List<Building>
+    )
+
+    /**
+     * 为地图与课表人工纠正条生成候选建筑列表：
+     * - 保留 `resolution` 的推荐短名单排在最前（`recommendedIds`）；
+     * - 同时完整补齐当前校区全部适合教学/实验/自习/住宿参考的楼宇，确保真实楼宇不在短名单时仍可手动选择并保存别名；
+     * - 严格按当前校区过滤，绝不把另一校区建筑混入当前校区确认列表。
+     */
+    fun buildManualConfirmationOptions(
+        resolution: ResolvedClassroomLocation,
+        buildings: List<Building>,
+        campusContext: String? = null
+    ): ManualBuildingConfirmationOptions {
+        val inlineCampus = detectExplicitInlineCampus(resolution.rawRoom)
+        val effectiveCampus = inlineCampus ?: normalizeCampusKey(campusContext)
+        val sameCampusPool = if (effectiveCampus != null) {
+            buildings.filter { buildingCampusKey(it) == effectiveCampus }
+        } else {
+            buildings
+        }
+
+        val recommended = (listOfNotNull(resolution.building) + resolution.candidateBuildings)
+            .distinctBy { it.id }
+            .filter { cand -> effectiveCampus == null || buildingCampusKey(cand) == effectiveCampus }
+
+        val suitableCategories = setOf(
+            CampusCategory.TEACHING_BUILDING,
+            CampusCategory.LAB,
+            CampusCategory.LIBRARY,
+            CampusCategory.DORMITORY
+        )
+        val categoryPriority = mapOf(
+            CampusCategory.TEACHING_BUILDING to 0,
+            CampusCategory.LAB to 1,
+            CampusCategory.LIBRARY to 2,
+            CampusCategory.DORMITORY to 3
+        )
+        val allSuitableSameCampus = sameCampusPool
+            .filter { it.category in suitableCategories }
+            .sortedBy { categoryPriority[it.category] ?: 9 }
+
+        return ManualBuildingConfirmationOptions(
+            recommendedIds = recommended.map { it.id }.toSet(),
+            orderedChoices = (recommended + allSuitableSameCampus).distinctBy { it.id }
+        )
+    }
+
     /**
      * 将教务原始教室字符串（如 "莲花街校区 1号教学楼1104"、"A座204"、"钟楼201"、"3206"）解析为校区建筑。
      * - 精确匹配已核验带明确校区归属的名称/别名 -> EXACT_VERIFIED

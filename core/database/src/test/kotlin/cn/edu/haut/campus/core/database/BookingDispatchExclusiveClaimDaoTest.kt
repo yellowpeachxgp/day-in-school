@@ -2613,4 +2613,98 @@ class BookingDispatchExclusiveClaimDaoTest {
             assertEquals(idsAfter1, snapAfter2.map { it.id to it.cloudJobId }.toSet())
         }
     }
+
+    @Test
+    fun manualBuildingCorrectionKeepsDormApproximateAndCoversAllCampusBuildings() = runBlocking {
+        val repo = buildInMemoryTestRepo("manual_building_correction_3")
+        val campusDao = database.campusDao()
+        val allBuildings = HautMockSeedData.lianhuajieBuildings +
+            cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS
+        val allAliases = HautMockSeedData.defaultBuildingAliases +
+            cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.HAUT_SONGSHANLU_ALIASES
+        campusDao.upsertBuildings(allBuildings.map { it.toEntity() })
+        campusDao.upsertBuildingAliases(allAliases.map { it.toEntity() })
+
+        // 1) Dormitory zone ("b_dorm_ef") MUST remain FUZZY_NEEDS_CONFIRMATION even if confirmBuildingAliasForRoom is invoked!
+        repo.confirmBuildingAliasForRoom("莲花街校区 学生宿舍F01 W111", "b_dorm_ef")
+        val afterDormConfirm = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "莲花街校区 学生宿舍F01 W111",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(
+            "Dormitory zone b_dorm_ef must NEVER become EXACT_VERIFIED building!",
+            cn.edu.haut.campus.core.model.BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+            afterDormConfirm.status
+        )
+
+        // 2) Wrong fuzzy candidate ("A座204" -> suggests b_t2) exposes BOTH recommended shortlist AND full same-campus buildings (e.g. b_t9), excluding Songshanlu!
+        val fuzzyBefore = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "A座204",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(cn.edu.haut.campus.core.model.BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, fuzzyBefore.status)
+        org.junit.Assert.assertFalse(fuzzyBefore.candidateBuildings.any { it.id == "b_t9" })
+
+        val fuzzyOptions = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.buildManualConfirmationOptions(
+            resolution = fuzzyBefore,
+            buildings = allBuildings,
+            campusContext = "lianhuajie"
+        )
+        org.junit.Assert.assertTrue("Recommended shortlist must stay marked", "b_t2" in fuzzyOptions.recommendedIds)
+        assertEquals("Recommended target must appear first", "b_t2", fuzzyOptions.orderedChoices.first().id)
+        org.junit.Assert.assertTrue("Building b_t9 outside shortlist MUST be selectable", fuzzyOptions.orderedChoices.any { it.id == "b_t9" })
+        org.junit.Assert.assertTrue("Building b_t38 outside shortlist MUST be selectable", fuzzyOptions.orderedChoices.any { it.id == "b_t38" })
+        org.junit.Assert.assertTrue("Cross-campus Songshanlu buildings MUST NOT appear in Lianhuajie options", fuzzyOptions.orderedChoices.none { it.campusId == "songshanlu" })
+
+        repo.confirmBuildingAliasForRoom("A座204", "b_t9", "lianhuajie")
+        val afterCorrectToT9 = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "A座204",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED, afterCorrectToT9.status)
+        assertEquals("b_t9", afterCorrectToT9.building?.id)
+
+        // 3) Unknown classroom ("未知专教B302", UNRESOLVED) can also be corrected to b_t38 outside top-4, while cross-campus confirm to b_ss_t1 is blocked!
+        val unresolvedBefore = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "未知专教B302",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(cn.edu.haut.campus.core.model.BuildingMatchStatus.UNRESOLVED, unresolvedBefore.status)
+        val unresolvedOptions = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.buildManualConfirmationOptions(
+            resolution = unresolvedBefore,
+            buildings = allBuildings,
+            campusContext = "lianhuajie"
+        )
+        org.junit.Assert.assertTrue(unresolvedOptions.orderedChoices.any { it.id == "b_t38" })
+        org.junit.Assert.assertTrue(unresolvedOptions.orderedChoices.none { it.id == "b_ss_t1" })
+
+        // Cross-campus confirm attempt MUST be ignored
+        repo.confirmBuildingAliasForRoom("未知专教B302", "b_ss_t1", "lianhuajie")
+        val afterBlockedCrossConfirm = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "未知专教B302",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(cn.edu.haut.campus.core.model.BuildingMatchStatus.UNRESOLVED, afterBlockedCrossConfirm.status)
+
+        // Valid same-campus confirm outside top-4 ("b_t38") succeeds!
+        repo.confirmBuildingAliasForRoom("未知专教B302", "b_t38", "lianhuajie")
+        val afterValidUnresolvedConfirm = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "未知专教B302",
+            buildings = allBuildings,
+            aliases = campusDao.getBuildingAliasesSnapshot().map { it.toDomain() },
+            campusContext = "lianhuajie"
+        )
+        assertEquals(cn.edu.haut.campus.core.model.BuildingMatchStatus.EXACT_VERIFIED, afterValidUnresolvedConfirm.status)
+        assertEquals("b_t38", afterValidUnresolvedConfirm.building?.id)
+    }
 }

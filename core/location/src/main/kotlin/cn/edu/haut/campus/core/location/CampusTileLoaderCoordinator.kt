@@ -23,7 +23,10 @@ data class TileRenderLookup<T>(
  */
 class CampusTileCacheCoordinator<T : Any>(
     maxMemoryEntries: Int = 360,
-    private val failureCooldownMs: Long = 45_000L
+    private val failureCooldownMs: Long = 45_000L,
+    private val maxAutoRetriesPerTile: Int = 4,
+    private val minRetryDebounceMs: Long = 250L,
+    private val defaultClockMs: () -> Long = System::currentTimeMillis
 ) {
     private val memoryCache = object : LinkedHashMap<String, T>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, T>?): Boolean =
@@ -31,6 +34,8 @@ class CampusTileCacheCoordinator<T : Any>(
     }
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
     private val failureCooldownUntilMs = ConcurrentHashMap<String, Long>()
+    private val consecutiveFailureCount = ConcurrentHashMap<String, Int>()
+    private val pendingExpiredRetryKeys = ConcurrentHashMap.newKeySet<String>()
 
     fun isWithinHaut25dRasterBounds(z: Int, x: Int, y: Int): Boolean {
         if (z !in 16..18) return false
@@ -57,28 +62,57 @@ class CampusTileCacheCoordinator<T : Any>(
 
     fun get(key: String): T? = synchronized(memoryCache) { memoryCache.get(key) }
 
-    fun put(key: String, tile: T) = synchronized(memoryCache) {
-        memoryCache.put(key, tile)
+    fun put(key: String, tile: T) {
+        synchronized(memoryCache) {
+            memoryCache.put(key, tile)
+        }
+        failureCooldownUntilMs.remove(key)
+        consecutiveFailureCount.remove(key)
+        pendingExpiredRetryKeys.remove(key)
     }
 
     fun clearFailureCooldowns() {
         failureCooldownUntilMs.clear()
+        consecutiveFailureCount.clear()
+        pendingExpiredRetryKeys.clear()
     }
 
-    fun evictExpiredCooldowns(nowMs: Long = System.currentTimeMillis()): Int {
+    /**
+     * 应用从后台回到前台（`ON_RESUME`）时重置自动重试耗尽计数并唤醒缺失瓦片刷新，
+     * 返回 `true` 表示此前存在失败冷却/待重试瓦片，需触发一次重绘。
+     */
+    fun onForegroundResume(nowMs: Long = defaultClockMs()): Boolean {
+        val hadFailedOrCooling =
+            failureCooldownUntilMs.isNotEmpty() ||
+                consecutiveFailureCount.isNotEmpty() ||
+                pendingExpiredRetryKeys.isNotEmpty()
+        failureCooldownUntilMs.clear()
+        consecutiveFailureCount.clear()
+        pendingExpiredRetryKeys.clear()
+        evictExpiredCooldowns(nowMs)
+        return hadFailedOrCooling
+    }
+
+    fun evictExpiredCooldowns(nowMs: Long = defaultClockMs()): Int {
         var evicted = 0
         for ((key, until) in failureCooldownUntilMs.entries) {
             if (nowMs >= until && failureCooldownUntilMs.remove(key, until)) {
                 evicted += 1
+                val fails = consecutiveFailureCount[key] ?: 0
+                if (get(key) == null && fails in 1..maxAutoRetriesPerTile) {
+                    pendingExpiredRetryKeys.add(key)
+                }
             }
         }
         return evicted
     }
 
-    fun nextCooldownExpiryEpochMs(nowMs: Long = System.currentTimeMillis()): Long? {
+    fun nextCooldownExpiryEpochMs(nowMs: Long = defaultClockMs()): Long? {
         evictExpiredCooldowns(nowMs)
         var earliest: Long? = null
-        for (until in failureCooldownUntilMs.values) {
+        for ((key, until) in failureCooldownUntilMs.entries) {
+            val fails = consecutiveFailureCount[key] ?: 0
+            if (fails > maxAutoRetriesPerTile) continue
             if (until > nowMs && (earliest == null || until < earliest)) {
                 earliest = until
             }
@@ -86,19 +120,45 @@ class CampusTileCacheCoordinator<T : Any>(
         return earliest
     }
 
+    private fun recordFailureCooldown(
+        key: String,
+        baseDurationMs: Long,
+        completionNowMs: Long,
+        onCooldownScheduled: ((expiryEpochMs: Long) -> Unit)?
+    ) {
+        val attempts = consecutiveFailureCount.merge(key, 1) { old, inc -> old + inc } ?: 1
+        val backoffShift = (attempts - 1).coerceIn(0, 2)
+        val scaledDuration = baseDurationMs * (1L shl backoffShift)
+        val expiryMs = completionNowMs + scaledDuration
+        failureCooldownUntilMs[key] = expiryMs
+        if (attempts <= maxAutoRetriesPerTile) {
+            onCooldownScheduled?.invoke(expiryMs)
+        }
+    }
+
     /**
      * 静止视口有生命周期的冷却到期唤醒器：
-     * 按最早冷却截止时刻仅挂起一次（避免逐帧重试风暴），到期后清理过期冷却并返回 `true` 以触发重绘重试。
+     * - 同时覆盖「慢请求完成/回调到达时冷却已过期」与「多个分批未来截止时刻」；
+     * - 施加最小防抖间隔 `minRetryDebounceMs` 与单瓦片有限自动重试上限 `maxAutoRetriesPerTile`，杜绝离线忙循环。
      */
     suspend fun awaitNextCooldownBatchExpiry(
-        nowMsProvider: () -> Long = System::currentTimeMillis,
+        nowMsProvider: () -> Long = defaultClockMs,
         delayMillis: suspend (Long) -> Unit
     ): Boolean {
         val now0 = nowMsProvider()
+        evictExpiredCooldowns(now0)
+        if (pendingExpiredRetryKeys.isNotEmpty()) {
+            pendingExpiredRetryKeys.clear()
+            delayMillis(minRetryDebounceMs)
+            evictExpiredCooldowns(nowMsProvider())
+            pendingExpiredRetryKeys.clear()
+            return true
+        }
         val earliest = nextCooldownExpiryEpochMs(now0) ?: return false
-        val waitMs = (earliest - now0).coerceAtLeast(1L)
+        val waitMs = (earliest - now0).coerceAtLeast(minRetryDebounceMs)
         delayMillis(waitMs)
         evictExpiredCooldowns(nowMsProvider())
+        pendingExpiredRetryKeys.clear()
         return true
     }
 
@@ -106,12 +166,19 @@ class CampusTileCacheCoordinator<T : Any>(
         synchronized(memoryCache) { memoryCache.clear() }
         inFlight.clear()
         failureCooldownUntilMs.clear()
+        consecutiveFailureCount.clear()
+        pendingExpiredRetryKeys.clear()
     }
 
     private fun isCoolingDown(key: String, nowMs: Long): Boolean {
         val until = failureCooldownUntilMs[key] ?: return false
         if (nowMs >= until) {
-            failureCooldownUntilMs.remove(key, until)
+            if (failureCooldownUntilMs.remove(key, until)) {
+                val fails = consecutiveFailureCount[key] ?: 0
+                if (get(key) == null && fails in 1..maxAutoRetriesPerTile) {
+                    pendingExpiredRetryKeys.add(key)
+                }
+            }
             return false
         }
         return true
@@ -122,7 +189,7 @@ class CampusTileCacheCoordinator<T : Any>(
         z: Int,
         x: Int,
         y: Int,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = defaultClockMs()
     ): TileRenderLookup<T> {
         val effectiveStyle = resolveEffectiveTileStyle(styleMode, z, x, y)
         val primaryKey = tileKey(effectiveStyle, z, x, y)
@@ -139,7 +206,8 @@ class CampusTileCacheCoordinator<T : Any>(
         } else {
             null
         }
-        val canLoadTarget = primaryKey !in inFlight && !isCoolingDown(primaryKey, nowMs)
+        val exhaustedAutoRetry = (consecutiveFailureCount[primaryKey] ?: 0) > maxAutoRetriesPerTile
+        val canLoadTarget = primaryKey !in inFlight && !isCoolingDown(primaryKey, nowMs) && !exhaustedAutoRetry
         return TileRenderLookup(
             tile = placeholder,
             isPlaceholder = placeholder != null,
@@ -152,7 +220,8 @@ class CampusTileCacheCoordinator<T : Any>(
         z: Int,
         x: Int,
         y: Int,
-        nowMs: Long = System.currentTimeMillis(),
+        nowMs: Long = defaultClockMs(),
+        nowMsProvider: (() -> Long)? = null,
         readDiskTile: suspend (key: String) -> T?,
         fetchRemoteTile: suspend (targetKey: String, url: String) -> T?,
         onLoaded: () -> Unit,
@@ -161,16 +230,18 @@ class CampusTileCacheCoordinator<T : Any>(
         val effectiveStyle = resolveEffectiveTileStyle(styleMode, z, x, y)
         val primaryKey = tileKey(effectiveStyle, z, x, y)
         val streetKey = "street_${z}_${x}_${y}"
+        val entryNowMs = nowMsProvider?.invoke() ?: nowMs
 
         if (get(primaryKey) != null) return
-        if (isCoolingDown(primaryKey, nowMs)) return
+        if ((consecutiveFailureCount[primaryKey] ?: 0) > maxAutoRetriesPerTile) return
+        if (isCoolingDown(primaryKey, entryNowMs)) return
         if (!inFlight.add(primaryKey)) return
+        pendingExpiredRetryKeys.remove(primaryKey)
 
         try {
             // 1. 优先命中目标样式自身的磁盘热缓存（绝不因 street 已缓存而跳过 haut25d 读取或请求！）
             val diskPrimary = readDiskTile(primaryKey)
             if (diskPrimary != null) {
-                failureCooldownUntilMs.remove(primaryKey)
                 put(primaryKey, diskPrimary)
                 onLoaded()
                 return
@@ -181,15 +252,18 @@ class CampusTileCacheCoordinator<T : Any>(
                 val officialUrl = "https://gis.haut.edu.cn/cmgis-server/upload/raster/3/$z/$x/$y.png"
                 val officialTile = fetchRemoteTile(primaryKey, officialUrl)
                 if (officialTile != null) {
-                    failureCooldownUntilMs.remove(primaryKey)
                     put(primaryKey, officialTile)
                     onLoaded()
                     return
                 }
-                // 官方 2.5D 拉取失败：记录冷却窗口以防逐帧死循环，同时通知有生命周期的唤醒器在冷却截止时自动重绘重试
-                val expiry25d = nowMs + failureCooldownMs
-                failureCooldownUntilMs[primaryKey] = expiry25d
-                onCooldownScheduled?.invoke(expiry25d)
+                // 官方 2.5D 拉取失败：按失败完成时刻记录冷却窗口，防止慢请求完成时冷却已过期却丢失重绘唤醒信号
+                val failAt25d = if (nowMsProvider != null) maxOf(entryNowMs, nowMsProvider.invoke()) else entryNowMs
+                recordFailureCooldown(
+                    key = primaryKey,
+                    baseDurationMs = failureCooldownMs,
+                    completionNowMs = failAt25d,
+                    onCooldownScheduled = onCooldownScheduled
+                )
                 if (get(streetKey) == null) {
                     val diskStreet = readDiskTile(streetKey)
                     if (diskStreet != null) {
@@ -221,15 +295,18 @@ class CampusTileCacheCoordinator<T : Any>(
             for (sUrl in streetUrls) {
                 val tile = fetchRemoteTile(streetKey, sUrl)
                 if (tile != null) {
-                    failureCooldownUntilMs.remove(streetKey)
                     put(streetKey, tile)
                     onLoaded()
                     return
                 }
             }
-            val streetExpiry = nowMs + (failureCooldownMs / 3L).coerceAtLeast(5_000L)
-            failureCooldownUntilMs[streetKey] = streetExpiry
-            onCooldownScheduled?.invoke(streetExpiry)
+            val failAtStreet = if (nowMsProvider != null) maxOf(entryNowMs, nowMsProvider.invoke()) else entryNowMs
+            recordFailureCooldown(
+                key = streetKey,
+                baseDurationMs = (failureCooldownMs / 3L).coerceAtLeast(5_000L),
+                completionNowMs = failAtStreet,
+                onCooldownScheduled = onCooldownScheduled
+            )
         } finally {
             inFlight.remove(primaryKey)
         }
