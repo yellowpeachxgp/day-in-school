@@ -1141,10 +1141,12 @@ class CampusRepository internal constructor(
      * - 更新主规则为目标星期、起止节次、教室与周次；
      * - 对其余被合并的子规则，减去本次编辑覆盖的周次集合（若剩余周次为空则移除子规则及其孤立单日覆盖），彻底消除残余 3-4节 重叠！
      */
+    @JvmOverloads
     suspend fun saveUserMergedCourseRuleEdit(
         course: Course,
         primaryRule: CourseScheduleRule,
-        mergedRuleIds: List<String>
+        mergedRuleIds: List<String>,
+        contextDate: LocalDate? = null
     ) {
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
@@ -1155,16 +1157,26 @@ class CampusRepository internal constructor(
             primaryRule.buildingId
         }
         val explicitExtraIds = mergedRuleIds.distinct().filter { it.isNotBlank() && it != primaryRule.id }
+        val contextDateIso = contextDate?.toString()
 
         database.withTransaction {
             val allRulesById = dao.getRulesSnapshot().associateBy { it.id }
             val existingPrimaryDomain = allRulesById[primaryRule.id]?.toDomain()
             val allOverrides = dao.getOccurrenceOverridesSnapshot()
-            val absorbedExtraIds = allOverrides
-                .filter { ov -> ov.reason == "MERGED_INTO:${primaryRule.id}" && !ov.courseRuleId.isNullOrBlank() }
-                .mapNotNull { it.courseRuleId }
-                .filter { it != primaryRule.id }
-            val extraRuleIds = (explicitExtraIds + absorbedExtraIds).distinct()
+            // 仅限定在当前打开卡片所在日期（contextDateIso）恢复同日吸收成员，严禁将历史其他日期的单日 MERGED_INTO 永久扩散到全学期误删未选中排课！
+            val sameContextAbsorbedIds = if (contextDateIso != null) {
+                allOverrides
+                    .filter { ov ->
+                        ov.dateIso == contextDateIso &&
+                            ov.reason == "MERGED_INTO:${primaryRule.id}" &&
+                            !ov.courseRuleId.isNullOrBlank()
+                    }
+                    .mapNotNull { it.courseRuleId }
+                    .filter { it != primaryRule.id }
+            } else {
+                emptyList()
+            }
+            val extraRuleIds = (explicitExtraIds + sameContextAbsorbedIds).distinct()
 
             dao.upsertCourse(course.copy(userModified = true).toEntity())
             dao.upsertRule(
@@ -1552,17 +1564,28 @@ class CampusRepository internal constructor(
         deleteCourseScheduleRules(listOf(ruleId))
     }
 
-    suspend fun deleteCourseScheduleRules(ruleIds: List<String>) {
+    @JvmOverloads
+    suspend fun deleteCourseScheduleRules(
+        ruleIds: List<String>,
+        contextDate: LocalDate? = null
+    ) {
         val seedIds = ruleIds.distinct().filter { it.isNotBlank() }.toSet()
         if (seedIds.isEmpty()) return
+        val contextDateIso = contextDate?.toString()
         database.withTransaction {
             val allOverrides = dao.getOccurrenceOverridesSnapshot()
-            val absorbedCompanionIds = allOverrides
-                .filter { ov ->
-                    !ov.courseRuleId.isNullOrBlank() &&
-                        seedIds.any { id -> ov.reason == "MERGED_INTO:$id" }
-                }
-                .mapNotNull { it.courseRuleId }
+            // 仅当存在明确卡片日期上下文（contextDateIso）时才扩展该日被吸收的合并成员，严禁跨日期全局扩展误删其他周次独立排课！
+            val absorbedCompanionIds = if (contextDateIso != null) {
+                allOverrides
+                    .filter { ov ->
+                        ov.dateIso == contextDateIso &&
+                            !ov.courseRuleId.isNullOrBlank() &&
+                            seedIds.any { id -> ov.reason == "MERGED_INTO:$id" }
+                    }
+                    .mapNotNull { it.courseRuleId }
+            } else {
+                emptyList()
+            }
             val cleanIds = (seedIds + absorbedCompanionIds).toSet()
             val rules = dao.getRulesSnapshot()
             val targetRules = rules.filter { it.id in cleanIds }

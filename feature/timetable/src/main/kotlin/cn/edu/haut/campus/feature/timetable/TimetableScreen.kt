@@ -1218,7 +1218,8 @@ fun TimetableScreen(
                             onClick = {
                                 scope.launch {
                                     repository.deleteCourseScheduleRules(
-                                        occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) }
+                                        ruleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) },
+                                        contextDate = occToEdit.date
                                     )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                     editingOccurrence = null
@@ -1287,7 +1288,8 @@ fun TimetableScreen(
                                             rawRoom = editedRoom.trim().ifEmpty { targetRule.rawRoom },
                                             weeks = parsedWeeks
                                         ),
-                                        mergedRuleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) }
+                                        mergedRuleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) },
+                                        contextDate = occToEdit.date
                                     )
                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 }
