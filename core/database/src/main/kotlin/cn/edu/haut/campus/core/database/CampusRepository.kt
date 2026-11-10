@@ -4598,14 +4598,48 @@ class CampusRepository internal constructor(
                 val activeStuNo = expectedStudentNo.ifEmpty { liveStuLocked }.takeIf { it.isNotEmpty() }
                 val allExistingInLock = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 val mutableExistingById = allExistingInLock.associateBy { it.id }.toMutableMap()
-                for (rj in verifiedSnapshot.jobs) {
-                    // 3.1 先按稳定云端 jobId（次选精确 planId）在同云账号全量旧行中查找（不以当前 B 学号过滤，防止漏掉旧 A 行后被主键 REPLACE 覆盖！）
-                    val existingByStableJob = allExistingInLock.firstOrNull {
-                        it.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                val claimedLocalPlanIds = HashSet<String>()
+                val authoritativeServerMergedPlanIds = HashSet<String>()
+
+                val incomingJobIds = verifiedSnapshot.jobs.mapNotNull { it.jobId.takeIf { id -> id.isNotBlank() } }.toSet()
+                val incomingPlanIds = verifiedSnapshot.jobs.mapNotNull { it.planId.takeIf { id -> id.isNotBlank() } }.toSet()
+                val preReservedExactLocalIds = allExistingInLock
+                    .filter { row ->
+                        row.ownerCloudUserId?.trim() == syncedCloudUserId && (
+                            (!row.cloudJobId.isNullOrBlank() && row.cloudJobId in incomingJobIds) ||
+                                (row.id in incomingPlanIds)
+                            )
+                    }
+                    .map { it.id }
+                    .toSet()
+
+                val terminalRemoteStates = setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
+                val orderedRemoteJobs = verifiedSnapshot.jobs.sortedWith(
+                    compareBy<cn.edu.haut.campus.core.campusservices.CloudSyncedReservationJobDto> { rj ->
+                        val hasExact = mutableExistingById.values.any { row ->
+                            row.ownerCloudUserId?.trim() == syncedCloudUserId && (
+                                (rj.jobId.isNotBlank() && row.cloudJobId == rj.jobId) ||
+                                    (rj.planId.isNotBlank() && row.id == rj.planId)
+                                )
+                        }
+                        when {
+                            hasExact -> 0
+                            rj.state !in terminalRemoteStates && rj.displayStatus !in terminalRemoteStates -> 1
+                            else -> 2
+                        }
+                    }
+                )
+
+                for (rj in orderedRemoteJobs) {
+                    // 3.1 先按稳定云端 jobId（次选精确 planId）在实时 mutableExistingById 中一对一查找（已认领行严禁二次复用！）
+                    val existingByStableJob = mutableExistingById.values.firstOrNull {
+                        it.id !in claimedLocalPlanIds &&
+                            it.ownerCloudUserId?.trim() == syncedCloudUserId &&
                             rj.jobId.isNotBlank() &&
                             it.cloudJobId == rj.jobId
-                    } ?: allExistingInLock.firstOrNull {
-                        it.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                    } ?: mutableExistingById.values.firstOrNull {
+                        it.id !in claimedLocalPlanIds &&
+                            it.ownerCloudUserId?.trim() == syncedCloudUserId &&
                             rj.planId.isNotBlank() &&
                             it.id == rj.planId &&
                             (it.cloudJobId.isNullOrBlank() || it.cloudJobId == rj.jobId)
@@ -4635,15 +4669,35 @@ class CampusRepository internal constructor(
                     }
                     val resolvedJobStudentId: String? = existingImmutableStu ?: verifiedRemoteStu
 
-                    // 3.3 仅当无已绑定 jobId 旧行且当前任务具备明确已核验学号时，才允许与同一云账号+同一学号+未分配 cloudJobId 的同日本地计划合并
+                    // 3.3 一对一认领同日未绑定（cloudJobId 为空）本地计划：
+                    //     - 已被前序 job 认领或已被精确 jobId/planId 预留的本地行绝不重复匹配；
+                    //     - 远端已取消/失败/过期的历史 job 绝不抢占本地排队中的 ARMED 待绑定行；
+                    //     - 同日存在多个待绑定本地行时按目标时间、区域、座位相似度最佳一对一配对。
+                    val rjIsTerminal = rj.state in terminalRemoteStates || rj.displayStatus in terminalRemoteStates
                     val matchingLocal = existingByStableJob ?: if (resolvedJobStudentId != null) {
-                        allExistingInLock.firstOrNull {
-                            it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
-                                it.ownerCloudUserId?.trim() == syncedCloudUserId &&
-                                it.ownerStudentId?.trim() == resolvedJobStudentId &&
-                                it.cloudJobId.isNullOrBlank() &&
-                                it.targetLocalDate == rj.targetLocalDate
+                        val unboundCandidates = mutableExistingById.values.filter { cand ->
+                            cand.id !in claimedLocalPlanIds &&
+                                cand.id !in preReservedExactLocalIds &&
+                                cand.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                                cand.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                                cand.ownerStudentId?.trim() == resolvedJobStudentId &&
+                                cand.cloudJobId.isNullOrBlank() &&
+                                cand.targetLocalDate == rj.targetLocalDate &&
+                                if (rjIsTerminal) {
+                                    cand.status in terminalRemoteStates
+                                } else {
+                                    cand.status !in terminalRemoteStates
+                                }
                         }
+                        unboundCandidates.maxWithOrNull(
+                            compareBy<LibraryBookingPlanEntity> { cand ->
+                                var score = 0
+                                if (cand.targetLocalTime == rj.targetLocalTime) score += 8
+                                if (cand.preferredAreaName.trim() == rj.areaName.trim()) score += 4
+                                if (rj.candidateSeats.any { seat -> cand.preferredSeatLabel.contains(seat) }) score += 2
+                                score
+                            }.thenBy { -it.createdAtEpochMillis }
+                        )
                     } else {
                         null
                     }
@@ -4738,24 +4792,35 @@ class CampusRepository internal constructor(
                         matchingLocal.id
                     } else {
                         val occupant = mutableExistingById[candidatePlanId]
-                        if (occupant == null) {
+                        val canReuseCandidateId = occupant == null && candidatePlanId !in claimedLocalPlanIds
+                        if (canReuseCandidateId) {
+                            candidatePlanId
+                        } else if (
+                            occupant != null &&
+                            occupant.id !in claimedLocalPlanIds &&
+                            occupant.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                            !resolvedJobStudentId.isNullOrBlank() &&
+                            occupant.ownerStudentId?.trim() == resolvedJobStudentId &&
+                            rj.jobId.isNotBlank() &&
+                            occupant.cloudJobId == rj.jobId
+                        ) {
                             candidatePlanId
                         } else {
-                            val sameCloud = occupant.ownerCloudUserId?.trim() == syncedCloudUserId
-                            val sameVerifiedStudent = !resolvedJobStudentId.isNullOrBlank() &&
-                                occupant.ownerStudentId?.trim() == resolvedJobStudentId &&
-                                (occupant.cloudJobId.isNullOrBlank() || occupant.cloudJobId == rj.jobId)
-                            if (sameCloud && sameVerifiedStudent) {
-                                candidatePlanId
-                            } else {
-                                val stuTag = (resolvedJobStudentId ?: "unscoped")
-                                    .replace(Regex("[^A-Za-z0-9]"), "")
-                                    .takeLast(6)
-                                    .ifEmpty { "unscoped" }
-                                val idDigest = rj.jobId.ifBlank { rj.planId }.hashCode().toUInt().toString(16).take(6)
-                                "${candidatePlanId}_${syncedCloudUserId.replace("-", "").takeLast(4)}_${stuTag}_$idDigest"
-                            }
+                            val stuTag = (resolvedJobStudentId ?: "unscoped")
+                                .replace(Regex("[^A-Za-z0-9]"), "")
+                                .takeLast(6)
+                                .ifEmpty { "unscoped" }
+                            val rawKey = "${syncedCloudUserId}|${resolvedJobStudentId.orEmpty()}|${rj.jobId.ifBlank { rj.planId }}"
+                            val shaHex = java.security.MessageDigest.getInstance("SHA-256")
+                                .digest(rawKey.toByteArray(Charsets.UTF_8))
+                                .joinToString("") { "%02x".format(it) }
+                                .take(10)
+                            "${candidatePlanId}_${stuTag}_$shaHex"
                         }
+                    }
+                    claimedLocalPlanIds += resolvedPlanId
+                    if (effectiveStatus != "NEEDS_RECONFIRMATION") {
+                        authoritativeServerMergedPlanIds += resolvedPlanId
                     }
                     val mergedPlan = LibraryBookingPlanEntity(
                         id = resolvedPlanId,
@@ -4821,6 +4886,7 @@ class CampusRepository internal constructor(
                     val latestLocalPlans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                     for (lp in latestLocalPlans) {
                         if (lp.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                            lp.id !in authoritativeServerMergedPlanIds &&
                             doesCloudPlanBelongToActiveAccount(lp, syncedCloudUserId, activeStuNo.orEmpty()) &&
                             (lp.id in reconfirmSet ||
                                 (verifiedSnapshot.needsReconfirmationBindingStudentNos.isNotEmpty() &&

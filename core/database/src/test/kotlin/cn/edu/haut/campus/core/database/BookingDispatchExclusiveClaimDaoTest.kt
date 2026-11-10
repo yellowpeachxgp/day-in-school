@@ -2372,4 +2372,245 @@ class BookingDispatchExclusiveClaimDaoTest {
             campusDao.getRulesSnapshot().count { it.courseId == c4.id }
         )
     }
+
+    @Test
+    fun sameStudentSameDayMultipleCloudJobsClaimOneToOneAndKeepHistory() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+
+        // Test BOTH orders: Order A = [CANCELLED, ARMED], Order B = [ARMED, CANCELLED], PLUS multiple unbound local rows on the same date + idempotent re-sync!
+        for ((orderIdx, reverseOrder) in listOf(false, true).withIndex()) {
+            dao.getLibraryBookingPlansSnapshot().forEach { dao.deleteLibraryBookingPlan(it.id) }
+            val repo = buildInMemoryTestRepo("multi_job_1to1_$orderIdx")
+            val jwt = testCloudJwt("cloud_user_same")
+            repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+            repo.saveVerifiedXpeachCloudAccount(
+                cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                    cloudUserId = "cloud_user_same",
+                    ssoIssuer = "https://auth.yellowpeachxgp.com",
+                    ssoSubject = "sub_same",
+                    displayName = "Same Student User",
+                    peachBalanceMicropeach = 50_000L,
+                    holdSupported = false,
+                    accessToken = jwt,
+                    refreshToken = "ctseal1:ref_same",
+                    linkedAtEpochMillis = 1_000L
+                )
+            )
+
+            // 1) Seed single local_pending (cloudJobId = null, ARMED) on 2026-11-28 + two unbound local rows on 2026-11-29!
+            dao.upsertLibraryBookingPlan(
+                LibraryBookingPlanEntity(
+                    id = "local_pending_28",
+                    schoolId = "haut",
+                    executionMode = "CLOUD_HOSTED",
+                    targetLocalDate = "2026-11-28",
+                    targetLocalTime = "07:00:00",
+                    timezoneId = "Asia/Shanghai",
+                    precheckAtEpochMillis = 1_000L,
+                    finalCheckAtEpochMillis = 2_000L,
+                    fireAtEpochMillis = 3_000L,
+                    precheckStatus = "ARMED",
+                    finalCheckStatus = "ARMED",
+                    fireStatus = "ARMED",
+                    preferredAreaName = "五层中区",
+                    preferredSeatLabel = "05桌 A座",
+                    allowAlternativeSeat = true,
+                    cloudJobId = null,
+                    externalBookingId = null,
+                    evidenceSha256 = null,
+                    priceMicropeach = 10_000L,
+                    paymentState = "DEBIT_PENDING",
+                    status = "ARMED",
+                    stateVersion = 1,
+                    generation = 1,
+                    lastDiagnosticMessage = "待绑定云任务",
+                    createdAtEpochMillis = 1_000L,
+                    updatedAtEpochMillis = 1_000L,
+                    ownerCloudUserId = "cloud_user_same",
+                    ownerStudentId = "20240001"
+                )
+            )
+            dao.upsertLibraryBookingPlan(
+                LibraryBookingPlanEntity(
+                    id = "local_pending_29_first",
+                    schoolId = "haut",
+                    executionMode = "CLOUD_HOSTED",
+                    targetLocalDate = "2026-11-29",
+                    targetLocalTime = "07:00:00",
+                    timezoneId = "Asia/Shanghai",
+                    precheckAtEpochMillis = 1_000L,
+                    finalCheckAtEpochMillis = 2_000L,
+                    fireAtEpochMillis = 3_000L,
+                    precheckStatus = "ARMED",
+                    finalCheckStatus = "ARMED",
+                    fireStatus = "ARMED",
+                    preferredAreaName = "四层南区",
+                    preferredSeatLabel = "01桌 A座",
+                    allowAlternativeSeat = true,
+                    cloudJobId = null,
+                    externalBookingId = null,
+                    evidenceSha256 = null,
+                    priceMicropeach = 10_000L,
+                    paymentState = "DEBIT_PENDING",
+                    status = "ARMED",
+                    stateVersion = 1,
+                    generation = 1,
+                    lastDiagnosticMessage = "待绑定29-1",
+                    createdAtEpochMillis = 1_000L,
+                    updatedAtEpochMillis = 1_000L,
+                    ownerCloudUserId = "cloud_user_same",
+                    ownerStudentId = "20240001"
+                )
+            )
+            dao.upsertLibraryBookingPlan(
+                LibraryBookingPlanEntity(
+                    id = "local_pending_29_second",
+                    schoolId = "haut",
+                    executionMode = "CLOUD_HOSTED",
+                    targetLocalDate = "2026-11-29",
+                    targetLocalTime = "08:30:00",
+                    timezoneId = "Asia/Shanghai",
+                    precheckAtEpochMillis = 1_000L,
+                    finalCheckAtEpochMillis = 2_000L,
+                    fireAtEpochMillis = 3_000L,
+                    precheckStatus = "ARMED",
+                    finalCheckStatus = "ARMED",
+                    fireStatus = "ARMED",
+                    preferredAreaName = "五层中区",
+                    preferredSeatLabel = "09桌 B座",
+                    allowAlternativeSeat = true,
+                    cloudJobId = null,
+                    externalBookingId = null,
+                    evidenceSha256 = null,
+                    priceMicropeach = 10_000L,
+                    paymentState = "DEBIT_PENDING",
+                    status = "ARMED",
+                    stateVersion = 1,
+                    generation = 1,
+                    lastDiagnosticMessage = "待绑定29-2",
+                    createdAtEpochMillis = 1_100L,
+                    updatedAtEpochMillis = 1_100L,
+                    ownerCloudUserId = "cloud_user_same",
+                    ownerStudentId = "20240001"
+                )
+            )
+
+            val jobOldCancelledJson = """
+                {
+                  "id": "job_28_old_cancelled",
+                  "plan_id": "rplan_28_old",
+                  "school_binding_id": "bind_same_1",
+                  "student_no": "20240001",
+                  "booking_local_date": "2026-11-28",
+                  "target_local_time": "07:00:00",
+                  "state": "CANCELLED",
+                  "display_status": "DELEGATION_STOPPED",
+                  "user_intent_state": "STOP_REQUESTED",
+                  "external_execution_state": "NOT_DISPATCHED",
+                  "school_cancellation_state": "NOT_REQUESTED",
+                  "candidate_seats": ["01桌 A座"]
+                }
+            """.trimIndent()
+            val jobNewArmedJson = """
+                {
+                  "id": "job_28_new_armed",
+                  "plan_id": "rplan_28_new",
+                  "school_binding_id": "bind_same_1",
+                  "student_no": "20240001",
+                  "booking_local_date": "2026-11-28",
+                  "target_local_time": "07:00:00",
+                  "state": "ARMED",
+                  "display_status": "ARMED",
+                  "user_intent_state": "ACTIVE",
+                  "external_execution_state": "NOT_DISPATCHED",
+                  "school_cancellation_state": "NOT_REQUESTED",
+                  "candidate_seats": ["05桌 A座"]
+                }
+            """.trimIndent()
+            val job29FirstJson = """
+                {
+                  "id": "job_29_active_one",
+                  "plan_id": "rplan_29_one",
+                  "school_binding_id": "bind_same_1",
+                  "student_no": "20240001",
+                  "booking_local_date": "2026-11-29",
+                  "target_local_time": "07:00:00",
+                  "area_name": "四层南区",
+                  "state": "ARMED",
+                  "display_status": "ARMED",
+                  "user_intent_state": "ACTIVE",
+                  "external_execution_state": "NOT_DISPATCHED",
+                  "school_cancellation_state": "NOT_REQUESTED",
+                  "candidate_seats": ["01桌 A座"]
+                }
+            """.trimIndent()
+            val job29SecondJson = """
+                {
+                  "id": "job_29_active_two",
+                  "plan_id": "rplan_29_two",
+                  "school_binding_id": "bind_same_1",
+                  "student_no": "20240001",
+                  "booking_local_date": "2026-11-29",
+                  "target_local_time": "08:30:00",
+                  "area_name": "五层中区",
+                  "state": "FINAL_CHECK_OK",
+                  "display_status": "FINAL_CHECK_OK",
+                  "user_intent_state": "ACTIVE",
+                  "external_execution_state": "NOT_DISPATCHED",
+                  "school_cancellation_state": "NOT_REQUESTED",
+                  "candidate_seats": ["09桌 B座"]
+                }
+            """.trimIndent()
+
+            val ordered28 = if (reverseOrder) "$jobNewArmedJson,$jobOldCancelledJson" else "$jobOldCancelledJson,$jobNewArmedJson"
+            val ordered29 = if (reverseOrder) "$job29SecondJson,$job29FirstJson" else "$job29FirstJson,$job29SecondJson"
+
+            repo.cloudHttpTransportForTest = { _, _, _, _, _ ->
+                """
+                {
+                  "ok": true,
+                  "data": {
+                    "auth_version": 1,
+                    "user": { "cloud_user_id": "cloud_user_same", "display_name": "Same Student User" },
+                    "wallet": { "peach_balance": 5.0 },
+                    "consents": [{ "id": "con_same_1", "school_id": "haut", "auth_version": 1 }],
+                    "school_bindings": [
+                      { "id": "bind_same_1", "school_id": "haut", "student_no": "20240001", "consent_id": "con_same_1", "auth_version": 1 }
+                    ],
+                    "reservation_plans": [],
+                    "reservation_jobs": [$ordered28,$ordered29],
+                    "orders": [],
+                    "parcels": []
+                  }
+                }
+                """.trimIndent()
+            }
+
+            // First sync
+            val sync1 = repo.syncWithCampusCloud()
+            org.junit.Assert.assertTrue("Sync 1 (reverse=$reverseOrder) failed: ${sync1.exceptionOrNull()}", sync1.isSuccess)
+
+            val snapAfter1 = dao.getLibraryBookingPlansSnapshot()
+            val rows28 = snapAfter1.filter { it.targetLocalDate == "2026-11-28" }
+            assertEquals("Both old CANCELLED and new ARMED jobs on 2026-11-28 MUST coexist (reverse=$reverseOrder)", 2, rows28.size)
+            val armed28 = rows28.single { it.cloudJobId == "job_28_new_armed" }
+            val cancelled28 = rows28.single { it.cloudJobId == "job_28_old_cancelled" }
+            assertEquals("ARMED", armed28.status)
+            assertEquals("local_pending_28", armed28.id)
+            assertEquals("CANCELLED", cancelled28.status)
+            org.junit.Assert.assertNotEquals(armed28.id, cancelled28.id)
+
+            val rows29 = snapAfter1.filter { it.targetLocalDate == "2026-11-29" }
+            assertEquals("Two unbound local rows on 2026-11-29 must be claimed 1-to-1 (reverse=$reverseOrder)", 2, rows29.size)
+            assertEquals("local_pending_29_first", rows29.single { it.cloudJobId == "job_29_active_one" }.id)
+            assertEquals("local_pending_29_second", rows29.single { it.cloudJobId == "job_29_active_two" }.id)
+
+            // Repeated sync idempotency: row IDs and total count remain identical!
+            val idsAfter1 = snapAfter1.map { it.id to it.cloudJobId }.toSet()
+            val sync2 = repo.syncWithCampusCloud()
+            org.junit.Assert.assertTrue(sync2.isSuccess)
+            val snapAfter2 = dao.getLibraryBookingPlansSnapshot()
+            assertEquals(idsAfter1, snapAfter2.map { it.id to it.cloudJobId }.toSet())
+        }
+    }
 }
