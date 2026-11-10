@@ -117,7 +117,9 @@ data class CloudSyncedReservationJobDto(
     val schoolCancellationState: String = "NOT_REQUESTED",
     val displayStatus: String = state,
     val statusLabel: String = "",
-    val billingState: String = "NOT_BILLED"
+    val billingState: String = "NOT_BILLED",
+    val schoolBindingId: String? = null,
+    val studentNo: String? = null
 )
 
 data class CloudSyncedOrderDto(
@@ -769,6 +771,19 @@ object CampusCloudOidcHelper {
         if (accessToken.isBlank() || planId.isBlank()) return null
         ensurePersistentAuthStoreLoaded()
         return confirmedPlanProvenanceStore[buildPlanProvenanceKey(cloudBaseUrl, accessToken, planId)]
+    }
+
+    fun resolveScopedPlanProvenanceStudentNo(
+        cloudBaseUrl: String,
+        accessToken: String,
+        planId: String,
+        expectedBindingId: String? = null
+    ): String? {
+        val prov = resolveScopedPlanProvenance(cloudBaseUrl, accessToken, planId) ?: return null
+        if (!expectedBindingId.isNullOrBlank() && prov.bindingId != expectedBindingId.trim()) {
+            return null
+        }
+        return prov.studentNo.trim().takeIf { it.isNotEmpty() && !it.contains("***") }
     }
 
     internal fun recordScopedAuthMetadata(
@@ -1881,6 +1896,7 @@ object CampusCloudOidcHelper {
             }
 
             // If cleanJobId was not found in snapshot at all, probe GET /api/v1/reservation-jobs/{cleanJobId} directly (fail closed unless authoritative 404 NOT_FOUND)
+            var probedCleanJobObj: JSONObject? = null
             val cleanJobPresentInFirstSnap = cleanJobId != null &&
                 (0 until firstJobs.length()).any { firstJobs.getJSONObject(it).optCleanString("id") == cleanJobId }
             if (cleanJobId != null && !cleanJobPresentInFirstSnap) {
@@ -1906,6 +1922,7 @@ object CampusCloudOidcHelper {
                             reason = "云端任务详情缺少关键状态字段，未核实前已阻止切换"
                         )
                     }
+                    probedCleanJobObj = probeData
                     val probePlanId = probeData.optCleanString("plan_id")
                     if (probePlanId.isNotBlank()) matchedRemotePlanIds += probePlanId
                 } else if (isAuthoritativeNotFoundResponse(jobProbeRaw)) {
@@ -1992,8 +2009,23 @@ object CampusCloudOidcHelper {
             }
 
             val expectedScopedJobIds = linkedSetOf<String>()
-            if (cleanJobId != null && cleanJobPresentInFirstSnap) {
+            if (cleanJobId != null && (cleanJobPresentInFirstSnap || probedCleanJobObj != null)) {
                 expectedScopedJobIds += cleanJobId
+            }
+            if (cleanJobId != null && probedCleanJobObj != null) {
+                val probeSt = probedCleanJobObj!!.optCleanString("state")
+                if (probeSt !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "CONFIRMED", "DELEGATION_STOPPED_SCHOOL_CONFIRMED")) {
+                    runCatching {
+                        transport(
+                            "POST",
+                            "$cleanBase/api/v1/reservation-jobs/$cleanJobId/cancel",
+                            "{}",
+                            accessToken,
+                            emptyMap()
+                        )
+                    }
+                    needsFollowUpSnapshot = true
+                }
             }
             for (i in 0 until firstJobs.length()) {
                 val j = firstJobs.getJSONObject(i)
@@ -2073,11 +2105,83 @@ object CampusCloudOidcHelper {
                 }
             }
 
-            // 2) Verify ALL expected child jobs are still covered in finalJobs and have safe states!
+            // 2) Verify ALL expected child jobs (including detail-probed jobs omitted from snapshots!) are covered and have safe states!
             val finalJobById = LinkedHashMap<String, JSONObject>()
             for (i in 0 until finalJobs.length()) {
                 val j = finalJobs.getJSONObject(i)
                 finalJobById[j.optCleanString("id")] = j
+            }
+            if (cleanJobId != null && probedCleanJobObj != null && cleanJobId !in finalJobById) {
+                val initialProbeObj = probedCleanJobObj!!
+                val initialProbeSr = initialProbeObj.optJSONObject("school_reservation")
+                    ?: initialProbeObj.optJSONObject("schoolReservation")
+                val initialProbeNorm = normalizeCloudJobConfirmation(
+                    jobId = cleanJobId,
+                    job = initialProbeObj,
+                    sr = initialProbeSr,
+                    orderObj = null,
+                    defaultStateWhenMissing = "RESULT_UNKNOWN"
+                )
+                val reprobeRaw = runCatching {
+                    transport("GET", "$cleanBase/api/v1/reservation-jobs/$cleanJobId", null, accessToken, emptyMap())
+                }.getOrNull()
+                val reprobeRoot = reprobeRaw?.let { runCatching { JSONObject(it) }.getOrNull() }
+                val reprobeData = if (reprobeRoot != null &&
+                    reprobeRoot.has("ok") &&
+                    reprobeRoot.get("ok") is Boolean &&
+                    reprobeRoot.getBoolean("ok")
+                ) {
+                    reprobeRoot.optJSONObject("data")?.takeIf {
+                        it.optCleanString("id") == cleanJobId &&
+                            it.has("state") &&
+                            it.optCleanString("state").isNotBlank()
+                    }
+                } else {
+                    null
+                }
+                if (reprobeData != null) {
+                    finalJobById[cleanJobId] = reprobeData
+                } else {
+                    // Initial probe ALREADY proved this job existed on Cloud; missing/error/vanishing on follow-up MUST NOT pass!
+                    val initialDate = initialProbeObj.optCleanString("booking_local_date")
+                    if (initialProbeNorm.hasCompleteConfirmedData &&
+                        (initialDate.isBlank() || initialDate == targetLocalDate)
+                    ) {
+                        val resolvedSt = if (initialProbeNorm.isDelegationStopped) {
+                            "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
+                        } else {
+                            "CONFIRMED"
+                        }
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED,
+                            reason = "云端任务详情已确认锁定学校座位（预约号：${initialProbeNorm.verifiedBookingId}），禁止切换重复预约",
+                            resolvedStatus = resolvedSt,
+                            externalBookingId = initialProbeNorm.verifiedBookingId,
+                            evidenceSha256 = initialProbeNorm.evidenceSha256,
+                            bookedSeatAlias = initialProbeNorm.seatAlias,
+                            bookedRegionAlias = initialProbeNorm.regionAlias
+                        )
+                    }
+                    if (initialProbeNorm.externalExecutionState in setOf("DISPATCH_INTENT", "RESULT_UNKNOWN") ||
+                        initialProbeNorm.state in setOf("EXECUTING", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN", "CANCEL_RESULT_UNKNOWN")
+                    ) {
+                        val resolvedSt = when {
+                            initialProbeNorm.state == "CANCEL_RESULT_UNKNOWN" ||
+                                initialProbeNorm.schoolCancellationState == "CANCEL_RESULT_UNKNOWN" -> "CANCEL_RESULT_UNKNOWN"
+                            initialProbeNorm.isDelegationStopped -> "DELEGATION_STOPPED_RESULT_UNKNOWN"
+                            else -> "RESULT_UNKNOWN"
+                        }
+                        return EngineSwitchCloudCheckResult(
+                            outcome = EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN,
+                            reason = "云端详情探测发现任务处于执行中或待核对（状态：$resolvedSt），末次快照未覆盖且复查未消解，已阻止切换本机抢座",
+                            resolvedStatus = resolvedSt
+                        )
+                    }
+                    return EngineSwitchCloudCheckResult(
+                        outcome = EngineSwitchCloudCheckOutcome.BLOCKED_OFFLINE_UNCOORDINATED,
+                        reason = "云端最终快照遗漏了详情已探测到的任务（$cleanJobId）且无法复核终态，已失败闭合阻止切换"
+                    )
+                }
             }
             for (expectedJobId in expectedScopedJobIds) {
                 if (expectedJobId !in finalJobById && expectedJobId !in authoritativelyAbsentJobIds) {
@@ -2088,8 +2192,7 @@ object CampusCloudOidcHelper {
                 }
             }
 
-            for (i in 0 until finalJobs.length()) {
-                val j = finalJobs.getJSONObject(i)
+            for (j in finalJobById.values) {
                 val jId = j.optCleanString("id")
                 val jPlanId = j.optCleanString("plan_id")
                 val jDate = j.optCleanString("booking_local_date")
@@ -2114,9 +2217,9 @@ object CampusCloudOidcHelper {
                     orderObj = null,
                     defaultStateWhenMissing = "RESULT_UNKNOWN"
                 )
-                // If confirmed on targetLocalDate (or active confirmed on the same plan for targetLocalDate), block duplicate booking!
-                // (Note: if Day-1 was CONFIRMED yesterday on a multi-day plan and user is switching Day-2 today, Day-1's jDate != targetLocalDate so past confirmed Day-1 won't block stopping Day-2 once Day-2 is CANCELLED and parent plan is disabled!)
-                if (norm.hasCompleteConfirmedData && jDate == targetLocalDate) {
+                val isSameOrUnspecifiedTargetDate =
+                    jDate == targetLocalDate || (cleanJobId != null && jId == cleanJobId && jDate.isBlank())
+                if (norm.hasCompleteConfirmedData && isSameOrUnspecifiedTargetDate) {
                     val resolvedSt = if (norm.isDelegationStopped) "DELEGATION_STOPPED_SCHOOL_CONFIRMED" else "CONFIRMED"
                     return EngineSwitchCloudCheckResult(
                         outcome = EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_CONFIRMED,
@@ -2494,6 +2597,15 @@ object CampusCloudOidcHelper {
             val parcelsArr = data.optJSONArray("parcels") ?: JSONArray()
             val syncReportObj = data.optJSONObject("sync_report")
 
+            val bindingStudentById = LinkedHashMap<String, String>()
+            for (i in 0 until bindingsArr.length()) {
+                val bObj = bindingsArr.optJSONObject(i) ?: continue
+                val bId = bObj.optCleanString("id")
+                val bSno = bObj.optNullableCleanString("student_no")?.takeIf { !it.contains("***") }
+                if (bId.isNotEmpty() && !bSno.isNullOrBlank()) {
+                    bindingStudentById[bId] = bSno
+                }
+            }
             val boundStudentNo = if (bindingsArr.length() > 0) {
                 val b0 = bindingsArr.optJSONObject(0)
                 b0?.optNullableCleanString("student_no")?.takeIf { !it.contains("***") }
@@ -2510,6 +2622,18 @@ object CampusCloudOidcHelper {
                         }
                     }
                     val jId = j.optCleanString("id")
+                    val jPlanId = j.optCleanString("plan_id")
+                    val jobBindId = j.optNullableCleanString("school_binding_id")
+                        ?: j.optNullableCleanString("binding_id")
+                    val provForJobPlan = if (jPlanId.isNotBlank()) {
+                        resolveScopedPlanProvenance(cleanBase, accessToken, jPlanId)
+                    } else {
+                        null
+                    }
+                    val verifiedJobStudentNo = j.optNullableCleanString("student_no")?.takeIf { !it.contains("***") }
+                        ?: jobBindId?.let { bindingStudentById[it] }
+                        ?: provForJobPlan?.takeIf { jobBindId.isNullOrBlank() || it.bindingId == jobBindId }
+                            ?.studentNo?.takeIf { it.isNotBlank() && !it.contains("***") }
                     val sr = j.optJSONObject("school_reservation") ?: j.optJSONObject("schoolReservation")
                     val bookingDate = j.optCleanString("booking_local_date")
                     val repDays = j.optInt("repeat_days", 1).coerceIn(1, 30)
@@ -2554,7 +2678,9 @@ object CampusCloudOidcHelper {
                             schoolCancellationState = norm.schoolCancellationState,
                             displayStatus = norm.displayStatus,
                             statusLabel = j.optCleanString("status_label", ""),
-                            billingState = norm.billingState
+                            billingState = norm.billingState,
+                            schoolBindingId = jobBindId,
+                            studentNo = verifiedJobStudentNo
                         )
                     )
                 }

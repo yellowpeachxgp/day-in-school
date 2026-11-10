@@ -2005,4 +2005,79 @@ class CampusServicesUnitTest {
         assertEquals("CANCEL_RESULT_UNKNOWN", normUnknownCancel.displayStatus)
         assertEquals("CANCEL_RESULT_UNKNOWN", normUnknownCancel.schoolCancellationState)
     }
+
+    @Test
+    fun coordinateStopBlocksJobAbsentInSnapshotsButExecutingInDetailProbe() {
+        // P1 #1 exact scenario:
+        // 1) first GET /sync/snapshot returns plans=[], jobs=[]
+        // 2) GET /reservation-jobs/job1 returns ok:true with state="EXECUTING", plan_id="plan1"
+        // 3) DELETE /reservation-plans/plan1 returns ok:true, enabled=false
+        // 4) second GET /sync/snapshot returns disabled plan1, jobs=[]
+        // Parent plan stopping does NOT prove in-flight school write finished -> MUST NOT return SAFE_TO_SWITCH_STOPPED!
+        var snapRound = 0
+        val resExecutingOmittedInFinal = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_probe_exec_p1",
+            cloudJobId = "job1",
+            planId = "",
+            targetLocalDate = "2026-11-26",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    snapRound += 1
+                    if (snapRound == 1) {
+                        """{"ok":true,"data":{"reservation_plans":[],"reservation_jobs":[]}}"""
+                    } else {
+                        """{"ok":true,"data":{"reservation_plans":[{"id":"plan1","enabled":false,"user_intent_state":"STOP_REQUESTED","target_local_date":"2026-11-26"}],"reservation_jobs":[]}}"""
+                    }
+                }
+                method == "GET" && url.endsWith("/api/v1/reservation-jobs/job1") ->
+                    """{"ok":true,"data":{"id":"job1","plan_id":"plan1","booking_local_date":"2026-11-26","state":"EXECUTING","external_execution_state":"DISPATCH_INTENT","user_intent_state":"STOP_REQUESTED"}}"""
+                method == "DELETE" && url.endsWith("/api/v1/reservation-plans/plan1") ->
+                    """{"ok":true,"data":{"plan_id":"plan1","enabled":false}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-jobs/job1/cancel") ->
+                    """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"in flight"}}"""
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"not found"}}"""
+            }
+        }
+        org.junit.Assert.assertNotEquals(
+            "Probed EXECUTING job omitted from snapshots must NEVER return SAFE_TO_SWITCH_STOPPED",
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED,
+            resExecutingOmittedInFinal.outcome
+        )
+        assertEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.BLOCKED_ALREADY_DISPATCHED_OR_UNKNOWN,
+            resExecutingOmittedInFinal.outcome
+        )
+
+        // Also cover: follow-up GET /reservation-jobs/job1 fails/times out after initial probe saw EXECUTING -> still blocked!
+        var probeCallCount = 0
+        val resProbeDropOnFollowUp = CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
+            accessToken = "tok_probe_exec_p1",
+            cloudJobId = "job1",
+            planId = "",
+            targetLocalDate = "2026-11-26",
+            cloudBaseUrl = "https://campus.yellowpeachxgp.com"
+        ) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"reservation_plans":[{"id":"plan1","enabled":false,"user_intent_state":"STOP_REQUESTED","target_local_date":"2026-11-26"}],"reservation_jobs":[]}}"""
+                method == "GET" && url.endsWith("/api/v1/reservation-jobs/job1") -> {
+                    probeCallCount += 1
+                    if (probeCallCount == 1) {
+                        """{"ok":true,"data":{"id":"job1","plan_id":"plan1","booking_local_date":"2026-11-26","state":"RESULT_UNKNOWN","external_execution_state":"RESULT_UNKNOWN"}}"""
+                    } else {
+                        """{"ok":false,"error":{"code":"NOT_FOUND","message":"anomalous vanish"}}"""
+                    }
+                }
+                method == "DELETE" && url.endsWith("/api/v1/reservation-plans/plan1") ->
+                    """{"ok":true,"data":{"plan_id":"plan1","enabled":false}}"""
+                else -> """{"ok":false,"error":{"code":"JOB_ALREADY_TERMINAL","message":"unknown"}}"""
+            }
+        }
+        org.junit.Assert.assertNotEquals(
+            CampusCloudOidcHelper.EngineSwitchCloudCheckOutcome.SAFE_TO_SWITCH_STOPPED,
+            resProbeDropOnFollowUp.outcome
+        )
+    }
 }

@@ -4046,13 +4046,20 @@ class CampusRepository internal constructor(
         }
 
     private suspend fun isolateBookingPlansForStudentSwitch(previousStudentId: String, nowMs: Long) {
+        val cleanPrevStu = previousStudentId.trim()
+        if (cleanPrevStu.isEmpty()) return
         bookingPlanStateMutex.withLock {
             database.withTransaction {
                 val all = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 for (plan in all) {
-                    if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) continue
-                    val stampedOwner = plan.ownerStudentId?.takeIf { it.isNotBlank() } ?: previousStudentId
-                    if (stampedOwner != previousStudentId) continue
+                    if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                        if (plan.ownerStudentId?.trim() == cleanPrevStu) {
+                            LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
+                        }
+                        continue
+                    }
+                    val stampedOwner = plan.ownerStudentId?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+                    if (stampedOwner != cleanPrevStu) continue
                     LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
                     when {
                         plan.status in setOf(
@@ -4527,16 +4534,55 @@ class CampusRepository internal constructor(
                 val syncedCloudUserId = expectedCloudUserId
                 val activeStuNo = expectedStudentNo.ifEmpty { liveStuLocked }.takeIf { it.isNotEmpty() }
                 val allExistingInLock = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-                val existingById = allExistingInLock.associateBy { it.id }
-                val localPlans = allExistingInLock.filter {
-                    doesCloudPlanBelongToActiveAccount(it, syncedCloudUserId, activeStuNo.orEmpty())
-                }
+                val mutableExistingById = allExistingInLock.associateBy { it.id }.toMutableMap()
                 for (rj in verifiedSnapshot.jobs) {
-                    val matchingLocal = localPlans.firstOrNull {
-                        it.cloudJobId == rj.jobId && it.targetLocalDate == rj.targetLocalDate
-                    } ?: localPlans.firstOrNull {
-                        it.targetLocalDate == rj.targetLocalDate &&
-                            it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
+                    // 3.1 先按稳定云端 jobId（次选精确 planId）在同云账号全量旧行中查找（不以当前 B 学号过滤，防止漏掉旧 A 行后被主键 REPLACE 覆盖！）
+                    val existingByStableJob = allExistingInLock.firstOrNull {
+                        it.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                            rj.jobId.isNotBlank() &&
+                            it.cloudJobId == rj.jobId
+                    } ?: allExistingInLock.firstOrNull {
+                        it.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                            rj.planId.isNotBlank() &&
+                            it.id == rj.planId &&
+                            (it.cloudJobId.isNullOrBlank() || it.cloudJobId == rj.jobId)
+                    }
+
+                    // 3.2 核定不可变的学校学号归属（existingImmutableStu 优先且不可被新学号篡改；新返回任务仅认服务端/绑定/本机已核验来源，未知归属保持 null 隔离！）
+                    val existingImmutableStu = existingByStableJob?.ownerStudentId?.trim()?.takeIf { it.isNotEmpty() }
+                    val localProvenanceStu = listOfNotNull(
+                        existingByStableJob?.id,
+                        rj.planId.takeIf { it.isNotBlank() }
+                    ).firstNotNullOfOrNull { pid ->
+                        CampusCloudOidcHelper.resolveScopedPlanProvenanceStudentNo(
+                            cloudBaseUrl = cloudBaseUrl,
+                            accessToken = token,
+                            planId = pid,
+                            expectedBindingId = rj.schoolBindingId
+                        )
+                    }
+                    val verifiedRemoteStu = rj.studentNo?.trim()?.takeIf { it.isNotEmpty() && !it.contains("***") }
+                        ?: localProvenanceStu
+                    if (existingImmutableStu != null &&
+                        verifiedRemoteStu != null &&
+                        verifiedRemoteStu != existingImmutableStu
+                    ) {
+                        // 同一 jobId 的学号归属发生矛盾：拒绝覆盖原有学校身份归属
+                        continue
+                    }
+                    val resolvedJobStudentId: String? = existingImmutableStu ?: verifiedRemoteStu
+
+                    // 3.3 仅当无已绑定 jobId 旧行且当前任务具备明确已核验学号时，才允许与同一云账号+同一学号+未分配 cloudJobId 的同日本地计划合并
+                    val matchingLocal = existingByStableJob ?: if (resolvedJobStudentId != null) {
+                        allExistingInLock.firstOrNull {
+                            it.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                                it.ownerCloudUserId?.trim() == syncedCloudUserId &&
+                                it.ownerStudentId?.trim() == resolvedJobStudentId &&
+                                it.cloudJobId.isNullOrBlank() &&
+                                it.targetLocalDate == rj.targetLocalDate
+                        }
+                    } else {
+                        null
                     }
                     // 若本地任务当前正处于本进程或已领取的 EXECUTING/DISPATCH_INTENT、或本地已请求取消而云端快照尚停留在排队态，拒绝被旧排队状态回退覆盖！
                     if (matchingLocal != null) {
@@ -4625,12 +4671,28 @@ class CampusRepository internal constructor(
                     val isConfirmedOnSchool =
                         effectiveStatus == "CONFIRMED" || effectiveStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
                     val candidatePlanId = "plan_${rj.jobId.ifBlank { rj.planId }.replace("-", "").take(14)}"
-                    val resolvedPlanId = when {
-                        matchingLocal != null -> matchingLocal.id
-                        existingById[candidatePlanId] != null &&
-                            existingById[candidatePlanId]?.ownerCloudUserId?.trim() != syncedCloudUserId ->
-                            "${candidatePlanId}_${syncedCloudUserId.replace("-", "").takeLast(6)}"
-                        else -> candidatePlanId
+                    val resolvedPlanId = if (matchingLocal != null) {
+                        matchingLocal.id
+                    } else {
+                        val occupant = mutableExistingById[candidatePlanId]
+                        if (occupant == null) {
+                            candidatePlanId
+                        } else {
+                            val sameCloud = occupant.ownerCloudUserId?.trim() == syncedCloudUserId
+                            val sameVerifiedStudent = !resolvedJobStudentId.isNullOrBlank() &&
+                                occupant.ownerStudentId?.trim() == resolvedJobStudentId &&
+                                (occupant.cloudJobId.isNullOrBlank() || occupant.cloudJobId == rj.jobId)
+                            if (sameCloud && sameVerifiedStudent) {
+                                candidatePlanId
+                            } else {
+                                val stuTag = (resolvedJobStudentId ?: "unscoped")
+                                    .replace(Regex("[^A-Za-z0-9]"), "")
+                                    .takeLast(6)
+                                    .ifEmpty { "unscoped" }
+                                val idDigest = rj.jobId.ifBlank { rj.planId }.hashCode().toUInt().toString(16).take(6)
+                                "${candidatePlanId}_${syncedCloudUserId.replace("-", "").takeLast(4)}_${stuTag}_$idDigest"
+                            }
+                        }
                     }
                     val mergedPlan = LibraryBookingPlanEntity(
                         id = resolvedPlanId,
@@ -4673,10 +4735,15 @@ class CampusRepository internal constructor(
                         repeatDays = effRepeatDays,
                         remainingDays = effRemainingDays,
                         ownerCloudUserId = syncedCloudUserId,
-                        ownerStudentId = matchingLocal?.ownerStudentId ?: activeStuNo
+                        ownerStudentId = resolvedJobStudentId
                     )
                     cloudAndParcelDao.upsertLibraryBookingPlan(mergedPlan)
-                    if (mergedPlan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
+                    mutableExistingById[mergedPlan.id] = mergedPlan
+                    val belongsToCurrentStudentForAlarm =
+                        activeStuNo == null || (!resolvedJobStudentId.isNullOrBlank() && resolvedJobStudentId == activeStuNo)
+                    if (belongsToCurrentStudentForAlarm &&
+                        mergedPlan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+                    ) {
                         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan)
                     } else {
                         LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, mergedPlan.id)
@@ -4960,18 +5027,16 @@ class CampusRepository internal constructor(
         if (planCloud.isEmpty() || planCloud != cleanActiveCloud) return false
         val cleanActiveStu = activeStudentNo?.trim().orEmpty()
         val planStu = plan.ownerStudentId?.trim().orEmpty()
-        if (planStu.isNotEmpty() && cleanActiveStu.isNotEmpty() && planStu != cleanActiveStu) {
-            return false
+        if (cleanActiveStu.isNotEmpty()) {
+            // 当前已明确登录某学号 B：仅明确归属学号 B 的云任务属于当前活跃身份；A 的任务与未知学号归属任务一律隔离！
+            return planStu.isNotEmpty() && planStu == cleanActiveStu
         }
-        if (planStu.isNotEmpty() && cleanActiveStu.isEmpty()) {
-            return false
-        }
-        return true
+        return planStu.isEmpty()
     }
 
     private fun isUnattributedLegacyBookingPlan(plan: LibraryBookingPlanEntity): Boolean {
         return if (plan.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-            plan.ownerCloudUserId.isNullOrBlank()
+            plan.ownerCloudUserId.isNullOrBlank() || plan.ownerStudentId.isNullOrBlank()
         } else {
             plan.ownerStudentId.isNullOrBlank()
         }
@@ -4995,10 +5060,10 @@ class CampusRepository internal constructor(
             val planOwnerStu = plan.ownerStudentId?.trim().orEmpty()
             return when {
                 cleanActiveCloud.isNotEmpty() -> {
-                    // 已登录当前云端账号 B：严禁将空 owner 旧记录或账号 A 的记录当作 B 的数据展示！
+                    // 已登录当前云端账号：若同时已登录学号 B，严禁将未知学号归属（planOwnerStu 为空）或学号 A 的记录展示为 B 的计划！
                     planOwnerCloud.isNotEmpty() &&
                         planOwnerCloud == cleanActiveCloud &&
-                        (cleanActiveStudent.isEmpty() || planOwnerStu.isEmpty() || planOwnerStu == cleanActiveStudent)
+                        (cleanActiveStudent.isEmpty() || (planOwnerStu.isNotEmpty() && planOwnerStu == cleanActiveStudent))
                 }
                 // 未登录云端账号时：若已登录某学号则仅展示明确匹配该学号的证据记录；若完全未登录则保留展示本机待核对/已确认证据
                 else -> {

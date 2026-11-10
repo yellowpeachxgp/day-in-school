@@ -1958,4 +1958,224 @@ class BookingDispatchExclusiveClaimDaoTest {
             )
         }
     }
+
+    @Test
+    fun sameCloudAccountStudentSwitchPreservesImmutableJobStudentOwner() = runBlocking {
+        // P1 #2 exact scenario:
+        // Same Profile & same Cloud account C ("cloud_user_C"), school student switches A ("20240001") -> B ("20240002") -> A ("20240001").
+        // Sync returns:
+        // 1) A's existing cloud job ("job_C_stuA_01") whose derived candidatePlanId matches A's local row id;
+        // 2) A historical unmapped job ("job_C_unknown_legacy") with no verifiable student_no/binding;
+        // 3) Same-date ("2026-11-30") distinct jobs for A and B ("job_C_sameDate_A", "job_C_sameDate_B").
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("same_cloud_stu_switch_p1")
+        val jwtC = testCloudJwt("cloud_user_C")
+
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_C",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_C",
+                displayName = "Shared Cloud C",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtC,
+                refreshToken = "ctseal1:ref_C",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+
+        val jobIdA = "job_C_stuA_01"
+        val derivedIdForJobA = "plan_${jobIdA.replace("-", "").take(14)}"
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = derivedIdForJobA,
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-28",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "PRECHECK_OK",
+                finalCheckStatus = "FINAL_CHECK_OK",
+                fireStatus = "CONFIRMED",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "01桌 A座",
+                allowAlternativeSeat = true,
+                cloudJobId = jobIdA,
+                externalBookingId = "bk_C_A_01",
+                evidenceSha256 = "sha_C_A_01",
+                priceMicropeach = 10_000L,
+                paymentState = "PAID",
+                status = "CONFIRMED",
+                stateVersion = 2,
+                generation = 1,
+                lastDiagnosticMessage = "A在同云账号C下的已确认预约",
+                createdAtEpochMillis = 1_000L,
+                updatedAtEpochMillis = 1_000L,
+                ownerCloudUserId = "cloud_user_C",
+                ownerStudentId = "20240001"
+            )
+        )
+
+        // Switch school student A -> B while keeping Cloud account C unchanged!
+        repo.saveAuthorizedSyncCredentials("20240002", "pw_B", "2026", "3")
+
+        // Seed B's own unsynced plan on 2026-11-30 so we also test same-date A vs B coexistence
+        dao.upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan_C_stuB_sameDate_local",
+                schoolId = "haut",
+                executionMode = "CLOUD_HOSTED",
+                targetLocalDate = "2026-11-30",
+                targetLocalTime = "07:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1_000L,
+                finalCheckAtEpochMillis = 2_000L,
+                fireAtEpochMillis = 3_000L,
+                precheckStatus = "ARMED",
+                finalCheckStatus = "ARMED",
+                fireStatus = "ARMED",
+                preferredAreaName = "四层南区",
+                preferredSeatLabel = "08桌 B座",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 10_000L,
+                paymentState = "DEBIT_PENDING",
+                status = "ARMED",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = "B同日计划",
+                createdAtEpochMillis = 2_000L,
+                updatedAtEpochMillis = 2_000L,
+                ownerCloudUserId = "cloud_user_C",
+                ownerStudentId = "20240002"
+            )
+        )
+
+        repo.cloudHttpTransportForTest = { _, _, _, _, _ ->
+            """
+            {
+              "ok": true,
+              "data": {
+                "auth_version": 2,
+                "user": { "cloud_user_id": "cloud_user_C", "display_name": "Shared Cloud C" },
+                "wallet": { "peach_balance": 5.0 },
+                "consents": [{ "id": "con_C_2", "school_id": "haut", "auth_version": 2 }],
+                "school_bindings": [
+                  { "id": "bind_C_B", "school_id": "haut", "student_no": "20240002", "consent_id": "con_C_2", "auth_version": 2 }
+                ],
+                "reservation_plans": [],
+                "reservation_jobs": [
+                  {
+                    "id": "$jobIdA",
+                    "plan_id": "rplan_A_01",
+                    "booking_local_date": "2026-11-28",
+                    "target_local_time": "07:00:00",
+                    "state": "CONFIRMED",
+                    "display_status": "SCHOOL_CONFIRMED",
+                    "user_intent_state": "ACTIVE",
+                    "external_execution_state": "SCHOOL_CONFIRMED",
+                    "school_cancellation_state": "NOT_REQUESTED",
+                    "candidate_seats": ["01桌 A座"],
+                    "school_reservation": {
+                      "external_booking_id": "bk_C_A_01",
+                      "seat_alias": "01桌 A座",
+                      "region_alias": "五层中区",
+                      "evidence_sha256": "sha_C_A_01",
+                      "official_status": "CONFIRMED"
+                    }
+                  },
+                  {
+                    "id": "job_C_unknown_legacy",
+                    "plan_id": "rplan_legacy_unmapped",
+                    "booking_local_date": "2026-11-29",
+                    "target_local_time": "07:00:00",
+                    "state": "ARMED",
+                    "display_status": "ARMED",
+                    "user_intent_state": "ACTIVE",
+                    "external_execution_state": "NOT_DISPATCHED",
+                    "school_cancellation_state": "NOT_REQUESTED",
+                    "candidate_seats": ["02桌 A座"]
+                  },
+                  {
+                    "id": "job_C_sameDate_A",
+                    "plan_id": "rplan_sameDate_A",
+                    "school_binding_id": "bind_C_A_revoked",
+                    "student_no": "20240001",
+                    "booking_local_date": "2026-11-30",
+                    "target_local_time": "07:00:00",
+                    "state": "CONFIRMED",
+                    "display_status": "SCHOOL_CONFIRMED",
+                    "user_intent_state": "ACTIVE",
+                    "external_execution_state": "SCHOOL_CONFIRMED",
+                    "school_cancellation_state": "NOT_REQUESTED",
+                    "candidate_seats": ["03桌 A座"],
+                    "school_reservation": {
+                      "external_booking_id": "bk_sameDate_A",
+                      "seat_alias": "03桌 A座",
+                      "region_alias": "五层中区",
+                      "evidence_sha256": "sha_sameDate_A",
+                      "official_status": "CONFIRMED"
+                    }
+                  },
+                  {
+                    "id": "job_C_sameDate_B",
+                    "plan_id": "rplan_sameDate_B",
+                    "school_binding_id": "bind_C_B",
+                    "booking_local_date": "2026-11-30",
+                    "target_local_time": "07:00:00",
+                    "state": "ARMED",
+                    "display_status": "ARMED",
+                    "user_intent_state": "ACTIVE",
+                    "external_execution_state": "NOT_DISPATCHED",
+                    "school_cancellation_state": "NOT_REQUESTED",
+                    "candidate_seats": ["08桌 B座"]
+                  }
+                ],
+                "orders": [],
+                "parcels": []
+              }
+            }
+            """.trimIndent()
+        }
+
+        val syncRes = repo.syncWithCampusCloud()
+        org.junit.Assert.assertTrue("Sync on C+B should succeed: ${syncRes.exceptionOrNull()}", syncRes.isSuccess)
+
+        // 1) A's existing row MUST keep ownerStudentId = "20240001" (NEVER re-attributed to "20240002"!)
+        val rowJobA = dao.getLibraryBookingPlanById(derivedIdForJobA)!!
+        assertEquals("20240001", rowJobA.ownerStudentId)
+        assertEquals("bk_C_A_01", rowJobA.externalBookingId)
+
+        // 2) Historical job without verifiable student_no/binding MUST stay isolated (ownerStudentId = null, invisible to B!)
+        val allRows = dao.getLibraryBookingPlansSnapshot()
+        val unknownLegacyRow = allRows.single { it.cloudJobId == "job_C_unknown_legacy" }
+        assertEquals(null, unknownLegacyRow.ownerStudentId)
+
+        // 3) Same-date ("2026-11-30") A and B jobs MUST NOT clobber each other!
+        val sameDateRowA = allRows.single { it.cloudJobId == "job_C_sameDate_A" }
+        val sameDateRowB = allRows.single { it.cloudJobId == "job_C_sameDate_B" }
+        assertEquals("20240001", sameDateRowA.ownerStudentId)
+        assertEquals("20240002", sameDateRowB.ownerStudentId)
+        assertEquals("plan_C_stuB_sameDate_local", sameDateRowB.id)
+
+        val visibleWhileB = repo.libraryBookingPlansFlow.first()
+        org.junit.Assert.assertTrue(visibleWhileB.none { it.cloudJobId == jobIdA })
+        org.junit.Assert.assertTrue(visibleWhileB.none { it.cloudJobId == "job_C_unknown_legacy" })
+        org.junit.Assert.assertTrue(visibleWhileB.none { it.cloudJobId == "job_C_sameDate_A" })
+        org.junit.Assert.assertTrue(visibleWhileB.any { it.cloudJobId == "job_C_sameDate_B" })
+
+        // 4) Switch back B -> A on same Cloud account C: A sees its preserved jobs ("job_C_stuA_01" & "job_C_sameDate_A") intact!
+        repo.saveAuthorizedSyncCredentials("20240001", "pw_A", "2026", "3")
+        val visibleBackOnA = repo.libraryBookingPlansFlow.first()
+        org.junit.Assert.assertTrue(visibleBackOnA.any { it.cloudJobId == jobIdA && it.externalBookingId == "bk_C_A_01" })
+        org.junit.Assert.assertTrue(visibleBackOnA.any { it.cloudJobId == "job_C_sameDate_A" && it.externalBookingId == "bk_sameDate_A" })
+        org.junit.Assert.assertTrue(visibleBackOnA.none { it.cloudJobId == "job_C_sameDate_B" })
+    }
 }
