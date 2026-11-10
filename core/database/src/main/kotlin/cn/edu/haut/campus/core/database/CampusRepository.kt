@@ -1154,10 +1154,18 @@ class CampusRepository internal constructor(
         } else {
             primaryRule.buildingId
         }
-        val extraRuleIds = mergedRuleIds.distinct().filter { it.isNotBlank() && it != primaryRule.id }
+        val explicitExtraIds = mergedRuleIds.distinct().filter { it.isNotBlank() && it != primaryRule.id }
 
         database.withTransaction {
             val allRulesById = dao.getRulesSnapshot().associateBy { it.id }
+            val existingPrimaryDomain = allRulesById[primaryRule.id]?.toDomain()
+            val allOverrides = dao.getOccurrenceOverridesSnapshot()
+            val absorbedExtraIds = allOverrides
+                .filter { ov -> ov.reason == "MERGED_INTO:${primaryRule.id}" && !ov.courseRuleId.isNullOrBlank() }
+                .mapNotNull { it.courseRuleId }
+                .filter { it != primaryRule.id }
+            val extraRuleIds = (explicitExtraIds + absorbedExtraIds).distinct()
+
             dao.upsertCourse(course.copy(userModified = true).toEntity())
             dao.upsertRule(
                 primaryRule.copy(
@@ -1165,10 +1173,27 @@ class CampusRepository internal constructor(
                     userModified = true
                 ).toEntity()
             )
+            val originalPrimaryWeeks = existingPrimaryDomain?.weeks.orEmpty()
             for (extraId in extraRuleIds) {
                 val extraEntity = allRulesById[extraId] ?: continue
                 val extraDomain = extraEntity.toDomain()
-                val remainingWeeks = extraDomain.weeks - primaryRule.weeks
+                // 原合并成员在原编辑范围（existingPrimary.weeks）内的周次随本次全学期修改一并移除/替换；
+                // 若新规则与子规则同星期且节次重叠，新周次也一并吸收；子规则在原合并范围之外独立存在的周次予以保留！
+                val newOverlappingWeeks = if (
+                    primaryRule.weekday == extraDomain.weekday &&
+                    primaryRule.startPeriod <= extraDomain.endPeriod &&
+                    primaryRule.endPeriod >= extraDomain.startPeriod
+                ) {
+                    primaryRule.weeks
+                } else {
+                    emptySet()
+                }
+                val weeksCoveredByMergedEdit = if (originalPrimaryWeeks.isNotEmpty()) {
+                    originalPrimaryWeeks + newOverlappingWeeks
+                } else {
+                    extraDomain.weeks + newOverlappingWeeks
+                }
+                val remainingWeeks = extraDomain.weeks - weeksCoveredByMergedEdit
                 if (remainingWeeks.isEmpty()) {
                     dao.deleteRuleById(extraId)
                     dao.deleteOccurrenceOverridesByRuleId(extraId)
@@ -1179,6 +1204,11 @@ class CampusRepository internal constructor(
                             userModified = true
                         ).toEntity()
                     )
+                    for (ov in allOverrides) {
+                        if (ov.courseRuleId == extraId && ov.reason == "MERGED_INTO:${primaryRule.id}") {
+                            dao.deleteOccurrenceOverrideById(ov.id)
+                        }
+                    }
                 }
             }
         }
@@ -1279,9 +1309,19 @@ class CampusRepository internal constructor(
 
         val sp = newStartPeriod.coerceIn(1, 12)
         val ep = newEndPeriod.coerceIn(sp, 12)
-        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+        val explicitRuleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
 
         database.withTransaction {
+            val companionIds = if (explicitRuleIds.isNotEmpty()) {
+                dao.getOccurrenceOverridesSnapshot()
+                    .filter { ov ->
+                        ov.dateIso == occ.date.toString() &&
+                            !ov.courseRuleId.isNullOrBlank() &&
+                            explicitRuleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" }
+                    }
+                    .mapNotNull { it.courseRuleId }
+            } else emptyList()
+            val ruleIds = (explicitRuleIds + companionIds).distinct()
             if (ruleIds.isNotEmpty()) {
                 val primaryRuleId = ruleIds.first()
                 dao.deleteOccurrenceOverridesForRuleOnDate(primaryRuleId, occ.date.toString())
@@ -1430,8 +1470,18 @@ class CampusRepository internal constructor(
             occ.buildingId
         } else null
 
-        val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
+        val explicitRuleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
         database.withTransaction {
+            val companionIds = if (explicitRuleIds.isNotEmpty()) {
+                dao.getOccurrenceOverridesSnapshot()
+                    .filter { ov ->
+                        ov.dateIso == occ.date.toString() &&
+                            !ov.courseRuleId.isNullOrBlank() &&
+                            explicitRuleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" }
+                    }
+                    .mapNotNull { it.courseRuleId }
+            } else emptyList()
+            val ruleIds = (explicitRuleIds + companionIds).distinct()
             if (ruleIds.isNotEmpty()) {
                 for (rId in ruleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
@@ -1503,9 +1553,17 @@ class CampusRepository internal constructor(
     }
 
     suspend fun deleteCourseScheduleRules(ruleIds: List<String>) {
-        val cleanIds = ruleIds.distinct().filter { it.isNotBlank() }.toSet()
-        if (cleanIds.isEmpty()) return
+        val seedIds = ruleIds.distinct().filter { it.isNotBlank() }.toSet()
+        if (seedIds.isEmpty()) return
         database.withTransaction {
+            val allOverrides = dao.getOccurrenceOverridesSnapshot()
+            val absorbedCompanionIds = allOverrides
+                .filter { ov ->
+                    !ov.courseRuleId.isNullOrBlank() &&
+                        seedIds.any { id -> ov.reason == "MERGED_INTO:$id" }
+                }
+                .mapNotNull { it.courseRuleId }
+            val cleanIds = (seedIds + absorbedCompanionIds).toSet()
             val rules = dao.getRulesSnapshot()
             val targetRules = rules.filter { it.id in cleanIds }
             if (targetRules.isEmpty()) return@withTransaction
@@ -1513,6 +1571,11 @@ class CampusRepository internal constructor(
             for (rId in cleanIds) {
                 dao.deleteRuleById(rId)
                 dao.deleteOccurrenceOverridesByRuleId(rId)
+            }
+            for (ov in allOverrides) {
+                if (cleanIds.any { id -> ov.reason == "MERGED_INTO:$id" }) {
+                    dao.deleteOccurrenceOverrideById(ov.id)
+                }
             }
             val coursesById = dao.getCoursesSnapshot().associateBy { it.id }
             for (cId in affectedCourseIds) {

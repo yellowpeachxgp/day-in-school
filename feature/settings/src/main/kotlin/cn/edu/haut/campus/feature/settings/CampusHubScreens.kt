@@ -113,11 +113,17 @@ fun EmptyClassroomScreen(
     onBack: () -> Unit
 ) {
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
+    val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val rules by repository.rulesFlow.collectAsState(initial = emptyList())
+    val periodTimes by repository.periodTimesFlow.collectAsState(initial = emptyList())
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
+    val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    val weekMonday = remember(today) {
+        today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    }
     val currentTeachingWeek = remember(today, currentTerm, calendarOverrides) {
         currentTerm?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }
@@ -125,31 +131,51 @@ fun EmptyClassroomScreen(
     var selectedCampusKey by remember(prefs.selectedCampusId, rules.size) {
         mutableStateOf(
             if (prefs.selectedCampusId.contains("songshan", ignoreCase = true) ||
-                rules.any { it.rawRoom.contains("嵩山") || it.rawRoom.contains("齐礼阎") }
+                (prefs.selectedCampusId.isBlank() &&
+                    rules.any { it.rawRoom.contains("嵩山") || it.rawRoom.contains("齐礼阎") })
             ) "songshanlu" else "lianhuajie"
         )
     }
     val campusDisplayName = if (selectedCampusKey == "songshanlu") "嵩山路校区" else "莲花街校区"
 
     var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
+    val selectedDateInCurrentWeek = remember(weekMonday, selectedDayOfWeek) {
+        weekMonday.plusDays((selectedDayOfWeek.value - 1).toLong())
+    }
     var selectedSlotIndex by remember {
         mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).hour))
     }
     val campusRoomsMap = remember(selectedCampusKey) {
         CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
     }
+    val totalCampusCandidateCount = remember(campusRoomsMap) { campusRoomsMap.values.sumOf { it.size } }
     val buildingKeys = remember(campusRoomsMap) { campusRoomsMap.keys.toList() }
     var selectedBuildingFilter by remember(selectedCampusKey) { mutableStateOf<String?>(null) }
 
     val activeSlot = CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[selectedSlotIndex]
-    val busyRoomsInSlot = remember(rules, currentTerm?.id, currentTeachingWeek, selectedDayOfWeek, activeSlot) {
-        CampusStudyRoomCatalog.findBusyRawRooms(
+    val busyRoomsInSlot = remember(
+        selectedDateInCurrentWeek,
+        currentTerm,
+        courses,
+        rules,
+        periodTimes,
+        calendarOverrides,
+        occurrenceOverrides,
+        activeSlot
+    ) {
+        CampusStudyRoomCatalog.findBusyRawRoomsForDate(
+            date = selectedDateInCurrentWeek,
+            term = currentTerm,
+            courses = courses,
             rules = rules,
-            termId = currentTerm?.id,
-            teachingWeek = currentTeachingWeek,
-            weekday = selectedDayOfWeek,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides,
             slot = activeSlot
         )
+    }
+    val freeCampusRoomCount = remember(campusRoomsMap, busyRoomsInSlot) {
+        campusRoomsMap.values.flatten().count { code -> CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot) }
     }
 
     Column(
@@ -159,7 +185,7 @@ fun EmptyClassroomScreen(
     ) {
         XPeachTopBar(
             title = "自习教室与无课参考",
-            subtitle = "$campusDisplayName · 第 $currentTeachingWeek 周 · 个人课表无冲突参考",
+            subtitle = "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,

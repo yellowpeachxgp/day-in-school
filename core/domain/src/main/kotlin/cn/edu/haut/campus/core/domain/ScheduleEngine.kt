@@ -45,6 +45,12 @@ object ScheduleEngine {
         val effectiveDate = TeachingWeekCalculator.resolveDate(date, term, calendarOverrides)
         val dayOverrides = occurrenceOverrides.filter { it.termId == term.id && it.date == date }
         val overridesByRuleId = dayOverrides.filter { it.courseRuleId != null }.associateBy { it.courseRuleId!! }
+        val absorbedCompanionsByPrimaryRuleId: Map<String, List<String>> = dayOverrides
+            .filter { it.canceled && !it.courseRuleId.isNullOrBlank() && it.reason?.startsWith("MERGED_INTO:") == true }
+            .groupBy(
+                keySelector = { it.reason!!.removePrefix("MERGED_INTO:").trim() },
+                valueTransform = { it.courseRuleId!! }
+            )
 
         val rawOccurrences = mutableListOf<ClassOccurrence>()
 
@@ -82,11 +88,16 @@ object ScheduleEngine {
                 val isOverridden = ruleOverride != null || effectiveDate.status == TermDateStatus.MAKEUP_RESCHEDULED
                 val reason = ruleOverride?.reason ?: effectiveDate.calendarNotice
 
+                val mergedRuleIdsWithCompanions = (
+                    listOf(rule.id) + absorbedCompanionsByPrimaryRuleId[rule.id].orEmpty()
+                    ).distinct()
+
                 rawOccurrences.add(
                     ClassOccurrence(
                         occurrenceId = "${date}_${rule.id}",
                         courseId = course.id,
                         ruleId = rule.id,
+                        mergedRuleIds = mergedRuleIdsWithCompanions,
                         overrideId = ruleOverride?.id,
                         courseName = course.name,
                         teacher = course.teacher,
@@ -130,11 +141,16 @@ object ScheduleEngine {
             val finalRoom = extraOverride.room ?: baseRule?.rawRoom ?: "待定教室"
             val finalBuildingId = extraOverride.buildingId ?: baseRule?.buildingId
 
+            val extraMergedIds = if (baseRule != null) {
+                (listOf(baseRule.id) + absorbedCompanionsByPrimaryRuleId[baseRule.id].orEmpty()).distinct()
+            } else emptyList()
+
             rawOccurrences.add(
                 ClassOccurrence(
                     occurrenceId = "${date}_override_${extraOverride.id}",
                     courseId = course.id,
                     ruleId = baseRule?.id,
+                    mergedRuleIds = extraMergedIds,
                     overrideId = extraOverride.id,
                     courseName = course.name,
                     teacher = course.teacher,
@@ -355,6 +371,14 @@ object ScheduleEngine {
         }
         val startPt = periodMap[startPeriod]
         val endPt = periodMap[endPeriod]
+        if (startPt != null && customEnd != null) {
+            val endSafe = if (customEnd.isAfter(startPt.startLocalTime)) {
+                customEnd
+            } else {
+                addMinutesClampedBeforeMidnight(startPt.startLocalTime, 45L * span)
+            }
+            return ResolvedPeriodWindow(startPt.startLocalTime, endSafe, hasResolvedTime = true)
+        }
         if (startPt != null && endPt != null) {
             val endSafe = if (endPt.endLocalTime.isAfter(startPt.startLocalTime)) {
                 endPt.endLocalTime

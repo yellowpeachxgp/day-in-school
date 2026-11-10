@@ -741,6 +741,8 @@ fun TodayScreen(
                 currentNow = currentNow,
                 teachingWeek = snapshot.teachingWeek ?: 1,
                 rules = rules,
+                resolvedDateOccurrences = snapshot.items.map { it.occurrence },
+                selectedCampusId = prefs.selectedCampusId,
                 activeFocusSession = activeFocusSession,
                 completedFocusSessions = completedFocusSessions,
                 onlineRooms = onlineRooms,
@@ -1832,6 +1834,8 @@ private fun TodayCampusBentoSection(
     currentNow: ZonedDateTime,
     teachingWeek: Int,
     rules: List<CourseScheduleRule>,
+    resolvedDateOccurrences: List<cn.edu.haut.campus.core.model.ClassOccurrence> = emptyList(),
+    selectedCampusId: String = "",
     activeFocusSession: cn.edu.haut.campus.core.model.FocusSessionDomain?,
     completedFocusSessions: List<cn.edu.haut.campus.core.model.FocusSessionDomain>,
     onlineRooms: List<cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain>,
@@ -1932,16 +1936,25 @@ private fun TodayCampusBentoSection(
         }
     }
 
-    val (currentSlotLabel, freeRoomsCount) = remember(currentNow, selectedDate, teachingWeek, activeTermId, rules) {
+    val (currentSlotLabel, studyAvailability) = remember(
+        currentNow,
+        selectedDate,
+        resolvedDateOccurrences,
+        selectedCampusId,
+        rules
+    ) {
         val slot = CampusStudyRoomCatalog.resolveActiveSlot(currentNow.toLocalTime())
-        val freeCount = CampusStudyRoomCatalog.computeFreeRoomsCount(
-            rules = rules,
-            activeTermId = activeTermId,
-            teachingWeek = teachingWeek,
-            weekday = selectedDate.dayOfWeek,
-            slot = slot
+        val effectiveCampus = selectedCampusId.trim().ifEmpty {
+            cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.detectCampusHint(
+                (resolvedDateOccurrences.map { it.rawRoom } + rules.map { it.rawRoom })
+            )?.value ?: "lianhuajie"
+        }
+        val summary = CampusStudyRoomCatalog.computeAvailabilityForOccurrences(
+            occurrences = resolvedDateOccurrences,
+            slot = slot,
+            campusId = effectiveCampus
         )
-        slot.label to freeCount
+        slot.label to summary
     }
 
     val examSpec = if (nearestExam != null) {
@@ -2051,7 +2064,11 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            subtitle = if (rules.isNotEmpty()) "名录 $freeRoomsCount 间个人无冲突 · 双校区参考" else "双校区自习教室目录与无课参考",
+            subtitle = if (rules.isNotEmpty() || resolvedDateOccurrences.isNotEmpty()) {
+                "${studyAvailability.campusShortLabel} ${studyAvailability.freeRoomsCount}/${studyAvailability.totalCandidateRoomsCount} 间个人课表无冲突（参考）"
+            } else {
+                "${studyAvailability.campusShortLabel} ${studyAvailability.totalCandidateRoomsCount} 间自习教室名录（个人无课参考）"
+            },
             onClick = onNavigateToEmptyClassrooms
         ),
         HomeCardModule.CAMPUS_COMMUNITY.id to HomeModularCardSpec(

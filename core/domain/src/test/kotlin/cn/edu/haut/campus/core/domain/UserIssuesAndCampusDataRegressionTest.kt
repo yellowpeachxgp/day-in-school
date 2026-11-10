@@ -186,14 +186,15 @@ class UserIssuesAndCampusDataRegressionTest {
             verifiedAt = LocalDate.of(2026, 11, 9)
         )
         val dormAliases = listOf(
-            BuildingAlias("al_dorm_f01_a", "b_dorm_ef", "学生宿舍F01", 1.0f, true)
+            // F01 仅关联学生公寓E/F片区通用点（未核实 F01 单栋或 W111 房间精确坐标），必须保持 FUZZY_NEEDS_CONFIRMATION
+            BuildingAlias("al_dorm_f01_a", "b_dorm_ef", "学生宿舍F01", 0.74f, false)
         )
         val resolved = ClassroomBuildingResolver.resolve(
             rawRoom = compClub.activityVenue,
             buildings = listOf(dormBuilding),
             aliases = dormAliases
         )
-        assertEquals(BuildingMatchStatus.EXACT_VERIFIED, resolved.status)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, resolved.status)
         assertEquals("b_dorm_ef", resolved.building?.id)
         assertEquals("W111", resolved.roomNumberHint)
     }
@@ -345,5 +346,48 @@ class UserIssuesAndCampusDataRegressionTest {
         assertEquals(mapSsCanteen.latitude, diningSsCanteen.latitude, 0.0)
         assertEquals(mapSsCanteen.longitude, diningSsCanteen.longitude, 0.0)
         assertTrue(mapSsCanteen.description.contains("近似"))
+
+        // Defensive contract check: ScheduleEngine honors customEnd/endAt even when customStart/startAt is null
+        val term = cn.edu.haut.campus.core.model.Term(
+            id = "2026-2027-1",
+            academicYear = "2026-2027",
+            termNumber = 1,
+            startDate = LocalDate.of(2026, 8, 31),
+            weekStartDay = java.time.DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = "tt_test",
+            current = true
+        )
+        val pts = listOf(
+            cn.edu.haut.campus.core.model.PeriodTime("p1", "tt_test", 1, java.time.LocalTime.of(8, 30), java.time.LocalTime.of(9, 15), "上午"),
+            cn.edu.haut.campus.core.model.PeriodTime("p2", "tt_test", 2, java.time.LocalTime.of(9, 20), java.time.LocalTime.of(9, 45), "上午")
+        )
+        val cEndOnly = cn.edu.haut.campus.core.model.Course(
+            id = "c_end_only",
+            name = "特殊结束时刻课程",
+            colorArgb = 0xFF2563EB,
+            source = cn.edu.haut.campus.core.model.CourseSource.MANUAL
+        )
+        val rEndOnly = cn.edu.haut.campus.core.model.CourseScheduleRule(
+            id = "r_end_only",
+            courseId = cEndOnly.id,
+            termId = term.id,
+            weekday = java.time.DayOfWeek.MONDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            weeks = setOf(1),
+            rawRoom = "1号教学楼1104",
+            customStartTime = null,
+            customEndTime = java.time.LocalTime.of(12, 15)
+        )
+        val occEndOnly = ScheduleEngine.resolveOccurrencesForDate(
+            date = LocalDate.of(2026, 8, 31),
+            term = term,
+            courses = listOf(cEndOnly),
+            rules = listOf(rEndOnly),
+            periodTimes = pts
+        ).single()
+        assertEquals(java.time.LocalTime.of(8, 30), occEndOnly.startTime)
+        assertEquals(java.time.LocalTime.of(12, 15), occEndOnly.endTime)
     }
 }

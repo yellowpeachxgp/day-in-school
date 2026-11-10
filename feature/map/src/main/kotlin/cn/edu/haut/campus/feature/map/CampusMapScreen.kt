@@ -189,6 +189,9 @@ private object CampusTileCache {
         coordinator.clearFailureCooldowns()
     }
 
+    suspend fun awaitNextCooldownBatchExpiry(delayMillis: suspend (Long) -> Unit): Boolean =
+        coordinator.awaitNextCooldownBatchExpiry(delayMillis = delayMillis)
+
     fun lookupForRender(styleMode: GisMapStyleMode, z: Int, x: Int, y: Int): TileRenderLookup<ImageBitmap> =
         coordinator.lookupForRender(styleMode = styleMode, z = z, x = x, y = y)
 
@@ -198,7 +201,8 @@ private object CampusTileCache {
         z: Int,
         x: Int,
         y: Int,
-        onLoaded: () -> Unit
+        onLoaded: () -> Unit,
+        onCooldownScheduled: ((Long) -> Unit)? = null
     ) {
         coordinator.loadTileIfNeeded(
             styleMode = styleMode,
@@ -253,7 +257,8 @@ private object CampusTileCache {
                     }.getOrNull()
                 }
             },
-            onLoaded = onLoaded
+            onLoaded = onLoaded,
+            onCooldownScheduled = onCooldownScheduled
         )
     }
 }
@@ -1303,7 +1308,12 @@ fun CampusMapScreen(
                                         if (selectedIndoorRoom != null) {
                                             append(" · ${selectedIndoorRoom!!.floorLabel} ${selectedIndoorRoom!!.name}")
                                         } else if (!resolution?.roomNumberHint.isNullOrBlank()) {
-                                            append(" · 房间 ${resolution!!.roomNumberHint}（已定位至楼栋）")
+                                            val precisionNote = if (resolution?.status == BuildingMatchStatus.EXACT_VERIFIED) {
+                                                "已定位至楼栋"
+                                            } else {
+                                                "片区近似待确认，非单栋/房间精确坐标"
+                                            }
+                                            append(" · 房间 ${resolution!!.roomNumberHint}（$precisionNote）")
                                         }
                                     } else {
                                         append("双指缩放/拖拽或点击右侧按钮调整视野")
@@ -2211,46 +2221,66 @@ fun CampusMapScreen(
                 }
             }
 
-            // 模糊教室人工确认条
+            // 模糊教室 / 片区近似点人工确认条
             if (resolution != null && resolution.status != BuildingMatchStatus.EXACT_VERIFIED) {
+                val approxTarget = resolution.building
+                val candidatePool = resolution.candidateBuildings.ifEmpty {
+                    campusBuildings.filter {
+                        it.category == CampusCategory.TEACHING_BUILDING ||
+                            it.category == CampusCategory.LAB ||
+                            it.category == CampusCategory.DORMITORY
+                    }
+                }
                 XPeachCard(
                     contentPadding = PaddingValues(10.dp),
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "确认教学楼：",
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false
+                            text = if (approxTarget != null) {
+                                "片区近似定位（待核实）：当前仅关联至「${approxTarget.name}」通用点，尚未核实单栋楼宇或房间精确位置"
+                            } else {
+                                "位置待人工确认：请手动选择所属楼宇或片区"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        for (candidate in buildings.filter {
-                            it.category == CampusCategory.TEACHING_BUILDING || it.category == CampusCategory.LAB
-                        }) {
-                            XPeachFilterPill(
-                                label = candidate.shortName,
-                                selected = selectedBuilding?.id == candidate.id,
-                                onClick = {
-                                    scope.launch {
-                                        repository.confirmBuildingAliasForRoom(searchQuery, candidate.id)
-                                        selectedBuilding = candidate
-                                        isFollowingUser = false
-                                        val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
-                                            candidate.latitude,
-                                            candidate.longitude
-                                        )
-                                        mapCenterLatGcj = glat
-                                        mapCenterLonGcj = glon
-                                        inAppNavigationActive = true
-                                    }
-                                }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "选择候选点：",
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false
                             )
+                            for (candidate in candidatePool) {
+                                val isDormZone = candidate.category == CampusCategory.DORMITORY
+                                XPeachFilterPill(
+                                    label = if (isDormZone) "${candidate.shortName}(片区)" else candidate.shortName,
+                                    selected = selectedBuilding?.id == candidate.id,
+                                    onClick = {
+                                        scope.launch {
+                                            if (!isDormZone) {
+                                                repository.confirmBuildingAliasForRoom(searchQuery, candidate.id)
+                                            }
+                                            selectedBuilding = candidate
+                                            isFollowingUser = false
+                                            val (glat, glon) = CampusMapNavigator.wgs84ToGcj02(
+                                                candidate.latitude,
+                                                candidate.longitude
+                                            )
+                                            mapCenterLatGcj = glat
+                                            mapCenterLonGcj = glon
+                                            inAppNavigationActive = true
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -2868,8 +2898,19 @@ private fun RealCampusTileMap(
     val scope = rememberCoroutineScope()
     val isDarkMap = XPeachTheme.isDark
     var tileLoadGeneration by remember { mutableIntStateOf(0) }
+    var cooldownScheduleEpoch by remember { mutableIntStateOf(0) }
     var canvasWidthPx by remember { mutableFloatStateOf(1080f) }
     var canvasHeightPx by remember { mutableFloatStateOf(1920f) }
+
+    // 有生命周期的最早冷却截止唤醒：静止视口下瓦片加载失败进入冷却后，到期自动唤醒重绘并重试（无逐帧风暴）
+    LaunchedEffect(styleMode, tileLoadGeneration, cooldownScheduleEpoch) {
+        if (CampusTileCache.awaitNextCooldownBatchExpiry { waitMs ->
+                kotlinx.coroutines.delay(waitMs + 16L)
+            }
+        ) {
+            tileLoadGeneration++
+        }
+    }
 
     val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026 && zoom >= 15.5f) {
         zoom.roundToInt().coerceIn(16, 18)
@@ -3115,7 +3156,8 @@ private fun RealCampusTileMap(
                             z = tileZ,
                             x = tx,
                             y = ty,
-                            onLoaded = { tileLoadGeneration++ }
+                            onLoaded = { tileLoadGeneration++ },
+                            onCooldownScheduled = { cooldownScheduleEpoch++ }
                         )
                     }
                 }

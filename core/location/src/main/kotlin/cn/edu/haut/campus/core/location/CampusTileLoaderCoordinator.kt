@@ -65,6 +65,43 @@ class CampusTileCacheCoordinator<T : Any>(
         failureCooldownUntilMs.clear()
     }
 
+    fun evictExpiredCooldowns(nowMs: Long = System.currentTimeMillis()): Int {
+        var evicted = 0
+        for ((key, until) in failureCooldownUntilMs.entries) {
+            if (nowMs >= until && failureCooldownUntilMs.remove(key, until)) {
+                evicted += 1
+            }
+        }
+        return evicted
+    }
+
+    fun nextCooldownExpiryEpochMs(nowMs: Long = System.currentTimeMillis()): Long? {
+        evictExpiredCooldowns(nowMs)
+        var earliest: Long? = null
+        for (until in failureCooldownUntilMs.values) {
+            if (until > nowMs && (earliest == null || until < earliest)) {
+                earliest = until
+            }
+        }
+        return earliest
+    }
+
+    /**
+     * 静止视口有生命周期的冷却到期唤醒器：
+     * 按最早冷却截止时刻仅挂起一次（避免逐帧重试风暴），到期后清理过期冷却并返回 `true` 以触发重绘重试。
+     */
+    suspend fun awaitNextCooldownBatchExpiry(
+        nowMsProvider: () -> Long = System::currentTimeMillis,
+        delayMillis: suspend (Long) -> Unit
+    ): Boolean {
+        val now0 = nowMsProvider()
+        val earliest = nextCooldownExpiryEpochMs(now0) ?: return false
+        val waitMs = (earliest - now0).coerceAtLeast(1L)
+        delayMillis(waitMs)
+        evictExpiredCooldowns(nowMsProvider())
+        return true
+    }
+
     fun clearAll() {
         synchronized(memoryCache) { memoryCache.clear() }
         inFlight.clear()
@@ -118,7 +155,8 @@ class CampusTileCacheCoordinator<T : Any>(
         nowMs: Long = System.currentTimeMillis(),
         readDiskTile: suspend (key: String) -> T?,
         fetchRemoteTile: suspend (targetKey: String, url: String) -> T?,
-        onLoaded: () -> Unit
+        onLoaded: () -> Unit,
+        onCooldownScheduled: ((expiryEpochMs: Long) -> Unit)? = null
     ) {
         val effectiveStyle = resolveEffectiveTileStyle(styleMode, z, x, y)
         val primaryKey = tileKey(effectiveStyle, z, x, y)
@@ -148,8 +186,10 @@ class CampusTileCacheCoordinator<T : Any>(
                     onLoaded()
                     return
                 }
-                // 官方 2.5D 拉取失败：记录冷却窗口以防逐帧死循环，同时按需加载 street 占位瓦片（独立存储于 street_*，绝不污染 haut25d_*）
-                failureCooldownUntilMs[primaryKey] = nowMs + failureCooldownMs
+                // 官方 2.5D 拉取失败：记录冷却窗口以防逐帧死循环，同时通知有生命周期的唤醒器在冷却截止时自动重绘重试
+                val expiry25d = nowMs + failureCooldownMs
+                failureCooldownUntilMs[primaryKey] = expiry25d
+                onCooldownScheduled?.invoke(expiry25d)
                 if (get(streetKey) == null) {
                     val diskStreet = readDiskTile(streetKey)
                     if (diskStreet != null) {
@@ -187,7 +227,9 @@ class CampusTileCacheCoordinator<T : Any>(
                     return
                 }
             }
-            failureCooldownUntilMs[streetKey] = nowMs + (failureCooldownMs / 3L).coerceAtLeast(5_000L)
+            val streetExpiry = nowMs + (failureCooldownMs / 3L).coerceAtLeast(5_000L)
+            failureCooldownUntilMs[streetKey] = streetExpiry
+            onCooldownScheduled?.invoke(streetExpiry)
         } finally {
             inFlight.remove(primaryKey)
         }

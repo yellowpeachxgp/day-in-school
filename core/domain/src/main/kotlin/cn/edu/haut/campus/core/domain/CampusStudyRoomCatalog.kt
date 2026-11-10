@@ -1,7 +1,14 @@
 package cn.edu.haut.campus.core.domain
 
+import cn.edu.haut.campus.core.model.CalendarOverride
+import cn.edu.haut.campus.core.model.ClassOccurrence
+import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.Term
 import java.time.DayOfWeek
+import java.time.LocalDate
 import java.time.LocalTime
 
 /**
@@ -45,12 +52,29 @@ object CampusStudyRoomCatalog {
     val ALL_SONGSHANLU_CANDIDATE_ROOMS: List<String> =
         SONGSHANLU_STUDY_ROOMS_MAP.values.flatten()
 
+    fun isSongshanCampus(campusId: String?): Boolean =
+        campusId != null && (
+            campusId.contains("songshan", ignoreCase = true) ||
+                campusId.contains("嵩山") ||
+                campusId.contains("齐礼阎")
+            )
+
     fun studyRoomsMapForCampus(campusId: String?): Map<String, List<String>> =
-        if (campusId != null && campusId.contains("songshan", ignoreCase = true)) {
+        if (isSongshanCampus(campusId)) {
             SONGSHANLU_STUDY_ROOMS_MAP
         } else {
             LIANHUAJIE_STUDY_ROOMS_MAP
         }
+
+    fun candidateRoomsForCampus(campusId: String?): List<String> =
+        if (isSongshanCampus(campusId)) {
+            ALL_SONGSHANLU_CANDIDATE_ROOMS
+        } else {
+            ALL_LIANHUAJIE_CANDIDATE_ROOMS
+        }
+
+    fun campusShortLabel(campusId: String?): String =
+        if (isSongshanCampus(campusId)) "嵩山路" else "莲花街"
 
     val STUDY_PERIOD_SLOTS: List<CampusStudyPeriodSlot> = listOf(
         CampusStudyPeriodSlot(0, "1-2节", 1, 2, LocalTime.of(9, 50)),
@@ -114,6 +138,103 @@ object CampusStudyRoomCatalog {
             raw.contains(roomCode) ||
                 (targetSongshanKey != null && normalizeSongshanRoomKey(raw) == targetSongshanKey)
         }
+    }
+
+    fun findBusyRawRoomsFromOccurrences(
+        occurrences: List<ClassOccurrence>,
+        slot: CampusStudyPeriodSlot
+    ): List<String> = occurrences
+        .filter { occ ->
+            occ.startPeriod <= slot.endPeriod && occ.endPeriod >= slot.startPeriod
+        }
+        .map { it.rawRoom.trim() }
+        .filter { it.isNotEmpty() }
+
+    fun findBusyRawRoomsForDate(
+        date: LocalDate,
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
+        slot: CampusStudyPeriodSlot
+    ): List<String> {
+        if (term == null) {
+            return findBusyRawRooms(
+                rules = rules,
+                activeTermId = null,
+                teachingWeek = 1,
+                weekday = date.dayOfWeek,
+                slot = slot
+            )
+        }
+        val occurrences = ScheduleEngine.resolveOccurrencesForDate(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
+        return findBusyRawRoomsFromOccurrences(occurrences, slot)
+    }
+
+    data class CampusStudyAvailabilitySummary(
+        val campusKey: String,
+        val campusShortLabel: String,
+        val freeRoomsCount: Int,
+        val totalCandidateRoomsCount: Int
+    )
+
+    fun computeAvailabilityForOccurrences(
+        occurrences: List<ClassOccurrence>,
+        slot: CampusStudyPeriodSlot,
+        campusId: String?
+    ): CampusStudyAvailabilitySummary {
+        val isSongshan = isSongshanCampus(campusId)
+        val candidates = if (isSongshan) ALL_SONGSHANLU_CANDIDATE_ROOMS else ALL_LIANHUAJIE_CANDIDATE_ROOMS
+        val busyRaw = findBusyRawRoomsFromOccurrences(occurrences, slot)
+        val freeCount = candidates.count { code -> isRoomFree(code, busyRaw) }
+        return CampusStudyAvailabilitySummary(
+            campusKey = if (isSongshan) "songshanlu" else "lianhuajie",
+            campusShortLabel = if (isSongshan) "嵩山路" else "莲花街",
+            freeRoomsCount = freeCount,
+            totalCandidateRoomsCount = candidates.size
+        )
+    }
+
+    fun computeAvailabilityForDate(
+        date: LocalDate,
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
+        slot: CampusStudyPeriodSlot,
+        campusId: String?
+    ): CampusStudyAvailabilitySummary {
+        val isSongshan = isSongshanCampus(campusId)
+        val candidates = if (isSongshan) ALL_SONGSHANLU_CANDIDATE_ROOMS else ALL_LIANHUAJIE_CANDIDATE_ROOMS
+        val busyRaw = findBusyRawRoomsForDate(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides,
+            slot = slot
+        )
+        val freeCount = candidates.count { code -> isRoomFree(code, busyRaw) }
+        return CampusStudyAvailabilitySummary(
+            campusKey = if (isSongshan) "songshanlu" else "lianhuajie",
+            campusShortLabel = if (isSongshan) "嵩山路" else "莲花街",
+            freeRoomsCount = freeCount,
+            totalCandidateRoomsCount = candidates.size
+        )
     }
 
     fun computeFreeRoomsCount(

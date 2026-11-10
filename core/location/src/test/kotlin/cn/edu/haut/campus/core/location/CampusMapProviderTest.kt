@@ -217,4 +217,77 @@ class CampusMapProviderTest {
             assertEquals("RECOVERED_25D", coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx2, ty, 6_600L).tile)
         }
     }
+
+    @Test
+    fun staticViewportCooldownExpiryAutomaticallyWakesUpAndRetriesWithoutUserAction() {
+        kotlinx.coroutines.runBlocking {
+            val coordinator = CampusTileCacheCoordinator<String>(maxMemoryEntries = 32, failureCooldownMs = 10_000L)
+            val z = 17
+            val tx = 106878
+            val ty = 51996
+            var virtualNowMs = 5_000L
+            var networkOnline = false
+            var tileLoadGeneration = 0
+            var cooldownScheduleEpoch = 0
+            var renderedTile: String? = null
+            var renderedPlaceholder = false
+            val delayCalls = mutableListOf<Long>()
+
+            suspend fun renderStaticViewportPass() {
+                val lookup = coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx, ty, virtualNowMs)
+                renderedTile = lookup.tile
+                renderedPlaceholder = lookup.isPlaceholder
+                if (lookup.shouldTriggerTargetLoad) {
+                    coordinator.loadTileIfNeeded(
+                        styleMode = GisMapStyleMode.OFFICIAL_25D_2026,
+                        z = z,
+                        x = tx,
+                        y = ty,
+                        nowMs = virtualNowMs,
+                        readDiskTile = { null },
+                        fetchRemoteTile = { _, url ->
+                            if (url.contains("gis.haut.edu.cn")) {
+                                if (networkOnline) "RECOVERED_25D_WITHOUT_PAN" else null
+                            } else {
+                                "STREET_PLACEHOLDER"
+                            }
+                        },
+                        onLoaded = { tileLoadGeneration += 1 },
+                        onCooldownScheduled = { cooldownScheduleEpoch += 1 }
+                    )
+                    val refreshed = coordinator.lookupForRender(GisMapStyleMode.OFFICIAL_25D_2026, z, tx, ty, virtualNowMs)
+                    renderedTile = refreshed.tile
+                    renderedPlaceholder = refreshed.isPlaceholder
+                }
+            }
+
+            // 1) Initial static viewport render while offline -> loads STREET_PLACEHOLDER and schedules cooldown (until 15_000ms)
+            renderStaticViewportPass()
+            assertEquals("STREET_PLACEHOLDER", renderedTile)
+            assertTrue(renderedPlaceholder)
+            assertEquals("Cooldown wakeup epoch must increment once (no per-frame storm)", 1, cooldownScheduleEpoch)
+            assertEquals(15_000L, coordinator.nextCooldownExpiryEpochMs(virtualNowMs))
+
+            // 2) Network recovers at t=8_000ms while viewport stays 100% static (NO pan, NO style toggle, NO clearFailureCooldowns!)
+            virtualNowMs = 8_000L
+            networkOnline = true
+
+            // Lifecycle wakeup suspends for exact remaining cooldown (15_000 - 8_000 = 7_000ms), then wakes up and triggers redraw!
+            val wokeUp = coordinator.awaitNextCooldownBatchExpiry(
+                nowMsProvider = { virtualNowMs },
+                delayMillis = { waitMs ->
+                    delayCalls += waitMs
+                    virtualNowMs += waitMs
+                }
+            )
+            assertTrue(wokeUp)
+            assertEquals(listOf(7_000L), delayCalls)
+            tileLoadGeneration += 1
+            renderStaticViewportPass()
+
+            assertEquals("RECOVERED_25D_WITHOUT_PAN", renderedTile)
+            assertFalse(renderedPlaceholder)
+            assertEquals(null, coordinator.nextCooldownExpiryEpochMs(virtualNowMs))
+        }
+    }
 }

@@ -476,9 +476,10 @@ object HautMockSeedData {
         BuildingAlias("al_4f", "b_t2", "^32[1-6]\\d{2}$", 0.96f, true),
         BuildingAlias("al_6", "b_t2", "教学楼A", 0.90f, true),
         BuildingAlias("al_7", "b_t2", "A座", 0.72f, false), // 模糊别名：触发用户确认弹窗
-        BuildingAlias("al_dorm_f01_a", "b_dorm_ef", "学生宿舍F01", 1.0f, true),
-        BuildingAlias("al_dorm_f01_b", "b_dorm_ef", "宿舍F01", 0.98f, true),
-        BuildingAlias("al_dorm_f01_c", "b_dorm_ef", "F01", 0.96f, true),
+        // 学生公寓E/F区仅收录片区通用中心点，尚未核实 F01 单栋楼宇或 W111 房间精确坐标，标记 verified=false 降为近似待确认！
+        BuildingAlias("al_dorm_f01_a", "b_dorm_ef", "学生宿舍F01", 0.74f, false),
+        BuildingAlias("al_dorm_f01_b", "b_dorm_ef", "宿舍F01", 0.72f, false),
+        BuildingAlias("al_dorm_f01_c", "b_dorm_ef", "F01", 0.70f, false),
         BuildingAlias("al_8", "b_t3", "3号教学楼", 1.0f, true),
         BuildingAlias("al_8a", "b_t3", "3号楼", 1.0f, true),
         BuildingAlias("al_8b", "b_t3", "莲3号教学楼", 1.0f, true),

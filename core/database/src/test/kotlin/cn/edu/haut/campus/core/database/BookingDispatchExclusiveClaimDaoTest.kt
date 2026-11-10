@@ -2178,4 +2178,198 @@ class BookingDispatchExclusiveClaimDaoTest {
         org.junit.Assert.assertTrue(visibleBackOnA.any { it.cloudJobId == "job_C_sameDate_A" && it.externalBookingId == "bk_sameDate_A" })
         org.junit.Assert.assertTrue(visibleBackOnA.none { it.cloudJobId == "job_C_sameDate_B" })
     }
+
+    @Test
+    fun mergedRuleEditShortenWeeksChangeDayPartialOverlapAndSingleDayChain() = runBlocking {
+        val repo = buildInMemoryTestRepo("merged_rule_regressions_5_6")
+        val campusDao = database.campusDao()
+        val term = HautMockSeedData.defaultTerms.first { it.id == "2026-2027-1" }
+        val periodTimes = HautMockSeedData.defaultPeriodTimes
+        campusDao.upsertTerms(listOf(term.toEntity()))
+        campusDao.upsertPeriodTimes(periodTimes.map { it.toEntity() })
+        campusDao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+        campusDao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+
+        // --- Item #9 check: F01 in HautMockSeedData must NOT be EXACT_VERIFIED (zone-level approximate only) ---
+        val f01Res = cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.resolve(
+            rawRoom = "莲花街校区 学生宿舍F01 W111",
+            buildings = HautMockSeedData.lianhuajieBuildings,
+            aliases = HautMockSeedData.defaultBuildingAliases
+        )
+        assertEquals(
+            "F01 alias pointing to generic E/F zone must NOT claim EXACT_VERIFIED",
+            cn.edu.haut.campus.core.model.BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+            f01Res.status
+        )
+        assertEquals("b_dorm_ef", f01Res.building?.id)
+
+        // --- Item #5a: Shortening weeks on merged [r1(1-2, W1..16), r2(3-4, W1..16)] to W1..8 must NOT leave r2 in W9! ---
+        val c1 = cn.edu.haut.campus.core.model.Course(
+            id = "c_short",
+            name = "编译原理实验",
+            teacher = "王老师",
+            colorArgb = 0xFF2563EB,
+            source = cn.edu.haut.campus.core.model.CourseSource.OFFICIAL_JW
+        )
+        val r1 = cn.edu.haut.campus.core.model.CourseScheduleRule(
+            id = "r_s1",
+            courseId = c1.id,
+            termId = term.id,
+            weekday = java.time.DayOfWeek.TUESDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            weeks = (1..16).toSet(),
+            rawRoom = "4号教学楼4102",
+            buildingId = "b_t4"
+        )
+        val r2 = r1.copy(id = "r_s2", startPeriod = 3, endPeriod = 4)
+        campusDao.upsertCourse(c1.toEntity())
+        campusDao.upsertRules(listOf(r1.toEntity(), r2.toEntity()))
+
+        val w2Tue = java.time.LocalDate.of(2026, 9, 8) // Week 2 Tue
+        val w9Tue = java.time.LocalDate.of(2026, 10, 27) // Week 9 Tue
+        val mergedW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = w2Tue,
+            term = term,
+            courses = listOf(c1),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = periodTimes
+        ).single()
+        assertEquals(listOf("r_s1", "r_s2"), mergedW2.mergedRuleIds)
+
+        repo.saveUserMergedCourseRuleEdit(
+            course = c1,
+            primaryRule = r1.copy(startPeriod = 1, endPeriod = 4, weeks = (1..8).toSet()),
+            mergedRuleIds = mergedW2.mergedRuleIds
+        )
+        val w9AfterShorten = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = w9Tue,
+            term = term,
+            courses = listOf(c1),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = periodTimes
+        )
+        assertEquals("Week 9 must have ZERO residual r_s2 3-4节 after shortening merged rule to W1..8!", 0, w9AfterShorten.size)
+
+        // --- Item #5b & #5c: Partial overlap [r_p1(W1..12), r_p2(W5..16)] + unrelated r_other(Fri W1..16), moving merged rule to Thursday W1..8 ---
+        val c2 = c1.copy(id = "c_partial", name = "算法设计与分析")
+        val rp1 = r1.copy(id = "r_p1", courseId = c2.id, weeks = (1..12).toSet())
+        val rp2 = r1.copy(id = "r_p2", courseId = c2.id, startPeriod = 3, endPeriod = 4, weeks = (5..16).toSet())
+        val rOther = r1.copy(id = "r_other_fri", courseId = c2.id, weekday = java.time.DayOfWeek.FRIDAY, startPeriod = 5, endPeriod = 6, weeks = (1..16).toSet())
+        campusDao.upsertCourse(c2.toEntity())
+        campusDao.upsertRules(listOf(rp1.toEntity(), rp2.toEntity(), rOther.toEntity()))
+
+        val w6Tue = java.time.LocalDate.of(2026, 10, 6) // Week 6 Tue (both rp1 and rp2 active -> merged!)
+        val w10Tue = java.time.LocalDate.of(2026, 11, 3) // Week 10 Tue (was in rp1..12 merged scope -> must be removed!)
+        val w14Tue = java.time.LocalDate.of(2026, 12, 1) // Week 14 Tue (standalone rp2 outside rp1's W1..12 -> must be preserved!)
+        val w6Thu = java.time.LocalDate.of(2026, 10, 8) // Week 6 Thu (new weekday!)
+        val w6Fri = java.time.LocalDate.of(2026, 10, 9) // Week 6 Fri (unrelated rule!)
+
+        val mergedW6 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            date = w6Tue,
+            term = term,
+            courses = listOf(c2),
+            rules = campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes = periodTimes
+        ).single()
+        assertEquals(listOf("r_p1", "r_p2"), mergedW6.mergedRuleIds)
+
+        repo.saveUserMergedCourseRuleEdit(
+            course = c2,
+            primaryRule = rp1.copy(weekday = java.time.DayOfWeek.THURSDAY, startPeriod = 1, endPeriod = 4, weeks = (1..8).toSet()),
+            mergedRuleIds = mergedW6.mergedRuleIds
+        )
+        val rulesAfterPartial = campusDao.getRulesSnapshot().map { it.toDomain() }
+        assertEquals(0, cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(w10Tue, term, listOf(c2), rulesAfterPartial, periodTimes).size)
+        val w14Preserved = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(w14Tue, term, listOf(c2), rulesAfterPartial, periodTimes).single()
+        assertEquals(3, w14Preserved.startPeriod)
+        assertEquals(4, w14Preserved.endPeriod)
+        val w6ThuMoved = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(w6Thu, term, listOf(c2), rulesAfterPartial, periodTimes).single()
+        assertEquals(1, w6ThuMoved.startPeriod)
+        assertEquals(4, w6ThuMoved.endPeriod)
+        assertEquals(1, cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(w6Fri, term, listOf(c2), rulesAfterPartial, periodTimes).size)
+
+        // --- Item #6: Single-day edit on merged [r_c1, r_c2] -> preserves mergedRuleIds -> subsequent full-semester edit & delete cover BOTH rules! ---
+        val c3 = c1.copy(id = "c_chain", name = "计算机体系结构")
+        val rc1 = r1.copy(id = "r_c1", courseId = c3.id, weeks = (1..16).toSet())
+        val rc2 = r1.copy(id = "r_c2", courseId = c3.id, startPeriod = 3, endPeriod = 4, weeks = (1..16).toSet())
+        campusDao.upsertCourse(c3.toEntity())
+        campusDao.upsertRules(listOf(rc1.toEntity(), rc2.toEntity()))
+
+        val w3Tue = java.time.LocalDate.of(2026, 9, 15)
+        val initialChainW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w2Tue, term, listOf(c3), campusDao.getRulesSnapshot().map { it.toDomain() }, periodTimes
+        ).single()
+        assertEquals(listOf("r_c1", "r_c2"), initialChainW2.mergedRuleIds)
+
+        // Step 1: Single-day edit W2 to 5-8节
+        repo.saveSingleDayOccurrenceEdit(initialChainW2, term.id, 5, 8, "5号教学楼5201")
+        val afterSingleEditW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w2Tue,
+            term,
+            listOf(c3),
+            campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        ).single()
+        assertEquals(
+            "Single-day edited occurrence MUST retain absorbed mergedRuleIds [r_c1, r_c2]!",
+            listOf("r_c1", "r_c2"),
+            afterSingleEditW2.mergedRuleIds
+        )
+
+        // Step 2: Re-edit single-day W2 to 7-8节 -> still retains [r_c1, r_c2]!
+        repo.saveSingleDayOccurrenceEdit(afterSingleEditW2, term.id, 7, 8, "5号教学楼5202")
+        val afterSecondSingleEditW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w2Tue,
+            term,
+            listOf(c3),
+            campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        ).single()
+        assertEquals(listOf("r_c1", "r_c2"), afterSecondSingleEditW2.mergedRuleIds)
+
+        // Step 3: From that single-day-edited W2 occurrence, user performs FULL-SEMESTER edit to 11-12节 -> W3 MUST ONLY have 11-12节 (zero old r_c2 3-4节)!
+        repo.saveUserMergedCourseRuleEdit(
+            course = c3,
+            primaryRule = rc1.copy(startPeriod = 11, endPeriod = 12, rawRoom = "3号教学楼3201"),
+            mergedRuleIds = afterSecondSingleEditW2.mergedRuleIds
+        )
+        val w3AfterFullFromSingle = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w3Tue,
+            term,
+            listOf(c3),
+            campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        )
+        assertEquals("W3 must NOT have leftover r_c2 3-4节!", 1, w3AfterFullFromSingle.size)
+        assertEquals(11, w3AfterFullFromSingle.single().startPeriod)
+        assertEquals(12, w3AfterFullFromSingle.single().endPeriod)
+
+        // Step 4: Also verify single-day edit -> deleteCourseScheduleRules deletes BOTH rules!
+        val c4 = c1.copy(id = "c_del_chain", name = "编译实验删除链")
+        val rd1 = r1.copy(id = "r_d1", courseId = c4.id, weeks = (1..16).toSet())
+        val rd2 = r1.copy(id = "r_d2", courseId = c4.id, startPeriod = 3, endPeriod = 4, weeks = (1..16).toSet())
+        campusDao.upsertCourse(c4.toEntity())
+        campusDao.upsertRules(listOf(rd1.toEntity(), rd2.toEntity()))
+        val initDelW2 = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w2Tue, term, listOf(c4), campusDao.getRulesSnapshot().map { it.toDomain() }, periodTimes
+        ).single()
+        repo.saveSingleDayOccurrenceEdit(initDelW2, term.id, 5, 8, "5号教学楼5201")
+        val singleEditedForDel = cn.edu.haut.campus.core.domain.ScheduleEngine.resolveOccurrencesForDate(
+            w2Tue,
+            term,
+            listOf(c4),
+            campusDao.getRulesSnapshot().map { it.toDomain() },
+            periodTimes,
+            occurrenceOverrides = campusDao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+        ).single()
+        repo.deleteCourseScheduleRules(singleEditedForDel.mergedRuleIds)
+        assertEquals(
+            0,
+            campusDao.getRulesSnapshot().count { it.courseId == c4.id }
+        )
+    }
 }
