@@ -400,6 +400,7 @@ fun HautCampusRootApp(
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
     var overlayScreen by rememberSaveable { mutableStateOf<String?>(null) }
     var communityInitialTab by rememberSaveable { mutableIntStateOf(0) }
+    var librarySeatsInitialViewMode by rememberSaveable { mutableIntStateOf(0) }
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var tabResetCounter by remember { mutableIntStateOf(0) }
 
@@ -575,6 +576,8 @@ fun HautCampusRootApp(
             "library_seats" -> {
                 LibrarySeatBookingScreen(
                     repository = repository,
+                    initialViewMode = librarySeatsInitialViewMode,
+                    onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
                     onBack = { overlayScreen = null }
                 )
             }
@@ -618,6 +621,10 @@ fun HautCampusRootApp(
             "xpeach_cloud" -> {
                 XPeachCloudAccountScreen(
                     repository = repository,
+                    onNavigateToCloudSeatBooking = {
+                        librarySeatsInitialViewMode = 1
+                        overlayScreen = "library_seats"
+                    },
                     onBack = { overlayScreen = null }
                 )
             }
@@ -673,7 +680,10 @@ fun HautCampusRootApp(
                                 onNavigateToFocus = { overlayScreen = "focus" },
                                 onNavigateToElectricity = { overlayScreen = "electricity" },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
-                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToLibrarySeats = {
+                                    librarySeatsInitialViewMode = 0
+                                    overlayScreen = "library_seats"
+                                },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                                 onNavigateToCommunity = {
                                     communityInitialTab = 0
@@ -704,7 +714,10 @@ fun HautCampusRootApp(
                                     mapRoomQuery = room
                                     currentTab = PrimaryBottomTab.CAMPUS
                                 },
-                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToLibrarySeats = {
+                                    librarySeatsInitialViewMode = 0
+                                    overlayScreen = "library_seats"
+                                },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                                 onNavigateToFocus = { overlayScreen = "focus" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
@@ -741,7 +754,14 @@ fun HautCampusRootApp(
                                 },
                                 onNavigateToElectricity = { overlayScreen = "electricity" },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
-                                onNavigateToLibrarySeats = { overlayScreen = "library_seats" },
+                                onNavigateToLibrarySeats = {
+                                    librarySeatsInitialViewMode = 0
+                                    overlayScreen = "library_seats"
+                                },
+                                onNavigateToCloudSeatBooking = {
+                                    librarySeatsInitialViewMode = 1
+                                    overlayScreen = "library_seats"
+                                },
                                 onNavigateToFocus = { overlayScreen = "focus" },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
                                 onNavigateToCommunity = {

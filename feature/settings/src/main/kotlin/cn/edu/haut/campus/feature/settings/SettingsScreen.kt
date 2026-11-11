@@ -161,6 +161,7 @@ fun SettingsScreen(
     onNavigateToElectricity: () -> Unit = {},
     onNavigateToLibraryCatalog: () -> Unit = {},
     onNavigateToLibrarySeats: () -> Unit = {},
+    onNavigateToCloudSeatBooking: () -> Unit = onNavigateToLibrarySeats,
     onNavigateToFocus: () -> Unit = {},
     onNavigateToEmptyClassrooms: () -> Unit = {},
     onNavigateToCommunity: () -> Unit = {},
@@ -210,6 +211,7 @@ fun SettingsScreen(
     val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
     val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
     val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
+    val libraryBookingPlans by repository.libraryBookingPlansFlow.collectAsState(initial = emptyList())
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
     var reminderPermSnapshot by remember(context) {
@@ -938,6 +940,56 @@ fun SettingsScreen(
 
                     XPeachInsetDivider(verticalPadding = 8.dp)
 
+                    val activeCloudOrLocalPlans = libraryBookingPlans.count {
+                        it.status !in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToCloudSeatBooking)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "图书馆选座与云端抢座",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (activeCloudOrLocalPlans > 0) {
+                                    "当前有 $activeCloudOrLocalPlans 项待执行抢座计划 · 支持关机离线准点抢座"
+                                } else {
+                                    "07:00 云端离线准点自动抢座、连续多日连抢与网页选座"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (activeCloudOrLocalPlans > 0) {
+                            XPeachStatusBadge(
+                                text = "待执行 $activeCloudOrLocalPlans",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = XPeachTheme.readablePrimary
+                            )
+                        } else {
+                            Text(
+                                text = "云端抢座 ›",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = XPeachTheme.readablePrimary
+                            )
+                        }
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -954,7 +1006,7 @@ fun SettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "云账号与扩展 (测试版)",
+                                text = "云账号与扩展",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium
                             )
@@ -962,7 +1014,7 @@ fun SettingsScreen(
                                 text = if (cloudBinding != null) {
                                     "已登录 ${cloudBinding?.displayName} · 已启用 $enabledPluginCount 个扩展"
                                 } else {
-                                    "云端定时选座与扩展功能"
+                                    "登录 XPeach 云账号开启云端抢座与扩展功能"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

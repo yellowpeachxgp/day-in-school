@@ -144,7 +144,9 @@ private data class PendingSeatActionRequest(
 @Composable
 fun LibrarySeatBookingScreen(
     onBack: () -> Unit,
-    repository: CampusRepository? = null
+    repository: CampusRepository? = null,
+    initialViewMode: Int = 0,
+    onNavigateToXpeachCloud: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -184,7 +186,9 @@ fun LibrarySeatBookingScreen(
     var showClearSessionDialog by remember { mutableStateOf(false) }
     var showBindCredentialDialog by remember { mutableStateOf(false) }
     var showRecordsDialog by remember { mutableStateOf(false) }
-    var selectedBookingViewMode by remember { mutableIntStateOf(0) }
+    var selectedBookingViewMode by remember(initialViewMode) {
+        mutableIntStateOf(initialViewMode.coerceIn(0, 1))
+    }
     var lastSilentReloginAttemptMs by remember { mutableLongStateOf(0L) }
     val bookingPlans = repository?.libraryBookingPlansFlow?.collectAsState(initial = emptyList())?.value.orEmpty()
     val cloudBinding = repository?.cloudIdentityBindingFlow?.collectAsState(initial = null)?.value
@@ -388,7 +392,7 @@ fun LibrarySeatBookingScreen(
         XPeachTopBar(
             title = "图书馆选座",
             subtitle = if (selectedBookingViewMode == 1) {
-                "定时选座辅助（测试版）"
+                "云端准点自动抢座与本机定时抢座"
             } else {
                 "河南工业大学图书馆"
             },
@@ -412,7 +416,7 @@ fun LibrarySeatBookingScreen(
                 XPeachSegmentedTabs(
                     items = listOf(
                         "网页选座",
-                        if (activePlanCount > 0) "定时选座 ($activePlanCount)" else "定时选座"
+                        if (activePlanCount > 0) "云端/定时抢座 ($activePlanCount)" else "云端/定时抢座"
                     ),
                     selectedIndex = selectedBookingViewMode,
                     onSelect = { selectedBookingViewMode = it }
@@ -884,6 +888,7 @@ fun LibrarySeatBookingScreen(
                 bookingPlans = bookingPlans,
                 hasBoundCloudAccount = cloudBinding != null,
                 onRequireLogin = { showBindCredentialDialog = true },
+                onNavigateToXpeachCloud = onNavigateToXpeachCloud,
                 onRefreshSeatOverview = { refreshSeatOverviewAsync() },
                 onFeedback = { ok, msg -> actionFeedbackBanner = ok to msg },
                 modifier = Modifier
@@ -1687,6 +1692,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     bookingPlans: List<LibraryBookingPlanEntity>,
     hasBoundCloudAccount: Boolean,
     onRequireLogin: () -> Unit,
+    onNavigateToXpeachCloud: (() -> Unit)? = null,
     onRefreshSeatOverview: () -> Unit,
     onFeedback: (Boolean, String) -> Unit,
     modifier: Modifier = Modifier
@@ -1696,9 +1702,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         seatOverview?.currentBooking ?: seatOverview?.recentHistory?.firstOrNull()
     }
     var selectedMode by remember(hasBoundCloudAccount) {
-        mutableStateOf(
-            if (hasBoundCloudAccount) BookingExecutionMode.CLOUD_HOSTED else BookingExecutionMode.LOCAL_DEVICE
-        )
+        mutableStateOf(BookingExecutionMode.CLOUD_HOSTED)
     }
     var useTomorrow by rememberSaveable {
         mutableStateOf(
@@ -2582,7 +2586,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                BookingExecutionMode.entries.forEach { mode ->
+                listOf(
+                    BookingExecutionMode.CLOUD_HOSTED,
+                    BookingExecutionMode.LOCAL_DEVICE,
+                    BookingExecutionMode.MANUAL_REMINDER
+                ).forEach { mode ->
                     XPeachFilterPill(
                         label = mode.label,
                         selected = selectedMode == mode,
@@ -2592,7 +2600,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
             Text(
                 text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
-                    "使用云端选座请先在「我的 → 云账号」中登录账号"
+                    "使用云端抢座需先登录 XPeach 云账号（支持关机离线准点自动抢座）"
                 } else {
                     selectedMode.subtitle
                 },
@@ -2604,6 +2612,18 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 },
                 modifier = Modifier.padding(top = 4.dp)
             )
+            if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount && onNavigateToXpeachCloud != null) {
+                FilledTonalButton(
+                    onClick = onNavigateToXpeachCloud,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .padding(top = 8.dp)
+                        .fillMaxWidth()
+                ) {
+                    Text("去登录 XPeach 云账号")
+                }
+            }
 
             if (selectedMode != BookingExecutionMode.CLOUD_HOSTED) {
                 XPeachInsetDivider(verticalPadding = 8.dp)
@@ -2899,9 +2919,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             else -> "状态待核实"
                         }
                         val friendlyMode = when (plan.executionMode) {
-                            "CLOUD_HOSTED" -> "云端代抢(测试版)"
+                            "CLOUD_HOSTED" -> "云端抢座"
                             "NOTIFICATION_ONLY", "MANUAL_REMINDER" -> "到点提醒"
-                            else -> "本机抢座(测试版)"
+                            else -> "本机抢座"
                         }
                         val cleanAreaName = plan.preferredAreaName.cleanNullLiteral("图书馆自习区")
                         val cleanSeatLabel = plan.preferredSeatLabel.cleanNullLiteral("自动优选")

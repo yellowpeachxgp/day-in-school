@@ -76,7 +76,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun XPeachCloudAccountScreen(
     repository: CampusRepository,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToCloudSeatBooking: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -143,7 +144,7 @@ fun XPeachCloudAccountScreen(
     ) {
         XPeachTopBar(
             title = "云账号与扩展",
-            subtitle = "云端定时选座与扩展管理",
+            subtitle = "云端定时抢座与扩展管理",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -211,7 +212,7 @@ fun XPeachCloudAccountScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "登录后可使用云端定时选座（测试版）",
+                            text = "登录 XPeach 云账号即可启用云端离线准点自动抢座（关机断网亦可准点执行）",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -228,22 +229,31 @@ fun XPeachCloudAccountScreen(
                             ) {
                                 Text("登录账号")
                             }
-                            OutlinedButton(
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/")).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                        )
-                                    }
-                                },
+                            FilledTonalButton(
+                                onClick = onNavigateToCloudSeatBooking,
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("打开网页端")
+                                Text("云端抢座工作台")
                             }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("打开网页端云端抢座")
                         }
                     }
                 } else {
@@ -306,6 +316,16 @@ fun XPeachCloudAccountScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
+                            onClick = onNavigateToCloudSeatBooking,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("去设置云端抢座")
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilledTonalButton(
                             enabled = !isSyncingSnapshot,
                             onClick = {
                                 scope.launch {
@@ -359,7 +379,7 @@ fun XPeachCloudAccountScreen(
                                 onClick = {
                                     runCatching {
                                         context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/")).apply {
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
                                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
                                         )
@@ -375,7 +395,7 @@ fun XPeachCloudAccountScreen(
                                 onClick = {
                                     scope.launch {
                                         repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-                                        feedbackBanner = "已退出账号，并取消未执行的云端代抢（测试版）任务"
+                                        feedbackBanner = "已退出账号，并停止未执行的云端抢座任务"
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
@@ -392,11 +412,20 @@ fun XPeachCloudAccountScreen(
                 val hasNeedsReconfirmation = cloudPlans.any { it.status == "NEEDS_RECONFIRMATION" }
                 if (cloudPlans.isNotEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "云端代抢记录 · 测试版 (${cloudPlans.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "云端抢座记录 (${cloudPlans.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            TextButton(onClick = onNavigateToCloudSeatBooking) {
+                                Text("管理抢座 ›")
+                            }
+                        }
                         if (hasNeedsReconfirmation) {
                             Spacer(modifier = Modifier.height(8.dp))
                             FilledTonalButton(

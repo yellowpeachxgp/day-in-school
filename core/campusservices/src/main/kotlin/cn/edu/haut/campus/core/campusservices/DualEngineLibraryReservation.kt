@@ -16,15 +16,15 @@ enum class BookingExecutionMode(
 ) {
     LOCAL_DEVICE(
         wireName = "LOCAL_DEVICE",
-        label = "本机选座 (测试版)",
-        subtitle = "保持手机联网，到点自动尝试选座",
+        label = "本机抢座",
+        subtitle = "保持手机联网与后台运行，到点自动尝试选座",
         requiresXpeachSso = false,
         priceMicropeach = 0L
     ),
     CLOUD_HOSTED(
         wireName = "CLOUD_HOSTED",
-        label = "云端选座 (测试版)",
-        subtitle = "由云端定时执行，预约成功消耗 1 配额，未成功不扣减",
+        label = "云端抢座",
+        subtitle = "云端服务器离线准点自动抢座，预约成功消耗 1 🍑，未抢中不扣减",
         requiresXpeachSso = true,
         priceMicropeach = 10_000L
     ),

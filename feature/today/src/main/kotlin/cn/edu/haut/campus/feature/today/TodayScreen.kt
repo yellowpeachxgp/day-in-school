@@ -2026,8 +2026,8 @@ private fun TodayCampusBentoSection(
                 HomeModularCardSpec(
                     id = "LIBRARY_SEAT",
                     title = "座位预约",
-                    badgeText = "选座",
-                    subtitle = "选区选座与定时预约",
+                    badgeText = "云端抢座",
+                    subtitle = "云端准点抢座与网页选座",
                     onClick = onNavigateToLibrarySeats
                 )
             }
