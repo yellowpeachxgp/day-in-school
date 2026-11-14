@@ -3273,10 +3273,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                     FilledTonalButton(
                                         onClick = {
                                             scope.launch {
-                                                val updated = repository.advanceBookingPlanStage(
-                                                    plan.id,
-                                                    TripleScheduleStage.FIRE
-                                                ).getOrNull()
+                                                // 云端托管计划走显式"现在执行"入口（服务端裁决窗口），
+                                                // 本机/提醒计划仍走定时 stage 推进
+                                                val updated = if (plan.executionMode.equals(BookingExecutionMode.CLOUD_HOSTED.wireName, ignoreCase = true)) {
+                                                    repository.executeCloudBookingPlanNow(plan.id).getOrNull()
+                                                } else {
+                                                    repository.advanceBookingPlanStage(
+                                                        plan.id,
+                                                        TripleScheduleStage.FIRE
+                                                    ).getOrNull()
+                                                }
                                                 if (updated != null) {
                                                     onFeedback(
                                                         updated.status in setOf("CONFIRMED", "REMINDER_SENT"),

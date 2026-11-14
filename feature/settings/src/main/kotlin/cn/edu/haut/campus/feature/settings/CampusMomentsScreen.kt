@@ -94,6 +94,7 @@ import cn.edu.haut.campus.core.model.MomentsPostItem
 import cn.edu.haut.campus.core.model.MomentsPostType
 import cn.edu.haut.campus.core.model.MomentsTextbookListing
 import cn.edu.haut.campus.core.model.PresetCampusMomentsCatalog
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -906,6 +907,7 @@ fun CampusMomentsScreen(
             matchedClues = matchedClues,
             contactRequests = contactRequestsResult.requests,
             isMine = canManageActivePost,
+            viewerCloudUserId = activeViewerCloudUserId,
             onDismiss = { activePostDetailId = null },
             onCopyContact = { contactText ->
                 if (contactText.isNotBlank() && contactText != cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT) {
@@ -918,28 +920,52 @@ fun CampusMomentsScreen(
             onJumpToCluePost = { clueId ->
                 activePostDetailId = clueId
             },
-            onSubmitContactRequest = { message, contactInfo ->
+            onSubmitContactRequest = { message, contactInfo, clientMessageId, onResult ->
+                // 捕获不可变提交身份，发送前按当前云端账号复核：切号/解绑则放弃本次发送
+                val submitPostId = activeDetailPost.id
+                val submitViewerId = activeViewerCloudUserId
                 scope.launch {
-                    repository.submitMomentsContactRequest(
-                        postId = activeDetailPost.id,
-                        message = message,
-                        contactInfo = contactInfo
-                    ).onSuccess {
+                    val liveViewerId = repository.cloudIdentityBindingFlow.first()?.cloudUserId.orEmpty()
+                    val result = if (submitViewerId.isNotBlank() && submitViewerId == liveViewerId) {
+                        repository.submitMomentsContactRequest(
+                            postId = submitPostId,
+                            message = message,
+                            contactInfo = contactInfo,
+                            clientMessageId = clientMessageId
+                        )
+                    } else {
+                        Result.failure(
+                            IllegalStateException("云端账号已切换或未登录，本次私密申请已保留草稿未发送")
+                        )
+                    }
+                    result.onSuccess {
                         feedbackMessage = "已向发起人提交私密联系申请（仅发起人与您本人可见）"
                         contactRequestsTrigger++
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "私密联系申请发送失败，请检查云端登录与网络连接"
                     }
+                    onResult(result.isSuccess)
                 }
             },
-            onHandleContactRequestAction = { requestId, action, replyMessage ->
+            onHandleContactRequestAction = { requestId, action, replyMessage, clientMessageId, onResult ->
+                val submitPostId = activeDetailPost.id
+                val submitViewerId = activeViewerCloudUserId
                 scope.launch {
-                    repository.handleMomentsContactRequestAction(
-                        postId = activeDetailPost.id,
-                        requestId = requestId,
-                        action = action,
-                        replyMessage = replyMessage
-                    ).onSuccess {
+                    val liveViewerId = repository.cloudIdentityBindingFlow.first()?.cloudUserId.orEmpty()
+                    val result = if (submitViewerId.isNotBlank() && submitViewerId == liveViewerId) {
+                        repository.handleMomentsContactRequestAction(
+                            postId = submitPostId,
+                            requestId = requestId,
+                            action = action,
+                            replyMessage = replyMessage,
+                            clientMessageId = clientMessageId
+                        )
+                    } else {
+                        Result.failure(
+                            IllegalStateException("云端账号已切换或未登录，本次操作未提交")
+                        )
+                    }
+                    result.onSuccess {
                         feedbackMessage = when (action) {
                             "APPROVE" -> "已同意申请并向对方公开您的联系方式"
                             "REPLY" -> "私信回复已发送"
@@ -951,6 +977,7 @@ fun CampusMomentsScreen(
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "操作失败，请检查网络连接"
                     }
+                    onResult(result.isSuccess)
                 }
             },
             onClaimLegacyOwnership = { claimToken ->
@@ -966,17 +993,20 @@ fun CampusMomentsScreen(
                     }
                 }
             },
-            onSubmitComment = { content, contactHint ->
+            onSubmitComment = { content, contactHint, onResult ->
+                // 公开留言使用独立的公开草稿字段：私密联系方式结构上不可能进入该调用
                 scope.launch {
-                    repository.addMomentsComment(
+                    val result = repository.addMomentsComment(
                         postId = activeDetailPost.id,
                         content = content,
                         contactHint = contactHint
-                    ).onSuccess {
+                    )
+                    result.onSuccess {
                         feedbackMessage = "已发表公开线索留言"
                     }.onFailure { err ->
                         feedbackMessage = err.message ?: "公开留言未能提交至云端，请检查网络连接后重试"
                     }
+                    onResult(result.isSuccess)
                 }
             },
             onReportPost = {
@@ -1627,26 +1657,35 @@ private fun MomentsPostDetailDialog(
     matchedClues: List<cn.edu.haut.campus.core.model.MomentsMatchedClue>,
     contactRequests: List<cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper.MomentsContactRequestDto> = emptyList(),
     isMine: Boolean,
+    viewerCloudUserId: String = "",
     onDismiss: () -> Unit,
     onCopyContact: (String) -> Unit,
     onJumpToCluePost: (String) -> Unit,
-    onSubmitContactRequest: (message: String, contactInfo: String) -> Unit = { _, _ -> },
-    onHandleContactRequestAction: (requestId: String, action: String, replyMessage: String?) -> Unit = { _, _, _ -> },
+    onSubmitContactRequest: (message: String, contactInfo: String, clientMessageId: String, onResult: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> },
+    onHandleContactRequestAction: (requestId: String, action: String, replyMessage: String?, clientMessageId: String?, onResult: (Boolean) -> Unit) -> Unit = { _, _, _, _, _ -> },
     onClaimLegacyOwnership: (contactProof: String) -> Unit = {},
-    onSubmitComment: (content: String, contactHint: String) -> Unit,
+    onSubmitComment: (content: String, contactHint: String, onResult: (Boolean) -> Unit) -> Unit = { _, _, _ -> },
     onReportPost: () -> Unit = {},
     onToggleResolved: () -> Unit,
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
-    var commentInput by remember { mutableStateOf("") }
-    var contactHintInput by remember { mutableStateOf("") }
     var legacyProofInput by remember { mutableStateOf("") }
     var showLegacyClaimBox by remember { mutableStateOf(false) }
-    var messageModeIndex by remember(isMine, contactRequests.size) {
-        mutableIntStateOf(if (isMine || contactRequests.isNotEmpty()) 1 else 0)
+    // A1：composer 状态严格绑定 postId+viewerId，绝不绑定 contactRequests 异步长度；
+    // 私密/公开草稿分离，受众只由用户主动切换或管理者身份决定，异步刷新不得翻转。
+    val composer = remember(post.id, viewerCloudUserId) {
+        MomentsContactComposerStateMachine(
+            postId = post.id,
+            viewerId = viewerCloudUserId,
+            initialCanManagePost = isMine
+        )
     }
-    val effectiveModeIndex = if (isMine) 1 else messageModeIndex
+    composer.canManagePost = isMine
+    val effectiveAudience = composer.effectiveAudience
+    // 当前受众对应的草稿（私密与公开字段互不共享）
+    val activeMessageDraft = if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) composer.privateMessage else composer.publicComment
+    val activeContactDraft = if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) composer.privateContact else composer.publicHint
 
     XPeachAlertDialog(
         onDismissRequest = onDismiss,
@@ -1747,7 +1786,7 @@ private fun MomentsPostDetailDialog(
                         color = XPeachTheme.readablePrimary
                     )
                     for (req in contactRequests) {
-                        var replyDraft by remember(req.id) { mutableStateOf("") }
+                        val replyDraft = composer.replyDraft(req.id)
                         XPeachWell(modifier = Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1848,7 +1887,7 @@ private fun MomentsPostDetailDialog(
                                 Spacer(modifier = Modifier.height(6.dp))
                                 OutlinedTextField(
                                     value = replyDraft,
-                                    onValueChange = { replyDraft = it },
+                                    onValueChange = { composer.updateReplyDraft(req.id, it) },
                                     label = {
                                         Text(
                                             if (isMine) "私信回复申请人（核对特征/约定地点）"
@@ -1870,10 +1909,16 @@ private fun MomentsPostDetailDialog(
                                         selected = replyDraft.trim().isNotEmpty(),
                                         compact = true,
                                         onClick = {
-                                            val cleanReply = replyDraft.trim().take(240)
+                                            val payload = composer.captureReplyPayload(req.id)
+                                            val cleanReply = payload.text.trim().take(240)
                                             if (cleanReply.isNotEmpty()) {
-                                                onHandleContactRequestAction(req.id, "REPLY", cleanReply)
-                                                replyDraft = ""
+                                                onHandleContactRequestAction(req.id, "REPLY", cleanReply, payload.clientMessageId) { ok ->
+                                                    if (ok) {
+                                                        composer.onReplySucceeded(req.id, payload.clientMessageId)
+                                                    } else {
+                                                        composer.onReplyFailed(req.id)
+                                                    }
+                                                }
                                             }
                                         }
                                     )
@@ -1883,9 +1928,15 @@ private fun MomentsPostDetailDialog(
                                             selected = true,
                                             compact = true,
                                             onClick = {
-                                                val cleanReply = replyDraft.trim().take(240).ifBlank { null }
-                                                onHandleContactRequestAction(req.id, "APPROVE", cleanReply)
-                                                replyDraft = ""
+                                                val payload = composer.captureReplyPayload(req.id)
+                                                val cleanReply = payload.text.trim().take(240).ifBlank { null }
+                                                onHandleContactRequestAction(req.id, "APPROVE", cleanReply, payload.clientMessageId) { ok ->
+                                                    if (ok) {
+                                                        composer.onReplySucceeded(req.id, payload.clientMessageId)
+                                                    } else {
+                                                        composer.onReplyFailed(req.id)
+                                                    }
+                                                }
                                             }
                                         )
                                     }
@@ -1894,7 +1945,7 @@ private fun MomentsPostDetailDialog(
                                             label = "拒绝",
                                             selected = false,
                                             compact = true,
-                                            onClick = { onHandleContactRequestAction(req.id, "REJECT", null) }
+                                            onClick = { onHandleContactRequestAction(req.id, "REJECT", null, null) { } }
                                         )
                                     }
                                     if (isMine) {
@@ -1902,7 +1953,7 @@ private fun MomentsPostDetailDialog(
                                             label = "拉黑",
                                             selected = false,
                                             compact = true,
-                                            onClick = { onHandleContactRequestAction(req.id, "BLOCK", null) }
+                                            onClick = { onHandleContactRequestAction(req.id, "BLOCK", null, null) { } }
                                         )
                                     }
                                 }
@@ -1913,7 +1964,7 @@ private fun MomentsPostDetailDialog(
                                         label = "拉黑",
                                         selected = false,
                                         compact = true,
-                                        onClick = { onHandleContactRequestAction(req.id, "BLOCK", null) }
+                                        onClick = { onHandleContactRequestAction(req.id, "BLOCK", null, null) { } }
                                     )
                                 }
                             }
@@ -1983,12 +2034,16 @@ private fun MomentsPostDetailDialog(
                 if (!isMine) {
                     XPeachSegmentedTabs(
                         items = listOf("私密联系申请", "公开线索留言"),
-                        selectedIndex = effectiveModeIndex,
-                        onSelect = { messageModeIndex = it }
+                        selectedIndex = if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) 0 else 1,
+                        onSelect = {
+                            composer.selectAudience(
+                                if (it == 0) ContactComposerAudience.PRIVATE_REQUEST else ContactComposerAudience.PUBLIC_COMMENT
+                            )
+                        }
                     )
                 }
                 Text(
-                    text = if (effectiveModeIndex == 0) {
+                    text = if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) {
                         "通过云端受控接口发送认领/联系申请，仅帖子发起人与您本人可见，建立后支持多轮私信沟通（需先登录云端账号）"
                     } else {
                         "公开线索留言对所有人可见，请勿在公开留言中填写手机号、微信号等个人敏感隐私"
@@ -2020,20 +2075,32 @@ private fun MomentsPostDetailDialog(
                         for (tpl in quickTemplates) {
                             XPeachFilterPill(
                                 label = tpl,
-                                selected = commentInput == tpl,
+                                selected = activeMessageDraft == tpl,
                                 compact = true,
-                                onClick = { commentInput = tpl }
+                                onClick = {
+                                    if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) {
+                                        composer.updatePrivateMessage(tpl)
+                                    } else {
+                                        composer.updatePublicComment(tpl)
+                                    }
+                                }
                             )
                         }
                     }
                 }
 
                 OutlinedTextField(
-                    value = commentInput,
-                    onValueChange = { commentInput = it },
+                    value = activeMessageDraft,
+                    onValueChange = {
+                        if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) {
+                            composer.updatePrivateMessage(it)
+                        } else {
+                            composer.updatePublicComment(it)
+                        }
+                    },
                     label = {
                         Text(
-                            if (effectiveModeIndex == 0) "给发起人的认领说明 / 物品特征（必填，1-240字）"
+                            if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) "给发起人的认领说明 / 物品特征（必填，1-240字）"
                             else "公开线索留言（所有人可见，1-240字）"
                         )
                     },
@@ -2042,11 +2109,17 @@ private fun MomentsPostDetailDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
-                    value = contactHintInput,
-                    onValueChange = { contactHintInput = it },
+                    value = activeContactDraft,
+                    onValueChange = {
+                        if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) {
+                            composer.updatePrivateContact(it)
+                        } else {
+                            composer.updatePublicHint(it)
+                        }
+                    },
                     label = {
                         Text(
-                            if (effectiveModeIndex == 0) "我的联系方式（必填，仅发起人可见）"
+                            if (effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) "我的联系方式（必填，仅发起人可见）"
                             else "公开备注（选填，所有人可见）"
                         )
                     },
@@ -2184,20 +2257,36 @@ private fun MomentsPostDetailDialog(
         },
         confirmButton = {
             Button(
-                enabled = commentInput.trim().isNotEmpty() &&
-                    (effectiveModeIndex == 1 || contactHintInput.trim().isNotEmpty()),
+                enabled = when (composer.effectiveAudience) {
+                    ContactComposerAudience.PRIVATE_REQUEST ->
+                        composer.privateMessage.trim().isNotEmpty() && composer.privateContact.trim().isNotEmpty()
+                    ContactComposerAudience.PUBLIC_COMMENT ->
+                        composer.publicComment.trim().isNotEmpty()
+                },
                 onClick = {
-                    if (effectiveModeIndex == 0) {
-                        onSubmitContactRequest(commentInput.trim().take(240), contactHintInput.trim().take(64))
+                    // 捕获不可变载荷 {postId, viewerId, audience, text, contact, clientMessageId}，
+                    // 由调用方按当前身份复核后发送；成功且匹配本次发送才清空对应草稿
+                    val payload = composer.captureSubmitPayload()
+                    if (payload.audience == ContactComposerAudience.PRIVATE_REQUEST) {
+                        onSubmitContactRequest(
+                            payload.text.trim().take(240),
+                            payload.contact.trim().take(64),
+                            payload.clientMessageId
+                        ) { ok ->
+                            if (ok) composer.onSubmitSucceeded(payload) else composer.onSubmitFailed(payload)
+                        }
                     } else {
-                        onSubmitComment(commentInput.trim().take(240), contactHintInput.trim().take(64))
+                        onSubmitComment(
+                            payload.text.trim().take(240),
+                            payload.contact.trim().take(64)
+                        ) { ok ->
+                            if (ok) composer.onSubmitSucceeded(payload) else composer.onSubmitFailed(payload)
+                        }
                     }
-                    commentInput = ""
-                    contactHintInput = ""
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(if (effectiveModeIndex == 0) "提交私密联系申请" else "发表公开留言")
+                Text(if (composer.effectiveAudience == ContactComposerAudience.PRIVATE_REQUEST) "提交私密联系申请" else "发表公开留言")
             }
         },
         dismissButton = {

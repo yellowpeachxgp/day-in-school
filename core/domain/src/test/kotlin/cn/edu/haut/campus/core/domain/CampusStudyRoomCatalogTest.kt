@@ -9,13 +9,166 @@ import java.time.DayOfWeek
 
 class CampusStudyRoomCatalogTest {
 
+    private fun defaultStudyPeriodTimes(): List<cn.edu.haut.campus.core.model.PeriodTime> =
+        CampusStudyRoomCatalog.FALLBACK_STUDY_PERIOD_TIMES
+
     @Test
-    fun `resolveActiveSlotIndex maps hours to 5 study period slots`() {
+    fun `resolveActiveSlotIndex maps hours to 6 study period slots`() {
         assertEquals(0, CampusStudyRoomCatalog.resolveActiveSlotIndex(8))
         assertEquals(1, CampusStudyRoomCatalog.resolveActiveSlotIndex(10))
         assertEquals(2, CampusStudyRoomCatalog.resolveActiveSlotIndex(14))
         assertEquals(3, CampusStudyRoomCatalog.resolveActiveSlotIndex(16))
         assertEquals(4, CampusStudyRoomCatalog.resolveActiveSlotIndex(20))
+        assertEquals(5, CampusStudyRoomCatalog.resolveActiveSlotIndex(22))
+    }
+
+    @Test
+    fun `resolveActiveSlotForTimeTable selects slot by active timetable period minutes`() {
+        val tt = "haut_lianhuajie_default"
+        val pts = defaultStudyPeriodTimes()
+
+        // 9-10节 slot covers period 9 (19:30-20:15) and period 10 (20:25-21:10) -> IN_SESSION
+        for (t in listOf("19:30", "20:44", "20:45", "20:50", "21:09")) {
+            val r = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+                nowTime = java.time.LocalTime.parse(t),
+                periodTimes = pts,
+                timeTableId = tt
+            )
+            assertEquals("at $t expected 9-10节 slot", 4, r.slotIndex)
+            assertEquals(CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION, r.timing)
+            assertEquals("9-10节", r.displayLabel)
+        }
+
+        // 11-12节 slot covers period 11 (21:15-22:00) and period 12 (22:05-22:50)
+        for (t in listOf("21:15", "21:59", "22:30", "22:49")) {
+            val r = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+                nowTime = java.time.LocalTime.parse(t),
+                periodTimes = pts,
+                timeTableId = tt
+            )
+            assertEquals("at $t expected 11-12节 slot", 5, r.slotIndex)
+            assertEquals(CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION, r.timing)
+        }
+    }
+
+    @Test
+    fun `resolveActiveSlotForTimeTable marks between-period gap as next slot not current`() {
+        val tt = "haut_lianhuajie_default"
+        val pts = defaultStudyPeriodTimes()
+
+        // Gap between period 10 end (21:10) and period 11 start (21:15):
+        // half-open end means 21:10 already belongs to the gap; whole gap selects NEXT slot 11-12.
+        for (t in listOf("21:10", "21:12", "21:14")) {
+            val r = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+                nowTime = java.time.LocalTime.parse(t),
+                periodTimes = pts,
+                timeTableId = tt
+            )
+            assertEquals("at $t expected next slot 11-12节", 5, r.slotIndex)
+            assertEquals(CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT, r.timing)
+            assertEquals("gap label must say next slot, not current", "11-12节·下一时段", r.displayLabel)
+        }
+
+        // Before the first slot -> first slot as upcoming
+        val early = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(7, 0),
+            periodTimes = pts,
+            timeTableId = tt
+        )
+        assertEquals(0, early.slotIndex)
+        assertEquals(CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT, early.timing)
+
+        // After the last slot -> last slot, marked ended (not silently "next")
+        val late = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(23, 30),
+            periodTimes = pts,
+            timeTableId = tt
+        )
+        assertEquals(5, late.slotIndex)
+        assertEquals(CampusStudyRoomCatalog.StudySlotTiming.AFTER_LAST, late.timing)
+    }
+
+    @Test
+    fun `resolveActiveSlotForTimeTable follows user-extended timetable and never mixes other timetable ids`() {
+        // User extends period 10 to 21:30 and period 11 to 21:35-22:20 on a custom timetable id.
+        val custom = defaultStudyPeriodTimes().map {
+            when (it.periodNo) {
+                10 -> it.copy(timeTableId = "tt_custom", endLocalTime = java.time.LocalTime.of(21, 30))
+                11 -> it.copy(timeTableId = "tt_custom", startLocalTime = java.time.LocalTime.of(21, 35), endLocalTime = java.time.LocalTime.of(22, 20))
+                12 -> it.copy(timeTableId = "tt_custom", startLocalTime = java.time.LocalTime.of(22, 25), endLocalTime = java.time.LocalTime.of(23, 10))
+                else -> it.copy(timeTableId = "tt_custom")
+            }
+        }
+        // Another campus's default periods coexist in the same list: must NOT leak into "tt_custom" resolution.
+        val mixed = defaultStudyPeriodTimes() + custom
+
+        val insideP10 = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(21, 20),
+            periodTimes = mixed,
+            timeTableId = "tt_custom"
+        )
+        assertEquals("custom period 10 runs to 21:30, still 9-10节", 4, insideP10.slotIndex)
+        assertEquals(CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION, insideP10.timing)
+        assertFalse(insideP10.usedFallbackTimetable)
+
+        val gap = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(21, 32),
+            periodTimes = mixed,
+            timeTableId = "tt_custom"
+        )
+        assertEquals(5, gap.slotIndex)
+        assertEquals(CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT, gap.timing)
+
+        // Missing timetable id -> explicit fallback (matches built-in default table), no cross-mixing.
+        val missing = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(20, 50),
+            periodTimes = mixed,
+            timeTableId = "tt_absent"
+        )
+        assertEquals(4, missing.slotIndex)
+        org.junit.Assert.assertTrue(missing.usedFallbackTimetable)
+
+        val nullTable = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(20, 50),
+            periodTimes = mixed,
+            timeTableId = null
+        )
+        assertEquals(4, nullTable.slotIndex)
+        org.junit.Assert.assertTrue(nullTable.usedFallbackTimetable)
+    }
+
+    @Test
+    fun `busy room uses resolved slot so period-10 room is not wrongly free at 20 50`() {
+        // Regression guard: at 20:50 the default table still sits inside period 10 -> 9-10节 slot,
+        // so a room busy in period 10 must NOT show as conflict-free for the 11-12节 slot.
+        val tt = "haut_lianhuajie_default"
+        val pts = defaultStudyPeriodTimes()
+        val rules = listOf(
+            CourseScheduleRule(
+                id = "r_p10",
+                courseId = "c1",
+                termId = "t1",
+                weekday = java.time.DayOfWeek.MONDAY,
+                startPeriod = 10,
+                endPeriod = 10,
+                weeks = setOf(1),
+                rawRoom = "5号教学楼5101"
+            )
+        )
+        val resolution = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = java.time.LocalTime.of(20, 50),
+            periodTimes = pts,
+            timeTableId = tt
+        )
+        assertEquals(4, resolution.slotIndex)
+        val busy = CampusStudyRoomCatalog.findBusyRawRooms(
+            rules = rules,
+            termId = "t1",
+            teachingWeek = 1,
+            weekday = java.time.DayOfWeek.MONDAY,
+            slot = resolution.slot
+        )
+        assertFalse("20:50 must still see 5号教学楼5101 as busy (period 10)", CampusStudyRoomCatalog.isRoomFree("5101", busy))
     }
 
     @Test

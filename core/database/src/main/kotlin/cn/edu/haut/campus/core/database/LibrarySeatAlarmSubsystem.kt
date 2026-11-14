@@ -127,6 +127,12 @@ object LibrarySeatAlarmSubsystem {
 
     fun schedulePlanAlarms(context: Context, plan: LibraryBookingPlanEntity) {
         val appContext = context.applicationContext
+        // 云端托管计划的定时派发权威在服务端：公共入口对 CLOUD_HOSTED 一律仅撤销本机旧 pending
+        // intent（含旧版本曾排好的 FIRE+9s、PRECHECK、FINAL_CHECK）后立即返回，绝不本地重排或续期。
+        if (plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true)) {
+            cancelPlanAlarms(appContext, plan.id)
+            return
+        }
         if (plan.status !in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
             cancelPlanAlarms(appContext, plan.id)
             return
@@ -145,8 +151,8 @@ object LibrarySeatAlarmSubsystem {
             true
         }
 
-        val isCloudHosted = plan.executionMode.equals("CLOUD_HOSTED", ignoreCase = true)
-        val fireTriggerMs = if (isCloudHosted) plan.fireAtEpochMillis + 9_000L else plan.fireAtEpochMillis
+        // 到达此处已排除 CLOUD_HOSTED（上方公共入口已拦截）：本机三阶段 FIRE 按原计划到点触发
+        val fireTriggerMs = plan.fireAtEpochMillis
         val stages = listOf(
             "PRECHECK" to plan.precheckAtEpochMillis,
             "FINAL_CHECK" to plan.finalCheckAtEpochMillis,

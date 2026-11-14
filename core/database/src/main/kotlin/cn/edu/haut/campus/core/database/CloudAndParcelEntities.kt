@@ -170,6 +170,27 @@ interface CloudAndParcelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCloudIdentityBinding(entity: CloudIdentityBindingEntity)
 
+    /**
+     * 条件 UPDATE：仅当 profileId 与 cloudUserId 仍匹配时写回可变字段（展示名/余额/时间戳）；
+     * 返回受影响行数——0 行表示身份已切换或解绑，调用方必须丢弃响应（绝不 INSERT 过期绑定）。
+     */
+    @Query(
+        """
+        UPDATE cloud_identity_binding
+        SET displayName = :displayName,
+            peachBalanceMicropeach = :peachBalanceMicropeach,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE profileId = :profileId AND cloudUserId = :cloudUserId
+        """
+    )
+    suspend fun updateCloudIdentityBindingMutableFieldsIfIdentityMatches(
+        profileId: String,
+        cloudUserId: String,
+        displayName: String,
+        peachBalanceMicropeach: Long,
+        updatedAtEpochMillis: Long
+    ): Int
+
     @Query("DELETE FROM cloud_identity_binding")
     suspend fun clearCloudIdentityBinding()
 
