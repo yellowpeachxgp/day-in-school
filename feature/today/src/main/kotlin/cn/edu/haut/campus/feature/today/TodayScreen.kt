@@ -775,6 +775,8 @@ fun TodayScreen(
                 rules = rules,
                 resolvedDateOccurrences = snapshot.items.map { it.occurrence },
                 selectedCampusId = prefs.selectedCampusId,
+                activeTimeTableId = term?.timeTableId,
+                periodTimes = periodTimes,
                 activeFocusSession = activeFocusSession,
                 completedFocusSessions = completedFocusSessions,
                 onlineRooms = onlineRooms,
@@ -1879,6 +1881,8 @@ private fun TodayCampusBentoSection(
     rules: List<CourseScheduleRule>,
     resolvedDateOccurrences: List<cn.edu.haut.campus.core.model.ClassOccurrence> = emptyList(),
     selectedCampusId: String = "",
+    activeTimeTableId: String? = null,
+    periodTimes: List<cn.edu.haut.campus.core.model.PeriodTime> = emptyList(),
     activeFocusSession: cn.edu.haut.campus.core.model.FocusSessionDomain?,
     completedFocusSessions: List<cn.edu.haut.campus.core.model.FocusSessionDomain>,
     onlineRooms: List<cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain>,
@@ -1984,9 +1988,15 @@ private fun TodayCampusBentoSection(
         selectedDate,
         resolvedDateOccurrences,
         selectedCampusId,
-        rules
+        rules,
+        periodTimes,
+        activeTimeTableId
     ) {
-        val slot = CampusStudyRoomCatalog.resolveActiveSlot(currentNow.toLocalTime())
+        val resolution = CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = currentNow.toLocalTime(),
+            periodTimes = periodTimes,
+            timeTableId = activeTimeTableId
+        )
         val effectiveCampus = selectedCampusId.trim().ifEmpty {
             cn.edu.haut.campus.core.domain.ClassroomBuildingResolver.detectCampusHint(
                 (resolvedDateOccurrences.map { it.rawRoom } + rules.map { it.rawRoom })
@@ -1994,10 +2004,10 @@ private fun TodayCampusBentoSection(
         }
         val summary = CampusStudyRoomCatalog.computeAvailabilityForOccurrences(
             occurrences = resolvedDateOccurrences,
-            slot = slot,
+            slot = resolution.slot,
             campusId = effectiveCampus
         )
-        slot.label to summary
+        resolution.displayLabel to summary
     }
 
     val examSpec = if (nearestExam != null) {

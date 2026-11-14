@@ -85,11 +85,126 @@ object CampusStudyRoomCatalog {
         CampusStudyPeriodSlot(5, "11-12节", 11, 12, LocalTime.of(23, 59)),
     )
 
+    /**
+     * 自动定位所选槽位的命中性质：课间与课前绝不冒充"当前占用"。
+     */
+    enum class StudySlotTiming {
+        /** 当前时刻落在所选槽位包含的实际节次区间内 */
+        IN_SESSION,
+
+        /** 当前时刻处于课间（或早于当天首个槽位），所选为即将开始的下一槽 */
+        UPCOMING_NEXT,
+
+        /** 当前时刻晚于最后一个已定义槽位的结束时间，仅保留最后槽位作参考 */
+        AFTER_LAST
+    }
+
+    /**
+     * 按激活学期作息表（Term.timeTableId 对应的 PeriodTime）解析当前应选中的自习槽位结果。
+     */
+    data class StudySlotResolution(
+        val slot: CampusStudyPeriodSlot,
+        val timing: StudySlotTiming,
+        /** 激活作息表缺失/无匹配节次时，是否回退到了内置默认作息（不混入其他学校/学期表） */
+        val usedFallbackTimetable: Boolean
+    ) {
+        val slotIndex: Int get() = slot.index
+
+        /** 课间预选中的是"下一时段"，标签必须明示而非冒充当前占用 */
+        val displayLabel: String
+            get() = when (timing) {
+                StudySlotTiming.IN_SESSION -> slot.label
+                StudySlotTiming.UPCOMING_NEXT -> "${slot.label}·下一时段"
+                StudySlotTiming.AFTER_LAST -> "${slot.label}·已结束"
+            }
+    }
+
+    /**
+     * 激活学期作息表缺失时的显式回退作息（与 haut_lianhuajie_default 内置默认作息一致）；
+     * 绝不从其他学校、其他学期或相邻 timeTableId 的节次表中"就近借用"。
+     */
+    val FALLBACK_STUDY_PERIOD_TIMES: List<PeriodTime> = listOf(
+        PeriodTime("fallback_pt_1", "haut_lianhuajie_default", 1, LocalTime.of(8, 30), LocalTime.of(9, 15), "上午"),
+        PeriodTime("fallback_pt_2", "haut_lianhuajie_default", 2, LocalTime.of(9, 20), LocalTime.of(10, 5), "上午"),
+        PeriodTime("fallback_pt_3", "haut_lianhuajie_default", 3, LocalTime.of(10, 25), LocalTime.of(11, 10), "上午"),
+        PeriodTime("fallback_pt_4", "haut_lianhuajie_default", 4, LocalTime.of(11, 15), LocalTime.of(12, 0), "上午"),
+        PeriodTime("fallback_pt_5", "haut_lianhuajie_default", 5, LocalTime.of(14, 30), LocalTime.of(15, 15), "下午"),
+        PeriodTime("fallback_pt_6", "haut_lianhuajie_default", 6, LocalTime.of(15, 20), LocalTime.of(16, 5), "下午"),
+        PeriodTime("fallback_pt_7", "haut_lianhuajie_default", 7, LocalTime.of(16, 25), LocalTime.of(17, 10), "下午"),
+        PeriodTime("fallback_pt_8", "haut_lianhuajie_default", 8, LocalTime.of(17, 15), LocalTime.of(18, 0), "下午"),
+        PeriodTime("fallback_pt_9", "haut_lianhuajie_default", 9, LocalTime.of(19, 30), LocalTime.of(20, 15), "晚间"),
+        PeriodTime("fallback_pt_10", "haut_lianhuajie_default", 10, LocalTime.of(20, 25), LocalTime.of(21, 10), "晚间"),
+        PeriodTime("fallback_pt_11", "haut_lianhuajie_default", 11, LocalTime.of(21, 15), LocalTime.of(22, 0), "晚间"),
+        PeriodTime("fallback_pt_12", "haut_lianhuajie_default", 12, LocalTime.of(22, 5), LocalTime.of(22, 50), "晚间"),
+    )
+
+    /**
+     * 依据激活学期 Term.timeTableId 对应的 PeriodTime 自动定位自习槽位：
+     * - 命中任一槽位覆盖的节次区间（含区间内的短课间，如第9/10节之间）→ 选该槽位并标记 IN_SESSION；
+     * - 处于相邻槽位之间的课间（或早于首个槽位）→ 选即将开始的下一槽并标记 UPCOMING_NEXT；
+     * - 晚于最后槽位结束 → 保留最后槽位并标记 AFTER_LAST；
+     * - [timeTableId] 缺失或该表无任何节次 → 明确回退 [FALLBACK_STUDY_PERIOD_TIMES]，不混入其他 timeTableId；
+     * - 槽位内某节次未定义时按已定义节次的并集确定区间；某槽位完全无节次定义时不可被选中。
+     */
+    fun resolveActiveSlotForTimeTable(
+        nowTime: LocalTime,
+        periodTimes: List<PeriodTime>,
+        timeTableId: String?
+    ): StudySlotResolution {
+        val activePeriods = if (timeTableId.isNullOrBlank()) {
+            emptyList()
+        } else {
+            periodTimes.filter { it.timeTableId == timeTableId }
+        }
+        val usedFallback = activePeriods.isEmpty()
+        val effectivePeriods = if (usedFallback) FALLBACK_STUDY_PERIOD_TIMES else activePeriods
+        val windows = STUDY_PERIOD_SLOTS.mapNotNull { slot ->
+            val times = effectivePeriods.filter { it.periodNo in slot.startPeriod..slot.endPeriod }
+            if (times.isEmpty()) {
+                null
+            } else {
+                Triple(
+                    slot,
+                    times.minOf { it.startLocalTime },
+                    times.maxOf { it.endLocalTime }
+                )
+            }
+        }
+        if (windows.isEmpty()) {
+            return StudySlotResolution(
+                slot = STUDY_PERIOD_SLOTS.last(),
+                timing = StudySlotTiming.AFTER_LAST,
+                usedFallbackTimetable = true
+            )
+        }
+        for ((slot, start, end) in windows) {
+            if (!nowTime.isBefore(start) && nowTime.isBefore(end)) {
+                return StudySlotResolution(slot, StudySlotTiming.IN_SESSION, usedFallback)
+            }
+            if (nowTime.isBefore(start)) {
+                return StudySlotResolution(slot, StudySlotTiming.UPCOMING_NEXT, usedFallback)
+            }
+        }
+        return StudySlotResolution(
+            slot = windows.last().first,
+            timing = StudySlotTiming.AFTER_LAST,
+            usedFallbackTimetable = usedFallback
+        )
+    }
+
+    @Deprecated(
+        message = "固定 cutoff 与激活作息表不一致（如默认表第10节 21:10 结束而非 20:45）；请改用 resolveActiveSlotForTimeTable 传入 Term.timeTableId 对应的 PeriodTime",
+        level = DeprecationLevel.WARNING
+    )
     fun resolveActiveSlotIndex(nowTime: LocalTime): Int {
         val matched = STUDY_PERIOD_SLOTS.firstOrNull { nowTime.isBefore(it.cutoffTime) }
         return matched?.index ?: STUDY_PERIOD_SLOTS.lastIndex
     }
 
+    @Deprecated(
+        message = "仅按小时粗粒度估算且与 LocalTime 重载不一致，仅保留作兼容；请改用 resolveActiveSlotForTimeTable",
+        level = DeprecationLevel.WARNING
+    )
     fun resolveActiveSlotIndex(nowHour: Int): Int = when {
         nowHour < 10 -> 0
         nowHour < 12 -> 1
@@ -99,6 +214,10 @@ object CampusStudyRoomCatalog {
         else -> 5
     }
 
+    @Deprecated(
+        message = "固定 cutoff 与激活作息表不一致；请改用 resolveActiveSlotForTimeTable",
+        level = DeprecationLevel.WARNING
+    )
     fun resolveActiveSlot(nowTime: LocalTime): CampusStudyPeriodSlot =
         STUDY_PERIOD_SLOTS[resolveActiveSlotIndex(nowTime)]
 

@@ -150,8 +150,20 @@ fun EmptyClassroomScreen(
     val selectedDateShortLabel = remember(selectedDateInCurrentWeek) {
         String.format("%02d-%02d", selectedDateInCurrentWeek.monthValue, selectedDateInCurrentWeek.dayOfMonth)
     }
-    var selectedSlotIndex by remember {
-        mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime()))
+    val autoSlotResolution = remember(currentTerm?.timeTableId, periodTimes) {
+        CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
+            nowTime = ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime(),
+            periodTimes = periodTimes,
+            timeTableId = currentTerm?.timeTableId
+        )
+    }
+    var selectedSlotIndex by remember { mutableIntStateOf(autoSlotResolution.slotIndex) }
+    var slotManuallyPicked by remember { mutableStateOf(false) }
+    // 作息表异步到达后跟随自动定位；用户手动点选节次后绝不覆盖其选择
+    LaunchedEffect(autoSlotResolution) {
+        if (!slotManuallyPicked) {
+            selectedSlotIndex = autoSlotResolution.slotIndex
+        }
     }
     val campusRoomsMap = remember(selectedCampusKey) {
         CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
@@ -293,10 +305,25 @@ fun EmptyClassroomScreen(
                         XPeachFilterPill(
                             label = slot.label,
                             selected = selectedSlotIndex == idx,
-                            onClick = { selectedSlotIndex = idx }
+                            onClick = {
+                                slotManuallyPicked = true
+                                selectedSlotIndex = idx
+                            }
                         )
                     }
                 }
+                Text(
+                    text = when (autoSlotResolution.timing) {
+                        CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION ->
+                            "自动定位当前时段：${autoSlotResolution.slot.label}"
+                        CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT ->
+                            "课间休息中 · 已预选下一时段：${autoSlotResolution.slot.label}"
+                        CampusStudyRoomCatalog.StudySlotTiming.AFTER_LAST ->
+                            "今日课程已结束 · 参考时段：${autoSlotResolution.slot.label}"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
