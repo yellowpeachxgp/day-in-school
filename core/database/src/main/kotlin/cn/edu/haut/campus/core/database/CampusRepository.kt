@@ -690,6 +690,10 @@ class CampusRepository internal constructor(
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
 
+    /** 学期无法自动确认、需用户重新选择学期同步核对的考试记录审计（V2 逐条修复审计）。 */
+    val examTermReviewAuditsFlow: Flow<List<ExamTermRepairAuditEntity>> =
+        dao.observeExamTermRepairAuditsByDisposition(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED)
+
     val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
         dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
 
@@ -757,6 +761,7 @@ class CampusRepository internal constructor(
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
             ensureExamTermPoisonRepairedIfNeeded()
+            ensureExamTermRepairV2IfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
@@ -831,6 +836,7 @@ class CampusRepository internal constructor(
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
         ensureExamTermPoisonRepairedIfNeeded()
+        ensureExamTermRepairV2IfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
     }
 
@@ -859,7 +865,165 @@ class CampusRepository internal constructor(
         }
     }
 
+    /**
+     * 考试学期修复 V2（逐条证据驱动，替代 V1 的纯日期窗口猜测）：
+     * - 有权威来源证明（originTermId 由可信同步管线写入）且 termId 被篡改的行 → 修复回原始学期；
+     * - 目标学期已存在相同指纹考试 → 删除错标副本并记 MERGED_DUPLICATE，不产生重复考试；
+     * - 旧库无来源行（originTermId == null）：学期有同步/导入证据 → 不动；
+     *   学期为已知污染签名（"2026-2027-1"）或非法格式且无证据 → 保留并记 REVIEW_REQUIRED 待用户重同步核对；
+     * - 绝不凭显示日期猜学期（一月考试不当然属于春季学期），绝不盲目反改 V1 已修过的行；
+     * - 修复与审计在同一事务内提交；无任何 DataStore 布尔门控——审计表即事实来源，
+     *   进程在任何时刻崩溃重跑都安全（同一 examRowId+ruleVersion 的审计幂等覆盖）。
+     */
+    internal suspend fun ensureExamTermRepairV2IfNeeded() {
+        val prefs = preferences.data.first()
+        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
+            runCatching { HautAcademicEndpoints.toTermId(savedXnm, savedXqm) }.getOrNull()
+        } else null
+        var changed = false
+        database.withTransaction {
+            val exams = dao.getExamSchedulesSnapshot()
+            val audits = dao.getExamTermRepairAuditsSnapshot()
+            val auditsByRow = audits.filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
+                .associateBy { it.examRowId }
+            val importAuditTermIds = dao.observeImportAudits().first()
+                .map { it.termId }.filter { it.isNotBlank() }.toSet()
+            val evidencedTermIds = buildSet {
+                savedSyncTermId?.let(::add)
+                addAll(importAuditTermIds)
+            }
+            val termIdPattern = Regex("\\d{4}-\\d{4}-\\d+")
+            val nowMs = System.currentTimeMillis()
+            val toWrite = mutableListOf<ExamTermRepairAuditEntity>()
+            val toRepair = mutableListOf<ExamScheduleEntity>()
+            val examsById = exams.associateBy { it.id }
+            val fingerprintIndex = exams.groupBy { examFingerprint(it) }
 
+            for (row in exams) {
+                val priorAudit = auditsByRow[row.id]
+                val provenance = row.originTermId?.takeIf { it.isNotBlank() }
+                when {
+                    provenance != null && provenance != row.termId -> {
+                        // 确定错标且有原始来源证明 → 修复（同事务写审计）
+                        val duplicates = fingerprintIndex[examFingerprint(row)].orEmpty()
+                            .filter { it.id != row.id && it.termId == provenance }
+                        if (duplicates.isNotEmpty()) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId+duplicate:${duplicates.first().id}",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            dao.deleteExamScheduleById(row.id)
+                            changed = true
+                        } else {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REPAIRED ||
+                                priorAudit.previousTermId != row.termId ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REPAIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            toRepair += row.copy(termId = provenance)
+                            changed = true
+                        }
+                    }
+                    provenance != null -> {
+                        // 一致：可信来源与存储学期相符；若曾被标记待核对则标记为已由重同步解决
+                        if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
+                            toWrite += priorAudit.copy(
+                                newTermId = row.termId,
+                                evidenceRef = "${priorAudit.evidenceRef}|resync_verified",
+                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                                repairedAtEpochMilli = nowMs
+                            )
+                            changed = true
+                        }
+                    }
+                    else -> {
+                        // 旧库无来源行：绝不按日期猜学期。
+                        val suspicious = row.termId.isBlank() ||
+                            !termIdPattern.matches(row.termId) ||
+                            (row.termId == "2026-2027-1" && row.termId !in evidencedTermIds)
+                        if (suspicious) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED ||
+                                priorAudit.previousTermId != row.termId
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = null,
+                                    evidenceRef = "missing_provenance",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                                changed = true
+                            }
+                        } else if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
+                            // 曾待核对的行现在具备同步/导入证据 → 标记已解决
+                            toWrite += priorAudit.copy(
+                                newTermId = row.termId,
+                                evidenceRef = "${priorAudit.evidenceRef}|evidence_available",
+                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                                repairedAtEpochMilli = nowMs
+                            )
+                            changed = true
+                        }
+                    }
+                }
+            }
+            // 审计引用已不存在的数据行 → 视为已由重同步/清理解决
+            for (audit in auditsByRow.values) {
+                if (audit.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED &&
+                    audit.examRowId !in examsById
+                ) {
+                    toWrite += audit.copy(
+                        evidenceRef = "${audit.evidenceRef}|row_removed",
+                        disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                        repairedAtEpochMilli = nowMs
+                    )
+                    changed = true
+                }
+            }
+            if (toRepair.isNotEmpty()) dao.upsertExamSchedules(toRepair)
+            if (toWrite.isNotEmpty()) dao.upsertExamTermRepairAudits(toWrite)
+        }
+        if (changed) notifyScheduleOrPolicyChanged("EXAM_TERM_REPAIR_V2")
+    }
+
+    /** 考试内容指纹：同一场考试的逻辑身份（不含学期列与同步时间戳）。 */
+    private fun examFingerprint(row: ExamScheduleEntity): String = listOf(
+        row.courseCode,
+        row.courseName,
+        row.examBatchName,
+        row.examStageLabel,
+        row.examFormat,
+        row.examDateIso.orEmpty(),
+        row.startTimeIso.orEmpty(),
+        row.endTimeIso.orEmpty(),
+        row.rawRoom,
+        row.isRetake.toString()
+    ).joinToString("|")
 
     /**
      * 为升级老用户补齐 11–12 节晚间默认作息时间（不覆盖用户已自定义编辑的 1–10 节作息）：
@@ -2172,7 +2336,40 @@ class CampusRepository internal constructor(
             } else {
                 exams
             }
-            dao.upsertExamSchedules(filteredToUpsert.map { it.toEntity() })
+            // 可信同步管线：写入时记录每行的原始学期为权威证据（originTermId）。
+            // 后续任何把 termId 写坏的缺陷都可凭此列确定修复方向；旧库行的该列为 NULL。
+            val stamped = filteredToUpsert.map { item ->
+                item.toEntity().copy(
+                    originTermId = item.originTermId ?: item.termId
+                )
+            }
+            dao.upsertExamSchedules(stamped)
+            // 权威重同步去重：同一场考试（内容指纹一致）若在其他学期遗留无来源旧行，
+            // 一律视为历史错标残留并在同事务内清除+审计，保证修复后不存在重复考试。
+            val staleFingerprints = mutableMapOf<String, ExamScheduleEntity>()
+            dao.getExamSchedulesSnapshot()
+                .filter { it.originTermId.isNullOrBlank() }
+                .forEach { staleFingerprints[examFingerprint(it)] = it }
+            val nowMs = System.currentTimeMillis()
+            val mergedAudits = mutableListOf<ExamTermRepairAuditEntity>()
+            for (incoming in stamped) {
+                val stale = staleFingerprints[examFingerprint(incoming)] ?: continue
+                if (stale.id == incoming.id || stale.termId == incoming.termId) continue
+                dao.deleteExamScheduleById(stale.id)
+                mergedAudits += ExamTermRepairAuditEntity(
+                    id = "v2:${stale.id}",
+                    examRowId = stale.id,
+                    previousTermId = stale.termId,
+                    newTermId = incoming.termId,
+                    evidenceRef = "authoritative_resync_fingerprint:${incoming.id}",
+                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                    repairedAtEpochMilli = nowMs
+                )
+            }
+            if (mergedAudits.isNotEmpty()) {
+                dao.upsertExamTermRepairAudits(mergedAudits)
+            }
         }
         notifyScheduleOrPolicyChanged("EXAMS_IMPORTED")
     }
@@ -7415,6 +7612,9 @@ class CampusRepository internal constructor(
     }
 
     companion object {
+        /** 考试学期修复规则版本：审计行按 (ruleVersion, examRowId) 幂等。 */
+        internal const val EXAM_TERM_REPAIR_RULE_V2 = "exam_term_repair_v2"
+
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
