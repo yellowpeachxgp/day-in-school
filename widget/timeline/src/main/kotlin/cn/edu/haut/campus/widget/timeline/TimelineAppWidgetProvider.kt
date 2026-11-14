@@ -200,19 +200,17 @@ class TimelineAppWidgetProvider : AppWidgetProvider() {
             )
 
             val defaultTargetTab = if (!snapshot.hasImportedCourses) "importer" else "today"
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            val launchIntent = WidgetRefreshCoordinator.createMainActivityLaunchIntent(context).apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, defaultTargetTab)
             }
-            if (launchIntent != null) {
-                val pi = PendingIntent.getActivity(
-                    context,
-                    appWidgetId,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.timeline_widget_root, pi)
-            }
+            val pi = PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.timeline_widget_root, pi)
 
             if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
             WidgetRefreshCoordinator.scheduleNextBoundaryRefresh(

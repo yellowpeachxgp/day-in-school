@@ -146,17 +146,28 @@ fun TimetableScreen(
     var showCanceledCoursesDialog by remember { mutableStateOf(false) }
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
+    var confirmDeleteMasterRule by remember { mutableStateOf<CourseScheduleRule?>(null) }
     var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
 
-    val termCanceledOverrides = remember(occurrenceOverrides, term?.id) {
+    val termCanceledGroups = remember(occurrenceOverrides, term?.id, rules) {
+        val ruleMap = rules.associateBy { it.id }
         occurrenceOverrides
             .filter {
                 (term == null || it.termId == term?.id) &&
                     it.canceled &&
                     it.reason?.startsWith("MERGED_INTO:") != true
             }
-            .sortedByDescending { it.date }
+            .groupBy { ov ->
+                val resolvedCourseId = ov.courseId ?: ov.courseRuleId?.let { ruleMap[it]?.courseId } ?: ov.id
+                ov.date to resolvedCourseId
+            }
+            .values
+            .map { it.sortedBy { ov -> ov.courseRuleId?.let { rId -> ruleMap[rId]?.startPeriod } ?: ov.startPeriod ?: 99 } }
+            .sortedByDescending { it.first().date }
+    }
+    val termCanceledOverrides = remember(termCanceledGroups) {
+        termCanceledGroups.map { it.first() }
     }
 
     val weekOccurrencesMap = remember(
@@ -402,8 +413,12 @@ fun TimetableScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            for (ov in termCanceledOverrides) {
-                                val r = ov.courseRuleId?.let { ruleById[it] }
+                            for (group in termCanceledGroups) {
+                                val ov = group.first()
+                                val groupRules = group.mapNotNull { g -> g.courseRuleId?.let { ruleById[it] } }
+                                val r = groupRules.firstOrNull()
+                                val minSp = groupRules.minOfOrNull { it.startPeriod } ?: ov.startPeriod
+                                val maxEp = groupRules.maxOfOrNull { it.endPeriod } ?: ov.endPeriod
                                 val c = (ov.courseId ?: r?.courseId)?.let { courseById[it] }
                                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                     Row(
@@ -425,8 +440,12 @@ fun TimetableScreen(
                                             Text(
                                                 text = buildString {
                                                     append("${ov.date} (${ov.date.dayOfWeek.ChineseLabel})")
-                                                    if (r != null) {
-                                                        append(" · 第${r.startPeriod}-${r.endPeriod}节 · ${r.rawRoom}")
+                                                    if (minSp != null && maxEp != null) {
+                                                        append(" · 第${minSp}-${maxEp}节")
+                                                    }
+                                                    val roomLabel = r?.rawRoom ?: ov.room
+                                                    if (!roomLabel.isNullOrBlank()) {
+                                                        append(" · $roomLabel")
                                                     }
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
@@ -442,7 +461,8 @@ fun TimetableScreen(
                                                     repository.restoreCanceledOccurrence(
                                                         date = ov.date,
                                                         ruleId = ov.courseRuleId,
-                                                        overrideId = ov.id
+                                                        overrideId = ov.id,
+                                                        mergedRuleIds = group.mapNotNull { it.courseRuleId }
                                                     )
                                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                                 }
@@ -1450,13 +1470,7 @@ fun TimetableScreen(
                         }
                     }
                     TextButton(
-                        onClick = {
-                            scope.launch {
-                                repository.deleteCourseScheduleRule(masterRuleToEdit.id)
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                editingMasterRule = null
-                            }
-                        },
+                        onClick = { confirmDeleteMasterRule = masterRuleToEdit },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -1501,6 +1515,46 @@ fun TimetableScreen(
             },
             dismissButton = {
                 TextButton(onClick = { editingMasterRule = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    val pendingDeleteMaster = confirmDeleteMasterRule
+    if (pendingDeleteMaster != null) {
+        val pendingCourse = courses.firstOrNull { it.id == pendingDeleteMaster.courseId }
+        val isPractical = pendingCourse?.externalId?.startsWith("sjk:") == true
+        XPeachAlertDialog(
+            onDismissRequest = { confirmDeleteMasterRule = null },
+            title = { Text("确认删除排课时段？") },
+            text = {
+                Text(
+                    text = if (isPractical) {
+                        "确认删除「${pendingCourse?.name ?: "实践课"}」的该自定义时段吗？删除全部时段后，课程将安全退回「时间待定实践课」列表，可随时重新设置时间。"
+                    } else {
+                        "确认删除「${pendingCourse?.name ?: "课程"}」（${pendingDeleteMaster.weekday.ChineseLabel} 第${pendingDeleteMaster.startPeriod}-${pendingDeleteMaster.endPeriod}节）的全学期排课时段吗？若仅需某一天停课，请在周课表点击对应卡片选择「单次停课」。"
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.deleteCourseScheduleRule(pendingDeleteMaster.id)
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            confirmDeleteMasterRule = null
+                            editingMasterRule = null
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteMasterRule = null }) {
                     Text("取消")
                 }
             }
@@ -1591,6 +1645,27 @@ fun TimetableScreen(
                                 }
                             )
                         }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = pracStartPeriod,
+                            onValueChange = { pracStartPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("起始节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = pracEndPeriod,
+                            onValueChange = { pracEndPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("结束节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     Text(
                         text = "周次",
@@ -1741,6 +1816,27 @@ fun TimetableScreen(
                                 }
                             )
                         }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = newStartPeriod,
+                            onValueChange = { newStartPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("起始节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = newEndPeriod,
+                            onValueChange = { newEndPeriod = it.filter(Char::isDigit).take(2) },
+                            label = { Text("结束节(1-12)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     Text(
                         text = "周次",
@@ -2319,6 +2415,7 @@ private fun RawMasterTimetableView(
                                                     XPeachTheme.courseBorder(rawArgb, active = false),
                                                     RoundedCornerShape(6.dp)
                                                 )
+                                                .clickable { onEditRule(r) }
                                                 .padding(horizontal = 4.dp, vertical = 3.5.dp),
                                             verticalArrangement = Arrangement.spacedBy(2.dp)
                                         ) {

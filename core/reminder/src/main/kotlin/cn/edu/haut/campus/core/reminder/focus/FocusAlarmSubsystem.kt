@@ -417,20 +417,19 @@ object FocusNotificationFactory {
             return false
         }
 
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            component = android.content.ComponentName(context.packageName, "cn.edu.haut.campus.MainActivity")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             data = Uri.parse("hautcampus://focus/open/$notificationId")
             putExtra(EXTRA_OVERLAY_ROUTE, OVERLAY_ROUTE_FOCUS)
         }
-        launchIntent?.let(accountScope::attach)
-        val contentPendingIntent = launchIntent?.let {
-            PendingIntent.getActivity(
-                context,
-                notificationId,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        }
+        accountScope.attach(launchIntent)
+        val contentPendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_FOCUS_TIMER)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)

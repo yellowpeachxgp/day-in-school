@@ -81,7 +81,8 @@ object CampusStudyRoomCatalog {
         CampusStudyPeriodSlot(1, "3-4节", 3, 4, LocalTime.of(12, 0)),
         CampusStudyPeriodSlot(2, "5-6节", 5, 6, LocalTime.of(15, 50)),
         CampusStudyPeriodSlot(3, "7-8节", 7, 8, LocalTime.of(17, 50)),
-        CampusStudyPeriodSlot(4, "9-10节", 9, 10, LocalTime.of(23, 59)),
+        CampusStudyPeriodSlot(4, "9-10节", 9, 10, LocalTime.of(20, 45)),
+        CampusStudyPeriodSlot(5, "11-12节", 11, 12, LocalTime.of(23, 59)),
     )
 
     fun resolveActiveSlotIndex(nowTime: LocalTime): Int {
@@ -94,7 +95,8 @@ object CampusStudyRoomCatalog {
         nowHour < 12 -> 1
         nowHour < 16 -> 2
         nowHour < 18 -> 3
-        else -> 4
+        nowHour < 21 -> 4
+        else -> 5
     }
 
     fun resolveActiveSlot(nowTime: LocalTime): CampusStudyPeriodSlot =

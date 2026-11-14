@@ -226,26 +226,24 @@ class TodayAppWidgetProvider : AppWidgetProvider() {
             }
 
             val defaultTargetTab = if (!snapshot.hasImportedCourses) "importer" else "today"
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            val launchIntent = WidgetRefreshCoordinator.createMainActivityLaunchIntent(context).apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, defaultTargetTab)
             }
-            if (launchIntent != null) {
-                val pi = PendingIntent.getActivity(
-                    context,
-                    appWidgetId,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.today_widget_root, pi)
-            }
+            val pi = PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.today_widget_root, pi)
 
-            val mapIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-                WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "map")
-                putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
-                putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, focus?.occurrence?.rawRoom)
-            }
-            if (mapIntent != null && focus != null) {
+            if (focus != null) {
+                val mapIntent = WidgetRefreshCoordinator.createMainActivityLaunchIntent(context).apply {
+                    WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "map")
+                    putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "map")
+                    putExtra(WidgetRefreshCoordinator.EXTRA_RAW_ROOM, focus.occurrence.rawRoom)
+                }
                 val mapPi = PendingIntent.getActivity(
                     context,
                     appWidgetId + 20000,

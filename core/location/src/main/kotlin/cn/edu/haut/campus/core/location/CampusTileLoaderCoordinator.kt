@@ -38,12 +38,14 @@ class CampusTileCacheCoordinator<T : Any>(
     private val pendingExpiredRetryKeys = ConcurrentHashMap.newKeySet<String>()
 
     fun isWithinHaut25dRasterBounds(z: Int, x: Int, y: Int): Boolean {
-        if (z !in 16..18) return false
+        // 官方 gis.haut.edu.cn/cmgis-server/upload/raster/3/{z}/{x}/{y}.png 实测有效层级为 z=11..17（z>=18 返回 404）；
+        // 支持 z=12..17 全量缩小视野，杜绝双指/按钮缩小时跳变回 2D 街景瓦片！
+        if (z !in 12..17) return false
         val n = 2.0.pow(z.toDouble())
-        val minX = floor((113.533 + 180.0) / 360.0 * n).toInt()
-        val maxX = ceil((113.562 + 180.0) / 360.0 * n).toInt()
-        val minY = floor((1.0 - asinh(tan(Math.toRadians(34.841))) / PI) / 2.0 * n).toInt()
-        val maxY = ceil((1.0 - asinh(tan(Math.toRadians(34.824))) / PI) / 2.0 * n).toInt()
+        val minX = floor((113.525 + 180.0) / 360.0 * n).toInt()
+        val maxX = ceil((113.570 + 180.0) / 360.0 * n).toInt()
+        val minY = floor((1.0 - asinh(tan(Math.toRadians(34.846))) / PI) / 2.0 * n).toInt()
+        val maxY = ceil((1.0 - asinh(tan(Math.toRadians(34.818))) / PI) / 2.0 * n).toInt()
         return x in minX..maxX && y in minY..maxY
     }
 

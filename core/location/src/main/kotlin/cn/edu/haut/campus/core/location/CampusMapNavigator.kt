@@ -125,26 +125,26 @@ object CampusMapNavigator {
         // 南门与南环路沿线 (lat ≈ 34.8287 ~ 34.8293)
         CampusRoadNode("r_gate_south", "莲花街南门广场", 34.82872, 113.54532),
         CampusRoadNode("r_s_west", "实训南环路口", 34.82932, 113.54230),
-        CampusRoadNode("r_s_t1_w", "1教西南路口", 34.82932, 113.54420),
+        CampusRoadNode("r_s_t1_w", "中轴西侧南路口", 34.82932, 113.54420),
         CampusRoadNode("r_s_axis", "南门中轴路口", 34.82932, 113.54532),
         CampusRoadNode("r_s_t4", "4教南路口", 34.82932, 113.54642),
         CampusRoadNode("r_s_t3", "3教南路口", 34.82932, 113.54785),
 
         // 教学区南中轴与连廊线 (lat ≈ 34.8300 ~ 34.8306)
-        CampusRoadNode("r_t1_gate", "1号教学楼入口", 34.82975, 113.54500),
+        CampusRoadNode("r_t2_gate", "32号楼（土建楼）入口", 34.83052, 113.53908),
+        CampusRoadNode("r_t1_gate", "31号楼（电气信息楼）入口", 34.83052, 113.54058),
         CampusRoadNode("r_t4_gate", "4号教学楼入口", 34.83002, 113.54642),
         CampusRoadNode("r_t3_gate", "3号教学楼入口", 34.82971, 113.54785),
         CampusRoadNode("r_m_west_s", "西门南侧步道", 34.83060, 113.53685),
         CampusRoadNode("r_m_dorm_s", "生活区南路口", 34.83060, 113.53880),
         CampusRoadNode("r_m_cant_s", "四餐厅南路口", 34.83060, 113.54135),
         CampusRoadNode("r_m_eng_s", "实训中心南路口", 34.83060, 113.54230),
-        CampusRoadNode("r_m_t1_n", "1教北侧林荫道", 34.83060, 113.54420),
+        CampusRoadNode("r_m_t1_n", "中轴西侧林荫道", 34.83060, 113.54420),
         CampusRoadNode("r_m_axis", "教学区中轴十字", 34.83060, 113.54532),
-        CampusRoadNode("r_m_t2_s", "32号楼南路口", 34.83060, 113.54642),
+        CampusRoadNode("r_m_t2_s", "4教北侧路口", 34.83060, 113.54642),
         CampusRoadNode("r_m_t3_n", "3教北路口", 34.83060, 113.54785),
 
         // 校区中轴景观道与图书馆/实训/西门沿线 (lat ≈ 34.8312 ~ 34.8322)
-        CampusRoadNode("r_t2_gate", "32号楼（土建楼）入口", 34.83124, 113.54615),
         CampusRoadNode("r_eng_gate", "实训中心入口", 34.83123, 113.54230),
         CampusRoadNode("r_c_west_gate", "长椿路西门广场", 34.83185, 113.53675),
         CampusRoadNode("r_c_dorm_m", "公寓区中路路口", 34.83185, 113.53880),
@@ -152,7 +152,7 @@ object CampusMapNavigator {
         CampusRoadNode("r_c_eng_n", "实训中心北路口", 34.83185, 113.54230),
         CampusRoadNode("r_c_lib_w", "图书馆西侧步道", 34.83185, 113.54420),
         CampusRoadNode("r_c_lib_s", "图书馆南广场", 34.83185, 113.54565),
-        CampusRoadNode("r_c_t2_n", "32号楼北侧路口", 34.83185, 113.54642),
+        CampusRoadNode("r_c_t2_n", "东中轴景观路口", 34.83185, 113.54642),
         CampusRoadNode("r_c_east", "东环中路路口", 34.83185, 113.54785),
         CampusRoadNode("r_lib_gate", "图书馆主入口", 34.83210, 113.54570),
         CampusRoadNode("r_cant_door", "第四学生餐厅入口", 34.83226, 113.54130),
@@ -179,10 +179,10 @@ object CampusMapNavigator {
         CampusRoadEdge("r_s_axis", "r_s_t4", "南环主干道"),
         CampusRoadEdge("r_s_t4", "r_s_t3", "南环主干道"),
 
-        // 1/3/4教接入支路
-        CampusRoadEdge("r_s_axis", "r_t1_gate", "1教南侧步道"),
-        CampusRoadEdge("r_s_t1_w", "r_t1_gate", "1教西侧步道"),
-        CampusRoadEdge("r_t1_gate", "r_m_axis", "中轴教学大道"),
+        // 31/32号楼与3/4教接入支路
+        CampusRoadEdge("r_m_dorm_s", "r_t2_gate", "32号楼北侧步道"),
+        CampusRoadEdge("r_t2_gate", "r_t1_gate", "31-32号楼连廊步道"),
+        CampusRoadEdge("r_t1_gate", "r_m_cant_s", "31号楼东侧步道"),
         CampusRoadEdge("r_s_t4", "r_t4_gate", "4教西侧通道"),
         CampusRoadEdge("r_t4_gate", "r_m_t2_s", "4教北侧通道"),
         CampusRoadEdge("r_s_t3", "r_t3_gate", "3教南侧广场"),
@@ -197,15 +197,15 @@ object CampusMapNavigator {
         CampusRoadEdge("r_m_axis", "r_m_t2_s", "教学区中路"),
         CampusRoadEdge("r_m_t2_s", "r_m_t3_n", "教学区中路"),
 
-        // 32号楼与实训中心竖向连道
+        // 中东区与实训中心竖向连道
         CampusRoadEdge("r_s_west", "r_m_eng_s", "实训西路"),
         CampusRoadEdge("r_m_eng_s", "r_eng_gate", "实训西路"),
         CampusRoadEdge("r_eng_gate", "r_c_eng_n", "实训西路"),
-        CampusRoadEdge("r_s_t1_w", "r_m_t1_n", "1教西侧林荫道"),
+        CampusRoadEdge("r_s_t1_w", "r_m_t1_n", "中轴西侧林荫道"),
         CampusRoadEdge("r_m_t1_n", "r_c_lib_w", "图书馆西路"),
+        CampusRoadEdge("r_s_axis", "r_m_axis", "校园中轴大道"),
         CampusRoadEdge("r_m_axis", "r_c_lib_s", "校园中轴大道"),
-        CampusRoadEdge("r_m_t2_s", "r_t2_gate", "32号楼步行道"),
-        CampusRoadEdge("r_t2_gate", "r_c_t2_n", "32号楼步行道"),
+        CampusRoadEdge("r_m_t2_s", "r_c_t2_n", "东中轴步行道"),
         CampusRoadEdge("r_m_t3_n", "r_c_east", "东环路"),
 
         // 中心景观大道 (lat ≈ 34.83185)
@@ -253,7 +253,8 @@ object CampusMapNavigator {
         "b_lib" to "r_lib_gate",
         "b_bell" to "r_n_bell",
         "b_eng" to "r_eng_gate",
-        "b_canteen1" to "r_cant_door",
+        "b_canteen1" to "r_n_bell",
+        "b_canteen4" to "r_cant_door",
         "b_dorm_ju" to "r_n_dorm_gate",
         "b_express" to "r_c_west_gate",
         "b_stadium" to "r_sp_stadium"

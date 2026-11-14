@@ -390,4 +390,102 @@ class UserIssuesAndCampusDataRegressionTest {
         assertEquals(java.time.LocalTime.of(8, 30), occEndOnly.startTime)
         assertEquals(java.time.LocalTime.of(12, 15), occEndOnly.endTime)
     }
+
+    @Test
+    fun issues5And8And13And17_diningNearbyCalibrationClosedReviewsExamTermIsolationAndEveningStudySlots() {
+        // #5: 31号楼(b_t1) / 32号楼(b_t2) mapped to 第四餐厅 (b_canteen4); 菊园(b_dorm_ju) on 第一餐厅 (b_canteen1)
+        val c1 = CampusDiningRecommender.CANTEENS.single { it.id == "b_canteen1" }
+        val c4 = CampusDiningRecommender.CANTEENS.single { it.id == "b_canteen4" }
+        val cSmall = CampusDiningRecommender.CANTEENS.single { it.id == "b_canteen_small" }
+        assertTrue(c1.nearbyBuildingIds.contains("b_dorm_ju"))
+        assertFalse(c1.nearbyBuildingIds.contains("b_dorm_cd"))
+        assertTrue(c4.nearbyBuildingIds.containsAll(listOf("b_t1", "b_t2")))
+        assertFalse(cSmall.nearbyBuildingIds.contains("b_t1"))
+
+        // #5: Closed canteen (b_canteen2 / b_canteen3) custom reviews must be excluded from active dish aggregation
+        val aggregated = CampusDiningRecommender.aggregateDishRatings(
+            listOf(
+                cn.edu.haut.campus.core.model.CampusDishReviewItem(
+                    id = "rev_closed_2",
+                    canteenId = "b_canteen2",
+                    canteenName = "原第二餐厅",
+                    windowName = "旧窗口",
+                    dishName = "下架测试餐",
+                    rating = 5
+                ),
+                cn.edu.haut.campus.core.model.CampusDishReviewItem(
+                    id = "rev_open_1",
+                    canteenId = "b_canteen1",
+                    canteenName = "第一餐厅",
+                    windowName = "1F面食档",
+                    dishName = "手工烩面",
+                    rating = 5
+                )
+            )
+        )
+        assertTrue(aggregated.none { it.canteenId == "b_canteen2" || it.canteenId == "b_canteen3" })
+        assertTrue(aggregated.any { it.canteenId == "b_canteen1" && it.dishName == "手工烩面" })
+
+        // #13: Evening 11-12节 slot present in CampusStudyRoomCatalog
+        assertEquals(5, CampusStudyRoomCatalog.PERIOD_SLOTS.size)
+        val eveningLate = CampusStudyRoomCatalog.PERIOD_SLOTS.last()
+        assertEquals(11..12, eveningLate.periodRange)
+        assertTrue(eveningLate.label.contains("11-12"))
+
+        // #8 & #12: ReminderPlanner strictly filters exams by active term.id
+        val activeTerm = cn.edu.haut.campus.core.model.Term(
+            id = "2026-2027-1",
+            academicYear = "2026-2027",
+            termNumber = 1,
+            startDate = LocalDate.of(2026, 9, 7),
+            weekStartDay = java.time.DayOfWeek.MONDAY,
+            weekCount = 20,
+            timeTableId = "tt_1",
+            current = true
+        )
+        val nowZdt = java.time.ZonedDateTime.of(
+            LocalDate.of(2026, 11, 15),
+            java.time.LocalTime.of(8, 0),
+            cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+        )
+        val staleOtherTermExam = cn.edu.haut.campus.core.model.AcademicExamItem(
+            id = "ex_old",
+            termId = "2025-2026-2",
+            courseName = "上学期残留考试",
+            examDateIso = "2026-11-16",
+            timeText = "2026-11-16(09:00-11:00)",
+            rawRoom = "1号教学楼1104",
+            seatNumber = "12"
+        )
+        val currentTermExam = staleOtherTermExam.copy(
+            id = "ex_cur",
+            termId = "2026-2027-1",
+            courseName = "本学期正式考试"
+        )
+        val events = ReminderPlanner.buildWindowEvents(
+            now = nowZdt,
+            horizonHours = 72L,
+            term = activeTerm,
+            courses = emptyList(),
+            rules = emptyList(),
+            periodTimes = emptyList(),
+            calendarOverrides = emptyList(),
+            occurrenceOverrides = emptyList(),
+            buildings = emptyList(),
+            aliases = emptyList(),
+            customTasks = emptyList(),
+            exams = listOf(staleOtherTermExam, currentTermExam),
+            prefs = cn.edu.haut.campus.core.model.ReminderPreferenceConfig(
+                enabled = true,
+                examLeadMinutes = listOf(60)
+            ),
+            dismissedKeys = emptySet(),
+            snoozedUntilEpochMillis = emptyMap()
+        )
+        assertTrue(events.none { it.title.contains("上学期残留考试") })
+        assertTrue(events.any { it.title.contains("本学期正式考试") })
+
+        // #17: Outpatient medical insurance reference summary non-blank
+        assertTrue(CampusHospitalPharmacyCatalog.OUTPATIENT_REIMBURSEMENT_REFERENCE_SUMMARY.contains("校医院"))
+    }
 }

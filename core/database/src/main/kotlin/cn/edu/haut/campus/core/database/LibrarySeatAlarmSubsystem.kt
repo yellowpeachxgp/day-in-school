@@ -167,15 +167,16 @@ object LibrarySeatAlarmSubsystem {
             runCatching {
                 if (canExact) {
                     if (stage == "FIRE") {
-                        val launchIntent = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
-                        val showPending = launchIntent?.let {
-                            PendingIntent.getActivity(
-                                appContext,
-                                requestCodeFor(plan.id, "SHOW"),
-                                it,
-                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                            )
+                        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+                            component = android.content.ComponentName(appContext.packageName, "cn.edu.haut.campus.MainActivity")
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         }
+                        val showPending = PendingIntent.getActivity(
+                            appContext,
+                            requestCodeFor(plan.id, "SHOW"),
+                            launchIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
                         alarmManager.setAlarmClock(
                             AlarmManager.AlarmClockInfo(effectiveTriggerMs, showPending),
                             pendingIntent
@@ -252,15 +253,16 @@ object LibrarySeatAlarmSubsystem {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) return
         }
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val contentIntent = launchIntent?.let {
-            PendingIntent.getActivity(
-                context,
-                notificationId,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            component = android.content.ComponentName(context.packageName, "cn.edu.haut.campus.MainActivity")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(title)

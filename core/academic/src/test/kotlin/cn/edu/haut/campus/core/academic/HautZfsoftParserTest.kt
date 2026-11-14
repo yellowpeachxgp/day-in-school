@@ -211,4 +211,28 @@ class HautZfsoftParserTest {
         assertEquals("期末集中考", exams[2].examStageLabel)
         assertEquals("27", exams[2].seatNumber)
     }
+
+    @Test
+    fun `parseGradesJson maps ZFSoft summer semester code 16 to termNo 3`() {
+        val summerGradesJson = """
+            {
+              "items": [
+                {
+                  "kch_id": "SJK_SUMMER_01",
+                  "kcmc": "暑期生产实习",
+                  "xnmmc": "2025-2026",
+                  "xnm": "2025",
+                  "xqm": "16",
+                  "xqmmc": "3",
+                  "xf": "2.0",
+                  "cj": "优秀",
+                  "jd": "4.5"
+                }
+              ]
+            }
+        """.trimIndent()
+        val items = HautZfsoftParser.parseGradesJson(summerGradesJson)
+        assertEquals(1, items.size)
+        assertEquals("2025-2026-3", items.single().termId)
+    }
 }

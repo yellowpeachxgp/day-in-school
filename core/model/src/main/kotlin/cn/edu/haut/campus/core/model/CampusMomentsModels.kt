@@ -51,6 +51,14 @@ data class MomentsPostComment(
     val createdAt: String = ""
 )
 
+data class MomentsContactMessage(
+    val id: String,
+    val senderRole: String,
+    val senderName: String,
+    val content: String,
+    val createdAt: String = ""
+)
+
 const val MASKED_ON_REQUEST_MOMENTS_CONTACT = "需发起联系/认领申请后查看"
 
 data class MomentsPostItem(
@@ -78,7 +86,10 @@ data class MomentsPostItem(
     val canManage: Boolean = false,
     val isLegacyUnowned: Boolean = false,
     val canClaimLegacy: Boolean = false,
-    val viewerRole: String = "GUEST"
+    val viewerRole: String = "GUEST",
+    val pendingContactRequestsCount: Int = 0,
+    val hasMyContactRequest: Boolean = false,
+    val myContactRequestStatus: String = ""
 ) {
     val isResolved: Boolean
         get() = status.equals("RESOLVED", ignoreCase = true)

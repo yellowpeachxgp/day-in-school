@@ -458,4 +458,61 @@ class CampusMapProviderTest {
             )
         }
     }
+
+    @Test
+    fun issues6And10_haut25dRasterBoundsCoverZoom12To17AndExcludeZoom18AndNorthwestWalkingGraphRoutesCleanly() {
+        val coordinator = CampusTileCacheCoordinator<String>()
+        // Lianhuajie center (~34.831, 113.545) across z=12..17 must stay in 2.5D raster bounds (never flipping to 2D on zoom-out),
+        // while z=18 must be excluded so zooming in scales z=17 crisply without HTTP 404 storms!
+        for (z in 12..17) {
+            val n = 1 shl z
+            val tx = ((113.545 + 180.0) / 360.0 * n).toInt()
+            val latRad = Math.toRadians(34.831)
+            val ty = ((1.0 - kotlin.math.ln(kotlin.math.tan(latRad) + 1.0 / kotlin.math.cos(latRad)) / Math.PI) / 2.0 * n).toInt()
+            assertTrue("Zoom $z center tile ($tx, $ty) must be inside 2.5D raster bounds", coordinator.isWithinHaut25dRasterBounds(z, tx, ty))
+        }
+        val n18 = 1 shl 18
+        val tx18 = ((113.545 + 180.0) / 360.0 * n18).toInt()
+        val latRad18 = Math.toRadians(34.831)
+        val ty18 = ((1.0 - kotlin.math.ln(kotlin.math.tan(latRad18) + 1.0 / kotlin.math.cos(latRad18)) / Math.PI) / 2.0 * n18).toInt()
+        assertFalse("Zoom 18 does not exist on HAUT raster server and must return false", coordinator.isWithinHaut25dRasterBounds(18, tx18, ty18))
+
+        // Calibrated 31号楼 (b_t1) -> 第四餐厅 (b_canteen4) walking route in northwest zone
+        val b31 = cn.edu.haut.campus.core.model.Building(
+            id = "b_t1",
+            campusId = "lianhuajie",
+            name = "31号教学楼（外语楼）",
+            shortName = "31号楼",
+            latitude = 34.83052,
+            longitude = 113.54058,
+            category = cn.edu.haut.campus.core.model.CampusCategory.TEACHING_BUILDING,
+            entrances = listOf("南门"),
+            description = "外语楼",
+            verifiedAt = java.time.LocalDate.of(2026, 11, 14)
+        )
+        val bCant4 = cn.edu.haut.campus.core.model.Building(
+            id = "b_canteen4",
+            campusId = "lianhuajie",
+            name = "第四餐厅（西苑餐厅）",
+            shortName = "四餐厅",
+            latitude = 34.83226,
+            longitude = 113.54130,
+            category = cn.edu.haut.campus.core.model.CampusCategory.CANTEEN,
+            entrances = listOf("东门"),
+            description = "西苑餐厅",
+            verifiedAt = java.time.LocalDate.of(2026, 11, 14)
+        )
+        val haut = CampusMapProviderRegistry.Default.resolve(
+            SchoolDirectory.HAUT_SCHOOL_ID,
+            SchoolDirectory.HAUT_LIANHUAJIE_CAMPUS_ID
+        )!!
+        val plan = haut.buildWalkingRoute(
+            userLocation = null,
+            fallbackOriginBuilding = b31,
+            destinationBuilding = bCant4,
+            allBuildings = listOf(b31, bCant4),
+            rawClassroom = null
+        )
+        assertTrue("31号楼 to 第四餐厅 must be a short nearby walk (< 450m)", plan.estimatedWalkDistanceMeters in 120..450)
+    }
 }

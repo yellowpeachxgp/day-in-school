@@ -2080,4 +2080,110 @@ class CampusServicesUnitTest {
             resProbeDropOnFollowUp.outcome
         )
     }
+
+    @Test
+    fun issues9And16AndCloudSafety_momentsMultiTurnChatClubVenueAndLiveSecretGuard() {
+        // 1) Cloud seat-booking live guard rejects blank/placeholder delegatedSecret before any network call
+        val rejectedPlaceholder = CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
+            accessToken = "tok_live_test",
+            studentNo = "2024000001",
+            delegatedSecret = "delegated_android_session",
+            targetDate = "2026-11-16",
+            targetExecuteAtIso = "07:00:00",
+            preferredAreaName = "4楼北自习区",
+            preferredSeatLabel = "012",
+            planIdempotencyKey = "idem_guard_1",
+            httpTransport = null
+        )
+        assertTrue(rejectedPlaceholder is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist)
+        assertFalse(
+            CampusCloudOidcHelper.reconfirmSchoolBindingAndPlans(
+                accessToken = "tok_live_test",
+                studentNo = "2024000001",
+                delegatedSecret = "delegated_android_session",
+                httpTransport = null
+            )
+        )
+
+        // 2) #9 Moments multi-turn contact request messages[] parsing + viewer reset scrub
+        val reqJson = org.json.JSONObject(
+            """
+            {
+              "id": "mcr_test_1",
+              "post_id": "mp_1",
+              "sender_user_id": "cu_req",
+              "sender_name": "张同学",
+              "message": "请问壳上有贴纸吗？",
+              "contact_info": "QQ:123456",
+              "status": "PENDING",
+              "created_at": "2026-11-15T01:00:00Z",
+              "messages": [
+                {"id": "m1", "sender_role": "REQUESTER", "sender_name": "张同学", "content": "是在四楼捡到的吗", "created_at": "2026-11-15T01:00:00Z"},
+                {"id": "m2", "sender_role": "OWNER", "sender_name": "李同学", "content": "是的，壳上有什么图案？", "created_at": "2026-11-15T01:02:00Z"},
+                {"id": "m3", "sender_role": "REQUESTER", "sender_name": "张同学", "content": "请问壳上有贴纸吗？", "created_at": "2026-11-15T01:03:00Z"}
+              ]
+            }
+            """.trimIndent()
+        )
+        val parsedDto = CampusCloudOidcHelper.parseMomentsContactRequestDto(reqJson, fallbackPostId = "mp_1")
+        assertEquals(3, parsedDto.messages.size)
+        assertEquals("OWNER", parsedDto.messages[1].senderRole)
+        assertEquals("是的，壳上有什么图案？", parsedDto.messages[1].content)
+
+        val postJson = org.json.JSONObject(
+            """
+            {
+              "id": "mp_1",
+              "type": "FOUND",
+              "title": "捡到耳机盒",
+              "category": "数码",
+              "campus": "莲花街校区",
+              "location": "图书馆",
+              "description": "白色耳机盒",
+              "contact": "需发起联系/认领申请后查看",
+              "contact_visibility": "ON_REQUEST",
+              "has_protected_contact": true,
+              "is_owner": false,
+              "pending_contact_requests_count": 2,
+              "has_my_contact_request": true,
+              "my_contact_request_status": "APPROVED"
+            }
+            """.trimIndent()
+        )
+        val parsedPost = CampusCloudOidcHelper.parseMomentsPostJson(postJson)!!
+        assertEquals(2, parsedPost.pendingContactRequestsCount)
+        assertTrue(parsedPost.hasMyContactRequest)
+        assertEquals("APPROVED", parsedPost.myContactRequestStatus)
+
+        val scrubbed = CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(
+            cn.edu.haut.campus.core.model.CampusMomentsSnapshot(posts = listOf(parsedPost))
+        )
+        assertEquals(0, scrubbed.posts.single().pendingContactRequestsCount)
+        assertFalse(scrubbed.posts.single().hasMyContactRequest)
+        assertEquals("", scrubbed.posts.single().myContactRequestStatus)
+
+        // 3) #16 Legacy Computer Service Club venue ("大学生活动中心" or "8号教学楼") normalized to F01 W111
+        val clubContentJson = org.json.JSONObject(
+            """
+            {
+              "school_id": "haut",
+              "version": 3,
+              "clubs": [
+                {
+                  "id": "club_partner_computer_service",
+                  "name": "大学生计算机服务社",
+                  "category": "TECH_INNOVATION",
+                  "activity_venue": "大学生活动中心 204",
+                  "enabled": true
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val parsedCatalog = CampusCloudOidcHelper.parseCampusContentJson(clubContentJson)!!
+        val compClub = parsedCatalog.clubs.single()
+        assertEquals("莲花街校区 学生宿舍F01 W111", compClub.activityVenue)
+        assertEquals("学生宿舍F01", compClub.buildingName)
+        assertEquals("W111", compClub.roomNumber)
+    }
 }

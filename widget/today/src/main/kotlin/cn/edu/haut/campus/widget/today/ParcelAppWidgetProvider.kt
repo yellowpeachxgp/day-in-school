@@ -188,19 +188,17 @@ class ParcelAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewText(R.id.tv_parcel_sub_2_desc, "粘贴短信秒提取件码 ›")
             }
 
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            val launchIntent = WidgetRefreshCoordinator.createMainActivityLaunchIntent(context).apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open_parcel_hub")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "parcel_hub")
             }
-            if (launchIntent != null) {
-                val pi = PendingIntent.getActivity(
-                    context,
-                    appWidgetId + 30000,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.parcel_widget_root, pi)
-            }
+            val pi = PendingIntent.getActivity(
+                context,
+                appWidgetId + 30000,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.parcel_widget_root, pi)
 
             WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)
         }

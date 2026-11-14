@@ -891,7 +891,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = "问题反馈、官方通知状态说明与校内权威公众号检索",
+                                text = "问题反馈、防冒充官方声明与校内权威公众号检索",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2061,10 +2061,10 @@ fun SettingsScreen(
                     scope.launch {
                         repository.setThemePalette(key, seedArgb)
                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = if (key == PresetThemePalette.LIQUID_GLASS.key) {
-                            "已启用 Liquid Glass 主题"
-                        } else {
-                            "已更新主题配色"
+                        feedbackText = when (key) {
+                            PresetThemePalette.LIQUID_GLASS.key -> "已启用 Liquid Glass 主题"
+                            PresetThemePalette.HAUT_BLUE.key -> "已切换为工大校徽深蓝 (#053968)"
+                            else -> "已更新主题配色"
                         }
                     }
                 },
@@ -2165,9 +2165,9 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("切换二次元星芒桌面图标", style = MaterialTheme.typography.bodyMedium)
+                        Text("切换二次元猫娘桌面图标", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "默认使用工大深蓝钟楼自适应图标，开启后切换为粉色星芒桌面图标（互斥单图标）",
+                            text = "默认使用工大深蓝钟楼自适应图标，开启后切换为二次元猫娘桌面图标（互斥单图标，不影响桌面小组件点击）",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2180,9 +2180,10 @@ fun SettingsScreen(
                                     context = context,
                                     enableAnimeIcon = enabled
                                 )
+                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                 animeLauncherAliasEnabled = enabled
                                 feedbackText = if (enabled) {
-                                    "已切换为粉色星芒桌面图标（返回桌面稍等片刻即可刷新）"
+                                    "已切换为二次元猫娘桌面图标（返回桌面稍等片刻即可刷新）"
                                 } else {
                                     "已恢复默认工大深蓝钟楼桌面图标"
                                 }
@@ -2203,7 +2204,7 @@ fun SettingsScreen(
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("校医院药品价格公示与医保参考", style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                text = "查询 198 项西药/中成药公示单价与医保报销注意事项",
+                                text = "查询 ${cn.edu.haut.campus.core.domain.CampusHospitalPharmacyCatalog.ITEMS.size} 项西药/中成药公示单价与医保报销注意事项",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

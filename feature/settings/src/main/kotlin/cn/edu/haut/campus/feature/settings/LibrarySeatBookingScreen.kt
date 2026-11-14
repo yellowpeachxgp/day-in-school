@@ -312,14 +312,17 @@ fun LibrarySeatBookingScreen(
                 when {
                     now >= plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK") -> {
                         if (isCloudPlan) {
-                            repository.syncWithCampusCloud()
-                        }
-                        val updated = repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FIRE).getOrNull()
-                        if (updated?.status == "CONFIRMED") {
-                            actionFeedbackBanner = true to (updated.lastDiagnosticMessage ?: "自动抢座成功！")
-                            refreshSeatOverviewAsync()
-                        } else if (updated?.status == "FAILED") {
-                            actionFeedbackBanner = false to (updated.lastDiagnosticMessage ?: "自动抢座未命中")
+                            if (tickCount % 3 == 0) {
+                                repository.syncWithCampusCloud()
+                            }
+                        } else {
+                            val updated = repository.advanceBookingPlanStage(plan.id, TripleScheduleStage.FIRE).getOrNull()
+                            if (updated?.status == "CONFIRMED") {
+                                actionFeedbackBanner = true to (updated.lastDiagnosticMessage ?: "自动抢座成功！")
+                                refreshSeatOverviewAsync()
+                            } else if (updated?.status == "FAILED") {
+                                actionFeedbackBanner = false to (updated.lastDiagnosticMessage ?: "自动抢座未命中")
+                            }
                         }
                     }
                     now >= plan.finalCheckAtEpochMillis && now < plan.fireAtEpochMillis && plan.status in setOf("ARMED", "PRECHECK_OK") -> {
@@ -2970,11 +2973,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             onNavigateToXpeachCloud?.invoke()
                             return@Button
                         }
-                        if (selectedMode == BookingExecutionMode.CLOUD_HOSTED &&
-                            sessionState !is LibrarySeatSessionState.Authenticated &&
-                            !hasSavedSchoolCredentials
-                        ) {
-                            onFeedback(false, "请先登录校园学号与密码，云端才能准点为您自动抢座")
+                        if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasSavedSchoolCredentials) {
+                            onFeedback(false, "开启云端准点抢座需保存校园学号与统一认证密码，以便凌晨 07:00 自动续签登录")
                             onRequireLogin()
                             return@Button
                         }

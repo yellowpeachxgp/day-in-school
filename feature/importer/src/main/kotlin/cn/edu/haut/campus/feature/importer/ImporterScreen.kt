@@ -106,6 +106,7 @@ import org.json.JSONTokener
 @Composable
 fun ImporterScreen(
     repository: CampusRepository,
+    onNavigateToTimetable: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -115,6 +116,7 @@ fun ImporterScreen(
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val rules by repository.rulesFlow.collectAsState(initial = emptyList())
     val periodTimes by repository.periodTimesFlow.collectAsState(initial = emptyList())
+    val unscheduledCourses by repository.unscheduledCoursesFlow.collectAsState(initial = emptyList())
     val audits by repository.importAuditsFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
@@ -274,6 +276,16 @@ fun ImporterScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        val pendingPracCount = unscheduledCourses.count { it.termId == (currentTerm?.id ?: selectedTermId) }
+                        if (pendingPracCount > 0) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            XPeachFilterPill(
+                                label = "去课表设置 ${pendingPracCount} 门实践课时间 ▸",
+                                selected = true,
+                                compact = true,
+                                onClick = onNavigateToTimetable
+                            )
+                        }
                     }
                 }
             }
@@ -476,13 +488,7 @@ fun ImporterScreen(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
                                             compact = true,
-                                            onClick = {
-                                                selectedXnm = yr
-                                                scope.launch {
-                                                    repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
-                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                }
-                                            }
+                                            onClick = { selectedXnm = yr }
                                         )
                                     }
                                 }
@@ -496,25 +502,13 @@ fun ImporterScreen(
                                         label = "第 1 学期",
                                         selected = selectedXqm == "3",
                                         compact = true,
-                                        onClick = {
-                                            selectedXqm = "3"
-                                            scope.launch {
-                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
-                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                            }
-                                        }
+                                        onClick = { selectedXqm = "3" }
                                     )
                                     XPeachFilterPill(
                                         label = "第 2 学期",
                                         selected = selectedXqm == "12",
                                         compact = true,
-                                        onClick = {
-                                            selectedXqm = "12"
-                                            scope.launch {
-                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
-                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                            }
-                                        }
+                                        onClick = { selectedXqm = "12" }
                                     )
                                 }
 
@@ -591,13 +585,7 @@ fun ImporterScreen(
                                             label = "$yr-${yr.toInt() + 1}",
                                             selected = selectedXnm == yr,
                                             compact = true,
-                                            onClick = {
-                                                selectedXnm = yr
-                                                scope.launch {
-                                                    repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(yr, selectedXqm))
-                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                }
-                                            }
+                                            onClick = { selectedXnm = yr }
                                         )
                                     }
                                 }
@@ -611,25 +599,13 @@ fun ImporterScreen(
                                         label = "第 1 学期",
                                         selected = selectedXqm == "3",
                                         compact = true,
-                                        onClick = {
-                                            selectedXqm = "3"
-                                            scope.launch {
-                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "3"))
-                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                            }
-                                        }
+                                        onClick = { selectedXqm = "3" }
                                     )
                                     XPeachFilterPill(
                                         label = "第 2 学期",
                                         selected = selectedXqm == "12",
                                         compact = true,
-                                        onClick = {
-                                            selectedXqm = "12"
-                                            scope.launch {
-                                                repository.selectCurrentTerm(HautAcademicEndpoints.toTermId(selectedXnm, "12"))
-                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                            }
-                                        }
+                                        onClick = { selectedXqm = "12" }
                                     )
                                 }
 

@@ -89,7 +89,9 @@ data class HautLiveSyncResult(
 
 fun HautLiveSyncResult.syncSummaryText(): String = buildString {
     append("课表已更新（$termId）：${timetableCandidates.size} 条排课")
-    if (unscheduledCourses.isNotEmpty()) append(" · ${unscheduledCourses.size} 门实践课程时间待定，不生成提醒")
+    if (unscheduledCourses.isNotEmpty()) {
+        append(" · ${unscheduledCourses.size} 门实践课时间待定（可在课表页自定义排课时间并开启提醒）")
+    }
     if (timetableCandidates.isEmpty()) {
         val fallback = additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
             sibId != termId && cands.isNotEmpty()
@@ -654,6 +656,7 @@ object HautZfsoftParser {
             val academicYear = if (xnm.contains("-")) xnm else "${xnm}-${(xnm.toIntOrNull() ?: 2025) + 1}"
             val xqm = requireTermCode(obj.optString("xqm"))
             val termNo = when (xqm) {
+                "16", "3_summer" -> 3
                 "12", "2" -> 2
                 else -> 1
             }
@@ -729,7 +732,7 @@ object HautZfsoftParser {
     }
 
     private fun requireTermCode(value: String): String = value.trim().also {
-        if (it !in setOf("3", "1", "12", "2")) throw AcademicReadException(
+        if (it !in setOf("3", "1", "12", "2", "16")) throw AcademicReadException(
             "SOURCE_DATA_INVALID", "学校学期编码无法识别，已保留之前的数据"
         )
     }
@@ -767,6 +770,7 @@ object HautZfsoftParser {
             val xqm = requireTermCode(obj.optString("xqm")).trim()
             val xqmmc = obj.optString("xqmmc", "").trim()
             val termNo = when {
+                xqmmc == "3" || xqm == "16" -> 3
                 xqmmc == "2" || xqm == "12" || xqm == "2" -> 2
                 else -> 1
             }

@@ -154,6 +154,7 @@ fun TodayScreen(
     onNavigateToMoments: () -> Unit = onNavigateToCommunity,
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToGrades: () -> Unit = {},
+    onNavigateToTimetable: () -> Unit = {},
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
@@ -170,6 +171,7 @@ fun TodayScreen(
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
+    val unscheduledCourses by repository.unscheduledCoursesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
     val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
     val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
@@ -578,6 +580,36 @@ fun TodayScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val pendingPracticalCourses = remember(unscheduledCourses, term?.id) {
+                    unscheduledCourses.filter { term == null || it.termId == term?.id }
+                }
+                if (pendingPracticalCourses.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(XPeachTheme.secondaryAccentCardColor)
+                            .clickable(onClick = onNavigateToTimetable)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${pendingPracticalCourses.size} 门实践课时间待定（可自定义排课时间）",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "去课表设置 ▸",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+                }
+
                 AnimatedContent(
                     targetState = selectedDate,
                     transitionSpec = {
@@ -863,6 +895,10 @@ fun TodayScreen(
                 selectedOccurrenceForDetail = null
                 onNavigateToMapWithRoom(room)
             },
+            onNavigateToTimetable = {
+                selectedOccurrenceForDetail = null
+                onNavigateToTimetable()
+            },
             onCourseSuspended = { courseName ->
                 dynamicSyncBanner = "已将「$courseName」设为单次停课，可在课表卡底部点击「恢复上课」撤销"
             },
@@ -994,6 +1030,7 @@ private fun CourseDetailAndSnoozeDialog(
     activeTask: ReminderTaskDomain?,
     overridesByScope: Map<String, ReminderEventOverride>,
     onNavigateToMapWithRoom: (String) -> Unit,
+    onNavigateToTimetable: () -> Unit = {},
     onCourseSuspended: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -1321,6 +1358,12 @@ private fun CourseDetailAndSnoozeDialog(
                     ) {
                         val isTodayOcc = occ.date == LocalDate.now(HAUT_ZONE_ID)
                         Text(if (isTodayOcc) "今日停课" else "本节停课", maxLines = 1, softWrap = false)
+                    }
+                    OutlinedButton(
+                        onClick = onNavigateToTimetable,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("调课/管理", maxLines = 1, softWrap = false)
                     }
                 }
             }

@@ -500,6 +500,7 @@ fun HautCampusRootApp(
         !prefs.hasCompletedOnboarding -> "onboarding"
         else -> "main_tabs"
     }
+    var showMapHospitalPharmacyDialog by remember { mutableStateOf(false) }
 
     AnimatedContent(
         targetState = activeRouteKey,
@@ -562,6 +563,10 @@ fun HautCampusRootApp(
             "importer" -> {
                 ImporterScreen(
                     repository = repository,
+                    onNavigateToTimetable = {
+                        overlayScreen = null
+                        currentTab = PrimaryBottomTab.TIMETABLE
+                    },
                     onBack = { overlayScreen = null }
                 )
             }
@@ -699,6 +704,7 @@ fun HautCampusRootApp(
                                 onNavigateToMoments = { overlayScreen = "moments" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToGrades = { currentTab = PrimaryBottomTab.GRADES },
+                                onNavigateToTimetable = { currentTab = PrimaryBottomTab.TIMETABLE },
                                 resetTrigger = if (currentTab == PrimaryBottomTab.TODAY) tabResetCounter else 0
                             )
                             PrimaryBottomTab.TIMETABLE -> TimetableScreen(
@@ -744,6 +750,7 @@ fun HautCampusRootApp(
                                     overlayScreen = "community"
                                 },
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
+                                onNavigateToHospitalPharmacy = { showMapHospitalPharmacyDialog = true },
                                 activeSchool = activeSession.school,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.CAMPUS) tabResetCounter else 0
                             )
@@ -811,6 +818,21 @@ fun HautCampusRootApp(
                 }
             }
         }
+    }
+
+    if (showMapHospitalPharmacyDialog) {
+        cn.edu.haut.campus.feature.settings.CampusHospitalPharmacyDialog(
+            onDismiss = { showMapHospitalPharmacyDialog = false },
+            onOpenUrl = { _, url ->
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    )
+                }
+            }
+        )
     }
 
     val releaseToPrompt = detectedUpdateRelease

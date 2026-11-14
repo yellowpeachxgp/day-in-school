@@ -4,10 +4,73 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Back hair & twin side locks -->
+    <path
+        android:fillColor="#4C1D95"
+        android:pathData="M33,46C31,58 32,70 36,77L43,74L43,62L65,62L65,74L72,77C76,70 77,58 75,46C73,35 64,30 54,30C44,30 35,35 33,46Z" />
+    <!-- Outer cat ears -->
+    <path
+        android:fillColor="#4C1D95"
+        android:pathData="M34,46L31,26L47,35Z M74,46L77,26L61,35Z" />
+    <!-- Inner pink cat ears -->
+    <path
+        android:fillColor="#F472B6"
+        android:pathData="M36,43L34,30L45,36Z M72,43L74,30L63,36Z" />
+    <!-- Ear side ribbons -->
     <path
         android:fillColor="#EC4899"
-        android:pathData="M34,28H74C77.3,28 80,30.7 80,34V74C80,77.3 77.3,80 74,80H34C30.7,80 28,77.3 28,74V34C28,30.7 30.7,28 34,28Z" />
+        android:pathData="M33,44L28.5,41.5L30,47.5Z M75,44L79.5,41.5L78,47.5Z" />
+    <!-- Sailor uniform collar & ribbon -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,34L59.2,46.8L73,48L62.5,57.1L65.7,70.6L54,63.4L42.3,70.6L45.5,57.1L35,48L48.8,46.8Z" />
+        android:pathData="M41,69L54,77L67,69L70,79L38,79Z" />
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M42,70.5L54,76.5L66,70.5L67,72.5L54,78.5L41,72.5Z" />
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M54,75L47,71L47,79Z M54,75L61,71L61,79Z" />
+    <path
+        android:fillColor="#BE185D"
+        android:pathData="M52.5,73.5h3v3h-3z" />
+    <!-- Face contour -->
+    <path
+        android:fillColor="#FFF7ED"
+        android:pathData="M38,48C38,39 45,34 54,34C63,34 70,39 70,48C70,59 63,68 54,68C45,68 38,59 38,48Z" />
+    <!-- Front anime bangs -->
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="M36,49C36,37 44,31 54,31C64,31 72,37 72,49C69,44 66,42 63,46C60,40 57,39 54,46C51,39 48,40 45,46C42,42 39,44 36,49Z" />
+    <!-- Hair halo highlight -->
+    <path
+        android:fillColor="#DDD6FE"
+        android:pathData="M43,39Q54,36 65,39Q64,41 54,39Q44,41 43,39Z" />
+    <!-- Upper eyelashes -->
+    <path
+        android:fillColor="#311042"
+        android:pathData="M41.5,50.5Q46,48 50.5,50.5Q49.8,51.8 46,50.8Q42.2,51.8 41.5,50.5Z M57.5,50.5Q62,48 66.5,50.5Q65.8,51.8 62,50.8Q58.2,51.8 57.5,50.5Z" />
+    <!-- Anime irises -->
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="M43,53a3,3.8 0 1,0 6,0a3,3.8 0 1,0 -6,0 M59,53a3,3.8 0 1,0 6,0a3,3.8 0 1,0 -6,0" />
+    <path
+        android:fillColor="#C084FC"
+        android:pathData="M44,54.2a2,2 0 1,0 4,0a2,2 0 1,0 -4,0 M60,54.2a2,2 0 1,0 4,0a2,2 0 1,0 -4,0" />
+    <!-- White eye sparkles -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M43.8,51.5a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0 M59.8,51.5a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0" />
+    <!-- Rosy blush cheeks -->
+    <path
+        android:fillColor="#FDA4AF"
+        android:fillAlpha="0.78"
+        android:pathData="M40.5,58a2.6,1.4 0 1,0 5.2,0a2.6,1.4 0 1,0 -5.2,0 M62.3,58a2.6,1.4 0 1,0 5.2,0a2.6,1.4 0 1,0 -5.2,0" />
+    <!-- Cute cat mouth (:3) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M50.5,60.5Q52.2,62.6 54,60.7Q55.8,62.6 57.5,60.5"
+        android:strokeWidth="1.4"
+        android:strokeColor="#9D174D"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

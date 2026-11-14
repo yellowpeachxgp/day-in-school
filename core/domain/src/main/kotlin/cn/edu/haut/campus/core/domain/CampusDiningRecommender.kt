@@ -217,7 +217,7 @@ object CampusDiningRecommender {
             areaLabel = "东北生活区 · 近3/4教与A/B/C/D公寓",
             latitude = 34.833440,
             longitude = 113.548450,
-            nearbyBuildingIds = setOf("b_t3", "b_t4", "b_bell", "b_dorm_ab", "b_dorm_cd", "b_express"),
+            nearbyBuildingIds = setOf("b_t3", "b_t4", "b_bell", "b_dorm_ab", "b_dorm_ju", "b_express"),
             brunchDishes = listOf("胡辣汤配水煎包", "鲜肉大包配豆浆", "鸡蛋灌饼"),
             lunchDinnerDishes = listOf("一楼大众自选快餐", "二楼河南羊肉烩面", "三楼铁板黑椒牛柳饭", "黄焖鸡米饭", "山西刀削面"),
             lateDishes = listOf("砂锅麻辣烫", "铁板炒饭", "酸辣粉")
@@ -227,10 +227,10 @@ object CampusDiningRecommender {
             campusId = "lianhuajie",
             name = "第四餐厅",
             shortName = "四餐厅",
-            areaLabel = "中西区 · 近实训中心与实验楼群",
+            areaLabel = "中西区 · 近31/32号楼、实训中心与实验楼群",
             latitude = 34.832260,
             longitude = 113.541300,
-            nearbyBuildingIds = setOf("b_eng", "b_t34", "b_t38", "b_t40", "b_t5", "b_t6", "b_t7", "b_t8", "b_t9", "b_t18", "b_dorm_ef"),
+            nearbyBuildingIds = setOf("b_t1", "b_t2", "b_eng", "b_t34", "b_t38", "b_t40", "b_t5", "b_t6", "b_t7", "b_t8", "b_t9", "b_t18", "b_dorm_ef"),
             brunchDishes = listOf("现磨豆浆配掉渣饼", "鲜虾蒸饺", "皮蛋瘦肉粥"),
             lunchDinnerDishes = listOf("招牌脆皮鸡米饭", "锡纸花甲粉", "番茄肥牛米线", "咖喱滑蛋猪排饭", "低脂鸡胸肉轻食碗"),
             lateDishes = listOf("铁板烤冷面", "关东煮拼盘", "老麻抄手")
@@ -243,7 +243,7 @@ object CampusDiningRecommender {
             areaLabel = "东侧教学区旁 · 近3/4号教学楼",
             latitude = 34.830570,
             longitude = 113.549520,
-            nearbyBuildingIds = setOf("b_t2", "b_t3", "b_t4", "b_t1", "b_hospital"),
+            nearbyBuildingIds = setOf("b_t3", "b_t4", "b_hospital"),
             brunchDishes = listOf("信阳热干面", "鸡蛋手抓饼", "紫菜鲜肉小馄饨"),
             lunchDinnerDishes = listOf("下课快手盖浇饭", "重庆豌杂小面", "柳州螺蛳粉", "广式腊味煲仔饭", "鸭血粉丝汤"),
             lateDishes = listOf("瓦罐汤配拌粉", "老北京炸酱面", "脆底煎饺")
@@ -466,10 +466,11 @@ object CampusDiningRecommender {
             )
         }
 
-        // 追加用户自行新增但不在默认目录中的自定义档口菜品
+        // 追加用户自行新增但不在默认目录中的自定义档口菜品（自动过滤已关闭的二餐厅/三餐厅历史残留）
         for ((key, list) in reviewsByKey) {
             if (key in handledKeys) continue
             val latest = list.maxByOrNull { it.updatedAtEpochMs } ?: continue
+            if (latest.canteenBuildingId in setOf("b_canteen2", "b_canteen3")) continue
             if (canteenBuildingIdFilter != null && latest.canteenBuildingId != canteenBuildingIdFilter) continue
             val shortName = canteenMap[latest.canteenBuildingId]?.shortName ?: "食堂"
             val avg = list.map { it.stars }.average().toFloat().coerceIn(1f, 5f)

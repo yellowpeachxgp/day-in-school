@@ -227,7 +227,8 @@ object DormElectricityNotificationSubsystem {
         val resolvedProfileId = profileId ?: activeSnap?.profileId
         val resolvedEpoch = generation ?: activeSnap?.generation
 
-        val launchIntent = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)?.apply {
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            component = android.content.ComponentName(appContext.packageName, "cn.edu.haut.campus.MainActivity")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(EXTRA_OVERLAY_ROUTE, OVERLAY_ROUTE_ELECTRICITY)
             if (!resolvedProfileId.isNullOrBlank() && resolvedEpoch != null && resolvedEpoch > 0L) {
@@ -243,14 +244,12 @@ object DormElectricityNotificationSubsystem {
             }
         }
 
-        val contentIntent = launchIntent?.let {
-            PendingIntent.getActivity(
-                appContext,
-                notificationId,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        }
+        val contentIntent = PendingIntent.getActivity(
+            appContext,
+            notificationId,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)

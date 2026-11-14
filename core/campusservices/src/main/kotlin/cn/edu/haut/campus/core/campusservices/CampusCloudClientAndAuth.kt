@@ -1151,6 +1151,14 @@ object CampusCloudOidcHelper {
         if (accessToken.isBlank()) {
             return CloudPlanSubmissionOutcome.RejectedPrePersist("云端会话令牌为空", isAuthExpired = true)
         }
+        if (httpTransport == null) {
+            if (studentNo.isBlank()) {
+                return CloudPlanSubmissionOutcome.RejectedPrePersist("缺少校园学号，请先绑定学号与统一认证密码")
+            }
+            if (delegatedSecret.isBlank() || delegatedSecret == "delegated_android_session") {
+                return CloudPlanSubmissionOutcome.RejectedPrePersist("缺少校园统一认证密码，请先保存学号与密码后再开启云端抢座")
+            }
+        }
         val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
         var planRequestSent = false
@@ -1372,6 +1380,9 @@ object CampusCloudOidcHelper {
         httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): Boolean {
         if (accessToken.isBlank() || studentNo.isBlank()) return false
+        if (httpTransport == null && (delegatedSecret.isBlank() || delegatedSecret == "delegated_android_session")) {
+            return false
+        }
         val transport = httpTransport ?: ::httpJsonRequest
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
@@ -2866,7 +2877,7 @@ object CampusCloudOidcHelper {
                             cl.optCleanString("activityVenue", presetClub?.activityVenue ?: "大学生活动中心")
                         ).ifBlank { "大学生活动中心" }
                         val isLegacyComputerServiceVenue = id == "club_partner_computer_service" &&
-                            rawVenue.contains("8号教学楼")
+                            (rawVenue.contains("8号") || rawVenue.contains("活动中心"))
                         val normalizedVenue = if (isLegacyComputerServiceVenue) {
                             "莲花街校区 学生宿舍F01 W111"
                         } else {
@@ -3248,8 +3259,85 @@ object CampusCloudOidcHelper {
         val status: String,
         val replyMessage: String?,
         val initiatorContact: String?,
-        val createdAt: String
+        val createdAt: String,
+        val messages: List<cn.edu.haut.campus.core.model.MomentsContactMessage> = emptyList()
     )
+
+    internal fun parseMomentsContactRequestDto(
+        d: JSONObject,
+        fallbackPostId: String,
+        fallbackSenderName: String = "河工大同学",
+        fallbackMessage: String = "",
+        fallbackContactInfo: String = "",
+        fallbackStatus: String = "PENDING",
+        fallbackId: String = ""
+    ): MomentsContactRequestDto {
+        val reqId = d.optCleanString("id", fallbackId)
+        val senderName = d.optCleanString("sender_name", fallbackSenderName).ifBlank { "河工大同学" }
+        val message = d.optCleanString("message", fallbackMessage)
+        val replyMessage = d.optNullableCleanString("reply_message")
+        val createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+        val rawMsgs = d.optJSONArray("messages")
+        val parsedMsgs = buildList {
+            if (rawMsgs != null && rawMsgs.length() > 0) {
+                for (i in 0 until rawMsgs.length()) {
+                    val m = rawMsgs.optJSONObject(i) ?: continue
+                    val content = m.optCleanString("content")
+                    if (content.isBlank()) continue
+                    val role = m.optCleanString("sender_role", "REQUESTER").uppercase()
+                    add(
+                        cn.edu.haut.campus.core.model.MomentsContactMessage(
+                            id = m.optCleanString("id", "${reqId}_m_$i"),
+                            senderRole = role,
+                            senderName = m.optCleanString(
+                                "sender_name",
+                                if (role == "OWNER") "发起人" else senderName
+                            ),
+                            content = content,
+                            createdAt = m.optCleanString("created_at").substringBefore("T").ifBlank { createdAt }
+                        )
+                    )
+                }
+            }
+            if (isEmpty()) {
+                if (message.isNotBlank()) {
+                    add(
+                        cn.edu.haut.campus.core.model.MomentsContactMessage(
+                            id = "${reqId}_init",
+                            senderRole = "REQUESTER",
+                            senderName = senderName,
+                            content = message,
+                            createdAt = createdAt
+                        )
+                    )
+                }
+                if (!replyMessage.isNullOrBlank()) {
+                    add(
+                        cn.edu.haut.campus.core.model.MomentsContactMessage(
+                            id = "${reqId}_reply",
+                            senderRole = "OWNER",
+                            senderName = "发起人",
+                            content = replyMessage,
+                            createdAt = d.optCleanString("updated_at").substringBefore("T").ifBlank { createdAt }
+                        )
+                    )
+                }
+            }
+        }
+        return MomentsContactRequestDto(
+            id = reqId,
+            postId = d.optCleanString("post_id", fallbackPostId),
+            senderUserId = d.optCleanString("sender_user_id"),
+            senderName = senderName,
+            message = message,
+            contactInfo = d.optCleanString("contact_info", fallbackContactInfo),
+            status = d.optCleanString("status", fallbackStatus),
+            replyMessage = replyMessage,
+            initiatorContact = d.optNullableCleanString("initiator_contact"),
+            createdAt = createdAt,
+            messages = parsedMsgs
+        )
+    }
 
     fun submitMomentsContactRequestToCloud(
         postId: String,
@@ -3277,17 +3365,13 @@ object CampusCloudOidcHelper {
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
         val d = root.optJSONObject("data") ?: return null
-        MomentsContactRequestDto(
-            id = d.optCleanString("id"),
-            postId = d.optCleanString("post_id", postId),
-            senderUserId = d.optCleanString("sender_user_id"),
-            senderName = d.optCleanString("sender_name", senderName),
-            message = d.optCleanString("message", message),
-            contactInfo = d.optCleanString("contact_info", contactInfo),
-            status = d.optCleanString("status", "PENDING"),
-            replyMessage = d.optNullableCleanString("reply_message"),
-            initiatorContact = d.optNullableCleanString("initiator_contact"),
-            createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+        parseMomentsContactRequestDto(
+            d = d,
+            fallbackPostId = postId,
+            fallbackSenderName = senderName,
+            fallbackMessage = message,
+            fallbackContactInfo = contactInfo,
+            fallbackStatus = "PENDING"
         )
     }.getOrNull()
 
@@ -3345,17 +3429,11 @@ object CampusCloudOidcHelper {
             for (i in 0 until arr.length()) {
                 val d = arr.optJSONObject(i) ?: continue
                 add(
-                    MomentsContactRequestDto(
-                        id = d.optCleanString("id"),
-                        postId = d.optCleanString("post_id", postId),
-                        senderUserId = d.optCleanString("sender_user_id"),
-                        senderName = d.optCleanString("sender_name", "河工大同学"),
-                        message = d.optCleanString("message"),
-                        contactInfo = d.optCleanString("contact_info"),
-                        status = d.optCleanString("status", "PENDING"),
-                        replyMessage = d.optNullableCleanString("reply_message"),
-                        initiatorContact = d.optNullableCleanString("initiator_contact"),
-                        createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+                    parseMomentsContactRequestDto(
+                        d = d,
+                        fallbackPostId = postId,
+                        fallbackSenderName = "河工大同学",
+                        fallbackStatus = "PENDING"
                     )
                 )
             }
@@ -3398,17 +3476,12 @@ object CampusCloudOidcHelper {
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
         val d = root.optJSONObject("data") ?: return null
-        MomentsContactRequestDto(
-            id = d.optCleanString("id", requestId),
-            postId = d.optCleanString("post_id", postId),
-            senderUserId = d.optCleanString("sender_user_id"),
-            senderName = d.optCleanString("sender_name", "河工大同学"),
-            message = d.optCleanString("message"),
-            contactInfo = d.optCleanString("contact_info"),
-            status = d.optCleanString("status", action),
-            replyMessage = d.optNullableCleanString("reply_message"),
-            initiatorContact = d.optNullableCleanString("initiator_contact"),
-            createdAt = d.optCleanString("created_at").substringBefore("T").ifBlank { "刚刚" }
+        parseMomentsContactRequestDto(
+            d = d,
+            fallbackPostId = postId,
+            fallbackSenderName = "河工大同学",
+            fallbackStatus = action,
+            fallbackId = requestId
         )
     }.getOrNull()
 
@@ -3553,7 +3626,10 @@ object CampusCloudOidcHelper {
                 isOwner = false,
                 canManage = false,
                 canClaimLegacy = false,
-                viewerRole = "GUEST"
+                viewerRole = "GUEST",
+                pendingContactRequestsCount = 0,
+                hasMyContactRequest = false,
+                myContactRequestStatus = ""
             )
         }
         val scrubbedBooks = snapshot.bookListings.map { book ->
@@ -3608,6 +3684,9 @@ object CampusCloudOidcHelper {
                     .put("is_legacy_unowned", p.isLegacyUnowned)
                     .put("can_claim_legacy", p.canClaimLegacy)
                     .put("viewer_role", p.viewerRole)
+                    .put("pending_contact_requests_count", p.pendingContactRequestsCount)
+                    .put("has_my_contact_request", p.hasMyContactRequest)
+                    .put("my_contact_request_status", p.myContactRequestStatus)
                     .put("likes_count", p.likesCount)
                     .put("favorites_count", p.favoritesCount)
                     .put("comments", commentsArr)
@@ -3786,7 +3865,10 @@ object CampusCloudOidcHelper {
             canManage = canManage,
             isLegacyUnowned = isLegacyUnowned,
             canClaimLegacy = canClaimLegacy,
-            viewerRole = viewerRole
+            viewerRole = viewerRole,
+            pendingContactRequestsCount = obj.optInt("pending_contact_requests_count", 0).coerceAtLeast(0),
+            hasMyContactRequest = obj.optBoolean("has_my_contact_request", false),
+            myContactRequestStatus = obj.optCleanString("my_contact_request_status")
         )
     }
 

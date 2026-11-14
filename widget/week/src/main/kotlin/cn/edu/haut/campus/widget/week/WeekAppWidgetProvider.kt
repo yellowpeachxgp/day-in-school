@@ -147,19 +147,17 @@ class WeekAppWidgetProvider : AppWidgetProvider() {
                 )
             }
 
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            val launchIntent = WidgetRefreshCoordinator.createMainActivityLaunchIntent(context).apply {
                 WidgetRefreshCoordinator.stampIntent(this, snapshot, appWidgetId, "open")
                 putExtra(WidgetRefreshCoordinator.EXTRA_NAVIGATE_TAB, "timetable")
             }
-            if (launchIntent != null) {
-                val pi = PendingIntent.getActivity(
-                    context,
-                    appWidgetId,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(R.id.week_widget_root, pi)
-            }
+            val pi = PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            views.setOnClickPendingIntent(R.id.week_widget_root, pi)
 
             if (!WidgetRefreshCoordinator.publishIfCurrent(context, appWidgetId, snapshot, views)) return
         }

@@ -57,6 +57,8 @@ object CampusHospitalPharmacyCatalog {
     const val CONTRIBUTOR_GITHUB_URL = "https://github.com/Lollipop2233"
     const val CAPTURED_DATE_ISO = "2026-06-23"
     const val POLICY_WECHAT_URL = "https://mp.weixin.qq.com/s/QEVe1IvkyiyIfjttGhzKJQ"
+    const val OUTPATIENT_REIMBURSEMENT_REFERENCE_SUMMARY =
+        "河工大参保大学生校医院普通门诊参考：纳入河南省基本医疗保险目录的合规药品，在年度门诊统筹限额内按大学生门诊统筹政策比例实时结算；非医保目录药品、自费耗材或未参保状态不予报销，实际报销金额以校医院收费窗口实时医保结算为准。"
 
     private val STANDARD_NMPA_APPROVAL_REGEX =
         Regex("^国药准字(H|Z|S|B|F|J|HJ|ZJ|SJ)\\d{8}$")

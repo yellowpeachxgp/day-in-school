@@ -661,9 +661,8 @@ object ReminderNotificationFactory {
         buildingId: String?,
         roomText: String?
     ): PendingIntent? {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            ?: return null
-        launchIntent.apply {
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            component = android.content.ComponentName(context.packageName, "cn.edu.haut.campus.MainActivity")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             data = Uri.parse("hautcampus://reminder/$navAction/${requestKey.hashCode()}")
             putExtra(EXTRA_REMINDER_NAV_ACTION, navAction)

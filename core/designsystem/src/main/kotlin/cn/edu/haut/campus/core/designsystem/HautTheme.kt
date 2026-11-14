@@ -803,6 +803,7 @@ enum class PresetThemePalette(
     val activatesLiquidGlass: Boolean = false,
     val recommendedStyle: UiDesignStyle? = null
 ) {
+    HAUT_BLUE("HAUT_BLUE", "工大蓝", "工大校徽深蓝 (#053968)", 0xFF053968, recommendedStyle = UiDesignStyle.FLUTTER_M3),
     MINT_BREEZE("MINT_BREEZE", "薄荷晨风", "清新薄荷绿", 0xFF10B981, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
     SKY_SODA("SKY_SODA", "晴空苏打", "清澈天蓝", 0xFF0EA5E9, recommendedStyle = UiDesignStyle.FRESH_BREEZE),
     PEACH_OOLONG("PEACH_OOLONG", "白桃乌龙", "柔和浅粉", 0xFFF472B6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
@@ -810,7 +811,6 @@ enum class PresetThemePalette(
     LAVENDER_MIST("LAVENDER_MIST", "海盐香芋", "淡雅浅紫", 0xFF8B5CF6, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
     POMELO_SUN("POMELO_SUN", "西柚暖阳", "温暖珊瑚橙", 0xFFFB7185, recommendedStyle = UiDesignStyle.CREAM_PASTEL),
     LIQUID_GLASS("LIQUID_GLASS", "Liquid Glass", "液态透镜折射", 0xFF0EA5E9, activatesLiquidGlass = true, recommendedStyle = UiDesignStyle.LIQUID_GLASS),
-    HAUT_BLUE("HAUT_BLUE", "工大蓝", "工大深蓝 (#053968)", 0xFF053968, recommendedStyle = UiDesignStyle.FLUTTER_M3),
     PINE_TEAL("PINE_TEAL", "松石青", "沉稳青绿", 0xFF0D9488),
     JADE_GREEN("JADE_GREEN", "翡翠绿", "自然深绿", 0xFF16A34A),
     AMBER_GOLD("AMBER_GOLD", "琥珀金", "温暖琥珀色", 0xFFD97706),
@@ -1280,7 +1280,8 @@ fun buildSeedColorScheme(
     return if (!darkTheme) {
         val isCream = uiDesignStyle == UiDesignStyle.CREAM_PASTEL
         val isFresh = uiDesignStyle == UiDesignStyle.FRESH_BREEZE
-        val primary = if (!isFresh && !isCream && (seedArgb and 0xFFFFFFL) == 0x053968L) {
+        val isExactHautBlue = (seedArgb and 0xFFFFFFL) == 0x053968L
+        val primary = if (isExactHautBlue) {
             Color(0xFF053968)
         } else {
             hsvColor(
@@ -1294,7 +1295,11 @@ fun buildSeedColorScheme(
             if (isCream) (sat * 0.20f).coerceIn(0.07f, 0.22f) else (sat * 0.24f).coerceIn(0.08f, 0.26f),
             0.975f
         ).copy(alpha = safeContainerAlpha)
-        val onPrimaryContainer = hsvColor(hue, (sat * 0.92f).coerceIn(0.45f, 0.92f), 0.38f)
+        val onPrimaryContainer = if (isExactHautBlue) {
+            Color(0xFF053968)
+        } else {
+            hsvColor(hue, (sat * 0.92f).coerceIn(0.45f, 0.92f), 0.38f)
+        }
         val secondary = hsvColor(hue + 20f, (sat * 0.72f).coerceIn(0.24f, 0.76f), 0.68f)
         val secondaryContainer = hsvColor(hue + 20f, (sat * 0.18f).coerceIn(0.06f, 0.18f), 0.965f)
             .copy(alpha = safeContainerAlpha)

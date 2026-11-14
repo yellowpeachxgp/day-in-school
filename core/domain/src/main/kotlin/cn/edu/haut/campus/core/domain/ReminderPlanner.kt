@@ -164,9 +164,10 @@ object ReminderPlanner {
             }
         }
 
-        // 考试事件：纳入所有具备明确日期与开始时间的考试（提前 1 天提醒可能在 8 天内触发）
+        // 考试事件：仅纳入当前激活学期（或未指定学期时全部）且具备明确日期与开始时间的考试
         val maxExamDate = startDate.plusDays(horizonDays + 2L)
         for (exam in exams) {
+            if (term != null && exam.termId.isNotBlank() && exam.termId != term.id) continue
             val examDate = exam.examDate ?: continue
             if (!examDate.isBefore(startDate) && !examDate.isAfter(maxExamDate)) {
                 val projected = projectExamToEvent(exam)

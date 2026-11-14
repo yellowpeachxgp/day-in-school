@@ -345,6 +345,7 @@ class CampusRepository internal constructor(
         val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
         val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
         val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
+        val EXAM_TERM_POISON_REPAIRED_V1 = booleanPreferencesKey("exam_term_poison_repaired_v1")
     }
 
     init {
@@ -755,6 +756,7 @@ class CampusRepository internal constructor(
                 syncCampusDictionaryV18Internal()
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
+            ensureExamTermPoisonRepairedIfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
@@ -828,7 +830,33 @@ class CampusRepository internal constructor(
             }
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
+        ensureExamTermPoisonRepairedIfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
+    }
+
+    /**
+     * 一次性修复历史版本将 2025-2026-2（2026年春季学期，考试日期 2026-01-01..2026-07-31）考试误归入 2026-2027-1 的残留记录。
+     */
+    internal suspend fun ensureExamTermPoisonRepairedIfNeeded() {
+        val prefs = preferences.data.first()
+        if (prefs[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] == true) return
+        database.withTransaction {
+            val allExams = dao.getExamSchedulesSnapshot()
+            val poisoned = allExams.filter { ex ->
+                val dateIso = ex.examDateIso
+                ex.termId == "2026-2027-1" &&
+                    dateIso != null &&
+                    dateIso >= "2026-01-01" &&
+                    dateIso <= "2026-07-31"
+            }
+            if (poisoned.isNotEmpty()) {
+                val repaired = poisoned.map { ex -> ex.copy(termId = "2025-2026-2") }
+                dao.upsertExamSchedules(repaired)
+            }
+        }
+        preferences.edit {
+            it[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] = true
+        }
     }
 
     /**
@@ -1543,18 +1571,41 @@ class CampusRepository internal constructor(
         overrideId: String? = null,
         mergedRuleIds: List<String> = emptyList()
     ) {
+        val dateIso = date.toString()
         val allRuleIds = (mergedRuleIds + listOfNotNull(ruleId)).distinct().filter { it.isNotBlank() }
         database.withTransaction {
+            val snapshot = dao.getOccurrenceOverridesSnapshot()
+            val restoredCanceledList = mutableListOf<OccurrenceOverrideEntity>()
             if (!overrideId.isNullOrBlank()) {
-                val existing = dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == overrideId }
+                val existing = snapshot.firstOrNull { it.id == overrideId }
                 if (existing != null && existing.courseRuleId == null && existing.canceled) {
                     dao.upsertOccurrenceOverride(existing.copy(canceled = false, reason = "临时调课/补课"))
                 } else {
+                    if (existing != null) restoredCanceledList += existing
                     dao.deleteOccurrenceOverrideById(overrideId)
                 }
             }
             for (rId in allRuleIds) {
-                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(rId, date.toString())
+                restoredCanceledList += snapshot.filter {
+                    it.dateIso == dateIso && it.courseRuleId == rId && it.canceled
+                }
+                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(rId, dateIso)
+            }
+            // 若恢复的原停课记录是由跨日调课产生（reason = "已调至 YYYY-MM-DD"），同步清理对应的调入临时记录，避免恢复后产生双份排课
+            val movedTargetCourseIds = restoredCanceledList
+                .filter { it.reason?.startsWith("已调至 ") == true }
+                .mapNotNull { it.courseId }
+                .toSet()
+            if (movedTargetCourseIds.isNotEmpty()) {
+                val pairedMoves = snapshot.filter { ov ->
+                    ov.courseRuleId == null &&
+                        !ov.canceled &&
+                        ov.courseId in movedTargetCourseIds &&
+                        ov.reason == "由 $dateIso 调入"
+                }
+                for (mv in pairedMoves) {
+                    dao.deleteOccurrenceOverrideById(mv.id)
+                }
             }
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
@@ -1610,6 +1661,44 @@ class CampusRepository internal constructor(
                                 course.externalId?.startsWith("sjk:") == true
                             )
                     ) {
+                        val extId = course.externalId.orEmpty()
+                        if (extId.startsWith("sjk:")) {
+                            val rest = extId.removePrefix("sjk:")
+                            val colonIdx = rest.indexOf(':')
+                            if (colonIdx > 0 && colonIdx < rest.lastIndex) {
+                                val pracTermId = rest.substring(0, colonIdx)
+                                val pracSourceKey = rest.substring(colonIdx + 1)
+                                val lastRuleWeeks = targetRules
+                                    .firstOrNull { it.courseId == cId }
+                                    ?.toDomain()
+                                    ?.weeks
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?.let { wks ->
+                                        val sorted = wks.sorted()
+                                        if (sorted.last() - sorted.first() + 1 == sorted.size && sorted.size > 1) {
+                                            "${sorted.first()}-${sorted.last()}周"
+                                        } else {
+                                            "${sorted.joinToString(",")}周"
+                                        }
+                                    }
+                                    .orEmpty()
+                                dao.upsertUnscheduledCourses(
+                                    listOf(
+                                        UnscheduledAcademicCourseEntity(
+                                            termId = pracTermId,
+                                            sourceKey = pracSourceKey,
+                                            sourceId = null,
+                                            name = course.name,
+                                            teacher = course.teacher,
+                                            creditPlain = course.creditPlain,
+                                            rawWeeks = lastRuleWeeks,
+                                            category = "实践/集中课",
+                                            syncedAtEpochMilli = System.currentTimeMillis()
+                                        )
+                                    )
+                                )
+                            }
+                        }
                         dao.deleteCourseById(course.id)
                     }
                 }
@@ -2974,7 +3063,7 @@ class CampusRepository internal constructor(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
             val idempotencyKey = "mcr_${postId}_${cleanMsg.hashCode()}_${cleanContact.hashCode()}"
-            CampusCloudOidcHelper.submitMomentsContactRequestToCloud(
+            val dto = CampusCloudOidcHelper.submitMomentsContactRequestToCloud(
                 postId = postId,
                 senderName = senderName,
                 message = cleanMsg,
@@ -2982,7 +3071,9 @@ class CampusRepository internal constructor(
                 idempotencyKey = idempotencyKey,
                 bearerToken = token,
                 cloudBaseUrl = baseUrl
-            ) ?: throw IllegalStateException("联系申请提交失败：可能网络未连接、该帖已结案或发起人已屏蔽申请")
+            ) ?: throw IllegalStateException("联系申请提交失败：可能网络未连接、无法向本人发起申请、该帖已结案或发起人已屏蔽申请")
+            runCatching { refreshCampusMomentsSnapshot() }
+            dto
         }
     }
 
@@ -3055,7 +3146,7 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            CampusCloudOidcHelper.handleMomentsContactRequestActionOnCloud(
+            val dto = CampusCloudOidcHelper.handleMomentsContactRequestActionOnCloud(
                 postId = postId,
                 requestId = requestId,
                 action = action,
@@ -3064,6 +3155,8 @@ class CampusRepository internal constructor(
                 bearerToken = token,
                 cloudBaseUrl = baseUrl
             ) ?: throw IllegalStateException("处理联系申请失败，请检查网络连接或权限")
+            runCatching { refreshCampusMomentsSnapshot() }
+            dto
         }
     }
 
@@ -5541,6 +5634,17 @@ class CampusRepository internal constructor(
         } else {
             val binding = activeBindingSnap
                 ?: throw IllegalStateException("使用云端抢座需先登录 XPeach 云账号；您也可随时切换为「本机抢座」（无需登录云账号）")
+            if (cloudHttpTransportForTest == null) {
+                if (currentStudentNo.isBlank()) {
+                    throw IllegalStateException("开启云端准点抢座需先登录并保存校园学号与统一认证密码")
+                }
+                val hasSavedPassword = !delegatedBundlePre.isNullOrBlank() && runCatching {
+                    org.json.JSONObject(delegatedBundlePre).optString("password").isNotBlank()
+                }.getOrDefault(false)
+                if (!hasSavedPassword) {
+                    throw IllegalStateException("开启云端准点抢座需保存校园统一认证密码（避免凌晨登录态过期），请重新验证并保存学号与密码")
+                }
+            }
             var token = resolveValidCloudAccessToken(forceRefresh = false)
             if (token.isBlank()) {
                 token = resolveValidCloudAccessToken(forceRefresh = true)
@@ -5847,23 +5951,26 @@ class CampusRepository internal constructor(
         bookingPlanStateMutex.withLock {
             cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         }
-        LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, entity.id)
             repoScope.launch { runCatching { syncWithCampusCloud() } }
-        } else if (executionMode == BookingExecutionMode.LOCAL_DEVICE) {
-            repoScope.launch {
-                runCatching {
-                    val token = readCachedLibrarySeatSession()?.rawToken
-                        ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
-                    if (!token.isNullOrBlank()) {
-                        HautLibrarySeatAuthClient.prewarmAutomatedSeatTargets(
-                            rawToken = token,
-                            targetDate = entity.targetLocalDate,
-                            preferredAreaName = entity.preferredAreaName,
-                            preferredSeatLabel = entity.preferredSeatLabel,
-                            planId = entity.id,
-                            planVersion = entity.generation
-                        )
+        } else {
+            LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, entity)
+            if (executionMode == BookingExecutionMode.LOCAL_DEVICE) {
+                repoScope.launch {
+                    runCatching {
+                        val token = readCachedLibrarySeatSession()?.rawToken
+                            ?: (ensureLibrarySeatSession(forceRefresh = false) as? LibrarySeatSessionState.Authenticated)?.snapshot?.rawToken
+                        if (!token.isNullOrBlank()) {
+                            HautLibrarySeatAuthClient.prewarmAutomatedSeatTargets(
+                                rawToken = token,
+                                targetDate = entity.targetLocalDate,
+                                preferredAreaName = entity.preferredAreaName,
+                                preferredSeatLabel = entity.preferredSeatLabel,
+                                planId = entity.id,
+                                planVersion = entity.generation
+                            )
+                        }
                     }
                 }
             }
@@ -5930,6 +6037,12 @@ class CampusRepository internal constructor(
             )
         ) {
             return@runCatching current
+        }
+        if (stage != TripleScheduleStage.FIRE &&
+            current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
+        ) {
+            runCatching { syncWithCampusCloud() }
+            return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
         }
         if (stage != TripleScheduleStage.FIRE &&
             (current.status == "EXECUTING" || current.fireStatus.startsWith("DISPATCH_INTENT"))
@@ -6375,6 +6488,7 @@ class CampusRepository internal constructor(
                 // 仅当委托处于有效状态且今日结果为明确的 CONFIRMED 或 FAILED 时才允许推进次日多日计划；
                 // 若为 DELEGATION_STOPPED_SCHOOL_CONFIRMED、RESULT_UNKNOWN、DELEGATION_STOPPED_RESULT_UNKNOWN 或 CANCELLED，一律禁止续期次日任务！
                 if (!stoppedMidFlight &&
+                    current.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
                     reconciledUpdated.status in setOf("CONFIRMED", "FAILED", "REMINDER_SENT") &&
                     current.remainingDays > 1 &&
                     latestInDb.status !in setOf("CANCELLED", "NEEDS_RECONFIRMATION")

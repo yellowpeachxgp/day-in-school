@@ -26,8 +26,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -100,6 +104,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -276,6 +281,7 @@ fun CampusMapScreen(
     onNavigateToCommunity: () -> Unit = {},
     onNavigateToCompetitions: () -> Unit = onNavigateToCommunity,
     onNavigateToSchoolCenter: () -> Unit = {},
+    onNavigateToHospitalPharmacy: () -> Unit = {},
     activeSchool: SchoolProfile = remember { SchoolDirectory.hautProfile() },
     resetTrigger: Int = 0
 ) {
@@ -1393,7 +1399,7 @@ fun CampusMapScreen(
                             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
-                            zoom = mapZoom.coerceIn(13.8f, 18.8f),
+                            zoom = mapZoom.coerceIn(12.6f, 18.8f),
                             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
                             gisDataset = if (isLianhuajieActive) gisDataset else null,
                             activeBuildingFootprint = activeBuildingFootprint,
@@ -1403,7 +1409,7 @@ fun CampusMapScreen(
                             onViewportChange = { newLat, newLon, newZoom ->
                                 mapCenterLatGcj = newLat
                                 mapCenterLonGcj = newLon
-                                mapZoom = newZoom.coerceIn(13.8f, 18.8f)
+                                mapZoom = newZoom.coerceIn(12.6f, 18.8f)
                             },
                             onSelectBuilding = { clicked ->
                                 selectedBuilding = clicked
@@ -1420,12 +1426,12 @@ fun CampusMapScreen(
                             XPeachIconButton(
                                 icon = Icons.Default.Add,
                                 contentDescription = "放大地图",
-                                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(13.8f, 18.8f) }
+                                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
                             )
                             XPeachIconButton(
                                 icon = Icons.Default.Remove,
                                 contentDescription = "缩小地图",
-                                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(13.8f, 18.8f) }
+                                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
                             )
                         }
                     }
@@ -2309,12 +2315,12 @@ fun CampusMapScreen(
             XPeachIconButton(
                 icon = Icons.Default.Add,
                 contentDescription = "放大地图",
-                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(13.8f, 18.8f) }
+                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
             )
             XPeachIconButton(
                 icon = Icons.Default.Remove,
                 contentDescription = "缩小地图",
-                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(13.8f, 18.8f) }
+                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
             )
             XPeachIconButton(
                 icon = Icons.Default.ZoomOutMap,
@@ -2447,7 +2453,8 @@ fun CampusMapScreen(
                     },
                     onOpenExternalMap = {
                         CampusMapNavigator.openWalkingNavigation(context, targetBuilding)
-                    }
+                    },
+                    onOpenHospitalPharmacy = onNavigateToHospitalPharmacy
                 )
             }
         }
@@ -2472,7 +2479,8 @@ private fun FloatingRouteBottomSheet(
     onSelectOriginBuilding: (Building?) -> Unit,
     onToggleInAppNavigation: () -> Unit,
     onOpenOfficialWebGis: () -> Unit,
-    onOpenExternalMap: () -> Unit
+    onOpenExternalMap: () -> Unit,
+    onOpenHospitalPharmacy: () -> Unit = {}
 ) {
     val headingHint = remember(deviceHeadingDegrees, plan.bearingDegrees) {
         if (deviceHeadingDegrees == null) {
@@ -2591,6 +2599,44 @@ private fun FloatingRouteBottomSheet(
                     }
                     Text(
                         text = "查看 ›",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = XPeachTheme.readablePrimary
+                    )
+                }
+            }
+        }
+
+        // 若当前选中校医院，提供 202 项药品价格公示与大学生医保说明快捷入口
+        if (building.id == "b_hospital" || building.name.contains("校医院")) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = XPeachTheme.primaryAccentCardColor,
+                border = androidx.compose.foundation.BorderStroke(
+                    0.8.dp,
+                    XPeachTheme.readablePrimary.copy(alpha = 0.36f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenHospitalPharmacy)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "校医院药品价格公示目录与大学生医保说明",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = XPeachTheme.readablePrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "查看目录 ›",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = XPeachTheme.readablePrimary
@@ -2824,8 +2870,8 @@ private fun OfficialGisWebViewDialog(
                             settings.setGeolocationEnabled(true)
                             settings.loadWithOverviewMode = true
                             settings.useWideViewPort = true
-                            settings.setSupportZoom(true)
-                            settings.builtInZoomControls = true
+                            settings.setSupportZoom(false)
+                            settings.builtInZoomControls = false
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             webChromeClient = object : WebChromeClient() {
@@ -2937,10 +2983,10 @@ private fun RealCampusTileMap(
         }
     }
 
-    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026 && zoom >= 15.5f) {
-        zoom.roundToInt().coerceIn(16, 18)
+    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) {
+        zoom.roundToInt().coerceIn(12, 17)
     } else {
-        zoom.roundToInt().coerceIn(14, 18)
+        zoom.roundToInt().coerceIn(12, 18)
     }
     val scaleFactor = 2.0.pow((zoom - tileZ).toDouble()).toFloat()
     val baseTileRenderPx = 256f * context.resources.displayMetrics.density * 0.90f * scaleFactor
@@ -3105,29 +3151,68 @@ private fun RealCampusTileMap(
                 }
             }
             .pointerInput(Unit) {
-                detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                    val zNow = currentTileZ
-                    val tilePxNow = currentBaseTilePx
-                    val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, zNow)
-                    val newZoom = (currentZoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
-                        .coerceIn(13.8f, 18.8f)
-                    val zoomRatio = 2.0.pow((newZoom - currentZoom).toDouble()).toFloat()
-                    val offsetFromCenterX = centroid.x - (canvasWidthPx / 2f)
-                    val offsetFromCenterY = centroid.y - (canvasHeightPx / 2f)
-                    val dxPx = -pan.x + offsetFromCenterX * (1f - 1f / zoomRatio)
-                    val dyPx = -pan.y + offsetFromCenterY * (1f - 1f / zoomRatio)
-                    val dTileX = dxPx / tilePxNow
-                    val dTileY = dyPx / tilePxNow
-                    val (newLat, newLon) = tileXYToLatLon(
-                        cTx + dTileX,
-                        cTy + dTileY,
-                        zNow
-                    )
-                    currentOnViewportChange(
-                        newLat.coerceIn(18.0, 54.0),
-                        newLon.coerceIn(73.0, 136.0),
-                        newZoom
-                    )
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var pastTouchSlop = false
+                    var panAccum = Offset.Zero
+                    val touchSlop = viewConfiguration.touchSlop
+                    do {
+                        val event = awaitPointerEvent()
+                        val canceled = event.changes.any { it.isConsumed }
+                        if (!canceled) {
+                            val pressedCount = event.changes.count { it.pressed }
+                            val rawZoom = event.calculateZoom()
+                            val gestureZoom = if (rawZoom.isFinite() && rawZoom > 0f) {
+                                rawZoom.coerceIn(0.25f, 4.0f)
+                            } else {
+                                1f
+                            }
+                            val pan = event.calculatePan()
+                            if (!pastTouchSlop) {
+                                panAccum += pan
+                                if (pressedCount >= 2 || panAccum.getDistance() > touchSlop) {
+                                    pastTouchSlop = true
+                                }
+                            }
+                            if (pastTouchSlop) {
+                                val rawCentroid = event.calculateCentroid(useCurrent = false)
+                                val centroid = if (rawCentroid != Offset.Unspecified) {
+                                    rawCentroid
+                                } else {
+                                    Offset(canvasWidthPx / 2f, canvasHeightPx / 2f)
+                                }
+                                if (gestureZoom != 1f || pan != Offset.Zero) {
+                                    val zNow = currentTileZ
+                                    val tilePxNow = currentBaseTilePx
+                                    val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, zNow)
+                                    val newZoom = (currentZoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
+                                        .coerceIn(12.6f, 18.8f)
+                                    val zoomRatio = 2.0.pow((newZoom - currentZoom).toDouble()).toFloat()
+                                    val offsetFromCenterX = centroid.x - (canvasWidthPx / 2f)
+                                    val offsetFromCenterY = centroid.y - (canvasHeightPx / 2f)
+                                    val dxPx = -pan.x + offsetFromCenterX * (1f - 1f / zoomRatio)
+                                    val dyPx = -pan.y + offsetFromCenterY * (1f - 1f / zoomRatio)
+                                    val dTileX = dxPx / tilePxNow
+                                    val dTileY = dyPx / tilePxNow
+                                    val (newLat, newLon) = tileXYToLatLon(
+                                        cTx + dTileX,
+                                        cTy + dTileY,
+                                        zNow
+                                    )
+                                    currentOnViewportChange(
+                                        newLat.coerceIn(18.0, 54.0),
+                                        newLon.coerceIn(73.0, 136.0),
+                                        newZoom
+                                    )
+                                }
+                                event.changes.forEach { change ->
+                                    if (change.positionChanged()) {
+                                        change.consume()
+                                    }
+                                }
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
     ) {
@@ -3193,9 +3278,9 @@ private fun RealCampusTileMap(
             drawRect(color = Color(0x6E0B1018))
         }
 
-        // 2.2 绘制河南工业大学官方 GIS 室外矢量底图（先用干净园区底色遮蔽底层栅格杂乱文字，再绘制水系、绿地、运动场、道路与 92 栋建筑轮廓）
+        // 2.2 绘制河南工业大学官方 GIS 室外矢量底图（仅莲花街校区具备官方 92 栋矢量轮廓；嵩山路校区严禁用纯色底板遮蔽街景底图！）
         if (styleMode == GisMapStyleMode.OFFICIAL_VECTOR_HYBRID && gisDataset != null) {
-            if (campusPolygonVertices.size >= 3) {
+            if (campusPolygonVertices.size >= 3 && campusPolygonVertices.first().latitude > 34.80) {
                 val campusMaskPath = Path().apply {
                     campusPolygonVertices.forEachIndexed { idx, v ->
                         val p = wgsToScreen(v.latitude, v.longitude)

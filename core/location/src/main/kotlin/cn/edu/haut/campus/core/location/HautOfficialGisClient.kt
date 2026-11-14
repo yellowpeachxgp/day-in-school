@@ -405,18 +405,19 @@ object HautOfficialGisClient {
         if (!responseText.isNullOrBlank()) {
             runCatching {
                 val root = JSONObject(responseText)
-                val list = root.optJSONArray("list") ?: JSONArray()
+                val list = root.optJSONArray("list")
+                    ?: root.optJSONObject("data")?.optJSONArray("content")
+                    ?: JSONArray()
                 for (i in 0 until list.length()) {
                     val item = list.optJSONObject(i) ?: continue
                     val id = item.optString("id")
-                    val name = item.optString("name").trim()
+                    val tags = item.optJSONObject("tags")
+                    val name = item.optString("name").trim().ifBlank { tags?.optString("name")?.trim().orEmpty() }
                     if (name.isBlank()) continue
                     val coordArr = item.optJSONArray("coordinate")
                     val lon = coordArr?.optDouble(0) ?: continue
                     val lat = coordArr.optDouble(1)
                     if (lat.isNaN() || lon.isNaN()) continue
-
-                    val tags = item.optJSONObject("tags")
                     val polygonCat = tags?.optString("polygon_category").orEmpty()
                     val roomCatRaw = tags?.optString("room_category").orEmpty()
                     val parentPol = tags?.optString("parent_pol")?.takeIf { it.isNotBlank() }
@@ -931,8 +932,13 @@ object HautOfficialGisClient {
                 for (i in 0 until data.length()) {
                     val obj = data.optJSONObject(i) ?: continue
                     val name = obj.optString("pointName").trim()
-                    val lon = obj.optString("longitude").toDoubleOrNull() ?: continue
-                    val lat = obj.optString("latitude").toDoubleOrNull() ?: continue
+                    val lngLatParts = obj.optString("lngLat").split(",")
+                    val lon = obj.optString("longitude").toDoubleOrNull()
+                        ?: lngLatParts.getOrNull(0)?.trim()?.toDoubleOrNull()
+                        ?: continue
+                    val lat = obj.optString("latitude").toDoubleOrNull()
+                        ?: lngLatParts.getOrNull(1)?.trim()?.toDoubleOrNull()
+                        ?: continue
                     val id = obj.optString("pointCode").ifBlank { "${code}_$i" }
                     val brief = cleanHtmlContent(obj.optString("pointBrief"))
                     if (name.isNotBlank()) {

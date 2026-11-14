@@ -138,12 +138,20 @@ fun EmptyClassroomScreen(
     }
     val campusDisplayName = if (selectedCampusKey == "songshanlu") "嵩山路校区" else "莲花街校区"
 
+    var selectedWeekOffset by remember { mutableIntStateOf(0) }
     var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
-    val selectedDateInCurrentWeek = remember(weekMonday, selectedDayOfWeek) {
-        weekMonday.plusDays((selectedDayOfWeek.value - 1).toLong())
+    val selectedDateInCurrentWeek = remember(weekMonday, selectedDayOfWeek, selectedWeekOffset) {
+        weekMonday.plusWeeks(selectedWeekOffset.toLong()).plusDays((selectedDayOfWeek.value - 1).toLong())
+    }
+    val selectedTeachingWeek = remember(selectedDateInCurrentWeek, currentTerm, calendarOverrides, currentTeachingWeek, selectedWeekOffset) {
+        currentTerm?.let { TeachingWeekCalculator.resolveDate(selectedDateInCurrentWeek, it, calendarOverrides).teachingWeek }
+            ?: (currentTeachingWeek + selectedWeekOffset)
+    }
+    val selectedDateShortLabel = remember(selectedDateInCurrentWeek) {
+        String.format("%02d-%02d", selectedDateInCurrentWeek.monthValue, selectedDateInCurrentWeek.dayOfMonth)
     }
     var selectedSlotIndex by remember {
-        mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).hour))
+        mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime()))
     }
     val campusRoomsMap = remember(selectedCampusKey) {
         CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
@@ -214,11 +222,22 @@ fun EmptyClassroomScreen(
             }
 
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "选择校区、星期与节次",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "选择校区、周次、星期与节次",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "第${selectedTeachingWeek}周 · $selectedDateShortLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -236,6 +255,16 @@ fun EmptyClassroomScreen(
                         selected = selectedCampusKey == "songshanlu",
                         onClick = { selectedCampusKey = "songshanlu" }
                     )
+                    XPeachFilterPill(
+                        label = "本周",
+                        selected = selectedWeekOffset == 0,
+                        onClick = { selectedWeekOffset = 0 }
+                    )
+                    XPeachFilterPill(
+                        label = "下周",
+                        selected = selectedWeekOffset == 1,
+                        onClick = { selectedWeekOffset = 1 }
+                    )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
@@ -245,8 +274,9 @@ fun EmptyClassroomScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     for (day in DayOfWeek.entries) {
+                        val isExactToday = selectedWeekOffset == 0 && day == today.dayOfWeek
                         XPeachFilterPill(
-                            label = if (day == today.dayOfWeek) "${day.ChineseLabel}(今)" else day.ChineseLabel,
+                            label = if (isExactToday) "${day.ChineseLabel}(今)" else day.ChineseLabel,
                             selected = selectedDayOfWeek == day,
                             onClick = { selectedDayOfWeek = day }
                         )
@@ -1165,18 +1195,18 @@ fun CampusCommunityScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
-                                text = "微信公众号与通知服务",
+                                text = "微信公众号、小程序与防冒充声明",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "App 通知服务状态说明与河工大校内权威公众号检索",
+                                text = "官方渠道说明、商业广告澄清与河工大校内权威公众号检索",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         XPeachStatusBadge(
-                            text = if (isAppWechatActive) "已开通" else "待开通",
+                            text = if (isAppWechatActive) "已开通" else "未开通",
                             containerColor = if (isAppWechatActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = if (isAppWechatActive) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1189,9 +1219,9 @@ fun CampusCommunityScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 text = if (isAppWechatActive) {
-                                    "Day in School 官方公众号：$cloudWechatName（可在微信搜索关注；官方绝不会索要您的教务密码）"
+                                    "Day in School 官方公众号：$cloudWechatName（完全免费无商业广告；官方绝不会索要您的教务密码）"
                                 } else {
-                                    "状态说明：Day in School 官方微信公众号目前处于筹备与资质审核阶段，暂未开放关注或账号绑定。正式上线后将通过云端配置在本栏公布认证名称，切勿向非官方公众号提交教务密码。"
+                                    "官方防冒充声明：Day in School（工大课表）完全免费、无任何商业推广广告。官方微信公众号仍在筹备中，且目前未上线任何推送商业引流广告的同名微信公众号或微信小程序。任何带有商业营销广告或索要教务密码的同名/近似公众号与小程序（如用户反馈的「邓州市少宇电子店」等第三方主体）均与本项目无关，切勿向非官方渠道提交统一认证或教务密码。"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1476,7 +1506,7 @@ fun CampusHospitalPharmacyDialog(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "重要说明：本表为校医院现场价格公示册离线转录（医保报销前基准单价），不代表当前实时在售或库存，也不提供在线买药或处方指导；并非所有药品均可走医保，实际报销金额以校医院收费窗口实时医保结算为准。",
+                            text = "重要说明：本表为校医院现场价格公示册离线转录（医保报销前基准单价），不代表当前实时在售或库存，也不提供在线买药或处方指导。\n${CampusHospitalPharmacyCatalog.OUTPATIENT_REIMBURSEMENT_REFERENCE_SUMMARY}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

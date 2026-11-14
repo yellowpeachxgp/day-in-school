@@ -203,6 +203,19 @@ object WidgetRefreshCoordinator {
         }.getOrDefault(false)
     }
 
+    const val MAIN_ACTIVITY_CLASS_NAME = "cn.edu.haut.campus.MainActivity"
+
+    /**
+     * 构造直达 `MainActivity` 本体的显式启动 Intent，避免依赖 `getLaunchIntentForPackage` 指向后续可能被切换禁用的桌面图标 `<activity-alias>`，
+     * 确保切换二次元猫娘/工大钟楼桌面图标后所有已固定桌面小组件点击永久有效（#18）。
+     */
+    fun createMainActivityLaunchIntent(context: Context): Intent {
+        return Intent(Intent.ACTION_MAIN).apply {
+            component = ComponentName(context.packageName, MAIN_ACTIVITY_CLASS_NAME)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+    }
+
     fun stampIntent(intent: Intent, snapshot: WidgetScheduleSnapshot, widgetId: Int, action: String) {
         intent.data = Uri.Builder().scheme(CampusDeepLinkContract.SCHEME).authority(CampusDeepLinkContract.HOST_WIDGET)
             .appendPath(snapshot.profileId).appendPath(snapshot.generation.toString())
@@ -220,16 +233,14 @@ object WidgetRefreshCoordinator {
     fun showSwitching(context: Context, ids: IntArray) {
         if (ids.isEmpty()) return
         val views = RemoteViews(context.packageName, R.layout.widget_account_switching)
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        if (launchIntent != null) {
-            val pi = PendingIntent.getActivity(
-                context,
-                9900 + ids.first(),
-                launchIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            views.setOnClickPendingIntent(R.id.widget_switching_root, pi)
-        }
+        val launchIntent = createMainActivityLaunchIntent(context)
+        val pi = PendingIntent.getActivity(
+            context,
+            9900 + ids.first(),
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        views.setOnClickPendingIntent(R.id.widget_switching_root, pi)
         AppWidgetManager.getInstance(context).updateAppWidget(ids, views)
     }
 
