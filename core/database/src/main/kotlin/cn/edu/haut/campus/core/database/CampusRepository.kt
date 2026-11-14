@@ -4383,13 +4383,24 @@ class CampusRepository internal constructor(
             return@withContext syncRes.peachBalance
         }
         val current = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withContext null
+        val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+            preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+        )
         var token = resolveValidCloudAccessToken(forceRefresh = false)
         if (token.isBlank()) return@withContext null
-        var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
+        var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(
+            accessToken = token,
+            cloudBaseUrl = cloudBaseUrl,
+            httpTransport = cloudHttpTransportForTest
+        )
         if (livePeach == null) {
             token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
             if (token.isNotBlank()) {
-                livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(token)
+                livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(
+                    accessToken = token,
+                    cloudBaseUrl = cloudBaseUrl,
+                    httpTransport = cloudHttpTransportForTest
+                )
             }
         }
         if (livePeach == null) return@withContext null
@@ -4818,7 +4829,7 @@ class CampusRepository internal constructor(
                         ""
                     }
                     val diagText = when (effectiveStatus) {
-                        "CONFIRMED" -> "云端代抢（测试版）已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到$repeatDiagSuffix"
+                        "CONFIRMED" -> "云端抢座已成功为您锁定 $cleanAreaName $primarySeat，请按时到馆刷脸签到$repeatDiagSuffix"
                         "DELEGATION_STOPPED_SCHOOL_CONFIRMED" ->
                             "委托已停止，但学校预约已成功（座位：$cleanAreaName $primarySeat，预约号：${rj.externalBookingId ?: "已生成"}）。系统未扣费且已停止后续计划，请核对或按需退座"
                         "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
@@ -4828,10 +4839,10 @@ class CampusRepository internal constructor(
                         "SCHOOL_CANCELLED" -> "学校端已确认取消该笔座位预约并释放座位"
                         "CANCEL_RESULT_UNKNOWN" -> "退座结果待核对：取消请求已发出，正在等待学校端确认"
                         "NEEDS_RECONFIRMATION" -> "需要重新确认授权：请点击「重新确认授权」以恢复云端同步"
-                        "CANCELLED" -> "已停止委托（未发起学校预约写入，未消耗内测配额 🍑）"
-                        "FAILED" -> "目标座位已被抢满，本次未消耗内测配额 🍑$repeatDiagSuffix"
-                        "EXPIRED" -> "已过开抢有效期窗口（本次未消耗内测配额 🍑）"
-                        else -> "云端代抢（测试版）已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 自动尝试抢座$repeatDiagSuffix"
+                        "CANCELLED" -> "已停止委托（未发起学校预约写入，本次未扣费）"
+                        "FAILED" -> "目标座位已被抢满，本次未扣费$repeatDiagSuffix"
+                        "EXPIRED" -> "已过开抢有效期窗口（本次未扣费）"
+                        else -> "云端抢座已就绪：将在 ${rj.targetLocalDate} ${rj.targetLocalTime} 准点自动抢座$repeatDiagSuffix"
                     }
                     val isConfirmedOnSchool =
                         effectiveStatus == "CONFIRMED" || effectiveStatus == "DELEGATION_STOPPED_SCHOOL_CONFIRMED"
@@ -5529,16 +5540,35 @@ class CampusRepository internal constructor(
             }
         } else {
             val binding = activeBindingSnap
-                ?: throw IllegalStateException("云端代抢（测试版）需先绑定 XPEACH 内测账号；您也可随时切换为「本机抢座 (测试版)」（无需登录云账号）")
-            if (binding.peachBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("内测防滥用积分不足（需 1 🍑 测试配额，积分仅用于内部测试防止恶意利用，无任何收费属性），请改用「本机抢座 (测试版)」")
-            }
+                ?: throw IllegalStateException("使用云端抢座需先登录 XPeach 云账号；您也可随时切换为「本机抢座」（无需登录云账号）")
             var token = resolveValidCloudAccessToken(forceRefresh = false)
             if (token.isBlank()) {
                 token = resolveValidCloudAccessToken(forceRefresh = true)
             }
             if (token.isBlank()) {
-                throw IllegalStateException("云端会话已过期或当前离线，无法创建云端代抢计划；原有的本机排队计划已为您保留")
+                throw IllegalStateException("云端会话已过期或当前离线，无法创建云端抢座计划；原有的本机排队计划已为您保留")
+            }
+            var effectiveBalanceMicropeach = binding.peachBalanceMicropeach
+            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
+                val livePeach = withContext(Dispatchers.IO) {
+                    CampusCloudOidcHelper.fetchLivePeachBalance(
+                        accessToken = token,
+                        cloudBaseUrl = cloudBaseUrl,
+                        httpTransport = cloudHttpTransportForTest
+                    )
+                }
+                if (livePeach != null) {
+                    effectiveBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong()
+                    cloudAndParcelDao.upsertCloudIdentityBinding(
+                        binding.copy(
+                            peachBalanceMicropeach = effectiveBalanceMicropeach,
+                            updatedAtEpochMillis = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
+                throw IllegalStateException("当前 XPeach 账户余额不足（云端抢座成功需 1 🍑，未抢中不扣费），请先前往 XPeach 账户补充余额，或改用「本机抢座」")
             }
             planOwnerCloudUserId = binding.cloudUserId
 
@@ -5705,7 +5735,7 @@ class CampusRepository internal constructor(
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist -> {
                     // 云端在持久化计划前明确拒绝（4xx 或前置授权失败），云端无半途任务，安全补偿恢复原有本机排队计划
                     restoreStoppedLocalPlansSafely()
-                    throw IllegalStateException("云端未能受理该代抢计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
+                    throw IllegalStateException("云端未能受理该抢座计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
                 }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous -> {
                     // 云端 POST /reservation-plans 已发出但响应丢失/超时：可能已在云端落库！

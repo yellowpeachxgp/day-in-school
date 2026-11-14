@@ -2948,4 +2948,69 @@ class BookingDispatchExclusiveClaimDaoTest {
         org.junit.Assert.assertNull(campusDao.getRulesSnapshot().firstOrNull { it.id == "rule_A3" })
         org.junit.Assert.assertNull(campusDao.getRulesSnapshot().firstOrNull { it.id == "rule_B3" })
     }
+
+    @Test
+    fun cloudHostedPlanAutoRefreshesLivePeachBalanceWhenCachedBalanceIsZero() = runBlocking {
+        val repo = buildInMemoryTestRepo("auto_refresh_zero_cached_balance")
+        val header = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"alg":"HS256","typ":"JWT"}""".toByteArray())
+        val payload = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"sub":"cloud_user_topup","exp":4102444800}""".toByteArray())
+        val jwt = "ctseal1:$header.$payload.sig"
+
+        repo.saveAuthorizedSyncCredentials("20240088", "pw_88", "2026", "3")
+        var walletQueried = 0
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/me/wallet") -> {
+                    walletQueried += 1
+                    """{"ok":true,"data":{"peach_balance":6.5,"micropeach_balance":65000}}"""
+                }
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"con_topup_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_topup_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{"status":"DELEGATED_ACTIVE"}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") ->
+                    """{"ok":true,"data":{"plan_id":"plan_remote_1","job_id":"job_remote_topup_1","status":"ARMED"}}"""
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+
+        // Initial local binding has cached balance = 0L (e.g. before user topped up on XPeach SSO)
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_topup",
+                ssoIssuer = "https://sso.xpeach.codes",
+                ssoSubject = "sub_topup",
+                displayName = "Topup Student",
+                peachBalanceMicropeach = 0L,
+                holdSupported = false,
+                accessToken = jwt,
+                refreshToken = "ctseal1:ref_topup",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+        // Force cached Room balance back to 0L in case background sync ran
+        val curBind = dao.getCloudIdentityBindingSnapshot()!!
+        dao.upsertCloudIdentityBinding(curBind.copy(peachBalanceMicropeach = 0L))
+
+        val nowCreateMs = java.time.ZonedDateTime.of(2026, 11, 14, 20, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai"))
+            .toInstant().toEpochMilli()
+        val created = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = java.time.LocalDate.of(2026, 11, 15),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "01桌 B座",
+            nowEpochMillis = nowCreateMs
+        ).getOrThrow()
+
+        org.junit.Assert.assertTrue("Must query live /api/v1/me/wallet when cached balance is 0", walletQueried >= 1)
+        assertEquals("CLOUD_HOSTED", created.executionMode)
+        assertEquals("job_remote_topup_1", created.cloudJobId)
+        assertEquals(65_000L, dao.getCloudIdentityBindingSnapshot()?.peachBalanceMicropeach)
+        repo.cloudHttpTransportForTest = null
+    }
 }

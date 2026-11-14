@@ -475,16 +475,19 @@ object CampusCloudOidcHelper {
      */
     fun fetchLivePeachBalance(
         accessToken: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): Double? {
         if (accessToken.isBlank()) return null
+        val transport = httpTransport ?: ::httpJsonRequest
         return runCatching {
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val walletRaw = httpJsonRequest(
-                method = "GET",
-                url = "$cleanBase/api/v1/me/wallet",
-                bodyJson = null,
-                bearerToken = accessToken
+            val walletRaw = transport(
+                "GET",
+                "$cleanBase/api/v1/me/wallet",
+                null,
+                accessToken,
+                emptyMap()
             )
             val walletRoot = JSONObject(walletRaw)
             if (!walletRoot.optBoolean("ok", false)) return null
@@ -1693,13 +1696,13 @@ object CampusCloudOidcHelper {
                 norm.hasCompleteConfirmedData && norm.isDelegationStopped ->
                     "委托已停止，但学校预约已成功（座位：${norm.regionAlias} ${norm.seatAlias}，预约号：${norm.verifiedBookingId}）。系统未自动扣费且已停止后续计划，请核对或按需退座"
                 norm.hasCompleteConfirmedData ->
-                    "云端抢座（测试版）成功！已锁定 ${norm.seatAlias}（预约号 ${norm.verifiedBookingId}），已消耗 1 🍑 内测防滥用配额"
+                    "云端抢座成功！已锁定 ${norm.seatAlias}（预约号 ${norm.verifiedBookingId}），已结算 1 🍑"
                 outcomeState == "DELEGATION_STOPPED_RESULT_UNKNOWN" ->
                     "委托已停止，但此前已发出的请求或确认凭据不完整，结果待核对（禁止盲目重试）"
                 outcomeState == "RESULT_UNKNOWN" ->
                     "云端返回结果待核对或缺少完整学校预约核验凭据，状态未知，已停止重试"
                 else ->
-                    "云端抢座（测试版）未锁定座位（状态：${norm.state}），未消耗内测配额"
+                    "云端抢座未锁定座位（状态：${norm.state}），本次未扣费"
             },
             outcomeState = outcomeState,
             userIntentState = norm.userIntentState,

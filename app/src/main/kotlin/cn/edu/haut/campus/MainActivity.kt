@@ -400,7 +400,7 @@ fun HautCampusRootApp(
     var currentTab by rememberSaveable { mutableStateOf(PrimaryBottomTab.TODAY) }
     var overlayScreen by rememberSaveable { mutableStateOf<String?>(null) }
     var communityInitialTab by rememberSaveable { mutableIntStateOf(0) }
-    var librarySeatsInitialViewMode by rememberSaveable { mutableIntStateOf(0) }
+    var librarySeatsInitialViewMode by rememberSaveable { mutableIntStateOf(1) }
     var mapRoomQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var tabResetCounter by remember { mutableIntStateOf(0) }
 
@@ -478,6 +478,9 @@ fun HautCampusRootApp(
 
     LaunchedEffect(externalTabRequest, externalRoomQuery, externalOverlayRequest) {
         if (!externalOverlayRequest.isNullOrBlank()) {
+            if (externalOverlayRequest == "library_seats") {
+                librarySeatsInitialViewMode = 1
+            }
             overlayScreen = externalOverlayRequest
             onConsumeExternalRequest()
         } else if (externalTabRequest != null) {
@@ -681,7 +684,7 @@ fun HautCampusRootApp(
                                 onNavigateToElectricity = { overlayScreen = "electricity" },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                                 onNavigateToLibrarySeats = {
-                                    librarySeatsInitialViewMode = 0
+                                    librarySeatsInitialViewMode = 1
                                     overlayScreen = "library_seats"
                                 },
                                 onNavigateToEmptyClassrooms = { overlayScreen = "empty_classrooms" },
@@ -715,7 +718,7 @@ fun HautCampusRootApp(
                                     currentTab = PrimaryBottomTab.CAMPUS
                                 },
                                 onNavigateToLibrarySeats = {
-                                    librarySeatsInitialViewMode = 0
+                                    librarySeatsInitialViewMode = 1
                                     overlayScreen = "library_seats"
                                 },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
@@ -755,7 +758,7 @@ fun HautCampusRootApp(
                                 onNavigateToElectricity = { overlayScreen = "electricity" },
                                 onNavigateToLibraryCatalog = { overlayScreen = "library_catalog" },
                                 onNavigateToLibrarySeats = {
-                                    librarySeatsInitialViewMode = 0
+                                    librarySeatsInitialViewMode = 1
                                     overlayScreen = "library_seats"
                                 },
                                 onNavigateToCloudSeatBooking = {

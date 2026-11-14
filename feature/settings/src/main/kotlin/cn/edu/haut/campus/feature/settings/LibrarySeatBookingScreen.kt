@@ -113,6 +113,7 @@ import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.CloudIdentityBindingEntity
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -145,7 +146,7 @@ private data class PendingSeatActionRequest(
 fun LibrarySeatBookingScreen(
     onBack: () -> Unit,
     repository: CampusRepository? = null,
-    initialViewMode: Int = 0,
+    initialViewMode: Int = 1,
     onNavigateToXpeachCloud: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -388,15 +389,17 @@ fun LibrarySeatBookingScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        val activePlanCount = bookingPlans.count { it.status !in setOf("CANCELLED", "CONFIRMED", "FAILED") }
+        val activePlanCount = bookingPlans.count {
+            it.status !in setOf("CANCELLED", "CONFIRMED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
+        }
         XPeachTopBar(
-            title = "图书馆选座",
+            title = if (selectedBookingViewMode == 1) "图书馆云端抢座" else "图书馆网页选座",
             subtitle = if (selectedBookingViewMode == 1) {
-                "云端准点自动抢座与本机定时抢座"
+                "07:00 云端离线准点自动抢座 · 多日连抢"
             } else {
-                "河南工业大学图书馆"
+                "河南工业大学图书馆官方选座页"
             },
-            badgeText = if (activePlanCount > 0) "待执行 $activePlanCount" else null,
+            badgeText = if (activePlanCount > 0) "待执行 $activePlanCount" else "云端已开放",
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -415,11 +418,11 @@ fun LibrarySeatBookingScreen(
             ) {
                 XPeachSegmentedTabs(
                     items = listOf(
-                        "网页选座",
-                        if (activePlanCount > 0) "云端/定时抢座 ($activePlanCount)" else "云端/定时抢座"
+                        if (activePlanCount > 0) "云端抢座 ($activePlanCount)" else "云端抢座",
+                        "网页选座"
                     ),
-                    selectedIndex = selectedBookingViewMode,
-                    onSelect = { selectedBookingViewMode = it }
+                    selectedIndex = if (selectedBookingViewMode == 1) 0 else 1,
+                    onSelect = { tabIdx -> selectedBookingViewMode = if (tabIdx == 0) 1 else 0 }
                 )
             }
         }
@@ -886,7 +889,9 @@ fun LibrarySeatBookingScreen(
                 sessionState = sessionState,
                 seatOverview = seatOverview,
                 bookingPlans = bookingPlans,
+                cloudBinding = cloudBinding,
                 hasBoundCloudAccount = cloudBinding != null,
+                hasSavedSchoolCredentials = prefs?.hasSavedCredentials == true,
                 onRequireLogin = { showBindCredentialDialog = true },
                 onNavigateToXpeachCloud = onNavigateToXpeachCloud,
                 onRefreshSeatOverview = { refreshSeatOverviewAsync() },
@@ -1690,7 +1695,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     sessionState: LibrarySeatSessionState,
     seatOverview: LibrarySeatOverviewSnapshot?,
     bookingPlans: List<LibraryBookingPlanEntity>,
+    cloudBinding: CloudIdentityBindingEntity?,
     hasBoundCloudAccount: Boolean,
+    hasSavedSchoolCredentials: Boolean,
     onRequireLogin: () -> Unit,
     onNavigateToXpeachCloud: (() -> Unit)? = null,
     onRefreshSeatOverview: () -> Unit,
@@ -1896,6 +1903,149 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // 顶部核心卡片：抢座执行方式（默认云端抢座）与 XPeach 云端账号 / 学号状态
+        XPeachCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "抢座引擎",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                XPeachStatusBadge(
+                    text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED) "手机关机断网照常开抢" else selectedMode.label,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = XPeachTheme.readablePrimary
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    BookingExecutionMode.CLOUD_HOSTED,
+                    BookingExecutionMode.LOCAL_DEVICE,
+                    BookingExecutionMode.MANUAL_REMINDER
+                ).forEach { mode ->
+                    XPeachFilterPill(
+                        label = mode.label,
+                        selected = selectedMode == mode,
+                        onClick = { selectedMode = mode }
+                    )
+                }
+            }
+            Text(
+                text = selectedMode.subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            if (selectedMode == BookingExecutionMode.CLOUD_HOSTED) {
+                XPeachInsetDivider(verticalPadding = 8.dp)
+                if (cloudBinding != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            XPeachStatusDotText(
+                                text = "已连接 XPeach：${cloudBinding.displayName}",
+                                dotColor = XPeachTheme.readablePrimary
+                            )
+                            Text(
+                                text = "当前余额 %.2f 🍑 · 仅学校确认成功后扣 1 🍑".format(
+                                    cloudBinding.peachBalanceMicropeach / 10_000.0
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        val snap = repository.syncWithCampusCloud().getOrNull()
+                                        val bal = snap?.peachBalance ?: repository.refreshXpeachWalletBalance()
+                                        if (bal != null) {
+                                            onFeedback(true, "已同步云端任务与最新余额：%.2f 🍑".format(bal))
+                                        } else {
+                                            onFeedback(true, "已触发云端同步")
+                                        }
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("同步", style = MaterialTheme.typography.labelSmall)
+                            }
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("网页端 ›", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "尚未登录 XPeach 云账号：登录后即可在云端服务器每日 07:00 毫秒级自动抢座",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (onNavigateToXpeachCloud != null) {
+                            Button(
+                                onClick = onNavigateToXpeachCloud,
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("登录 XPeach 云账号")
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("打开网页版云端抢座")
+                        }
+                    }
+                }
+            }
+        }
+
         if (sessionState !is LibrarySeatSessionState.Authenticated) {
             XPeachCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -1905,12 +2055,12 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "尚未登录选座账号",
+                            text = "尚未登录校园学号",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "登录后即可加载自习室与座位列表",
+                            text = "登录学号与统一认证密码后，即可读取实时空座并授权云端 07:00 自动抢座",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2572,10 +2722,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
         }
 
-        // 第四步：选择执行方式
+        // 第四步：确认参数并一键开启抢座
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "4. 执行方式",
+                text = "4. 确认并开启抢座",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -2600,7 +2750,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
             Text(
                 text = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
-                    "使用云端抢座需先登录 XPeach 云账号（支持关机离线准点自动抢座）"
+                    "使用云端抢座需先登录 XPeach 云账号（支持手机关机断网准点自动抢座）"
                 } else {
                     selectedMode.subtitle
                 },
@@ -2731,9 +2881,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     result.fold(
                         onSuccess = { created ->
                             val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
+                            val modePrefix = if (created.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                                "已开启云端抢座"
+                            } else {
+                                "已开启本机定时抢座"
+                            }
                             onFeedback(
                                 true,
-                                "已设置定时抢座：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
+                                "$modePrefix：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
                             )
                         },
                         onFailure = { err ->
@@ -2810,6 +2965,19 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 Button(
                     enabled = computedScheduleResult.isSuccess && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
+                        if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasBoundCloudAccount) {
+                            onFeedback(false, "请先登录 XPeach 云账号后再开启云端抢座")
+                            onNavigateToXpeachCloud?.invoke()
+                            return@Button
+                        }
+                        if (selectedMode == BookingExecutionMode.CLOUD_HOSTED &&
+                            sessionState !is LibrarySeatSessionState.Authenticated &&
+                            !hasSavedSchoolCredentials
+                        ) {
+                            onFeedback(false, "请先登录校园学号与密码，云端才能准点为您自动抢座")
+                            onRequireLogin()
+                            return@Button
+                        }
                         permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
                         if (selectedMode != BookingExecutionMode.CLOUD_HOSTED && !permissionSnapshot.allReady) {
                             showPermissionActivationDialog = true
@@ -2820,7 +2988,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("开启定时抢座")
+                    Text(
+                        when (selectedMode) {
+                            BookingExecutionMode.CLOUD_HOSTED -> "开启云端抢座"
+                            BookingExecutionMode.LOCAL_DEVICE -> "开启本机抢座"
+                            BookingExecutionMode.MANUAL_REMINDER -> "开启到点提醒"
+                        }
+                    )
                 }
 
                 FilledTonalButton(

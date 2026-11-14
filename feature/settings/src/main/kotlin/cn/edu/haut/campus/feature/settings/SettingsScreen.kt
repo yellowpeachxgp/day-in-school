@@ -1022,15 +1022,15 @@ fun SettingsScreen(
                         }
                         if (peachFormatted != null) {
                             XPeachStatusBadge(
-                                text = "配额 ${peachFormatted}",
+                                text = "🍑 ${peachFormatted}",
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = XPeachTheme.readablePrimary
                             )
                         } else {
-                            XPeachStatusBadge(
-                                text = "测试版",
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            Text(
+                                text = "去登录 ›",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = XPeachTheme.readablePrimary
                             )
                         }
                     }
@@ -3151,12 +3151,12 @@ private fun ProfileDisclaimerSection() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "2. 选座辅助处于测试阶段，不承诺预约成功率；请遵守场馆规定按时签到。",
+                text = "2. 云端抢座与本机定时抢座受图书馆实时余位影响，不承诺必中；预约成功后请遵守场馆规定按时签到。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "3. 测试配额仅用于限制高频请求，无货币价值，不支持充值或提现。",
+                text = "3. 云端抢座仅在学校端权威确认成功后消耗 1 🍑，未抢中、取消或本机抢座均不扣减。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
