@@ -201,6 +201,9 @@ interface CampusDao {
     @Query("SELECT * FROM exam_term_repair_audits WHERE disposition = :disposition")
     fun observeExamTermRepairAuditsByDisposition(disposition: String): Flow<List<ExamTermRepairAuditEntity>>
 
+    @Query("DELETE FROM exam_term_repair_audits")
+    suspend fun clearExamTermRepairAudits()
+
     @Query("SELECT * FROM unscheduled_academic_courses ORDER BY termId DESC, name ASC, sourceKey ASC")
     fun observeUnscheduledCourses(): Flow<List<UnscheduledAcademicCourseEntity>>
 

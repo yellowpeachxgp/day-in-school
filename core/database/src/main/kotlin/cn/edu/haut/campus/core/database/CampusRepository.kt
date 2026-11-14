@@ -3347,7 +3347,8 @@ class CampusRepository internal constructor(
     suspend fun addMomentsComment(
         postId: String,
         content: String,
-        contactHint: String = ""
+        contactHint: String = "",
+        clientMessageId: String? = null
     ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanContent = content.trim().take(240)
@@ -3364,6 +3365,7 @@ class CampusRepository internal constructor(
                 authorName = authorName,
                 content = cleanContent,
                 contactHint = contactHint.trim().take(48),
+                clientMessageId = clientMessageId,
                 cloudBaseUrl = baseUrl,
                 bearerToken = token.takeIf { it.isNotBlank() },
                 httpTransport = cloudHttpTransportForTest
@@ -4425,6 +4427,7 @@ class CampusRepository internal constructor(
             dao.clearOccurrenceOverrides()
             dao.clearGradeAttempts()
             dao.clearExamSchedules()
+            dao.clearExamTermRepairAudits()
             dao.clearUnscheduledCourses()
             dao.clearImportAudits()
             dao.clearWidgetConfigs()
@@ -5137,65 +5140,8 @@ class CampusRepository internal constructor(
                 throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
             }
 
-            // 2) 合并云端快递包裹到本地 Room
-            var parcelChanged = false
-            for (rp in verifiedSnapshot.parcels) {
-                val cleanTracking = rp.trackingNumber.cleanNullLiteral()
-                if (cleanTracking.isBlank()) continue
-                val existing = cloudAndParcelDao.getParcelByTrackingNumber(cleanTracking)
-                val cleanRemotePickup = rp.pickupCode.cleanNullableLiteral()
-                val cleanExistingPickup = existing?.pickupCode.cleanNullableLiteral()
-                val mergedPickup = cleanRemotePickup ?: cleanExistingPickup
-                val mergedStation = rp.stationName.cleanNullableLiteral()
-                    ?: existing?.stationName.cleanNullableLiteral()
-                    ?: "莲花街北苑菜鸟驿站"
-                val mergedTitle = rp.itemTitle.cleanNullableLiteral()
-                    ?: existing?.itemTitle.cleanNullableLiteral()
-                val mergedCarrier = rp.carrierName.cleanNullLiteral(
-                    existing?.carrierName.cleanNullLiteral("校园快递")
-                )
-                val mergedStatus = when {
-                    existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName || rp.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
-                        ParcelLifecycleStatus.PICKED_UP.wireName
-                    !mergedPickup.isNullOrBlank() ->
-                        ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
-                    rp.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && mergedPickup == null ->
-                        ParcelLifecycleStatus.IN_TRANSIT.wireName
-                    else -> rp.status.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName)
-                }
-                if (existing == null ||
-                    existing.status != mergedStatus ||
-                    existing.pickupCode != mergedPickup ||
-                    existing.stationName != mergedStation ||
-                    existing.itemTitle != mergedTitle
-                ) {
-                    parcelChanged = true
-                    cloudAndParcelDao.upsertParcelItem(
-                        ParcelItemEntity(
-                            id = existing?.id ?: rp.id.cleanNullLiteral("prc_${UUID.randomUUID().toString().replace("-", "").take(12)}"),
-                            trackingNumber = cleanTracking,
-                            carrierCode = rp.carrierCode.cleanNullLiteral(existing?.carrierCode.cleanNullLiteral("CAINIAO")),
-                            carrierName = mergedCarrier,
-                            status = mergedStatus,
-                            pickupCode = mergedPickup,
-                            stationName = mergedStation,
-                            itemTitle = mergedTitle,
-                            estimatedDeliveryText = when (mergedStatus) {
-                                ParcelLifecycleStatus.PICKED_UP.wireName -> "本人已取件签收"
-                                ParcelLifecycleStatus.READY_FOR_PICKUP.wireName -> "已到达驿站/快递柜，请凭取件码取件"
-                                else -> existing?.estimatedDeliveryText.cleanNullableLiteral() ?: "运输中，预计 1-2 日送达校园驿站"
-                            },
-                            sourcesJson = existing?.sourcesJson ?: """[{"provider_id":"parcel.cloud-sync","priority":90}]""",
-                            fieldProvenanceJson = existing?.fieldProvenanceJson ?: """{"provider_id":"parcel.cloud-sync","updated_at":$now}""",
-                            checkpointsJson = existing?.checkpointsJson ?: "[]",
-                            createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
-                            updatedAtEpochMillis = now
-                        )
-                    )
-                }
-            }
-
             // 3) 合并云端图书馆预约任务到本地 Room（严格隔离 ownerCloudUserId + 学号，严禁混并空 owner 旧记录或跨云账号记录）
+            var parcelChanged = false
             bookingPlanStateMutex.withLock {
                 val liveBindingLocked = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 val liveStuLocked = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
@@ -5209,7 +5155,66 @@ class CampusRepository internal constructor(
                 if (expectedStudentNo.isNotEmpty() && liveStuLocked.isNotEmpty() && liveStuLocked != expectedStudentNo) {
                     throw IllegalStateException("同步落库前学号已切换，已放弃写入旧学号会话同步结果")
                 }
-                val syncedCloudUserId = expectedCloudUserId
+                    // 2) 合并云端快递包裹到本地 Room — moved INSIDE the identity-checked lock:
+                    // a stale-session merge must never commit account-A parcels after
+                    // an account switch that the final recheck would reject.
+                for (rp in verifiedSnapshot.parcels) {
+                    val cleanTracking = rp.trackingNumber.cleanNullLiteral()
+                    if (cleanTracking.isBlank()) continue
+                    val existing = cloudAndParcelDao.getParcelByTrackingNumber(cleanTracking)
+                    val cleanRemotePickup = rp.pickupCode.cleanNullableLiteral()
+                    val cleanExistingPickup = existing?.pickupCode.cleanNullableLiteral()
+                    val mergedPickup = cleanRemotePickup ?: cleanExistingPickup
+                    val mergedStation = rp.stationName.cleanNullableLiteral()
+                        ?: existing?.stationName.cleanNullableLiteral()
+                        ?: "莲花街北苑菜鸟驿站"
+                    val mergedTitle = rp.itemTitle.cleanNullableLiteral()
+                        ?: existing?.itemTitle.cleanNullableLiteral()
+                    val mergedCarrier = rp.carrierName.cleanNullLiteral(
+                        existing?.carrierName.cleanNullLiteral("校园快递")
+                    )
+                    val mergedStatus = when {
+                        existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName || rp.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
+                            ParcelLifecycleStatus.PICKED_UP.wireName
+                        !mergedPickup.isNullOrBlank() ->
+                            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
+                        rp.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && mergedPickup == null ->
+                            ParcelLifecycleStatus.IN_TRANSIT.wireName
+                        else -> rp.status.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName)
+                    }
+                    if (existing == null ||
+                        existing.status != mergedStatus ||
+                        existing.pickupCode != mergedPickup ||
+                        existing.stationName != mergedStation ||
+                        existing.itemTitle != mergedTitle
+                    ) {
+                        parcelChanged = true
+                        cloudAndParcelDao.upsertParcelItem(
+                            ParcelItemEntity(
+                                id = existing?.id ?: rp.id.cleanNullLiteral("prc_${UUID.randomUUID().toString().replace("-", "").take(12)}"),
+                                trackingNumber = cleanTracking,
+                                carrierCode = rp.carrierCode.cleanNullLiteral(existing?.carrierCode.cleanNullLiteral("CAINIAO")),
+                                carrierName = mergedCarrier,
+                                status = mergedStatus,
+                                pickupCode = mergedPickup,
+                                stationName = mergedStation,
+                                itemTitle = mergedTitle,
+                                estimatedDeliveryText = when (mergedStatus) {
+                                    ParcelLifecycleStatus.PICKED_UP.wireName -> "本人已取件签收"
+                                    ParcelLifecycleStatus.READY_FOR_PICKUP.wireName -> "已到达驿站/快递柜，请凭取件码取件"
+                                    else -> existing?.estimatedDeliveryText.cleanNullableLiteral() ?: "运输中，预计 1-2 日送达校园驿站"
+                                },
+                                sourcesJson = existing?.sourcesJson ?: """[{"provider_id":"parcel.cloud-sync","priority":90}]""",
+                                fieldProvenanceJson = existing?.fieldProvenanceJson ?: """{"provider_id":"parcel.cloud-sync","updated_at":$now}""",
+                                checkpointsJson = existing?.checkpointsJson ?: "[]",
+                                createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
+                                updatedAtEpochMillis = now
+                            )
+                        )
+                    }
+                }
+    
+                    val syncedCloudUserId = expectedCloudUserId
                 val activeStuNo = expectedStudentNo.ifEmpty { liveStuLocked }.takeIf { it.isNotEmpty() }
                 val allExistingInLock = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 val mutableExistingById = allExistingInLock.associateBy { it.id }.toMutableMap()

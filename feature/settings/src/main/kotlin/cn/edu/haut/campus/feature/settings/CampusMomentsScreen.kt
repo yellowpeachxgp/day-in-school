@@ -993,13 +993,14 @@ fun CampusMomentsScreen(
                     }
                 }
             },
-            onSubmitComment = { content, contactHint, onResult ->
+            onSubmitComment = { content, contactHint, clientMessageId, onResult ->
                 // 公开留言使用独立的公开草稿字段：私密联系方式结构上不可能进入该调用
                 scope.launch {
                     val result = repository.addMomentsComment(
                         postId = activeDetailPost.id,
                         content = content,
-                        contactHint = contactHint
+                        contactHint = contactHint,
+                        clientMessageId = clientMessageId
                     )
                     result.onSuccess {
                         feedbackMessage = "已发表公开线索留言"
@@ -1664,7 +1665,7 @@ private fun MomentsPostDetailDialog(
     onSubmitContactRequest: (message: String, contactInfo: String, clientMessageId: String, onResult: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> },
     onHandleContactRequestAction: (requestId: String, action: String, replyMessage: String?, clientMessageId: String?, onResult: (Boolean) -> Unit) -> Unit = { _, _, _, _, _ -> },
     onClaimLegacyOwnership: (contactProof: String) -> Unit = {},
-    onSubmitComment: (content: String, contactHint: String, onResult: (Boolean) -> Unit) -> Unit = { _, _, _ -> },
+    onSubmitComment: (content: String, contactHint: String, clientMessageId: String, onResult: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> },
     onReportPost: () -> Unit = {},
     onToggleResolved: () -> Unit,
     onDelete: () -> Unit
@@ -2278,7 +2279,8 @@ private fun MomentsPostDetailDialog(
                     } else {
                         onSubmitComment(
                             payload.text.trim().take(240),
-                            payload.contact.trim().take(64)
+                            payload.contact.trim().take(64),
+                            payload.clientMessageId
                         ) { ok ->
                             if (ok) composer.onSubmitSucceeded(payload) else composer.onSubmitFailed(payload)
                         }

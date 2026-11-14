@@ -2,6 +2,7 @@ package cn.edu.haut.campus.feature.settings
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.util.UUID
@@ -81,8 +82,12 @@ class MomentsContactComposerStateMachine(
         private set
 
     // ---- 每条私密会话回复的独立草稿与幂等键 ----
-    private val replyDrafts = mutableMapOf<String, String>()
+    // Observable map so Compose subscribes to per-request drafts; a plain
+    // MutableMap + manual revision counter left the TextField unobserved
+    // (typed text silently reverted to the stale value).
+    private val replyDrafts = mutableStateMapOf<String, String>()
     private val replyMessageIds = mutableMapOf<String, String>()
+    /** Kept as a cheap generation counter for non-Compose tests/tools. */
     var replyDraftsRevision by mutableIntStateOf(0)
         private set
 

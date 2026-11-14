@@ -1419,6 +1419,10 @@ fun TimetableScreen(
                                 singleDateError = "请填写有效周次范围（如 1-16周 或 3,5,7周）"
                                 return@Button
                             }
+                            if (parsedWeeks.any { it !in 1..30 }) {
+                                singleDateError = "周次必须在 1-30 之间"
+                                return@Button
+                            }
                             scope.launch {
                                 if (targetCourse != null) {
                                     repository.saveUserMergedCourseRuleEdit(
@@ -1627,6 +1631,7 @@ fun TimetableScreen(
                             epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
                             epRaw < spRaw -> "结束节次不能小于开始节次"
                             parsedWeeks.isEmpty() -> "请填写有效周次范围（如 1-16周 或 3,5,7周）"
+                            parsedWeeks.any { it !in 1..30 } -> "周次必须在 1-30 之间"
                             else -> null
                         }
                         if (masterEditError != null) return@Button
@@ -1865,6 +1870,7 @@ fun TimetableScreen(
                             epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
                             epRaw < spRaw -> "结束节次不能小于开始节次"
                             parsedWeeks.isEmpty() -> "请填写有效周次范围（如 14-16周 或 10周）"
+                            parsedWeeks.any { it !in 1..30 } -> "周次必须在 1-30 之间"
                             else -> null
                         }
                         if (pracError != null) return@Button
@@ -2055,6 +2061,7 @@ fun TimetableScreen(
                             epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
                             epRaw < spRaw -> "结束节次不能小于开始节次"
                             parsedWeeks.isEmpty() -> "请填写有效周次范围（如 1-16周 或 3,5,7周）"
+                            parsedWeeks.any { it !in 1..30 } -> "周次必须在 1-30 之间"
                             else -> null
                         }
                         if (addError != null) return@Button

@@ -3217,6 +3217,7 @@ object CampusCloudOidcHelper {
         authorName: String,
         content: String,
         contactHint: String = "",
+        clientMessageId: String? = null,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
         bearerToken: String? = null,
         httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
@@ -3227,6 +3228,11 @@ object CampusCloudOidcHelper {
             .put("author_name", authorName)
             .put("content", content)
             .put("contact_hint", contactHint)
+            .apply {
+                // Per-send idempotency key; servers that don't support it yet
+                // safely ignore the unknown field.
+                if (!clientMessageId.isNullOrBlank()) put("client_message_id", clientMessageId)
+            }
             .toString()
         val raw = transport(
             "POST",
