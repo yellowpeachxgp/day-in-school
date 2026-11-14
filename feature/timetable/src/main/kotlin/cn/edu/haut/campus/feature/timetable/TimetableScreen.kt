@@ -150,20 +150,43 @@ fun TimetableScreen(
     var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
 
+    // 已取消分组语义（与恢复一致）：
+    // - 新版跨日调课（moveId != null）按 moveId 折叠为一个原子恢复动作；
+    // - 普通停课（无 moveId、非「已调至」reason）按 日期+真实课程 折叠；
+    // - 旧版模糊调课（无 moveId、reason 为「已调至 …」）逐项单列并标注「待核对」，
+    //   避免同日同课程的独立调课被错误合并，也避免误删可能不相关的调入目标。
+    var pendingLegacyReviewTargets by remember {
+        mutableStateOf<List<OccurrenceOverride>>(emptyList())
+    }
     val termCanceledGroups = remember(occurrenceOverrides, term?.id, rules) {
         val ruleMap = rules.associateBy { it.id }
-        occurrenceOverrides
+        val canceledRows = occurrenceOverrides
             .filter {
                 (term == null || it.termId == term?.id) &&
                     it.canceled &&
                     it.reason?.startsWith("MERGED_INTO:") != true
             }
+        val movedGroups = canceledRows
+            .filter { !it.moveId.isNullOrBlank() }
+            .groupBy { it.moveId!! }
+            .values
+            .map { rows ->
+                rows.sortedBy { ov ->
+                    ov.courseRuleId?.let { rId -> ruleMap[rId]?.startPeriod } ?: ov.startPeriod ?: 99
+                }
+            }
+        val legacyMoveRows = canceledRows
+            .filter { it.moveId.isNullOrBlank() && it.reason?.startsWith("已调至 ") == true }
+            .map { listOf(it) }
+        val plainGroups = canceledRows
+            .filter { it.moveId.isNullOrBlank() && it.reason?.startsWith("已调至 ") != true }
             .groupBy { ov ->
                 val resolvedCourseId = ov.courseId ?: ov.courseRuleId?.let { ruleMap[it]?.courseId } ?: ov.id
                 ov.date to resolvedCourseId
             }
             .values
             .map { it.sortedBy { ov -> ov.courseRuleId?.let { rId -> ruleMap[rId]?.startPeriod } ?: ov.startPeriod ?: 99 } }
+        (movedGroups + legacyMoveRows + plainGroups)
             .sortedByDescending { it.first().date }
     }
     val termCanceledOverrides = remember(termCanceledGroups) {
@@ -420,6 +443,9 @@ fun TimetableScreen(
                                 val minSp = groupRules.minOfOrNull { it.startPeriod } ?: ov.startPeriod
                                 val maxEp = groupRules.maxOfOrNull { it.endPeriod } ?: ov.endPeriod
                                 val c = (ov.courseId ?: r?.courseId)?.let { courseById[it] }
+                                val isMoveGroup = !ov.moveId.isNullOrBlank()
+                                val isLegacyMove = ov.moveId.isNullOrBlank() &&
+                                    ov.reason?.startsWith("已调至 ") == true
                                 XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -447,9 +473,18 @@ fun TimetableScreen(
                                                     if (!roomLabel.isNullOrBlank()) {
                                                         append(" · $roomLabel")
                                                     }
+                                                    if (isMoveGroup) {
+                                                        append(" · 已调出，恢复将撤销本次调课")
+                                                    } else if (isLegacyMove) {
+                                                        append(" · 旧版调课记录·待核对")
+                                                    }
                                                 },
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (isLegacyMove) {
+                                                    MaterialTheme.colorScheme.error
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
                                             )
                                         }
                                         XPeachFilterPill(
@@ -458,12 +493,16 @@ fun TimetableScreen(
                                             compact = true,
                                             onClick = {
                                                 scope.launch {
-                                                    repository.restoreCanceledOccurrence(
+                                                    val restoreResult = repository.restoreCanceledOccurrence(
                                                         date = ov.date,
                                                         ruleId = ov.courseRuleId,
                                                         overrideId = ov.id,
                                                         mergedRuleIds = group.mapNotNull { it.courseRuleId }
                                                     )
+                                                    if (restoreResult.legacyReviewRequired) {
+                                                        pendingLegacyReviewTargets =
+                                                            restoreResult.legacyAmbiguousTargets
+                                                    }
                                                     WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                                                 }
                                             }
@@ -477,6 +516,78 @@ fun TimetableScreen(
                 confirmButton = {
                     TextButton(onClick = { showCanceledCoursesDialog = false }) {
                         Text("关闭")
+                    }
+                }
+            )
+        }
+
+        // 旧版模糊调课恢复后的待核对目标：源停课已恢复，列出疑似调入目标由用户逐项决定删除或保留
+        if (pendingLegacyReviewTargets.isNotEmpty()) {
+            XPeachAlertDialog(
+                onDismissRequest = { pendingLegacyReviewTargets = emptyList() },
+                title = { Text("核对旧版调课调入记录") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "该停课记录来自旧版调课，源时段已恢复。以下调入记录可能与之关联，请逐条确认是否删除（删除后不再重复排课）；不确定时可保留待核对。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        for (target in pendingLegacyReviewTargets) {
+                            val targetCourse = target.courseId?.let { cid -> courses.firstOrNull { it.id == cid } }
+                            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = targetCourse?.name ?: "课程记录",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = buildString {
+                                                append("调入 ${target.date} (${target.date.dayOfWeek.ChineseLabel})")
+                                                if (target.startPeriod != null && target.endPeriod != null) {
+                                                    append(" · 第${target.startPeriod}-${target.endPeriod}节")
+                                                }
+                                                target.room?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    XPeachFilterPill(
+                                        label = "删除",
+                                        selected = false,
+                                        compact = true,
+                                        onClick = {
+                                            scope.launch {
+                                                repository.deleteOccurrenceOverride(target.id)
+                                                pendingLegacyReviewTargets =
+                                                    pendingLegacyReviewTargets.filterNot { it.id == target.id }
+                                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { pendingLegacyReviewTargets = emptyList() }) {
+                        Text("保留待核对")
                     }
                 }
             )
@@ -1259,8 +1370,19 @@ fun TimetableScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val sp = (editedStartPeriod.toIntOrNull() ?: occToEdit.startPeriod).coerceIn(1, 12)
-                        val ep = (editedEndPeriod.toIntOrNull() ?: occToEdit.endPeriod).coerceIn(sp, 12)
+                        // 节次校验：非法输入明确提示，不静默夹取
+                        val spRaw = editedStartPeriod.toIntOrNull()
+                        val epRaw = editedEndPeriod.toIntOrNull()
+                        if (spRaw == null || spRaw !in 1..12) {
+                            singleDateError = "开始节次必须是 1-12 的数字"
+                            return@Button
+                        }
+                        if (epRaw == null || epRaw !in 1..12 || epRaw < spRaw) {
+                            singleDateError = "结束节次必须是 1-12 且不小于开始节次"
+                            return@Button
+                        }
+                        val sp = spRaw
+                        val ep = epRaw
                         if (editScopeMode != 0 || targetRule == null) {
                             val parsedTargetDate = runCatching { LocalDate.parse(targetDateText.trim()) }.getOrNull()
                             if (parsedTargetDate == null) {
@@ -1292,9 +1414,13 @@ fun TimetableScreen(
                                 editingOccurrence = null
                             }
                         } else {
+                            val parsedWeeks = WeeksSetParser.parse(editedWeeksText)
+                            if (parsedWeeks.isEmpty()) {
+                                singleDateError = "请填写有效周次范围（如 1-16周 或 3,5,7周）"
+                                return@Button
+                            }
                             scope.launch {
                                 if (targetCourse != null) {
-                                    val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { targetRule.weeks }
                                     repository.saveUserMergedCourseRuleEdit(
                                         course = targetCourse.copy(
                                             name = editedName.trim().ifEmpty { targetCourse.name },
@@ -1342,6 +1468,7 @@ fun TimetableScreen(
         var editedWeeksText by remember(masterRuleToEdit) {
             mutableStateOf(WeeksSetParser.format(masterRuleToEdit.weeks))
         }
+        var masterEditError by remember(masterRuleToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(targetCourse) { mutableLongStateOf(targetCourse?.colorArgb ?: 0xFF0072BC) }
         val palette = XPeachCoursePalette.SwatchesArgb
 
@@ -1448,6 +1575,13 @@ fun TimetableScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    masterEditError?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
@@ -1484,11 +1618,20 @@ fun TimetableScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        // 输入校验：非法节次/空周次明确提示，不静默兜底
+                        val spRaw = editedStartPeriod.toIntOrNull()
+                        val epRaw = editedEndPeriod.toIntOrNull()
+                        val parsedWeeks = WeeksSetParser.parse(editedWeeksText)
+                        masterEditError = when {
+                            spRaw == null || spRaw !in 1..12 -> "开始节次必须是 1-12 的数字"
+                            epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
+                            epRaw < spRaw -> "结束节次不能小于开始节次"
+                            parsedWeeks.isEmpty() -> "请填写有效周次范围（如 1-16周 或 3,5,7周）"
+                            else -> null
+                        }
+                        if (masterEditError != null) return@Button
                         scope.launch {
                             if (targetCourse != null) {
-                                val sp = (editedStartPeriod.toIntOrNull() ?: masterRuleToEdit.startPeriod).coerceIn(1, 12)
-                                val ep = (editedEndPeriod.toIntOrNull() ?: masterRuleToEdit.endPeriod).coerceIn(sp, 12)
-                                val parsedWeeks = WeeksSetParser.parse(editedWeeksText).ifEmpty { masterRuleToEdit.weeks }
                                 repository.saveUserCourseEdit(
                                     course = targetCourse.copy(
                                         name = editedName.trim().ifEmpty { targetCourse.name },
@@ -1497,8 +1640,8 @@ fun TimetableScreen(
                                     ),
                                     rule = masterRuleToEdit.copy(
                                         weekday = DayOfWeek.of(editedWeekday),
-                                        startPeriod = sp,
-                                        endPeriod = ep,
+                                        startPeriod = checkNotNull(spRaw),
+                                        endPeriod = checkNotNull(epRaw),
                                         rawRoom = editedRoom.trim().ifEmpty { masterRuleToEdit.rawRoom },
                                         weeks = parsedWeeks
                                     )
@@ -1567,6 +1710,7 @@ fun TimetableScreen(
         var pracWeekday by remember(pracToSchedule) { mutableIntStateOf(today.dayOfWeek.value) }
         var pracStartPeriod by remember(pracToSchedule) { mutableStateOf("1") }
         var pracEndPeriod by remember(pracToSchedule) { mutableStateOf("2") }
+        var pracError by remember(pracToSchedule) { mutableStateOf<String?>(null) }
         var pracWeeks by remember(pracToSchedule) {
             mutableStateOf(
                 pracToSchedule.rawWeeks.takeIf { it.isNotBlank() && WeeksSetParser.parse(it).isNotEmpty() }
@@ -1700,22 +1844,38 @@ fun TimetableScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    pracError?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        // 输入校验：非法节次/空周次明确提示，不静默兜底保存错误排课
+                        val spRaw = pracStartPeriod.trim().toIntOrNull()
+                        val epRaw = pracEndPeriod.trim().toIntOrNull()
+                        val parsedWeeks = WeeksSetParser.parse(pracWeeks)
+                        pracError = when {
+                            spRaw == null || spRaw !in 1..12 -> "开始节次必须是 1-12 的数字"
+                            epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
+                            epRaw < spRaw -> "结束节次不能小于开始节次"
+                            parsedWeeks.isEmpty() -> "请填写有效周次范围（如 14-16周 或 10周）"
+                            else -> null
+                        }
+                        if (pracError != null) return@Button
                         scope.launch {
-                            val sp = (pracStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 12)
-                            val ep = (pracEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 12)
-                            val weeks = WeeksSetParser.parse(pracWeeks).ifEmpty { setOf(selectedWeek) }
                             repository.scheduleUnscheduledPracticalCourse(
                                 unscheduled = pracToSchedule,
                                 rawRoom = pracRoom.trim().ifBlank { "实践场地" },
                                 weekday = DayOfWeek.of(pracWeekday),
-                                startPeriod = sp,
-                                endPeriod = ep,
-                                weeks = weeks
+                                startPeriod = spRaw!!,
+                                endPeriod = epRaw!!,
+                                weeks = parsedWeeks
                             )
                             WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
                             schedulingPracticalCourse = null
@@ -1742,6 +1902,7 @@ fun TimetableScreen(
         var newStartPeriod by remember { mutableStateOf("1") }
         var newEndPeriod by remember { mutableStateOf("2") }
         var newWeeks by remember { mutableStateOf("1-16周") }
+        var addError by remember { mutableStateOf<String?>(null) }
 
         XPeachAlertDialog(
             onDismissRequest = { showAddCourseDialog = false },
@@ -1871,31 +2032,46 @@ fun TimetableScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    addError?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
-                        if (newName.isNotBlank()) {
-                            scope.launch {
-                                val sp = (newStartPeriod.toIntOrNull() ?: 1).coerceIn(1, 12)
-                                val ep = (newEndPeriod.toIntOrNull() ?: sp).coerceIn(sp, 12)
-                                val weeks = WeeksSetParser.parse(newWeeks).ifEmpty { setOf(selectedWeek) }
-                                repository.addManualCourseWithRule(
-                                    termId = activeTermId,
-                                    name = newName.trim(),
-                                    teacher = newTeacher.trim().ifBlank { null },
-                                    rawRoom = newRoom.trim().ifBlank { "待定" },
-                                    weekday = DayOfWeek.of(newWeekday),
-                                    startPeriod = sp,
-                                    endPeriod = ep,
-                                    weeks = weeks,
-                                    colorArgb = 0xFF0072BC
-                                )
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                showAddCourseDialog = false
-                            }
+                        // 输入校验：空课程名/非法节次/空或无效周次明确提示，绝不静默兜底保存错误课程
+                        val spRaw = newStartPeriod.trim().toIntOrNull()
+                        val epRaw = newEndPeriod.trim().toIntOrNull()
+                        val parsedWeeks = WeeksSetParser.parse(newWeeks)
+                        addError = when {
+                            newName.isBlank() -> "课程名称不能为空"
+                            spRaw == null || spRaw !in 1..12 -> "开始节次必须是 1-12 的数字"
+                            epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
+                            epRaw < spRaw -> "结束节次不能小于开始节次"
+                            parsedWeeks.isEmpty() -> "请填写有效周次范围（如 1-16周 或 3,5,7周）"
+                            else -> null
+                        }
+                        if (addError != null) return@Button
+                        scope.launch {
+                            repository.addManualCourseWithRule(
+                                termId = activeTermId,
+                                name = newName.trim(),
+                                teacher = newTeacher.trim().ifBlank { null },
+                                rawRoom = newRoom.trim().ifBlank { "待定" },
+                                weekday = DayOfWeek.of(newWeekday),
+                                startPeriod = spRaw!!,
+                                endPeriod = epRaw!!,
+                                weeks = parsedWeeks,
+                                colorArgb = 0xFF0072BC
+                            )
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                            showAddCourseDialog = false
                         }
                     },
                     shape = RoundedCornerShape(12.dp)
