@@ -5027,6 +5027,7 @@ class CampusRepository internal constructor(
                     val belongsToCurrentStudentForAlarm =
                         activeStuNo == null || (!resolvedJobStudentId.isNullOrBlank() && resolvedJobStudentId == activeStuNo)
                     if (belongsToCurrentStudentForAlarm &&
+                        mergedPlan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
                         mergedPlan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
                     ) {
                         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan)
@@ -6024,6 +6025,40 @@ class CampusRepository internal constructor(
         planId: String,
         stage: TripleScheduleStage,
         nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> =
+        advanceBookingPlanStageInternal(
+            planId = planId,
+            stage = stage,
+            allowCloudExecuteNow = false,
+            nowEpochMillis = nowEpochMillis
+        )
+
+    /**
+     * 用户显式"现在执行"入口（与定时 stage API 分离）：仅接受 CLOUD_HOSTED 计划，
+     * 由服务端窗口裁决是否可提前执行；客户端绝不替代云端定时引擎。
+     */
+    suspend fun executeCloudBookingPlanNow(
+        planId: String,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> {
+        val plan = cloudAndParcelDao.getLibraryBookingPlanById(planId)
+            ?: return Result.failure(IllegalArgumentException("未找到预约计划 $planId"))
+        if (plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName) {
+            return Result.failure(IllegalStateException("立即执行入口仅适用于云端托管抢座计划"))
+        }
+        return advanceBookingPlanStageInternal(
+            planId = planId,
+            stage = TripleScheduleStage.FIRE,
+            allowCloudExecuteNow = true,
+            nowEpochMillis = nowEpochMillis
+        )
+    }
+
+    private suspend fun advanceBookingPlanStageInternal(
+        planId: String,
+        stage: TripleScheduleStage,
+        allowCloudExecuteNow: Boolean,
+        nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
         val current = cloudAndParcelDao.getLibraryBookingPlanById(planId)
             ?: throw IllegalArgumentException("未找到预约计划 $planId")
@@ -6047,6 +6082,28 @@ class CampusRepository internal constructor(
             current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
         ) {
             runCatching { syncWithCampusCloud() }
+            return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
+        }
+        // 定时入口（含旧版本排定的 pending intent、开机/时区/升级/账号切换恢复）命中云端托管
+        // 计划的 FIRE：校验 owner 与当前身份归属后仅做 GET 同步合并服务端权威状态——
+        // 严禁 execute-now、严禁本地续期、严禁改写服务端权威执行状态。
+        if (stage == TripleScheduleStage.FIRE &&
+            current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+            !allowCloudExecuteNow
+        ) {
+            val activeCloudId = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim()
+            val liveStuForFire = (buildDelegatedCredentialBundle().first
+                ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+            val belongsToActiveIdentity = isBookingPlanVisibleToIdentity(
+                plan = current,
+                activeCloudUserId = activeCloudId,
+                activeStudentId = liveStuForFire
+            )
+            if (belongsToActiveIdentity &&
+                current.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "EXECUTING")
+            ) {
+                runCatching { syncWithCampusCloud() }
+            }
             return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
         }
         if (stage != TripleScheduleStage.FIRE &&
@@ -6828,7 +6885,12 @@ class CampusRepository internal constructor(
                     activeCloudUserId = activeBinding?.cloudUserId,
                     activeStudentId = activeStudentId
                 )
-                if (belongsToActiveAccount && plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
+                // 恢复入口与定时入口同规则：CLOUD_HOSTED 绝不本地重排闹钟（schedulePlanAlarms 入口
+                // 亦自带拦截），仅撤销旧 pending intent；本机三阶段闹钟仅限非云端计划
+                if (belongsToActiveAccount &&
+                    plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                    plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+                ) {
                     LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan)
                 } else {
                     LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
