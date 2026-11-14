@@ -1457,7 +1457,8 @@ object CampusCloudOidcHelper {
     fun executeCloudHostedReservationJobNow(
         accessToken: String,
         jobId: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): AutomatedSeatBookingResult {
         if (accessToken.isBlank() || jobId.isBlank()) {
             return AutomatedSeatBookingResult(
@@ -1471,12 +1472,14 @@ object CampusCloudOidcHelper {
             )
         }
         return runCatching {
+            val transport = httpTransport ?: ::httpJsonRequest
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val raw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/reservation-jobs/$jobId/execute-now",
-                bodyJson = "{}",
-                bearerToken = accessToken
+            val raw = transport(
+                "POST",
+                "$cleanBase/api/v1/reservation-jobs/$jobId/execute-now",
+                "{}",
+                accessToken,
+                emptyMap()
             )
             parseExecuteNowBookingResult(jobId = jobId, raw = raw)
         }.getOrElse {
@@ -1743,16 +1746,19 @@ object CampusCloudOidcHelper {
     fun logoutAllCloudSessions(
         accessToken: String,
         unlinkXpeach: Boolean = true,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): Boolean {
         if (accessToken.isBlank()) return false
         return runCatching {
+            val transport = httpTransport ?: ::httpJsonRequest
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val raw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/auth/logout-all",
-                bodyJson = JSONObject().put("unlink_xpeach", unlinkXpeach).toString(),
-                bearerToken = accessToken
+            val raw = transport(
+                "POST",
+                "$cleanBase/api/v1/auth/logout-all",
+                JSONObject().put("unlink_xpeach", unlinkXpeach).toString(),
+                accessToken,
+                emptyMap()
             )
             JSONObject(raw).optBoolean("ok", false)
         }.getOrDefault(false)
@@ -2350,16 +2356,19 @@ object CampusCloudOidcHelper {
      */
     fun refreshCloudSession(
         refreshToken: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): Pair<String, String>? {
         if (refreshToken.isBlank()) return null
         return runCatching {
+            val transport = httpTransport ?: ::httpJsonRequest
             val cleanBase = cloudBaseUrl.trimEnd('/')
-            val raw = httpJsonRequest(
-                method = "POST",
-                url = "$cleanBase/api/v1/auth/refresh",
-                bodyJson = JSONObject().put("refresh_token", refreshToken.trim()).toString(),
-                bearerToken = null
+            val raw = transport(
+                "POST",
+                "$cleanBase/api/v1/auth/refresh",
+                JSONObject().put("refresh_token", refreshToken.trim()).toString(),
+                null,
+                emptyMap()
             )
             val root = JSONObject(raw)
             if (!root.optBoolean("ok", false)) return null
@@ -3209,19 +3218,22 @@ object CampusCloudOidcHelper {
         content: String,
         contactHint: String = "",
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
-        bearerToken: String? = null
+        bearerToken: String? = null,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): MomentsPostItem? = runCatching {
+        val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
             .put("author_name", authorName)
             .put("content", content)
             .put("contact_hint", contactHint)
             .toString()
-        val raw = httpJsonRequest(
-            method = "POST",
-            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/comments",
-            bodyJson = body,
-            bearerToken = bearerToken?.takeIf { it.isNotBlank() }
+        val raw = transport(
+            "POST",
+            "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/comments",
+            body,
+            bearerToken?.takeIf { it.isNotBlank() },
+            emptyMap()
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -3346,9 +3358,11 @@ object CampusCloudOidcHelper {
         contactInfo: String,
         idempotencyKey: String,
         bearerToken: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): MomentsContactRequestDto? = runCatching {
         if (bearerToken.isBlank()) return null
+        val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val body = JSONObject()
             .put("sender_name", senderName)
@@ -3356,11 +3370,12 @@ object CampusCloudOidcHelper {
             .put("contact_info", contactInfo)
             .put("client_request_id", idempotencyKey)
             .toString()
-        val raw = httpJsonRequest(
-            method = "POST",
-            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
-            bodyJson = body,
-            bearerToken = bearerToken
+        val raw = transport(
+            "POST",
+            "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
+            body,
+            bearerToken,
+            emptyMap()
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null
@@ -3408,15 +3423,18 @@ object CampusCloudOidcHelper {
     fun fetchMomentsContactRequestsResultFromCloud(
         postId: String,
         bearerToken: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): MomentsContactRequestsListResult = runCatching {
         if (bearerToken.isBlank()) return MomentsContactRequestsListResult()
+        val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
-        val raw = httpJsonRequest(
-            method = "GET",
-            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
-            bodyJson = null,
-            bearerToken = bearerToken
+        val raw = transport(
+            "GET",
+            "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests",
+            null,
+            bearerToken,
+            emptyMap()
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return MomentsContactRequestsListResult()
@@ -3461,20 +3479,23 @@ object CampusCloudOidcHelper {
         reason: String? = null,
         clientMessageId: String? = null,
         bearerToken: String,
-        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
+        cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
+        httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): MomentsContactRequestDto? = runCatching {
         if (bearerToken.isBlank()) return null
+        val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
         val bodyObj = JSONObject().put("action", action)
         if (!replyMessage.isNullOrBlank()) bodyObj.put("reply_message", replyMessage.trim())
         if (!reason.isNullOrBlank()) bodyObj.put("reason", reason.trim())
         // 客户端幂等键：REPLY 等用户主动发送动作去重；旧服务端忽略未知字段保持兼容
         if (!clientMessageId.isNullOrBlank()) bodyObj.put("client_message_id", clientMessageId.trim().take(80))
-        val raw = httpJsonRequest(
-            method = "POST",
-            url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests/${Uri.encode(requestId)}/action",
-            bodyJson = bodyObj.toString(),
-            bearerToken = bearerToken
+        val raw = transport(
+            "POST",
+            "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests/${Uri.encode(requestId)}/action",
+            bodyObj.toString(),
+            bearerToken,
+            emptyMap()
         )
         val root = JSONObject(raw)
         if (!root.optBoolean("ok", false)) return null

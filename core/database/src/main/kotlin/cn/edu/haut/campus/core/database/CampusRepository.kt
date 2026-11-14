@@ -3034,7 +3034,8 @@ class CampusRepository internal constructor(
                 content = cleanContent,
                 contactHint = contactHint.trim().take(48),
                 cloudBaseUrl = baseUrl,
-                bearerToken = token.takeIf { it.isNotBlank() }
+                bearerToken = token.takeIf { it.isNotBlank() },
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("网络未连接或服务端拒绝（如已被发起人屏蔽），留言未能提交，请联网重试")
             val curSnap = prefsState.campusMomentsSnapshot
             val nextPosts = curSnap.posts.map { if (it.id == postId) cloudUpdated else it }
@@ -3078,7 +3079,8 @@ class CampusRepository internal constructor(
                 contactInfo = cleanContact,
                 idempotencyKey = idempotencyKey,
                 bearerToken = token,
-                cloudBaseUrl = baseUrl
+                cloudBaseUrl = baseUrl,
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("联系申请提交失败：可能网络未连接、无法向本人发起申请、该帖已结案或发起人已屏蔽申请")
             runCatching { refreshCampusMomentsSnapshot() }
             dto
@@ -3097,7 +3099,8 @@ class CampusRepository internal constructor(
         CampusCloudOidcHelper.fetchMomentsContactRequestsResultFromCloud(
             postId = postId,
             bearerToken = token,
-            cloudBaseUrl = baseUrl
+            cloudBaseUrl = baseUrl,
+            httpTransport = cloudHttpTransportForTest
         )
     }
 
@@ -3163,7 +3166,8 @@ class CampusRepository internal constructor(
                 reason = reason,
                 clientMessageId = clientMessageId,
                 bearerToken = token,
-                cloudBaseUrl = baseUrl
+                cloudBaseUrl = baseUrl,
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("处理联系申请失败，请检查网络连接或权限")
             runCatching { refreshCampusMomentsSnapshot() }
             dto
@@ -4342,7 +4346,7 @@ class CampusRepository internal constructor(
             }
             if (storedRt.isNotBlank()) {
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
-                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt)
+                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt, httpTransport = cloudHttpTransportForTest)
                     if (pair != null) {
                         cachedCloudAccessToken = pair.first
                         cachedCloudRefreshToken = pair.second
@@ -4456,7 +4460,8 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.logoutAllCloudSessions(
                     accessToken = tokenBeforeSwitch,
                     unlinkXpeach = false,
-                    cloudBaseUrl = cloudBaseUrlForSwitch
+                    cloudBaseUrl = cloudBaseUrlForSwitch,
+                    httpTransport = cloudHttpTransportForTest
                 )
             }
         } else false
@@ -5313,7 +5318,8 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.logoutAllCloudSessions(
                     accessToken = tokenBeforeUnlink,
                     unlinkXpeach = true,
-                    cloudBaseUrl = cloudBaseUrl
+                    cloudBaseUrl = cloudBaseUrl,
+                    httpTransport = cloudHttpTransportForTest
                 )
             }
         } else {
@@ -6376,7 +6382,8 @@ class CampusRepository internal constructor(
                                 withContext(Dispatchers.IO) {
                                     CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
                                         accessToken = cloudToken,
-                                        jobId = validCloudJobId
+                                        jobId = validCloudJobId,
+                                        httpTransport = cloudHttpTransportForTest
                                     )
                                 }
                             } else {
