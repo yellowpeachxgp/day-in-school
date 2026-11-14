@@ -695,6 +695,10 @@ class CampusRepository internal constructor(
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
 
+    /** 学期无法自动确认、需用户重新选择学期同步核对的考试记录审计（V2 逐条修复审计）。 */
+    val examTermReviewAuditsFlow: Flow<List<ExamTermRepairAuditEntity>> =
+        dao.observeExamTermRepairAuditsByDisposition(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED)
+
     val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
         dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
 
@@ -762,6 +766,7 @@ class CampusRepository internal constructor(
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
             ensureExamTermPoisonRepairedIfNeeded()
+            ensureExamTermRepairV2IfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
@@ -836,6 +841,7 @@ class CampusRepository internal constructor(
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
         ensureExamTermPoisonRepairedIfNeeded()
+        ensureExamTermRepairV2IfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
     }
 
@@ -863,6 +869,166 @@ class CampusRepository internal constructor(
             it[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] = true
         }
     }
+
+    /**
+     * 考试学期修复 V2（逐条证据驱动，替代 V1 的纯日期窗口猜测）：
+     * - 有权威来源证明（originTermId 由可信同步管线写入）且 termId 被篡改的行 → 修复回原始学期；
+     * - 目标学期已存在相同指纹考试 → 删除错标副本并记 MERGED_DUPLICATE，不产生重复考试；
+     * - 旧库无来源行（originTermId == null）：学期有同步/导入证据 → 不动；
+     *   学期为已知污染签名（"2026-2027-1"）或非法格式且无证据 → 保留并记 REVIEW_REQUIRED 待用户重同步核对；
+     * - 绝不凭显示日期猜学期（一月考试不当然属于春季学期），绝不盲目反改 V1 已修过的行；
+     * - 修复与审计在同一事务内提交；无任何 DataStore 布尔门控——审计表即事实来源，
+     *   进程在任何时刻崩溃重跑都安全（同一 examRowId+ruleVersion 的审计幂等覆盖）。
+     */
+    internal suspend fun ensureExamTermRepairV2IfNeeded() {
+        val prefs = preferences.data.first()
+        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
+            runCatching { HautAcademicEndpoints.toTermId(savedXnm, savedXqm) }.getOrNull()
+        } else null
+        var changed = false
+        database.withTransaction {
+            val exams = dao.getExamSchedulesSnapshot()
+            val audits = dao.getExamTermRepairAuditsSnapshot()
+            val auditsByRow = audits.filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
+                .associateBy { it.examRowId }
+            val importAuditTermIds = dao.observeImportAudits().first()
+                .map { it.termId }.filter { it.isNotBlank() }.toSet()
+            val evidencedTermIds = buildSet {
+                savedSyncTermId?.let(::add)
+                addAll(importAuditTermIds)
+            }
+            val termIdPattern = Regex("\\d{4}-\\d{4}-\\d+")
+            val nowMs = System.currentTimeMillis()
+            val toWrite = mutableListOf<ExamTermRepairAuditEntity>()
+            val toRepair = mutableListOf<ExamScheduleEntity>()
+            val examsById = exams.associateBy { it.id }
+            val fingerprintIndex = exams.groupBy { examFingerprint(it) }
+
+            for (row in exams) {
+                val priorAudit = auditsByRow[row.id]
+                val provenance = row.originTermId?.takeIf { it.isNotBlank() }
+                when {
+                    provenance != null && provenance != row.termId -> {
+                        // 确定错标且有原始来源证明 → 修复（同事务写审计）
+                        val duplicates = fingerprintIndex[examFingerprint(row)].orEmpty()
+                            .filter { it.id != row.id && it.termId == provenance }
+                        if (duplicates.isNotEmpty()) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId+duplicate:${duplicates.first().id}",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            dao.deleteExamScheduleById(row.id)
+                            changed = true
+                        } else {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REPAIRED ||
+                                priorAudit.previousTermId != row.termId ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REPAIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            toRepair += row.copy(termId = provenance)
+                            changed = true
+                        }
+                    }
+                    provenance != null -> {
+                        // 一致：可信来源与存储学期相符；若曾被标记待核对则标记为已由重同步解决
+                        if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
+                            toWrite += priorAudit.copy(
+                                newTermId = row.termId,
+                                evidenceRef = "${priorAudit.evidenceRef}|resync_verified",
+                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                                repairedAtEpochMilli = nowMs
+                            )
+                            changed = true
+                        }
+                    }
+                    else -> {
+                        // 旧库无来源行：绝不按日期猜学期。
+                        val suspicious = row.termId.isBlank() ||
+                            !termIdPattern.matches(row.termId) ||
+                            (row.termId == "2026-2027-1" && row.termId !in evidencedTermIds)
+                        if (suspicious) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED ||
+                                priorAudit.previousTermId != row.termId
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = null,
+                                    evidenceRef = "missing_provenance",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                                changed = true
+                            }
+                        } else if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
+                            // 曾待核对的行现在具备同步/导入证据 → 标记已解决
+                            toWrite += priorAudit.copy(
+                                newTermId = row.termId,
+                                evidenceRef = "${priorAudit.evidenceRef}|evidence_available",
+                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                                repairedAtEpochMilli = nowMs
+                            )
+                            changed = true
+                        }
+                    }
+                }
+            }
+            // 审计引用已不存在的数据行 → 视为已由重同步/清理解决
+            for (audit in auditsByRow.values) {
+                if (audit.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED &&
+                    audit.examRowId !in examsById
+                ) {
+                    toWrite += audit.copy(
+                        evidenceRef = "${audit.evidenceRef}|row_removed",
+                        disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                        repairedAtEpochMilli = nowMs
+                    )
+                    changed = true
+                }
+            }
+            if (toRepair.isNotEmpty()) dao.upsertExamSchedules(toRepair)
+            if (toWrite.isNotEmpty()) dao.upsertExamTermRepairAudits(toWrite)
+        }
+        if (changed) notifyScheduleOrPolicyChanged("EXAM_TERM_REPAIR_V2")
+    }
+
+    /** 考试内容指纹：同一场考试的逻辑身份（不含学期列与同步时间戳）。 */
+    private fun examFingerprint(row: ExamScheduleEntity): String = listOf(
+        row.courseCode,
+        row.courseName,
+        row.examBatchName,
+        row.examStageLabel,
+        row.examFormat,
+        row.examDateIso.orEmpty(),
+        row.startTimeIso.orEmpty(),
+        row.endTimeIso.orEmpty(),
+        row.rawRoom,
+        row.isRetake.toString()
+    ).joinToString("|")
 
     /**
      * 为升级老用户补齐 11–12 节晚间默认作息时间（不覆盖用户已自定义编辑的 1–10 节作息）：
@@ -1271,6 +1437,14 @@ class CampusRepository internal constructor(
         weeks: Set<Int>,
         colorArgb: Long
     ) {
+        // 输入校验：拒绝静默兜底——空周次/越界节次/空课程名一律明确报错，
+        // 不把用户的空输入悄悄变成「第 1 节全学期」的错误排课。
+        require(name.isNotBlank()) { "课程名称不能为空" }
+        require(termId.isNotBlank()) { "学期不能为空" }
+        require(startPeriod in 1..12) { "开始节次必须在 1-12 节之间" }
+        require(endPeriod in startPeriod..12) { "结束节次必须不小于开始节次且不超过第 12 节" }
+        require(weeks.isNotEmpty()) { "周次不能为空，请填写有效周次范围" }
+        require(weeks.all { it in 1..30 }) { "周次超出有效范围(1-30)" }
         val courseId = "c_manual_${UUID.randomUUID().toString().take(8)}"
         val ruleId = "r_manual_${UUID.randomUUID().toString().take(8)}"
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
@@ -1527,6 +1701,18 @@ class CampusRepository internal constructor(
                     .mapNotNull { it.courseRuleId }
             } else emptyList()
             val ruleIds = (explicitRuleIds + companionIds).distinct()
+            // 每一次跨日调课生成唯一 moveId：同一次调课的全部源停课行与调入目标行共享该关联，
+            // 恢复时按 moveId 原子撤销，绝不再按 courseId+日期文本猜测配对。
+            val moveId = UUID.randomUUID().toString()
+            // 若被移动对象本身是上一次调课的调入目标（moveRole=TARGET），把旧调课的源停课行
+            // 整体改挂到新 moveId，旧 moveId 随之消亡：恢复新调课即回到最初规则原时段，不残留双份排课。
+            val movingTargetOverride = occ.overrideId?.let { oid ->
+                dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == oid }
+            }
+            val chainedMoveId = movingTargetOverride
+                ?.takeIf { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET && it.courseRuleId == null }
+                ?.moveId
+                ?.takeIf { it.isNotBlank() }
             if (ruleIds.isNotEmpty()) {
                 for (rId in ruleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
@@ -1538,12 +1724,20 @@ class CampusRepository internal constructor(
                             courseRuleId = rId,
                             date = occ.date,
                             canceled = true,
-                            reason = "已调至 $targetDate"
+                            reason = "已调至 $targetDate",
+                            moveId = moveId,
+                            moveRole = OccurrenceOverride.MOVE_ROLE_SOURCE
                         ).toEntity()
                     )
                 }
             } else if (!occ.overrideId.isNullOrBlank()) {
                 dao.deleteOccurrenceOverrideById(occ.overrideId!!)
+            }
+            if (!chainedMoveId.isNullOrBlank() && chainedMoveId != moveId) {
+                val oldMoveRows = dao.getOccurrenceOverridesForMove(termId, chainedMoveId)
+                for (row in oldMoveRows) {
+                    dao.upsertOccurrenceOverride(row.copy(moveId = moveId))
+                }
             }
 
             dao.upsertOccurrenceOverride(
@@ -1558,7 +1752,9 @@ class CampusRepository internal constructor(
                     room = cleanRoom,
                     buildingId = verifiedBuildingId,
                     canceled = false,
-                    reason = reason?.trim()?.takeIf { it.isNotBlank() } ?: "由 ${occ.date} 调入"
+                    reason = reason?.trim()?.takeIf { it.isNotBlank() } ?: "由 ${occ.date} 调入",
+                    moveId = moveId,
+                    moveRole = OccurrenceOverride.MOVE_ROLE_TARGET
                 ).toEntity()
             )
         }
@@ -1570,50 +1766,116 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
     }
 
+    /**
+     * 单次「恢复上课」的结构化结果：
+     * - [restoredSourceOverrideIds] 被恢复的源停课覆盖行（含按 moveId 原子恢复的整组源）；
+     * - [deletedTargetOverrideIds] 被精确删除的调入目标行（仅限同一 moveId 的 TARGET）；
+     * - [restoredMoveIds] 被整体撤销的跨日调课关联；
+     * - [legacyAmbiguousTargets] 旧数据（moveId==null）恢复时检出的疑似调入目标——绝不自动删除，
+     *   交由 UI 提示用户显式选择删除或保留待核对。
+     */
+    data class OccurrenceRestoreResult(
+        val restoredSourceOverrideIds: List<String> = emptyList(),
+        val deletedTargetOverrideIds: List<String> = emptyList(),
+        val restoredMoveIds: List<String> = emptyList(),
+        val legacyAmbiguousTargets: List<OccurrenceOverride> = emptyList()
+    ) {
+        val legacyReviewRequired: Boolean get() = legacyAmbiguousTargets.isNotEmpty()
+    }
+
+    /**
+     * 恢复被停课的 occurrence：
+     * - 选中行带有 moveId 时，将同一学期内该 moveId 的全部 SOURCE 与 TARGET 行作为一次原子操作整体撤销；
+     * - 普通停课（无 moveId）只恢复用户选择的取消记录，绝不按 courseId+日期批量删除其他目标；
+     * - 旧版模糊调课（无 moveId、reason 为「已调至 …」）恢复源后，检出候选调入目标并返回待核对清单。
+     * 所有写入均在单一 Room 事务内提交；过期点击与重复恢复为安全 no-op。
+     */
     suspend fun restoreCanceledOccurrence(
         date: LocalDate,
         ruleId: String?,
         overrideId: String? = null,
         mergedRuleIds: List<String> = emptyList()
-    ) {
+    ): OccurrenceRestoreResult {
         val dateIso = date.toString()
         val allRuleIds = (mergedRuleIds + listOfNotNull(ruleId)).distinct().filter { it.isNotBlank() }
-        database.withTransaction {
+        val result = database.withTransaction {
             val snapshot = dao.getOccurrenceOverridesSnapshot()
-            val restoredCanceledList = mutableListOf<OccurrenceOverrideEntity>()
+            val restoredSourceIds = linkedSetOf<String>()
+            val deletedTargetIds = linkedSetOf<String>()
+            val restoredMoveIds = linkedSetOf<String>()
+            val legacySourcesRestored = mutableListOf<OccurrenceOverrideEntity>()
+            val moveIdsToRestore = linkedMapOf<String, String>() // moveId -> termId
+
             if (!overrideId.isNullOrBlank()) {
                 val existing = snapshot.firstOrNull { it.id == overrideId }
                 if (existing != null && existing.courseRuleId == null && existing.canceled) {
                     dao.upsertOccurrenceOverride(existing.copy(canceled = false, reason = "临时调课/补课"))
-                } else {
-                    if (existing != null) restoredCanceledList += existing
-                    dao.deleteOccurrenceOverrideById(overrideId)
+                } else if (existing != null) {
+                    if (existing.canceled && !existing.moveId.isNullOrBlank()) {
+                        moveIdsToRestore[existing.moveId!!] = existing.termId
+                    } else {
+                        if (existing.canceled) {
+                            restoredSourceIds += existing.id
+                            legacySourcesRestored += existing
+                        }
+                        dao.deleteOccurrenceOverrideById(overrideId)
+                    }
                 }
             }
             for (rId in allRuleIds) {
-                restoredCanceledList += snapshot.filter {
+                val canceledForRule = snapshot.filter {
                     it.dateIso == dateIso && it.courseRuleId == rId && it.canceled
                 }
-                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(rId, dateIso)
+                for (row in canceledForRule) {
+                    if (!row.moveId.isNullOrBlank()) {
+                        moveIdsToRestore[row.moveId!!] = row.termId
+                    } else {
+                        dao.deleteOccurrenceOverrideById(row.id)
+                        restoredSourceIds += row.id
+                        legacySourcesRestored += row
+                    }
+                }
             }
-            // 若恢复的原停课记录是由跨日调课产生（reason = "已调至 YYYY-MM-DD"），同步清理对应的调入临时记录，避免恢复后产生双份排课
-            val movedTargetCourseIds = restoredCanceledList
-                .filter { it.reason?.startsWith("已调至 ") == true }
-                .mapNotNull { it.courseId }
-                .toSet()
-            if (movedTargetCourseIds.isNotEmpty()) {
-                val pairedMoves = snapshot.filter { ov ->
+            // 有 moveId 的跨日调课视为一个原子操作：恢复其全部 SOURCE 并删除该 moveId 的 TARGET。
+            for ((mid, termOfMove) in moveIdsToRestore) {
+                val moveRows = dao.getOccurrenceOverridesForMove(termOfMove, mid)
+                var touched = false
+                for (row in moveRows) {
+                    dao.deleteOccurrenceOverrideById(row.id)
+                    touched = true
+                    if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
+                        deletedTargetIds += row.id
+                    } else {
+                        restoredSourceIds += row.id
+                    }
+                }
+                if (touched) restoredMoveIds += mid
+            }
+            // 旧版无 moveId 的模糊调课源（reason = "已调至 YYYY-MM-DD"）：仅恢复所选源，
+            // 检出但绝不自动删除候选调入目标，提示用户显式核对。
+            val ambiguous = linkedMapOf<String, OccurrenceOverrideEntity>()
+            for (src in legacySourcesRestored) {
+                if (src.reason?.startsWith("已调至 ") != true) continue
+                val candidates = snapshot.filter { ov ->
                     ov.courseRuleId == null &&
                         !ov.canceled &&
-                        ov.courseId in movedTargetCourseIds &&
-                        ov.reason == "由 $dateIso 调入"
+                        ov.moveId.isNullOrBlank() &&
+                        ov.courseId == src.courseId &&
+                        ov.reason == "由 ${src.dateIso} 调入"
                 }
-                for (mv in pairedMoves) {
-                    dao.deleteOccurrenceOverrideById(mv.id)
+                for (c in candidates) {
+                    ambiguous[c.id] = c
                 }
             }
+            OccurrenceRestoreResult(
+                restoredSourceOverrideIds = restoredSourceIds.toList(),
+                deletedTargetOverrideIds = deletedTargetIds.toList(),
+                restoredMoveIds = restoredMoveIds.toList(),
+                legacyAmbiguousTargets = ambiguous.values.map { it.toDomain() }
+            )
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        return result
     }
 
     suspend fun deleteCourseScheduleRule(ruleId: String) {
@@ -1647,9 +1909,29 @@ class CampusRepository internal constructor(
             val targetRules = rules.filter { it.id in cleanIds }
             if (targetRules.isEmpty()) return@withTransaction
             val affectedCourseIds = targetRules.map { it.courseId }.toSet()
+            // 记录将被规则删除波及的调课源行 moveId：若删除后该调课不再有任何 SOURCE，
+            // 其 TARGET 沦为无源孤儿行（会凭空复活一节课），必须同事务内一并清理。
+            val moveIdsLosingSources = allOverrides
+                .filter { ov ->
+                    !ov.moveId.isNullOrBlank() &&
+                        ov.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE &&
+                        ov.courseRuleId != null && ov.courseRuleId in cleanIds
+                }
+                .associate { it.moveId!! to it.termId }
             for (rId in cleanIds) {
                 dao.deleteRuleById(rId)
                 dao.deleteOccurrenceOverridesByRuleId(rId)
+            }
+            for ((mid, termOfMove) in moveIdsLosingSources) {
+                val remaining = dao.getOccurrenceOverridesForMove(termOfMove, mid)
+                val hasSurvivingSource = remaining.any {
+                    it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.courseRuleId != null
+                }
+                if (!hasSurvivingSource) {
+                    for (orphan in remaining) {
+                        dao.deleteOccurrenceOverrideById(orphan.id)
+                    }
+                }
             }
             for (ov in allOverrides) {
                 if (cleanIds.any { id -> ov.reason == "MERGED_INTO:$id" }) {
@@ -1726,6 +2008,12 @@ class CampusRepository internal constructor(
         weeks: Set<Int>,
         colorArgb: Long = 0xFF0D9488
     ) {
+        require(unscheduled.termId.isNotBlank()) { "实践课学期不能为空" }
+        require(unscheduled.sourceKey.isNotBlank()) { "实践课来源标识不能为空" }
+        require(startPeriod in 1..12) { "开始节次必须在 1-12 节之间" }
+        require(endPeriod in startPeriod..12) { "结束节次必须不小于开始节次且不超过第 12 节" }
+        require(weeks.isNotEmpty()) { "周次不能为空，请填写有效周次范围" }
+        require(weeks.all { it in 1..30 }) { "周次超出有效范围(1-30)" }
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val cleanRoom = rawRoom.trim().ifBlank { "实践场地" }
@@ -1761,15 +2049,25 @@ class CampusRepository internal constructor(
                 courseId = courseId,
                 termId = unscheduled.termId,
                 weekday = weekday,
-                startPeriod = startPeriod.coerceIn(1, 12),
-                endPeriod = endPeriod.coerceIn(startPeriod.coerceIn(1, 12), 12),
-                weeks = weeks.ifEmpty { (1..16).toSet() },
+                startPeriod = startPeriod,
+                endPeriod = endPeriod,
+                weeks = weeks,
                 rawRoom = cleanRoom,
                 buildingId = resolved.building?.id,
                 userModified = true
             )
             dao.upsertCourse(course.toEntity())
-            dao.upsertRule(rule.toEntity())
+            // 幂等保护：完全相同的目标时段已存在时不重复插入（防止双击/重复提交产生重复排课），
+            // 不同时段的另一次排课仍正常追加。
+            val identicalSlotExists = dao.getRulesSnapshot().any { r ->
+                r.courseId == courseId && r.termId == unscheduled.termId &&
+                    r.weekdayIso == weekday.value &&
+                    r.startPeriod == startPeriod && r.endPeriod == endPeriod &&
+                    r.weeksCsv == weeks.sorted().joinToString(",")
+            }
+            if (!identicalSlotExists) {
+                dao.upsertRule(rule.toEntity())
+            }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
@@ -2043,7 +2341,40 @@ class CampusRepository internal constructor(
             } else {
                 exams
             }
-            dao.upsertExamSchedules(filteredToUpsert.map { it.toEntity() })
+            // 可信同步管线：写入时记录每行的原始学期为权威证据（originTermId）。
+            // 后续任何把 termId 写坏的缺陷都可凭此列确定修复方向；旧库行的该列为 NULL。
+            val stamped = filteredToUpsert.map { item ->
+                item.toEntity().copy(
+                    originTermId = item.originTermId ?: item.termId
+                )
+            }
+            dao.upsertExamSchedules(stamped)
+            // 权威重同步去重：同一场考试（内容指纹一致）若在其他学期遗留无来源旧行，
+            // 一律视为历史错标残留并在同事务内清除+审计，保证修复后不存在重复考试。
+            val staleFingerprints = mutableMapOf<String, ExamScheduleEntity>()
+            dao.getExamSchedulesSnapshot()
+                .filter { it.originTermId.isNullOrBlank() }
+                .forEach { staleFingerprints[examFingerprint(it)] = it }
+            val nowMs = System.currentTimeMillis()
+            val mergedAudits = mutableListOf<ExamTermRepairAuditEntity>()
+            for (incoming in stamped) {
+                val stale = staleFingerprints[examFingerprint(incoming)] ?: continue
+                if (stale.id == incoming.id || stale.termId == incoming.termId) continue
+                dao.deleteExamScheduleById(stale.id)
+                mergedAudits += ExamTermRepairAuditEntity(
+                    id = "v2:${stale.id}",
+                    examRowId = stale.id,
+                    previousTermId = stale.termId,
+                    newTermId = incoming.termId,
+                    evidenceRef = "authoritative_resync_fingerprint:${incoming.id}",
+                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                    repairedAtEpochMilli = nowMs
+                )
+            }
+            if (mergedAudits.isNotEmpty()) {
+                dao.upsertExamTermRepairAudits(mergedAudits)
+            }
         }
         notifyScheduleOrPolicyChanged("EXAMS_IMPORTED")
     }
@@ -7500,6 +7831,9 @@ class CampusRepository internal constructor(
     }
 
     companion object {
+        /** 考试学期修复规则版本：审计行按 (ruleVersion, examRowId) 幂等。 */
+        internal const val EXAM_TERM_REPAIR_RULE_V2 = "exam_term_repair_v2"
+
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

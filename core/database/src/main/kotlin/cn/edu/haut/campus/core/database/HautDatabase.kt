@@ -101,6 +101,13 @@ interface CampusDao {
     @Query("DELETE FROM occurrence_overrides WHERE courseRuleId = :ruleId AND dateIso = :dateIso AND canceled = 1")
     suspend fun deleteCanceledOccurrenceOverridesForRuleOnDate(ruleId: String, dateIso: String)
 
+    /** 按稳定调课关联查询：同一 moveId 的全部行，严格限定学期与角色边界。 */
+    @Query("SELECT * FROM occurrence_overrides WHERE termId = :termId AND moveId = :moveId")
+    suspend fun getOccurrenceOverridesForMove(termId: String, moveId: String): List<OccurrenceOverrideEntity>
+
+    @Query("DELETE FROM occurrence_overrides WHERE termId = :termId AND moveId = :moveId AND moveRole = :moveRole")
+    suspend fun deleteOccurrenceOverridesForMoveRole(termId: String, moveId: String, moveRole: String): Int
+
     @Query("DELETE FROM courses WHERE id = :courseId")
     suspend fun deleteCourseById(courseId: String)
 
@@ -182,6 +189,18 @@ interface CampusDao {
     @Query("DELETE FROM exam_schedules WHERE termId = :termId")
     suspend fun clearExamSchedulesForTerm(termId: String)
 
+    @Query("DELETE FROM exam_schedules WHERE id = :id")
+    suspend fun deleteExamScheduleById(id: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertExamTermRepairAudits(items: List<ExamTermRepairAuditEntity>)
+
+    @Query("SELECT * FROM exam_term_repair_audits")
+    suspend fun getExamTermRepairAuditsSnapshot(): List<ExamTermRepairAuditEntity>
+
+    @Query("SELECT * FROM exam_term_repair_audits WHERE disposition = :disposition")
+    fun observeExamTermRepairAuditsByDisposition(disposition: String): Flow<List<ExamTermRepairAuditEntity>>
+
     @Query("SELECT * FROM unscheduled_academic_courses ORDER BY termId DESC, name ASC, sourceKey ASC")
     fun observeUnscheduledCourses(): Flow<List<UnscheduledAcademicCourseEntity>>
 
@@ -238,6 +257,7 @@ interface CampusDao {
         WidgetInstanceConfigEntity::class,
         ImportAuditEntity::class,
         ExamScheduleEntity::class,
+        ExamTermRepairAuditEntity::class,
         ReminderTaskEntity::class,
         ReminderEventPrefEntity::class,
         UtilityDailySampleEntity::class,
@@ -252,7 +272,7 @@ interface CampusDao {
         ParcelSourceConnectionEntity::class,
         InstalledExtensionPluginEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {

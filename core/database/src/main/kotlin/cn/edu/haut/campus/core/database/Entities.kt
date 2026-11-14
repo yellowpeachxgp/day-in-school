@@ -1,7 +1,10 @@
 package cn.edu.haut.campus.core.database
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.edu.haut.campus.core.domain.WeeksSetParser
 import cn.edu.haut.campus.core.model.AttemptType
 import cn.edu.haut.campus.core.model.Building
@@ -159,7 +162,10 @@ data class CourseScheduleRuleEntity(
     )
 }
 
-@Entity(tableName = "occurrence_overrides")
+@Entity(
+    tableName = "occurrence_overrides",
+    indices = [Index(value = ["termId", "moveId", "moveRole"], unique = false)]
+)
 data class OccurrenceOverrideEntity(
     @PrimaryKey val id: String,
     val termId: String,
@@ -173,7 +179,11 @@ data class OccurrenceOverrideEntity(
     val room: String?,
     val buildingId: String?,
     val canceled: Boolean,
-    val reason: String?
+    val reason: String?,
+    /** 跨日调课稳定关联 ID：同一次调课的全部源停课行与调入目标行共享，普通停课/旧数据为 null。 */
+    val moveId: String?,
+    /** 调课行角色（受控值 SOURCE/TARGET）；null 表示与调课无关。 */
+    val moveRole: String?
 ) {
     fun toDomain() = OccurrenceOverride(
         id = id,
@@ -188,7 +198,9 @@ data class OccurrenceOverrideEntity(
         room = room,
         buildingId = buildingId,
         canceled = canceled,
-        reason = reason
+        reason = reason,
+        moveId = moveId,
+        moveRole = moveRole
     )
 }
 
@@ -340,7 +352,9 @@ data class ExamScheduleEntity(
     val seatNumber: String?,
     val campusName: String,
     val isRetake: Boolean,
-    val syncedAtEpochMilli: Long
+    val syncedAtEpochMilli: Long,
+    /** 可信同步管线写入时记录的原始学期（权威来源证明）；旧库行或手工写入为 null。 */
+    val originTermId: String?
 ) {
     fun toDomain() = ExamScheduleItem(
         id = id,
@@ -358,8 +372,36 @@ data class ExamScheduleEntity(
         seatNumber = seatNumber,
         campusName = campusName,
         isRetake = isRetake,
-        syncedAt = Instant.ofEpochMilli(syncedAtEpochMilli)
+        syncedAt = Instant.ofEpochMilli(syncedAtEpochMilli),
+        originTermId = originTermId
     )
+}
+
+/**
+ * 考试学期修复逐条审计：记录每次自动修复/待核对判定的原始学期、目标学期、证据引用与规则版本，
+ * 保证修复可审计、可重跑幂等；绝不使用单个布尔标志冒充“全库已修”。
+ */
+@Entity(
+    tableName = "exam_term_repair_audits",
+    indices = [Index(value = ["examRowId"], unique = false)]
+)
+data class ExamTermRepairAuditEntity(
+    /** 稳定主键：ruleVersion + examRowId，重复运行同一规则只保留一条审计。 */
+    @PrimaryKey val id: String,
+    val examRowId: String,
+    val previousTermId: String,
+    val newTermId: String?,
+    val evidenceRef: String,
+    val ruleVersion: String,
+    val disposition: String,
+    val repairedAtEpochMilli: Long
+) {
+    companion object {
+        const val DISPOSITION_REPAIRED = "REPAIRED"
+        const val DISPOSITION_REVIEW_REQUIRED = "REVIEW_REQUIRED"
+        const val DISPOSITION_RESOLVED_BY_RESYNC = "RESOLVED_BY_RESYNC"
+        const val DISPOSITION_MERGED_DUPLICATE = "MERGED_DUPLICATE"
+    }
 }
 
 fun StudentProfile.toEntity() = StudentProfileEntity(
@@ -440,7 +482,9 @@ fun OccurrenceOverride.toEntity() = OccurrenceOverrideEntity(
     room = room,
     buildingId = buildingId,
     canceled = canceled,
-    reason = reason
+    reason = reason,
+    moveId = moveId,
+    moveRole = moveRole
 )
 
 fun GradeAttempt.toEntity() = GradeAttemptEntity(
@@ -520,5 +564,43 @@ fun ExamScheduleItem.toEntity() = ExamScheduleEntity(
     seatNumber = seatNumber,
     campusName = campusName,
     isRetake = isRetake,
-    syncedAtEpochMilli = syncedAt.toEpochMilli()
+    syncedAtEpochMilli = syncedAt.toEpochMilli(),
+    originTermId = originTermId
 )
+
+/**
+ * Room 8 -> 9：
+ * - occurrence_overrides 追加可空 moveId/moveRole 两列与非唯一索引 (termId, moveId, moveRole)，
+ *   支撑按稳定调课关联精确恢复；旧行保持 NULL，绝不按 reason 文本回填配对、绝不删表重建。
+ * - exam_schedules 追加可空 originTermId 列，记录可信同步管线写入时的原始学期证据。
+ * - 新建 exam_term_repair_audits 逐条修复审计表（原/新学期、证据引用、规则版本、时间、行 ID）。
+ * 迁移不猜测学期：无任何权威来源的旧行一律保留原值并交由运行时 V2 修复流程判定。
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `occurrence_overrides` ADD COLUMN `moveId` TEXT")
+        db.execSQL("ALTER TABLE `occurrence_overrides` ADD COLUMN `moveRole` TEXT")
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_occurrence_overrides_termId_moveId_moveRole` ON `occurrence_overrides` (`termId`, `moveId`, `moveRole`)"
+        )
+        db.execSQL("ALTER TABLE `exam_schedules` ADD COLUMN `originTermId` TEXT")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `exam_term_repair_audits` (
+                `id` TEXT NOT NULL,
+                `examRowId` TEXT NOT NULL,
+                `previousTermId` TEXT NOT NULL,
+                `newTermId` TEXT,
+                `evidenceRef` TEXT NOT NULL,
+                `ruleVersion` TEXT NOT NULL,
+                `disposition` TEXT NOT NULL,
+                `repairedAtEpochMilli` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_exam_term_repair_audits_examRowId` ON `exam_term_repair_audits` (`examRowId`)"
+        )
+    }
+}

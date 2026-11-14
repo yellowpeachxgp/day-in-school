@@ -125,6 +125,7 @@ fun GradesScreen(
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
     val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
+    val examTermReviewAudits by repository.examTermReviewAuditsFlow.collectAsState(initial = emptyList())
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
     val scheduleRules by repository.rulesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
@@ -832,6 +833,15 @@ fun GradesScreen(
                         }
                         1 -> {
                             // 3B. 考试安排列表：严格区分「当前学期」与「历史学期归档」，绝不将旧学期考试静默冒充本学期考试
+                            if (examTermReviewAudits.isNotEmpty()) {
+                                XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "有 ${examTermReviewAudits.size} 条考试记录所属学期无法自动确认（可能来自旧版本错标），已保留待核对——请到同步入口选择正确学期重新同步核对。",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
                             val targetExamTerm = selectedTermFilter ?: activeTermId
                             val primaryTermExams = remember(examSchedules, targetExamTerm) {
                                 examSchedules.filter { it.termId == targetExamTerm }

@@ -194,6 +194,9 @@ fun TodayScreen(
     var currentNow by remember { mutableStateOf(ZonedDateTime.now(HAUT_ZONE_ID)) }
     var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
     var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
+    var pendingLegacyRestoreTargets by remember {
+        mutableStateOf<List<cn.edu.haut.campus.core.model.OccurrenceOverride>>(emptyList())
+    }
     var isDynamicSyncing by remember { mutableStateOf(false) }
     var dynamicSyncBanner by remember { mutableStateOf<String?>(null) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
@@ -744,14 +747,22 @@ fun TodayScreen(
                                                 compact = true,
                                                 onClick = {
                                                     scope.launch {
-                                                        repository.restoreCanceledOccurrence(
+                                                        val restoreResult = repository.restoreCanceledOccurrence(
                                                             date = canceledOcc.date,
                                                             ruleId = canceledOcc.ruleId,
                                                             overrideId = canceledOcc.overrideId,
                                                             mergedRuleIds = canceledOcc.mergedRuleIds
                                                         )
                                                         WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                        dynamicSyncBanner = "已恢复「${canceledOcc.courseName}」当日排课与提醒"
+                                                        if (restoreResult.legacyReviewRequired) {
+                                                            pendingLegacyRestoreTargets =
+                                                                restoreResult.legacyAmbiguousTargets
+                                                        }
+                                                        dynamicSyncBanner = if (restoreResult.legacyReviewRequired) {
+                                                            "已恢复「${canceledOcc.courseName}」，检测到可能关联的旧版调入记录，请核对"
+                                                        } else {
+                                                            "已恢复「${canceledOcc.courseName}」当日排课与提醒"
+                                                        }
                                                     }
                                                 }
                                             )
@@ -905,6 +916,76 @@ fun TodayScreen(
                 dynamicSyncBanner = "已将「$courseName」设为单次停课，可在课表卡底部点击「恢复上课」撤销"
             },
             onDismiss = { selectedOccurrenceForDetail = null }
+        )
+    }
+
+    // 旧版模糊调课恢复后的待核对目标：逐项由用户决定删除或保留
+    if (pendingLegacyRestoreTargets.isNotEmpty()) {
+        XPeachAlertDialog(
+            onDismissRequest = { pendingLegacyRestoreTargets = emptyList() },
+            title = { Text("核对旧版调课调入记录") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "该停课记录来自旧版调课，源时段已恢复。以下调入记录可能与之关联，请逐条确认是否删除；不确定时可保留待核对。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    for (target in pendingLegacyRestoreTargets) {
+                        val targetCourse = target.courseId?.let { cid -> courses.firstOrNull { it.id == cid } }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = targetCourse?.name ?: "课程记录",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = buildString {
+                                        append("调入 ${target.date}")
+                                        if (target.startPeriod != null && target.endPeriod != null) {
+                                            append(" · 第${target.startPeriod}-${target.endPeriod}节")
+                                        }
+                                        target.room?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            XPeachFilterPill(
+                                label = "删除",
+                                selected = false,
+                                compact = true,
+                                onClick = {
+                                    scope.launch {
+                                        repository.deleteOccurrenceOverride(target.id)
+                                        pendingLegacyRestoreTargets =
+                                            pendingLegacyRestoreTargets.filterNot { it.id == target.id }
+                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pendingLegacyRestoreTargets = emptyList() }) {
+                    Text("保留待核对")
+                }
+            }
         )
     }
 

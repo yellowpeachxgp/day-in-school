@@ -118,8 +118,16 @@ data class OccurrenceOverride(
     val room: String? = null,
     val buildingId: String? = null,
     val canceled: Boolean = false,
-    val reason: String? = null
-)
+    val reason: String? = null,
+    val moveId: String? = null,
+    val moveRole: String? = null
+) {
+    companion object {
+        /** 跨日调课关联角色（受控值）：源停课行 = [MOVE_ROLE_SOURCE]，调入目标行 = [MOVE_ROLE_TARGET]。 */
+        const val MOVE_ROLE_SOURCE = "SOURCE"
+        const val MOVE_ROLE_TARGET = "TARGET"
+    }
+}
 
 enum class ClassStatus {
     UPCOMING,
