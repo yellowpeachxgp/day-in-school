@@ -3045,7 +3045,8 @@ class CampusRepository internal constructor(
     suspend fun submitMomentsContactRequest(
         postId: String,
         message: String,
-        contactInfo: String
+        contactInfo: String,
+        clientMessageId: String? = null
     ): Result<CampusCloudOidcHelper.MomentsContactRequestDto> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanMsg = message.trim().take(240)
@@ -3062,7 +3063,9 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            val idempotencyKey = "mcr_${postId}_${cleanMsg.hashCode()}_${cleanContact.hashCode()}"
+            // 幂等键绑定"用户这一次发送"的 clientMessageId（失败重试沿用，新的发送换新键）；
+            // 绝不用正文/联系方式 hash 兜底——两条有意相同的留言必须都能送达
+            val idempotencyKey = "mcr_${postId}_${clientMessageId?.trim()?.takeIf { it.isNotEmpty() }?.take(64) ?: UUID.randomUUID().toString().replace("-", "")}"
             val dto = CampusCloudOidcHelper.submitMomentsContactRequestToCloud(
                 postId = postId,
                 senderName = senderName,
@@ -3137,7 +3140,8 @@ class CampusRepository internal constructor(
         requestId: String,
         action: String,
         replyMessage: String? = null,
-        reason: String? = null
+        reason: String? = null,
+        clientMessageId: String? = null
     ): Result<CampusCloudOidcHelper.MomentsContactRequestDto> = withContext(Dispatchers.IO) {
         runCatching {
             val token = resolveValidCloudAccessToken(forceRefresh = false)
@@ -3152,6 +3156,7 @@ class CampusRepository internal constructor(
                 action = action,
                 replyMessage = replyMessage,
                 reason = reason,
+                clientMessageId = clientMessageId,
                 bearerToken = token,
                 cloudBaseUrl = baseUrl
             ) ?: throw IllegalStateException("处理联系申请失败，请检查网络连接或权限")

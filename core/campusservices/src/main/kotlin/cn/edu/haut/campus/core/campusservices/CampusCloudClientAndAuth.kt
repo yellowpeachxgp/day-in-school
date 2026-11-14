@@ -3459,6 +3459,7 @@ object CampusCloudOidcHelper {
         action: String,
         replyMessage: String? = null,
         reason: String? = null,
+        clientMessageId: String? = null,
         bearerToken: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL
     ): MomentsContactRequestDto? = runCatching {
@@ -3467,6 +3468,8 @@ object CampusCloudOidcHelper {
         val bodyObj = JSONObject().put("action", action)
         if (!replyMessage.isNullOrBlank()) bodyObj.put("reply_message", replyMessage.trim())
         if (!reason.isNullOrBlank()) bodyObj.put("reason", reason.trim())
+        // 客户端幂等键：REPLY 等用户主动发送动作去重；旧服务端忽略未知字段保持兼容
+        if (!clientMessageId.isNullOrBlank()) bodyObj.put("client_message_id", clientMessageId.trim().take(80))
         val raw = httpJsonRequest(
             method = "POST",
             url = "$cleanBase/api/v1/moments/posts/${Uri.encode(postId)}/contact-requests/${Uri.encode(requestId)}/action",
