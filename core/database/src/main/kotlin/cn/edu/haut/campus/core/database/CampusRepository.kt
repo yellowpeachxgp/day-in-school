@@ -341,6 +341,11 @@ class CampusRepository internal constructor(
         val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
         val CLOUD_ACCESS_TOKEN = stringPreferencesKey("cloud_access_token_v1")
         val CLOUD_REFRESH_TOKEN = stringPreferencesKey("cloud_refresh_token_v1")
+        // 云身份会话世代（严格单调，存于 Room schema 之外的 DataStore，按 profileId 隔离）：
+        // 登录/换号/解绑均推进世代；解绑另存 tombstone，旧会话在途响应一律失效
+        val CLOUD_IDENTITY_GENERATION = longPreferencesKey("cloud_identity_generation_v1")
+        val CLOUD_IDENTITY_GENERATION_OWNER = stringPreferencesKey("cloud_identity_generation_owner_v1")
+        val CLOUD_IDENTITY_UNLINK_TOMBSTONE = stringPreferencesKey("cloud_identity_unlink_tombstone_v1")
         val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
         val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
         val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
@@ -4070,6 +4075,14 @@ class CampusRepository internal constructor(
         runCatching {
             java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
         }
+        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回
+        // （世代推进先于 Room 事务执行，避免在事务内嵌套身份锁）
+        cloudIdentityMutex.withLock {
+            bumpCloudIdentityGenerationLocked(
+                cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                markUnlinkTombstone = true
+            )
+        }
         database.withTransaction {
             dao.clearStudentProfile()
             dao.clearCourses()
@@ -4162,6 +4175,105 @@ class CampusRepository internal constructor(
     // --- XPEACH SSO Cloud Account & Wallet Binding (Optional; Zero-SSO Local Mode Preserved) ---
     val cloudIdentityBindingFlow: Flow<CloudIdentityBindingEntity?> =
         cloudAndParcelDao.observeCloudIdentityBinding()
+
+    /**
+     * 云身份生命周期协调锁：统一 (binding, generation, apiBase) 快照读取顺序、世代推进与
+     * 响应写回复核。持锁期间只做本地 DAO/DataStore 操作，绝不在锁内发起网络请求。
+     */
+    private val cloudIdentityMutex = Mutex()
+
+    /**
+     * 云身份会话快照：请求开始时捕获 (profileId, cloudUserId, generation, apiBase, token subject)，
+     * 网络响应写回前必须重新逐项比对——任一项不一致即丢弃，绝不写回或复活过期绑定。
+     */
+    data class CloudIdentitySessionSnapshot(
+        val profileId: String,
+        val cloudUserId: String,
+        val generation: Long,
+        val apiBaseUrl: String,
+        val ssoSubject: String
+    )
+
+    private suspend fun readCloudIdentityGeneration(): Long =
+        preferences.data.first()[PrefKeys.CLOUD_IDENTITY_GENERATION] ?: 0L
+
+    /** 必须在 cloudIdentityMutex 内调用：世代严格单调递增，同账号重新登录也推进世代。 */
+    private suspend fun bumpCloudIdentityGenerationLocked(
+        cloudUserId: String?,
+        markUnlinkTombstone: Boolean
+    ): Long {
+        val next = readCloudIdentityGeneration() + 1L
+        preferences.edit {
+            it[PrefKeys.CLOUD_IDENTITY_GENERATION] = next
+            if (cloudUserId.isNullOrBlank()) {
+                it.remove(PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER)
+            } else {
+                it[PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER] = cloudUserId.trim()
+            }
+            if (markUnlinkTombstone) {
+                it[PrefKeys.CLOUD_IDENTITY_UNLINK_TOMBSTONE] =
+                    "${cloudUserId.orEmpty().trim()}:$next:${System.currentTimeMillis()}"
+            }
+        }
+        return next
+    }
+
+    /** 统一快照读取入口：身份锁内原子读取 (binding, generation, apiBase)。 */
+    suspend fun snapshotCloudIdentitySession(): CloudIdentitySessionSnapshot? =
+        cloudIdentityMutex.withLock {
+            val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withLock null
+            val prefsSnap = preferencesFlow.first()
+            CloudIdentitySessionSnapshot(
+                profileId = binding.profileId,
+                cloudUserId = binding.cloudUserId,
+                generation = readCloudIdentityGeneration(),
+                apiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                    prefsSnap.networkProxyConfig.customCloudApiBaseUrl
+                ),
+                ssoSubject = binding.ssoSubject
+            )
+        }
+
+    /** 必须在 cloudIdentityMutex 内调用 */
+    private suspend fun isCloudIdentitySnapshotCurrentLocked(
+        snapshot: CloudIdentitySessionSnapshot
+    ): Boolean {
+        val live = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return false
+        val liveBase = runCatching {
+            NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+            )
+        }.getOrNull()
+        return live.profileId == snapshot.profileId &&
+            live.cloudUserId.trim() == snapshot.cloudUserId.trim() &&
+            live.ssoSubject.trim() == snapshot.ssoSubject.trim() &&
+            readCloudIdentityGeneration() == snapshot.generation &&
+            liveBase == snapshot.apiBaseUrl
+    }
+
+    /** 提交云委托/写回前的即时复核：切号、解绑、同号重登、换 base-url 一律视为已失效。 */
+    suspend fun isCloudIdentitySnapshotCurrent(snapshot: CloudIdentitySessionSnapshot): Boolean =
+        cloudIdentityMutex.withLock { isCloudIdentitySnapshotCurrentLocked(snapshot) }
+
+    /**
+     * 网络响应写回：身份锁内复核快照仍有效后执行条件 UPDATE（rows=0 即丢弃），
+     * 绝不从网络响应 INSERT 过期绑定行。
+     */
+    private suspend fun writeBackCloudBindingIfCurrent(
+        snapshot: CloudIdentitySessionSnapshot,
+        newPeachBalanceMicropeach: Long? = null,
+        newDisplayName: String? = null
+    ): Boolean = cloudIdentityMutex.withLock {
+        if (!isCloudIdentitySnapshotCurrentLocked(snapshot)) return@withLock false
+        val live = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withLock false
+        cloudAndParcelDao.updateCloudIdentityBindingMutableFieldsIfIdentityMatches(
+            profileId = snapshot.profileId,
+            cloudUserId = snapshot.cloudUserId,
+            displayName = newDisplayName?.takeIf { it.isNotBlank() } ?: live.displayName,
+            peachBalanceMicropeach = newPeachBalanceMicropeach ?: live.peachBalanceMicropeach,
+            updatedAtEpochMillis = System.currentTimeMillis()
+        ) > 0
+    }
 
     @Volatile
     private var cachedCloudAccessToken: String = ""
@@ -4468,7 +4580,12 @@ class CampusRepository internal constructor(
             linkedAtEpochMillis = profile.linkedAtEpochMillis,
             updatedAtEpochMillis = now
         )
-        cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        cloudIdentityMutex.withLock {
+            // 登录、切换云账号、同账号重新登录一律推进世代：
+            // 任何在途网络响应（含旧会话余额/计划写回）自此一律失效
+            bumpCloudIdentityGenerationLocked(profile.cloudUserId, markUnlinkTombstone = false)
+            cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        }
         repoScope.launch {
             runCatching { syncWithCampusCloud() }
         }
@@ -4480,10 +4597,8 @@ class CampusRepository internal constructor(
         if (syncRes != null) {
             return@withContext syncRes.peachBalance
         }
-        val current = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withContext null
-        val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-        )
+        val identitySession = snapshotCloudIdentitySession() ?: return@withContext null
+        val cloudBaseUrl = identitySession.apiBaseUrl
         var token = resolveValidCloudAccessToken(forceRefresh = false)
         if (token.isBlank()) return@withContext null
         var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(
@@ -4502,11 +4617,12 @@ class CampusRepository internal constructor(
             }
         }
         if (livePeach == null) return@withContext null
-        val updated = current.copy(
-            peachBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong(),
-            updatedAtEpochMillis = System.currentTimeMillis()
+        // 世代守卫写回：请求期间解绑/换号/同号重登/换 base-url 一律丢弃响应，
+        // 绝不 upsert 旧 binding.copy 行（那会覆盖新账号绑定或复活已解绑账号）
+        writeBackCloudBindingIfCurrent(
+            snapshot = identitySession,
+            newPeachBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong()
         )
-        cloudAndParcelDao.upsertCloudIdentityBinding(updated)
         livePeach
     }
 
@@ -4551,9 +4667,9 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.configurePersistentAuthStorageDir(
                     java.io.File(appContext.filesDir, "cloud_auth_provenance")
                 )
-                val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                val identitySession = snapshotCloudIdentitySession()
                     ?: throw IllegalStateException("尚未连接 XPeach 通行证")
-                val expectedCloudUserId = currentBinding.cloudUserId.trim()
+                val expectedCloudUserId = identitySession.cloudUserId.trim()
                 if (expectedCloudUserId.isEmpty()) {
                     throw IllegalStateException("当前 XPeach 通行证标识异常，请重新登录")
                 }
@@ -4664,8 +4780,8 @@ class CampusRepository internal constructor(
                 if (verifiedSnapshot.cloudUserId.trim() != expectedCloudUserId) {
                     throw IllegalStateException("云端同步返回账号与当前绑定账号不一致，已拒绝落库")
                 }
-                val activeBindingAfterSync = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
-                if (activeBindingAfterSync == null || activeBindingAfterSync.cloudUserId.trim() != expectedCloudUserId) {
+                // 世代复核：同步期间解绑/换号/同号重登/换 base-url 一律丢弃整份旧会话响应
+                if (!isCloudIdentitySnapshotCurrent(identitySession)) {
                     throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
                 }
                 val liveStuAfterSync = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
@@ -4674,14 +4790,16 @@ class CampusRepository internal constructor(
                 }
                 val now = System.currentTimeMillis()
 
-            // 1) 更新本地 XPeach 通行证与 🍑 余额
-            cloudAndParcelDao.upsertCloudIdentityBinding(
-                currentBinding.copy(
-                    displayName = verifiedSnapshot.displayName.ifBlank { currentBinding.displayName },
-                    peachBalanceMicropeach = kotlin.math.round(verifiedSnapshot.peachBalance * 10_000.0).toLong(),
-                    updatedAtEpochMillis = now
-                )
+            // 1) 更新本地 XPeach 通行证与 🍑 余额：身份锁内世代守卫条件 UPDATE（rows=0 即丢弃），
+            //    绝不 upsert 旧快照整行覆盖新账号绑定或复活已解绑行
+            val bindingWritten = writeBackCloudBindingIfCurrent(
+                snapshot = identitySession,
+                newPeachBalanceMicropeach = kotlin.math.round(verifiedSnapshot.peachBalance * 10_000.0).toLong(),
+                newDisplayName = verifiedSnapshot.displayName
             )
+            if (!bindingWritten) {
+                throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
+            }
 
             // 2) 合并云端快递包裹到本地 Room
             var parcelChanged = false
@@ -4747,6 +4865,10 @@ class CampusRepository internal constructor(
                 val liveStuLocked = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
                 if (liveBindingLocked == null || liveBindingLocked.cloudUserId.trim() != expectedCloudUserId) {
                     throw IllegalStateException("同步落库前云端账号已切换或解绑，已放弃写入旧会话同步结果")
+                }
+                // 世代复核（ABA 防护）：cloudUserId 相同也可能已经历"解绑→重绑"，世代不一致即放弃落库
+                if (!isCloudIdentitySnapshotCurrent(identitySession)) {
+                    throw IllegalStateException("同步落库前云端身份世代已变更，已放弃写入旧会话同步结果")
                 }
                 if (expectedStudentNo.isNotEmpty() && liveStuLocked.isNotEmpty() && liveStuLocked != expectedStudentNo) {
                     throw IllegalStateException("同步落库前学号已切换，已放弃写入旧学号会话同步结果")
@@ -5220,7 +5342,11 @@ class CampusRepository internal constructor(
                 }
             }
         }
-        cloudAndParcelDao.clearCloudIdentityBinding()
+        cloudIdentityMutex.withLock {
+            // 解绑推进世代并留存 tombstone：在途响应写回失效，A→解绑→重绑(ABA) 场景旧会话响应亦不复活
+            bumpCloudIdentityGenerationLocked(prevCloudUserId, markUnlinkTombstone = true)
+            cloudAndParcelDao.clearCloudIdentityBinding()
+        }
         bookingPlanStateMutex.withLock {
             database.withTransaction {
                 val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
@@ -5464,6 +5590,9 @@ class CampusRepository internal constructor(
         val targetDateStr = targetDate.toString()
         val prefsSnap = preferencesFlow.first()
         val activeBindingSnap = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+        // 统一身份快照（profileId + cloudUserId + generation + apiBase + ssoSubject）：
+        // 云端分支的余额写回与委托提交前复核均以此为准
+        val identitySessionAtStart = snapshotCloudIdentitySession()
         val (studentNoBundlePre, delegatedBundlePre) = buildDelegatedCredentialBundle()
         val currentStudentNo = (studentNoBundlePre ?: prefsSnap.savedStudentId.orEmpty()).trim()
 
@@ -5669,12 +5798,14 @@ class CampusRepository internal constructor(
                 }
                 if (livePeach != null) {
                     effectiveBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong()
-                    cloudAndParcelDao.upsertCloudIdentityBinding(
-                        binding.copy(
-                            peachBalanceMicropeach = effectiveBalanceMicropeach,
-                            updatedAtEpochMillis = System.currentTimeMillis()
+                    // 世代守卫写回：等待云端响应期间解绑/换号/重登的，丢弃旧身份余额结果，
+                    // 绝不 upsert binding.copy 覆盖新账号或复活已解绑绑定行
+                    if (identitySessionAtStart != null) {
+                        writeBackCloudBindingIfCurrent(
+                            snapshot = identitySessionAtStart,
+                            newPeachBalanceMicropeach = effectiveBalanceMicropeach
                         )
-                    )
+                    }
                 }
             }
             if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
@@ -5799,6 +5930,20 @@ class CampusRepository internal constructor(
             }
 
             // 2) 本机已 100% 原子停止后，向云端提交托管计划（带幂等键 planId）
+            //    提交前即时复核：身份/世代/base-url 与学号必须仍与开始快照一致，
+            //    切号期间的排队提交一律停止并恢复原有本机计划
+            if (identitySessionAtStart == null ||
+                !isCloudIdentitySnapshotCurrent(identitySessionAtStart)
+            ) {
+                restoreStoppedLocalPlansSafely()
+                throw IllegalStateException("云端账号在任务创建期间已切换或解绑，已停止向云端提交旧会话委托")
+            }
+            val liveStudentBeforeSubmit = (buildDelegatedCredentialBundle().first
+                ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+            if (liveStudentBeforeSubmit != currentStudentNo) {
+                restoreStoppedLocalPlansSafely()
+                throw IllegalStateException("校园学号在任务创建期间已切换，已停止向云端提交旧学号委托")
+            }
             val formattedTime = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)
             val cleanArea = preferredAreaName.trim().ifBlank { "五层中区" }
             val cleanSeat = preferredSeatLabel.trim().ifBlank { "01桌 B座" }
