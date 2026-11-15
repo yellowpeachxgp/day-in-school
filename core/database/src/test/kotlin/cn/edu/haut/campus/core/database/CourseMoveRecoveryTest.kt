@@ -147,7 +147,7 @@ class CourseMoveRecoveryTest {
         val targetB = afterMoves.single { it.moveId == moveBId && it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
 
         // 只恢复上午的调课（moveA）
-        val result = repo.restoreCanceledOccurrence(
+        val result = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = rMorning.id, mergedRuleIds = listOf(rMorning.id)
         )
         assertTrue(result.restoredMoveIds.contains(moveAId))
@@ -186,7 +186,7 @@ class CourseMoveRecoveryTest {
         assertEquals(2, moveIds.size)
 
         // 恢复第一个调课（自定义 reason 的那次）
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         val remaining = overrides()
         assertEquals(1, remaining.count { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET })
         assertTrue(remaining.any { it.courseRuleId == r2.id && it.canceled })
@@ -216,14 +216,14 @@ class CourseMoveRecoveryTest {
         assertEquals(1, moved.count { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET })
 
         // 恢复整个调课（一次操作）
-        val result = repo.restoreCanceledOccurrence(
+        val result = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id, r2.id)
         )
         assertEquals(listOf(moveId), result.restoredMoveIds)
         assertTrue(overrides().none { it.moveId == moveId })
 
         // 重复恢复：安全 no-op，不影响数据
-        val second = repo.restoreCanceledOccurrence(
+        val second = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id, r2.id)
         )
         assertTrue(second.restoredMoveIds.isEmpty())
@@ -251,7 +251,7 @@ class CourseMoveRecoveryTest {
         val moveId = overrides().first { it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE }.moveId!!
 
         // 恢复普通停课：只删 r1 的取消行，调课保持
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         val remaining = overrides()
         assertTrue(remaining.none { it.courseRuleId == r1.id })
         assertTrue(remaining.any { it.moveId == moveId })
@@ -277,7 +277,7 @@ class CourseMoveRecoveryTest {
         assertEquals(target.id, edited.id)
         assertEquals(target.moveId, edited.moveId)
         assertEquals("改后教室", edited.room)
-        val result = repo.restoreCanceledOccurrence(
+        val result = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
         )
         assertTrue(result.deletedTargetOverrideIds.contains(target.id))
@@ -321,7 +321,7 @@ class CourseMoveRecoveryTest {
         assertTrue(afterChained.none { it.moveId == moveA })
 
         // 恢复 moveB：最初源时段恢复 + 最新目标删除，不残留双份排课
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         assertTrue(overrides().isEmpty())
     }
 
@@ -373,7 +373,7 @@ class CourseMoveRecoveryTest {
             ).toEntity()
         )
 
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         val remaining = overrides()
         // 本学期的调课已撤销
         assertTrue(remaining.none { it.termId == term.id })
@@ -411,7 +411,7 @@ class CourseMoveRecoveryTest {
             ).toEntity()
         )
 
-        val result = repo.restoreCanceledOccurrence(
+        val result = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
         )
         // 源已恢复，两个候选目标全部保留待核对
@@ -444,7 +444,7 @@ class CourseMoveRecoveryTest {
 
         val crashed = runCatching {
             fixture.database.withTransaction {
-                repo.restoreCanceledOccurrence(
+                restoreSelectionFromState(dao, repo, term.id, 
                     date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
                 )
                 error("模拟事务中途失败")
@@ -481,7 +481,7 @@ class CourseMoveRecoveryTest {
         )
         assertEquals(1, targetAfter.size)
 
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         // 恢复后：源日期重新有课，目标日期不再有调入课
         val restoredSource = ScheduleEngine.resolveOccurrencesForDate(
             date = sourceDate, term = term, courses = listOf(course), rules = listOf(r1),
@@ -528,7 +528,7 @@ class CourseMoveRecoveryTest {
         assertFalse(edited.canceled)
 
         // 恢复源：整次调课原子撤销，编辑后的目标行一并删除，不残留
-        val result = repo.restoreCanceledOccurrence(
+        val result = restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
         )
         assertTrue(result.restoredMoveIds.contains(moveId))
@@ -564,7 +564,7 @@ class CourseMoveRecoveryTest {
         assertEquals(1, canceledOcc(targetDate, listOf(r1)).size)
 
         // 2) 恢复暂停：仅取消标记，不撤销整次调课，源停课行保持
-        repo.restoreCanceledOccurrence(
+        restoreSelectionFromState(dao, repo, term.id, 
             date = targetDate, ruleId = null, overrideId = target.id, mergedRuleIds = emptyList()
         )
         val unpaused = overrides().single { it.id == target.id }
@@ -574,7 +574,7 @@ class CourseMoveRecoveryTest {
         assertEquals(1, resolveOcc(targetDate, listOf(r1)).size)
 
         // 3) 撤销整次调课：经 SOURCE 行恢复，SOURCE+TARGET 全清
-        repo.restoreCanceledOccurrence(
+        restoreSelectionFromState(dao, repo, term.id, 
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
         )
         assertTrue(overrides().isEmpty())
@@ -595,7 +595,7 @@ class CourseMoveRecoveryTest {
         val source = overrides().single { it.courseRuleId == r1.id }
 
         // 未暂停的 TARGET 行被恢复：旧适配器与显式命令均为安全空操作，绝不视同撤销整次调课
-        val staleActive = repo.restoreCanceledOccurrence(
+        val staleActive = restoreSelectionFromState(dao, repo, term.id, 
             date = targetDate, ruleId = null, overrideId = target.id
         )
         assertFalse(staleActive.changed)
@@ -615,7 +615,7 @@ class CourseMoveRecoveryTest {
         assertFalse(overrides().single { it.id == target.id }.canceled)
         val second = repo.unpauseOccurrence(term.id, target.id, expectedMoveId = moveId)
         assertEquals(CampusRepository.OccurrenceCommandStatus.NO_CHANGE, second.status)
-        val adapterRepeat = repo.restoreCanceledOccurrence(
+        val adapterRepeat = restoreSelectionFromState(dao, repo, term.id, 
             date = targetDate, ruleId = null, overrideId = target.id
         )
         assertFalse(adapterRepeat.changed)
@@ -667,7 +667,7 @@ class CourseMoveRecoveryTest {
         assertTrue(rows.any { it.courseRuleId == r1.id && it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.moveId == moveB })
         assertTrue(rows.any { it.dateIso == secondTarget.toString() && it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET && it.moveId == moveB })
 
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
         assertTrue(overrides().isEmpty())
     }
 
@@ -698,7 +698,7 @@ class CourseMoveRecoveryTest {
         assertEquals(moveA, overrides().single { it.id == targetA.id }.moveId)
 
         // 恢复 A：B 的源/目标完好
-        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = rA.id, mergedRuleIds = listOf(rA.id))
+        restoreSelectionFromState(dao, repo, term.id, date = sourceDate, ruleId = rA.id, mergedRuleIds = listOf(rA.id))
         val remaining = overrides()
         assertTrue(remaining.none { it.moveId == moveA })
         assertTrue(remaining.any { it.id == targetB.id && it.moveId == moveB })
@@ -1018,7 +1018,7 @@ class CourseMoveRecoveryTest {
             repo.unpauseOccurrence(term.id, target.id, expectedMoveId = moveId).status
         )
         // 迟到的陈旧回调（旧适配器入口）：行已活跃 → 安全空操作，绝不落入整组撤销
-        val stale = repo.restoreCanceledOccurrence(
+        val stale = restoreSelectionFromState(dao, repo, term.id, 
             date = targetDate, ruleId = null, overrideId = target.id
         )
         assertFalse(stale.changed)
@@ -1031,7 +1031,7 @@ class CourseMoveRecoveryTest {
             preferences = fixture.dataStore,
             accountProfile = fixture.profile
         )
-        val staleAfterReopen = repoReopened.restoreCanceledOccurrence(
+        val staleAfterReopen = restoreSelectionFromState(dao, repoReopened, term.id, 
             date = targetDate, ruleId = null, overrideId = target.id
         )
         assertFalse(staleAfterReopen.changed)

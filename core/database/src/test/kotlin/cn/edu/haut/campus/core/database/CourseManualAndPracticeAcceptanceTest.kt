@@ -85,7 +85,7 @@ class CourseManualAndPracticeAcceptanceTest {
                 buildings = HautMockSeedData.lianhuajieBuildings
             ).isEmpty()
         )
-        repo.restoreCanceledOccurrence(date = date, ruleId = rule.id, mergedRuleIds = listOf(rule.id))
+        restoreSelectionFromState(dao, repo, term.id, date = date, ruleId = rule.id, mergedRuleIds = listOf(rule.id))
         val restored = ScheduleEngine.resolveOccurrencesForDate(
             date = date, term = term, courses = listOf(course), rules = listOf(rule),
             periodTimes = HautMockSeedData.defaultPeriodTimes,

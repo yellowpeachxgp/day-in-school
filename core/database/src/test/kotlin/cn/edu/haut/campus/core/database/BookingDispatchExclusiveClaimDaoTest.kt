@@ -1056,7 +1056,7 @@ class BookingDispatchExclusiveClaimDaoTest {
         assertEquals(1, canceledListW2.size)
         assertEquals(listOf("r_m1", "r_m2"), canceledListW2.single().mergedRuleIds)
 
-        repo.restoreCanceledOccurrence(
+        restoreSelectionFromState(campusDao, repo, term.id, 
             date = tuesdayW2,
             ruleId = canceledListW2.single().ruleId,
             overrideId = canceledListW2.single().overrideId,

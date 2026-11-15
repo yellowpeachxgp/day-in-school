@@ -158,6 +158,8 @@ fun TimetableScreen(
     var pendingLegacyReviewTargets by remember {
         mutableStateOf<List<OccurrenceOverride>>(emptyList())
     }
+    // 恢复命令 CONFLICT 提示：身份冲突时明确告知「未修改」，待刷新后重新选择
+    var restoreNotice by remember { mutableStateOf<String?>(null) }
     val termCanceledGroups = remember(occurrenceOverrides, term?.id, rules) {
         val ruleMap = rules.associateBy { it.id }
         val canceledRows = occurrenceOverrides
@@ -436,6 +438,13 @@ fun TimetableScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            restoreNotice?.let { notice ->
+                                Text(
+                                    text = notice,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                             for (group in termCanceledGroups) {
                                 val ov = group.first()
                                 val groupRules = group.mapNotNull { g -> g.courseRuleId?.let { ruleById[it] } }
@@ -492,66 +501,63 @@ fun TimetableScreen(
                                             selected = true,
                                             compact = true,
                                             onClick = {
-                                                // 点击瞬间固化意图与身份（termId/组内行/moveId），
-                                                // 绝不从刷新后的状态重推——双击与陈旧回调均安全。
+                                                // 点击瞬间从当前快照构造完整不可变恢复命令：组内每行/每个调课组
+                                                // 的身份字段 + mutationToken 一起冻结，launch 内只提交一次。
                                                 val clickTermId = term?.id
-                                                val clickDate = ov.date
+                                                val snapshotOverrides = occurrenceOverrides
                                                 val groupRows = group.toList()
                                                 val groupMoveIds = groupRows
                                                     .mapNotNull { it.moveId }
                                                     .distinct()
-                                                scope.launch {
-                                                    if (clickTermId == null) return@launch
-                                                    val results =
-                                                        mutableListOf<CampusRepository.OccurrenceCommandResult>()
-                                                    if (groupMoveIds.size == 1) {
-                                                        // 调课关联组（含暂停的调入目标）：
-                                                        // 唯一显式入口原子撤销整次调课
-                                                        results += repository.undoMove(
-                                                            clickTermId,
-                                                            groupMoveIds.single()
-                                                        )
+                                                val selectedMoves = groupMoveIds.map { mid ->
+                                                    CampusRepository.SelectedMove(
+                                                        moveId = mid,
+                                                        // 整组身份：学期内该 moveId 的全部行（含未暂停的目标）
+                                                        expectedMembers = snapshotOverrides
+                                                            .filter { it.termId == clickTermId && it.moveId == mid }
+                                                            .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
+                                                    )
+                                                }
+                                                val selectedRows = groupRows.filter { it.moveId.isNullOrBlank() }.map { row ->
+                                                    CampusRepository.SelectedOverride(
+                                                        id = row.id,
+                                                        mutationToken = row.mutationToken,
+                                                        ruleId = row.courseRuleId,
+                                                        dateIso = row.date.toString(),
+                                                        expectedMove = CampusRepository.ExpectedMove.NoMove,
+                                                        role = row.moveRole
+                                                    )
+                                                }
+                                                val command = if (clickTermId == null) null else CampusRepository.RestoreCommand(
+                                                    commandId = UUID.randomUUID().toString(),
+                                                    accountProfileId = repository.profileId,
+                                                    termId = clickTermId,
+                                                    intent = if (selectedRows.isEmpty() && selectedMoves.isNotEmpty()) {
+                                                        // 纯调课组：唯一显式入口原子撤销整次调课
+                                                        CampusRepository.RestoreIntent.UNDO_MOVES
                                                     } else {
-                                                        // 普通/旧版停课组：规则行按规则+日期恢复，
-                                                        // 纯覆盖行（单日新增）逐条恢复暂停
-                                                        val ruleIds = groupRows
-                                                            .mapNotNull { it.courseRuleId }
-                                                            .distinct()
-                                                        if (ruleIds.isNotEmpty()) {
-                                                            results += repository.restoreRuleCancellation(
-                                                                clickTermId,
-                                                                ruleIds,
-                                                                clickDate,
-                                                                // 按 moveId 折叠的调课组已走 undoMove；
-                                                                // 落至此分支即点击时无调课关联——
-                                                                // null 双向断言「全部为独立行」，
-                                                                // 命中后被改挂新 moveId 将判 CONFLICT。
-                                                                expectedMoveId = groupMoveIds.singleOrNull()
-                                                            )
+                                                        // 混合/普通组：规则行删除 + 纯覆盖行解除暂停 + 调课组整组撤销
+                                                        CampusRepository.RestoreIntent.RESTORE_SELECTION
+                                                    },
+                                                    selectedRows = selectedRows,
+                                                    selectedMoves = selectedMoves
+                                                )
+                                                scope.launch {
+                                                    if (command == null) return@launch
+                                                    val result = repository.executeRestoreCommand(command)
+                                                    when (result.status) {
+                                                        CampusRepository.OccurrenceCommandStatus.APPLIED -> {
+                                                            restoreNotice = null
+                                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                            val legacyTargets = result.legacyAmbiguousTargets
+                                                            if (legacyTargets.isNotEmpty()) {
+                                                                pendingLegacyReviewTargets = legacyTargets
+                                                            }
                                                         }
-                                                        for (row in groupRows.filter {
-                                                            it.courseRuleId == null
-                                                        }) {
-                                                            results += repository.unpauseOccurrence(
-                                                                clickTermId,
-                                                                row.id,
-                                                                row.moveId
-                                                            )
+                                                        CampusRepository.OccurrenceCommandStatus.CONFLICT -> {
+                                                            restoreNotice = "记录已变化，未修改，请刷新后重新选择"
                                                         }
-                                                    }
-                                                    if (results.any {
-                                                        it.status ==
-                                                            CampusRepository.OccurrenceCommandStatus.APPLIED
-                                                    }
-                                                    ) {
-                                                        WidgetRefreshCoordinator
-                                                            .requestImmediateRefreshAll(context)
-                                                    }
-                                                    val legacyTargets = results
-                                                        .flatMap { it.legacyAmbiguousTargets }
-                                                        .distinctBy { it.id }
-                                                    if (legacyTargets.isNotEmpty()) {
-                                                        pendingLegacyReviewTargets = legacyTargets
+                                                        CampusRepository.OccurrenceCommandStatus.NO_CHANGE -> Unit
                                                     }
                                                 }
                                             }

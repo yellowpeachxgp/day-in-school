@@ -761,80 +761,93 @@ fun TodayScreen(
                                                 selected = true,
                                                 compact = true,
                                                 onClick = {
-                                                    // 点击瞬间固化 (termId, overrideId, moveId, 意图)——
-                                                    // 绝不从刷新后的选中态重推，避免双击/陈旧回调误撤整次调课。
+                                                    // 点击瞬间从当前快照构造完整不可变恢复命令（全部行/调课组的
+                                                    // 身份字段 + mutationToken 一起冻结）——launch 内只负责提交，
+                                                    // 绝不从刷新后的行状态重推语义，避免双击/陈旧回调误撤整次调课。
                                                     val clickTermId = term?.id
                                                     val clickDate = canceledOcc.date
                                                     val clickCourseName = canceledOcc.courseName
                                                     val clickOverrideId = canceledOcc.overrideId
                                                     val clickRuleIds = canceledOcc.mergedRuleIds
+                                                    val snapshotOverrides = occurrenceOverrides
                                                     val clickedRow = clickOverrideId?.let { oid ->
-                                                        occurrenceOverrides.firstOrNull { it.id == oid }
+                                                        snapshotOverrides.firstOrNull { it.id == oid }
                                                     }
-                                                    scope.launch {
-                                                        if (clickTermId == null) return@launch
-                                                        val restoreResult = if (
-                                                            clickOverrideId != null &&
-                                                            clickedRow?.courseRuleId == null
-                                                        ) {
-                                                            // 纯覆盖行（暂停的调入目标/单日新增）：显式恢复暂停
-                                                            repository.unpauseOccurrence(
+                                                    val command = when {
+                                                        clickTermId == null -> null
+                                                        clickOverrideId != null && clickedRow == null ->
+                                                            // 点击行在快照前已消失：空选择 → NO_CHANGE，
+                                                            // 绝不按规则扩展命中其他行
+                                                            CampusRepository.RestoreCommand(
+                                                                commandId = UUID.randomUUID().toString(),
+                                                                accountProfileId = repository.profileId,
                                                                 termId = clickTermId,
-                                                                overrideId = clickOverrideId,
-                                                                expectedMoveId = clickedRow?.moveId
+                                                                intent = CampusRepository.RestoreIntent.RESTORE_SELECTION
                                                             )
-                                                        } else {
-                                                            // 规则停课行（含调课 SOURCE）：点击时捕获命中行的
-                                                            // moveId 集合——每个 moveId 先经 undoMove 原子撤销整组
-                                                            // （覆盖其全部 SOURCE+TARGET，多调课组逐组处理）；
-                                                            // 再由 restoreRuleCancellation(expectedMoveId=null)
-                                                            // 断言剩余命中行均为独立停课行——若点击后有行被
-                                                            // 再次调课改挂新 moveId，将判 CONFLICT 而非误撤新调课。
-                                                            val capturedMoveIds = occurrenceOverrides
-                                                                .filter {
-                                                                    it.courseRuleId != null &&
-                                                                        it.courseRuleId in clickRuleIds &&
-                                                                        it.date == clickDate &&
-                                                                        it.canceled
-                                                                }
-                                                                .mapNotNull {
-                                                                    it.moveId?.takeIf { m -> m.isNotBlank() }
-                                                                }
-                                                                .distinct()
-                                                            val partialResults =
-                                                                mutableListOf<CampusRepository.OccurrenceCommandResult>()
-                                                            for (capturedMoveId in capturedMoveIds) {
-                                                                partialResults += repository.undoMove(
-                                                                    clickTermId,
-                                                                    capturedMoveId
+                                                        clickedRow != null && clickedRow.courseRuleId == null ->
+                                                            // 纯覆盖行（暂停的调入目标/单日新增）→ 恢复暂停
+                                                            CampusRepository.RestoreCommand(
+                                                                commandId = UUID.randomUUID().toString(),
+                                                                accountProfileId = repository.profileId,
+                                                                termId = clickTermId,
+                                                                intent = CampusRepository.RestoreIntent.UNPAUSE,
+                                                                selectedRows = listOf(
+                                                                    CampusRepository.SelectedOverride(
+                                                                        id = clickedRow.id,
+                                                                        mutationToken = clickedRow.mutationToken,
+                                                                        ruleId = null,
+                                                                        dateIso = clickedRow.date.toString(),
+                                                                        expectedMove = clickedRow.moveId
+                                                                            ?.takeIf { it.isNotBlank() }
+                                                                            ?.let { CampusRepository.ExpectedMove.Move(it) }
+                                                                            ?: CampusRepository.ExpectedMove.NoMove,
+                                                                        role = clickedRow.moveRole
+                                                                    )
                                                                 )
-                                                            }
-                                                            partialResults += repository.restoreRuleCancellation(
-                                                                termId = clickTermId,
-                                                                ruleIds = clickRuleIds,
-                                                                date = clickDate,
-                                                                expectedMoveId = null
                                                             )
-                                                            CampusRepository.OccurrenceCommandResult(
-                                                                status = when {
-                                                                    partialResults.any {
-                                                                        it.status == CampusRepository.OccurrenceCommandStatus.CONFLICT
-                                                                    } -> CampusRepository.OccurrenceCommandStatus.CONFLICT
-                                                                    partialResults.any {
-                                                                        it.status == CampusRepository.OccurrenceCommandStatus.APPLIED
-                                                                    } -> CampusRepository.OccurrenceCommandStatus.APPLIED
-                                                                    else -> CampusRepository.OccurrenceCommandStatus.NO_CHANGE
-                                                                },
-                                                                restoredSourceOverrideIds = partialResults
-                                                                    .flatMap { it.restoredSourceOverrideIds },
-                                                                deletedTargetOverrideIds = partialResults
-                                                                    .flatMap { it.deletedTargetOverrideIds },
-                                                                restoredMoveIds = partialResults
-                                                                    .flatMap { it.restoredMoveIds },
-                                                                legacyAmbiguousTargets = partialResults
-                                                                    .flatMap { it.legacyAmbiguousTargets }
+                                                        else -> {
+                                                            // 规则停课行集合：普通行逐行选择（NoMove 断言），
+                                                            // 调课行按其 moveId 整组选择（含全部成员身份）
+                                                            val hitRows = snapshotOverrides.filter {
+                                                                it.termId == clickTermId &&
+                                                                    it.courseRuleId != null &&
+                                                                    it.courseRuleId in clickRuleIds &&
+                                                                    it.date == clickDate && it.canceled
+                                                            }
+                                                            CampusRepository.RestoreCommand(
+                                                                commandId = UUID.randomUUID().toString(),
+                                                                accountProfileId = repository.profileId,
+                                                                termId = clickTermId,
+                                                                intent = CampusRepository.RestoreIntent.RESTORE_SELECTION,
+                                                                selectedRows = hitRows
+                                                                    .filter { it.moveId.isNullOrBlank() }
+                                                                    .map {
+                                                                        CampusRepository.SelectedOverride(
+                                                                            id = it.id,
+                                                                            mutationToken = it.mutationToken,
+                                                                            ruleId = it.courseRuleId,
+                                                                            dateIso = it.date.toString(),
+                                                                            expectedMove = CampusRepository.ExpectedMove.NoMove,
+                                                                            role = it.moveRole
+                                                                        )
+                                                                    },
+                                                                selectedMoves = hitRows
+                                                                    .mapNotNull { it.moveId?.takeIf { m -> m.isNotBlank() } }
+                                                                    .distinct()
+                                                                    .map { mid ->
+                                                                        CampusRepository.SelectedMove(
+                                                                            moveId = mid,
+                                                                            expectedMembers = snapshotOverrides
+                                                                                .filter { it.termId == clickTermId && it.moveId == mid }
+                                                                                .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
+                                                                        )
+                                                                    }
                                                             )
                                                         }
+                                                    }
+                                                    scope.launch {
+                                                        if (command == null) return@launch
+                                                        val restoreResult = repository.executeRestoreCommand(command)
                                                         if (restoreResult.status ==
                                                             CampusRepository.OccurrenceCommandStatus.APPLIED
                                                         ) {
@@ -847,14 +860,14 @@ fun TodayScreen(
                                                         dynamicSyncBanner = when (restoreResult.status) {
                                                             CampusRepository.OccurrenceCommandStatus.APPLIED ->
                                                                 if (restoreResult.legacyReviewRequired) {
-                                                                    "已恢复「$clickCourseName」，检测到可能关联的旧版调入记录，请核对"
+                                                                    "已恢复「" + clickCourseName + "」，检测到可能关联的旧版调入记录，请核对"
                                                                 } else {
-                                                                    "已恢复「$clickCourseName」当日排课与提醒"
+                                                                    "已恢复「" + clickCourseName + "」当日排课与提醒"
                                                                 }
                                                             CampusRepository.OccurrenceCommandStatus.CONFLICT ->
-                                                                "「$clickCourseName」的停课记录已变化，未能恢复，请稍后重试"
+                                                                "「" + clickCourseName + "」记录已变化，未修改，请刷新后重新选择"
                                                             CampusRepository.OccurrenceCommandStatus.NO_CHANGE ->
-                                                                "「$clickCourseName」已是上课状态"
+                                                                "「" + clickCourseName + "」已是上课状态"
                                                         }
                                                     }
                                                 }

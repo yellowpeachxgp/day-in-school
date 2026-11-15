@@ -9,6 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.io.File
+import java.time.LocalDate
+import java.util.UUID
 
 /**
  * 课程/考试修复回归测试共用的 in-memory fixture：
@@ -73,4 +75,83 @@ internal data class RepairTestFixture(
             return RepairTestFixture(database, repository, dataStore, profile, storeFile)
         }
     }
+}
+
+/**
+ * 恢复命令测试构造器：以当前 DAO 快照构造与旧适配器选择等价的不可变 RestoreCommand
+ * （overrideId 指定的纯覆盖行按暂停恢复、规则关联行带 moveId 的归入调课组整组选择、
+ * 规则+日期命中的停课行逐行选择），再经 executeRestoreCommand 单事务执行。
+ * 测试侧等价于 UI 点击瞬间冻结快照——与生产路径的「点击时固化」同一时序。
+ */
+internal suspend fun restoreSelectionFromState(
+    dao: CampusDao,
+    repository: CampusRepository,
+    termId: String,
+    date: LocalDate,
+    ruleId: String? = null,
+    overrideId: String? = null,
+    mergedRuleIds: List<String> = emptyList()
+): CampusRepository.OccurrenceCommandResult {
+    val snapshot = dao.getOccurrenceOverridesSnapshot()
+    val allRuleIds = (mergedRuleIds + listOfNotNull(ruleId)).distinct().filter { it.isNotBlank() }
+    val dateIso = date.toString()
+    val selectedRows = LinkedHashMap<String, CampusRepository.SelectedOverride>()
+    val selectedMoves = LinkedHashMap<String, CampusRepository.SelectedMove>()
+
+    fun selectMove(moveId: String) {
+        if (moveId !in selectedMoves) {
+            selectedMoves[moveId] = CampusRepository.SelectedMove(
+                moveId = moveId,
+                expectedMembers = snapshot
+                    .filter { it.termId == termId && it.moveId == moveId }
+                    .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
+            )
+        }
+    }
+
+    fun selectRow(row: OccurrenceOverrideEntity) {
+        selectedRows[row.id] = CampusRepository.SelectedOverride(
+            id = row.id,
+            mutationToken = row.mutationToken,
+            ruleId = row.courseRuleId,
+            dateIso = row.dateIso,
+            expectedMove = row.moveId?.takeIf { it.isNotBlank() }
+                ?.let { CampusRepository.ExpectedMove.Move(it) }
+                ?: CampusRepository.ExpectedMove.NoMove,
+            role = row.moveRole
+        )
+    }
+
+    if (!overrideId.isNullOrBlank()) {
+        snapshot.firstOrNull { it.id == overrideId }?.let { existing ->
+            if (existing.courseRuleId == null) {
+                selectRow(existing)
+            } else if (!existing.moveId.isNullOrBlank()) {
+                selectMove(existing.moveId!!)
+            } else {
+                selectRow(existing)
+            }
+        }
+    }
+    for (rId in allRuleIds) {
+        for (row in snapshot.filter {
+            it.dateIso == dateIso && it.courseRuleId == rId && it.canceled
+        }) {
+            if (!row.moveId.isNullOrBlank()) {
+                selectMove(row.moveId!!)
+            } else {
+                selectRow(row)
+            }
+        }
+    }
+    return repository.executeRestoreCommand(
+        CampusRepository.RestoreCommand(
+            commandId = "test-" + UUID.randomUUID().toString(),
+            accountProfileId = repository.profileId,
+            termId = termId,
+            intent = CampusRepository.RestoreIntent.RESTORE_SELECTION,
+            selectedRows = selectedRows.values.toList(),
+            selectedMoves = selectedMoves.values.toList()
+        )
+    )
 }
