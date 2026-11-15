@@ -278,6 +278,13 @@ class CampusRepository internal constructor(
      */
     internal var occurrenceCommandInTransactionHook: (suspend (command: String) -> Unit)? = null
 
+    /**
+     * 测试注入点：恢复/撤销命令事务内每完成一条破坏性写入（删除行/盖印改写）回调
+     * （命令名, 已写行 id）——覆盖「写中」阶段，可在删一半后注入故障验证整体回滚
+     * 与零通知。仅用于回归测试，生产路径必须为 null。
+     */
+    internal var occurrenceCommandWriteProgressHook: (suspend (command: String, rowId: String) -> Unit)? = null
+
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -1990,6 +1997,63 @@ class CampusRepository internal constructor(
         val changed: Boolean get() = status == OccurrenceCommandStatus.APPLIED
     }
 
+    /** 恢复命令的显式意图：UI 在点击瞬间固化，仓库绝不从当前行状态反推意图。 */
+    enum class RestoreIntent {
+        /** 仅恢复暂停的纯覆盖行（暂停的调入目标/单日新增）：selectedRows 必须全部 ruleId==null。 */
+        UNPAUSE,
+
+        /** 仅按 moveId 整组撤销跨日调课：selectedRows 必须为空、selectedMoves 非空。 */
+        UNDO_MOVES,
+
+        /** 点击时选中的混合集合原子恢复：规则停课行删除 + 纯覆盖行解除暂停 + 调课组整组撤销。 */
+        RESTORE_SELECTION
+    }
+
+    /**
+     * 行级调课关联断言：[NoMove] 是显式断言「该行不得携带任何 moveId」，
+     * 绝不与「不校验」共用 null；[Move] 要求行 moveId 精确相等。
+     */
+    sealed interface ExpectedMove {
+        data object NoMove : ExpectedMove
+        data class Move(val moveId: String) : ExpectedMove
+    }
+
+    /** 行身份锚点：稳定 id + 不可复用版本令牌（任何真实写入都会换新令牌）。 */
+    data class RowIdentity(val id: String, val mutationToken: String)
+
+    /** 点击时冻结的单行选择：id+令牌+结构断言（rule/date/move/role），绝不按 rule/date 扩展。 */
+    data class SelectedOverride(
+        val id: String,
+        val mutationToken: String,
+        val ruleId: String?,
+        val dateIso: String,
+        val expectedMove: ExpectedMove,
+        val role: String?
+    )
+
+    /** 点击时冻结的整组调课选择：[expectedMembers] 必须覆盖该 moveId 在命令学期内的全部行。 */
+    data class SelectedMove(
+        val moveId: String,
+        val expectedMembers: List<RowIdentity>
+    )
+
+    /**
+     * 点击瞬间固化的不可变恢复命令：包含全部行/调课组选择与版本令牌断言。
+     * 单事务执行：按选中 ID 精确读取（禁止 rule/date 扩展）→ 逐条验
+     * token+term+rule/date+NoMove/Move+role+调课成员集合 → 任一冲突整组
+     * [OccurrenceCommandStatus.CONFLICT] 零写；全部消失
+     * [OccurrenceCommandStatus.NO_CHANGE]；部分消失 CONFLICT（保守）。
+     * 不设持久回执表：验证「旧 ID 消失→NO_CHANGE、活跃行身份变更→CONFLICT」即可。
+     */
+    data class RestoreCommand(
+        val commandId: String,
+        val accountProfileId: String,
+        val termId: String,
+        val intent: RestoreIntent,
+        val selectedRows: List<SelectedOverride> = emptyList(),
+        val selectedMoves: List<SelectedMove> = emptyList()
+    )
+
     /**
      * 「恢复暂停」命令：仅对**纯覆盖行**（暂停的调入目标/单日新增）取消 canceled 标记。
      * - 行不存在或已活跃 → [OccurrenceCommandStatus.NO_CHANGE]（双击/陈旧回调安全幂等）；
@@ -2123,6 +2187,220 @@ class CampusRepository internal constructor(
     }
 
     /**
+     * 执行 [RestoreCommand]：唯一接受「点击时冻结的完整不可变选择」的原子恢复入口。
+     *
+     * 单一事务内：
+     * 1. 账号/term/结构校验——跨账号、空 term、重复 id、空白令牌、意图形态不符
+     *    （UNPAUSE 混入规则行/调课组、UNDO_MOVES 混入单选行、RESTORE_SELECTION 空选）
+     *    一律整体拒绝，绝不写任何东西；
+     * 2. 按选中 ID 精确读取（禁止 rule/date 扩展），逐条验
+     *    mutationToken + termId + ruleId + dateIso + expectedMove + role，
+     *    调课组额外验成员集合（id+token 全等）；
+     * 3. 任一冲突 → 整组 [OccurrenceCommandStatus.CONFLICT] 零写；
+     *    全部选中行/组消失 → [OccurrenceCommandStatus.NO_CHANGE]；
+     *    部分消失 → CONFLICT（保守），绝不顺手恢复幸存行；
+     * 4. 全部校验通过后一次性提交写入，事务外仅通知一次。
+     *
+     * 旧规则停课/调课行若 reason 为「已调至 …」且 moveId 缺失，恢复后仍检出
+     * 旧版模糊调入目标交由用户核对，绝不自动猜测删除。
+     */
+    suspend fun executeRestoreCommand(command: RestoreCommand): OccurrenceCommandResult {
+        // 形态校验：结构性非法输入整体拒绝（含重复 id / 空白字段 / 意图-选择形态不符）。
+        val malformed = run {
+            if (command.termId.isBlank() || command.accountProfileId.isBlank()) return@run true
+            val rowIds = command.selectedRows.map { it.id }
+            if (rowIds.size != rowIds.toSet().size) return@run true
+            if (command.selectedRows.any { sel ->
+                    sel.id.isBlank() || sel.mutationToken.isBlank() || sel.dateIso.isBlank() ||
+                        (sel.expectedMove as? ExpectedMove.Move)?.moveId?.isBlank() == true
+                }
+            ) return@run true
+            val rowIdSet = rowIds.toSet()
+            val moveIds = command.selectedMoves.map { it.moveId }
+            if (moveIds.size != moveIds.toSet().size) return@run true
+            if (command.selectedMoves.any { sm ->
+                    sm.moveId.isBlank() || sm.expectedMembers.isEmpty() ||
+                        sm.expectedMembers.any { it.id.isBlank() || it.mutationToken.isBlank() } ||
+                        sm.expectedMembers.map { it.id }.toSet().size != sm.expectedMembers.size
+                }
+            ) return@run true
+            when (command.intent) {
+                RestoreIntent.UNPAUSE ->
+                    command.selectedMoves.isNotEmpty() ||
+                        command.selectedRows.any { it.ruleId != null }
+                RestoreIntent.UNDO_MOVES ->
+                    command.selectedRows.isNotEmpty() || command.selectedMoves.isEmpty()
+                RestoreIntent.RESTORE_SELECTION -> false
+            }
+        }
+        if (malformed || command.accountProfileId != profileId) {
+            Log.w(
+                LOG_TAG,
+                "executeRestoreCommand: " + command.commandId + " 账号/结构校验失败 " +
+                    "(profile=" + command.accountProfileId + ",term=" + command.termId + ")，整体拒绝"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (command.selectedRows.isEmpty() && command.selectedMoves.isEmpty()) {
+            return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        }
+        val result = database.withTransaction {
+            // 旧版模糊调入目标检出需要删除前快照：先于任何写入截取
+            val preWriteSnapshot = dao.getOccurrenceOverridesSnapshot()
+            // 仅按选中 ID 精确读取——绝不按 rule/date 扩展选中范围
+            val resolvedRows = LinkedHashMap<String, OccurrenceOverrideEntity>()
+            var missingSelections = 0
+            for (sel in command.selectedRows) {
+                val row = dao.getOccurrenceOverrideById(sel.id)
+                if (row == null) missingSelections++ else resolvedRows[sel.id] = row
+            }
+            val resolvedMoves = LinkedHashMap<String, List<OccurrenceOverrideEntity>>()
+            for (sm in command.selectedMoves) {
+                val members = dao.getOccurrenceOverridesForMove(command.termId, sm.moveId)
+                if (members.isEmpty()) missingSelections++ else resolvedMoves[sm.moveId] = members
+            }
+            when {
+                // 全部选中行/组消失：旧命令目标已不存在 → 安全幂等 NO_CHANGE
+                resolvedRows.isEmpty() && resolvedMoves.isEmpty() ->
+                    OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+                // 部分消失：保守整体拒绝，绝不只恢复幸存行
+                missingSelections > 0 -> {
+                    Log.w(
+                        LOG_TAG,
+                        "executeRestoreCommand " + command.commandId + ": " + missingSelections +
+                            " 条选择已消失，整体拒绝"
+                    )
+                    OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                }
+                else -> {
+                    var conflict = false
+                    fun fail(reason: String) {
+                        Log.w(LOG_TAG, "executeRestoreCommand " + command.commandId + ": " + reason)
+                        conflict = true
+                    }
+                    for (sel in command.selectedRows) {
+                        val row = resolvedRows.getValue(sel.id)
+                        if (row.termId != command.termId) {
+                            fail("行 " + sel.id + " 属于 " + row.termId + "，拒绝跨学期恢复")
+                            break
+                        }
+                        if (row.mutationToken != sel.mutationToken) {
+                            fail("行 " + sel.id + " 已被改写，旧令牌失效")
+                            break
+                        }
+                        if (row.courseRuleId?.takeIf { it.isNotBlank() } !=
+                            sel.ruleId?.takeIf { it.isNotBlank() }
+                        ) {
+                            fail("行 " + sel.id + " 规则关联与选择不符")
+                            break
+                        }
+                        if (row.dateIso != sel.dateIso) {
+                            fail("行 " + sel.id + " 日期与选择不符")
+                            break
+                        }
+                        val expectedMid = (sel.expectedMove as? ExpectedMove.Move)
+                            ?.moveId?.takeIf { it.isNotBlank() }
+                        if (row.moveId?.takeIf { it.isNotBlank() } != expectedMid) {
+                            fail("行 " + sel.id + " moveId=" + row.moveId + " 与期望不符")
+                            break
+                        }
+                        if (row.moveRole?.takeIf { it.isNotBlank() } !=
+                            sel.role?.takeIf { it.isNotBlank() }
+                        ) {
+                            fail("行 " + sel.id + " 调课角色与选择不符")
+                            break
+                        }
+                        // 规则关联的调课行（SOURCE）只能随其调课组整体撤销——
+                        // 组未随命令选中则孤儿化对端，保守拒绝；
+                        // 纯覆盖行的 moveId（暂停的调入目标）不在此限——可单独解除暂停
+                        if (row.courseRuleId != null && !row.moveId.isNullOrBlank() &&
+                            resolvedMoves.keys.none { it == row.moveId }
+                        ) {
+                            fail("行 " + sel.id + " 属调课组 " + row.moveId + " 但组未被选中")
+                            break
+                        }
+                    }
+                    if (!conflict) {
+                        for (sm in command.selectedMoves) {
+                            val members = resolvedMoves.getValue(sm.moveId)
+                            val expected = sm.expectedMembers
+                                .map { it.id to it.mutationToken }.toSet()
+                            val actual = members
+                                .map { it.id to it.mutationToken }.toSet()
+                            if (expected != actual) {
+                                fail("调课组 " + sm.moveId + " 成员集合与点击时捕获的不符")
+                                break
+                            }
+                        }
+                    }
+                    if (conflict) {
+                        OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                    } else {
+                        occurrenceCommandInTransactionHook?.invoke("restoreCommand")
+                        val restoredSourceIds = linkedSetOf<String>()
+                        val deletedTargetIds = linkedSetOf<String>()
+                        val restoredMoveIds = linkedSetOf<String>()
+                        val unpausedIds = linkedSetOf<String>()
+                        val legacySources = mutableListOf<OccurrenceOverrideEntity>()
+                        var wrote = false
+                        for (sm in command.selectedMoves) {
+                            for (row in resolvedMoves.getValue(sm.moveId)) {
+                                dao.deleteOccurrenceOverrideById(row.id)
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
+                                    deletedTargetIds += row.id
+                                } else {
+                                    restoredSourceIds += row.id
+                                }
+                                wrote = true
+                            }
+                            restoredMoveIds += sm.moveId
+                        }
+                        for (sel in command.selectedRows) {
+                            val row = resolvedRows.getValue(sel.id)
+                            if (row.courseRuleId != null) {
+                                // 带 moveId 的规则行由上方调课组删除覆盖，跳过单独动作
+                                if (!row.moveId.isNullOrBlank()) continue
+                                dao.deleteOccurrenceOverrideById(row.id)
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                restoredSourceIds += row.id
+                                if (row.reason?.startsWith("已调至 ") == true) legacySources += row
+                                wrote = true
+                            } else if (row.canceled) {
+                                // 纯覆盖行仅解除暂停：保留 id/moveId/moveRole 等全部身份字段，
+                                // 统一写层盖印新令牌
+                                upsertOccurrenceOverrideStamped(
+                                    row.copy(canceled = false, reason = null)
+                                )
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                unpausedIds += row.id
+                                wrote = true
+                            }
+                        }
+                        val ambiguous = findLegacyAmbiguousTargets(preWriteSnapshot, legacySources)
+                        OccurrenceCommandResult(
+                            status = if (wrote) {
+                                OccurrenceCommandStatus.APPLIED
+                            } else {
+                                OccurrenceCommandStatus.NO_CHANGE
+                            },
+                            unpausedOverrideIds = unpausedIds.toList(),
+                            restoredSourceOverrideIds = restoredSourceIds.toList(),
+                            deletedTargetOverrideIds = deletedTargetIds.toList(),
+                            restoredMoveIds = restoredMoveIds.toList(),
+                            legacyAmbiguousTargets = ambiguous.map { it.toDomain() }
+                        )
+                    }
+                }
+            }
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
      * 事务内「恢复暂停」：按 id 精确读行，校验 termId 与点击时捕获的 [expectedMoveId]；
      * 仅取消 canceled 标记，保留全部身份字段，绝不触碰任何其他行。
      */
@@ -2185,6 +2463,7 @@ class CampusRepository internal constructor(
         val deletedTargetIds = mutableListOf<String>()
         for (row in rows) {
             dao.deleteOccurrenceOverrideById(row.id)
+            occurrenceCommandWriteProgressHook?.invoke("undoMove", row.id)
             if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
                 deletedTargetIds += row.id
             } else {
