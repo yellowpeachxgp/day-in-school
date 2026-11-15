@@ -2275,4 +2275,83 @@ class CampusServicesUnitTest {
             (acceptOutcome as? CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)?.remoteJobOrPlanId
         )
     }
+
+    // ---------- R4-Q2：reservation-quote 报价单钉价（cloud 338d501+）+ quote 变更再确认 ----------
+
+    @Test
+    fun `plan create carries quote_id when server offers matching quote and re-drifts when quote price moves`() {
+        // A) 服务端提供 reservation-quote 且价格与用户确认价一致 → 计划体同时携带 quote_id + expected_price
+        val bodiesWithQuote = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val acceptedWithQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L) { method, url, body, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":true,"data":{"quote_id":"quote_srv_1","price_micropeach":20000}}"""
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    bodiesWithQuote.add(body.orEmpty())
+                    """{"ok":true,"data":{"job_id":"job_q1","plan_id":"plan_q1"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+        assertTrue(acceptedWithQuote is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
+        val sentBody = JSONObject(bodiesWithQuote.single())
+        assertEquals(20_000L, sentBody.getLong("expected_price_micropeach"))
+        assertEquals("quote_srv_1", sentBody.getString("quote_id"))
+
+        // B) quote 报价与本次钉入价不符（用户确认后云端又调价）→ 计划 POST 前即 PriceDriftConflict：
+        //    POST /reservation-plans 从未发出（可证明 pre-persist），进入下一轮诚实再确认，绝不静默升级
+        val planPostCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val driftedOnQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L) { method, url, _, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":true,"data":{"quote_id":"quote_srv_2","price_micropeach":25000}}"""
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    planPostCount.incrementAndGet()
+                    """{"ok":true,"data":{"job_id":"job_q2"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+        assertTrue(driftedOnQuote is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict)
+        val quoteDrift = driftedOnQuote as CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
+        assertEquals(20_000L, quoteDrift.expectedPriceMicropeach)
+        assertEquals(25_000L, quoteDrift.currentPriceMicropeach)
+        assertEquals("quote 报价漂移必须在计划 POST 前短路（provably pre-persist）", 0, planPostCount.get())
+
+        // C) legacy 云端无报价端点（404/未提供）→ 请求体不携带 quote_id，仅凭 expected_price 照常创建
+        val legacyBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val acceptedLegacy = submitPlanWithTransport(expectedPriceMicropeach = 10_000L) { method, url, body, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    legacyBodies.add(body.orEmpty())
+                    """{"ok":true,"data":{"job_id":"job_legacy_1"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+        assertTrue(acceptedLegacy is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
+        val legacyBody = JSONObject(legacyBodies.single())
+        assertFalse(legacyBody.has("quote_id"))
+        assertEquals(10_000L, legacyBody.getLong("expected_price_micropeach"))
+    }
 }

@@ -3097,4 +3097,427 @@ class BookingDispatchExclusiveClaimDaoTest {
         )
         repo.cloudHttpTransportForTest = null
     }
+
+    // ---------- R4-Q2：用户确认价贯通（UI→Repo→payload）+ quote_id + 持久化成交价 ----------
+
+    private fun saveTestCloudAccount(
+        repo: CampusRepository,
+        cloudUserId: String,
+        refreshToken: String = "ctseal1:ref_$cloudUserId",
+        balanceMicropeach: Long = 50_000L,
+        accessToken: String? = null
+    ) = runBlocking {
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = cloudUserId,
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_$cloudUserId",
+                displayName = "User $cloudUserId",
+                peachBalanceMicropeach = balanceMicropeach,
+                holdSupported = false,
+                accessToken = accessToken ?: testCloudJwt(cloudUserId),
+                refreshToken = refreshToken,
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+    }
+
+    private fun expiredTestCloudJwt(sub: String): String {
+        val header = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"alg":"HS256","typ":"JWT"}""".toByteArray())
+        val payload = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"sub":"$sub","exp":1}""".toByteArray())
+        return "ctseal1:$header.$payload.sig"
+    }
+
+    private fun baseCloudCreateTransport(
+        planBodies: java.util.concurrent.CopyOnWriteArrayList<String>,
+        idemKeys: java.util.concurrent.CopyOnWriteArrayList<String>,
+        onPlanPost: (attempt: Int) -> String
+    ): (String, String, String?, String?, Map<String, String>) -> String {
+        val postCount = java.util.concurrent.atomic.AtomicInteger(0)
+        return { method, url, body, _, headers ->
+            when {
+                // legacy 云端：无 reservation-quote 端点，走仅 expected_price 钉价路径
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no route"}}"""
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    planBodies.add(body.orEmpty())
+                    idemKeys.add(headers["Idempotency-Key"].orEmpty())
+                    onPlanPost(postCount.incrementAndGet())
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+    }
+
+    private val testNowMs: Long
+        get() = java.time.ZonedDateTime.of(2026, 11, 25, 22, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai"))
+            .toInstant().toEpochMilli()
+
+    private suspend fun createCloudPlan(
+        repo: CampusRepository,
+        acceptedPriceMicropeach: Long? = null,
+        seat: String = "05桌 A座",
+        atMs: Long
+    ) = repo.createDualEngineBookingPlan(
+        executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+        targetDate = java.time.LocalDate.of(2026, 11, 26),
+        targetTimeText = "07:00:00",
+        preferredAreaName = "五层中区",
+        preferredSeatLabel = seat,
+        acceptedPriceMicropeach = acceptedPriceMicropeach,
+        nowEpochMillis = atMs
+    )
+
+    @Test
+    fun cloudPlanPriceDriftConfirmCarriesAcceptedPriceAndPersistsExactlyOnePlan() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_confirm_loop")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        // 先存在一条同日本机排队计划：云端创建走「先原子停止本机→提交→失败补偿恢复」交接路径
+        val localPlan = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = testNowMs
+        ).getOrThrow()
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        repo.cloudHttpTransportForTest = baseCloudCreateTransport(planBodies, idemKeys) { attempt ->
+            postAttempts.incrementAndGet()
+            if (attempt == 1) {
+                // 服务端 100→200：第一次 POST 以 409 PRICE_DRIFT 明确拒绝（provably pre-persist）
+                """{"ok":false,"error":{"code":"PRICE_DRIFT","message":"服务价格已调整","detail":{"expected_price_micropeach":10000,"current_price_micropeach":20000}}}"""
+            } else {
+                """{"ok":true,"data":{"job_id":"job_p200","plan_id":"plan_p200","status":"ARMED"}}"""
+            }
+        }
+
+        // 第一次创建：钉入展示常量价 10000 → 409 → CloudPlanPriceDriftException（云端无计划，本机补偿恢复）
+        val driftCreate = createCloudPlan(repo, atMs = testNowMs + 1_000L)
+        val err = driftCreate.exceptionOrNull()
+        org.junit.Assert.assertTrue("必须抛 CloudPlanPriceDriftException，实际: $err", err is CloudPlanPriceDriftException)
+        err as CloudPlanPriceDriftException
+        assertEquals(10_000L, err.expectedPriceMicropeach)
+        assertEquals(20_000L, err.currentPriceMicropeach)
+        assertEquals(1, postAttempts.get())
+        assertEquals(10_000L, org.json.JSONObject(planBodies[0]).getLong("expected_price_micropeach"))
+
+        // 用户取消路径：本机排队计划已诚实恢复，且绝不自动重发（POST 计数保持 1）
+        val restoredLocal = dao.getLibraryBookingPlanById(localPlan.id)!!
+        org.junit.Assert.assertTrue(
+            "cancel keeps original local plan, got " + restoredLocal.status,
+            restoredLocal.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+        )
+        assertEquals("user CANCEL → no second POST", 1, postAttempts.get())
+        org.junit.Assert.assertTrue(
+            dao.getLibraryBookingPlansSnapshot().none {
+                it.executionMode == "CLOUD_HOSTED" && it.targetLocalDate == "2026-11-26"
+            }
+        )
+
+        // 用户明确接受新价 → 全新业务键第二次创建，POST 钉入确认价 20000
+        val confirmed = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = err.currentPriceMicropeach,
+            atMs = testNowMs + 2_000L
+        ).getOrThrow()
+
+        assertEquals(2, postAttempts.get())
+        assertEquals(20_000L, org.json.JSONObject(planBodies[1]).getLong("expected_price_micropeach"))
+        // 前次 409 已证明 pre-persist → 确认重发必须是全新业务键，且恰好产生一个计划
+        org.junit.Assert.assertTrue(idemKeys[0].isNotBlank())
+        org.junit.Assert.assertTrue(idemKeys[1].isNotBlank())
+        org.junit.Assert.assertNotEquals("fresh business key per confirm attempt", idemKeys[0], idemKeys[1])
+        assertEquals("job_p200", confirmed.cloudJobId)
+        // 持久化的是用户确认的原成交价 20000，而非今日常量价
+        assertEquals(20_000L, confirmed.priceMicropeach)
+        val cloudRows = dao.getLibraryBookingPlansSnapshot().filter {
+            it.executionMode == "CLOUD_HOSTED" && it.targetLocalDate == "2026-11-26" && it.status != "CANCELLED"
+        }
+        assertEquals("exactly ONE cloud plan row", 1, cloudRows.size)
+        assertEquals(20_000L, cloudRows.single().priceMicropeach)
+        // 本机排队计划已按云端交接让位（原子停止，绝不双引擎并跑）
+        assertEquals("CANCELLED", dao.getLibraryBookingPlanById(localPlan.id)!!.status)
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanSecondSubmitHittingAnotherDriftTriggersAnotherReconfirmRound() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_second_drift")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        val localPlan = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = testNowMs
+        ).getOrThrow()
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        repo.cloudHttpTransportForTest = baseCloudCreateTransport(planBodies, idemKeys) { attempt ->
+            postAttempts.incrementAndGet()
+            // 每次提交都被服务端以更高的新价拒绝：100→200→250，绝不静默升级
+            val newPrice = 15_000L + attempt * 5_000L
+            """{"ok":false,"error":{"code":"PRICE_DRIFT","message":"价格又调整","detail":{"expected_price_micropeach":${10_000L + (attempt - 1) * 10_000L},"current_price_micropeach":$newPrice}}}"""
+        }
+
+        val err1 = createCloudPlan(repo, atMs = testNowMs + 1_000L).exceptionOrNull()
+            as CloudPlanPriceDriftException
+        assertEquals(10_000L, err1.expectedPriceMicropeach)
+        assertEquals(20_000L, err1.currentPriceMicropeach)
+
+        // 用户接受 20000 重发 → 服务端又调到 25000 → 又一发 409，又一轮诚实再确认（无静默升级）
+        val err2 = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = err1.currentPriceMicropeach,
+            atMs = testNowMs + 2_000L
+        ).exceptionOrNull() as CloudPlanPriceDriftException
+        assertEquals(20_000L, err2.expectedPriceMicropeach)
+        assertEquals(25_000L, err2.currentPriceMicropeach)
+
+        assertEquals(2, postAttempts.get())
+        assertEquals(20_000L, org.json.JSONObject(planBodies[1]).getLong("expected_price_micropeach"))
+        org.junit.Assert.assertTrue(
+            "两轮均 pre-persist → 云端绝无任何计划落库",
+            dao.getLibraryBookingPlansSnapshot().none { it.executionMode == "CLOUD_HOSTED" }
+        )
+        // 每轮失败都按诚实补偿恢复本机计划
+        org.junit.Assert.assertTrue(
+            dao.getLibraryBookingPlanById(localPlan.id)!!.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+        )
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanTokenRefreshResubmitStillCarriesAcceptedPriceNotConstant() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_refresh_resubmit")
+        // 种入已过期的访问令牌：首个令牌解析必须真实命中 /auth/refresh 换取新令牌
+        saveTestCloudAccount(
+            repo,
+            "cloud_user_A",
+            refreshToken = "ctseal1:ref_A",
+            accessToken = expiredTestCloudJwt("cloud_user_A")
+        )
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val refreshCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val base = baseCloudCreateTransport(planBodies, idemKeys) { attempt ->
+            postAttempts.incrementAndGet()
+            if (attempt == 1) {
+                // 第一次 POST：令牌过期被拒（pre-persist，可安全刷新重提交）
+                """{"ok":false,"error":{"code":"CLOUD_AUTH_REQUIRED","message":"token expired"}}"""
+            } else {
+                """{"ok":true,"data":{"job_id":"job_refreshed","plan_id":"plan_refreshed"}}"""
+            }
+        }
+        repo.cloudHttpTransportForTest = { method, url, body, token, headers ->
+            if (method == "POST" && url.endsWith("/api/v1/auth/refresh")) {
+                refreshCalls.incrementAndGet()
+                """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A2"}}"""
+            } else {
+                base(method, url, body, token, headers)
+            }
+        }
+
+        // 用户已确认 20000 的创建：首次 POST 令牌过期 → 刷新后重提交必须仍钉入确认价而非回落常量价
+        val created = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = 20_000L,
+            atMs = testNowMs + 1_000L
+        ).getOrThrow()
+
+        assertEquals(2, postAttempts.get())
+        org.junit.Assert.assertTrue("必须发生令牌刷新重提交", refreshCalls.get() >= 1)
+        assertEquals(20_000L, org.json.JSONObject(planBodies[0]).getLong("expected_price_micropeach"))
+        assertEquals(20_000L, org.json.JSONObject(planBodies[1]).getLong("expected_price_micropeach"))
+        // 同一次业务尝试的重提交沿用同一幂等键（服务端幂等去重）
+        assertEquals(idemKeys[0], idemKeys[1])
+        assertEquals("job_refreshed", created.cloudJobId)
+        assertEquals(20_000L, created.priceMicropeach)
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanQuoteOfferedAttachesQuoteIdAndQuoteDriftPreemptsPlanPost() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_quote_flow")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val quotePrice = java.util.concurrent.atomic.AtomicLong(20_000L)
+        repo.cloudHttpTransportForTest = { method, url, body, _, headers ->
+            when {
+                // cloud 338d501+：提供 reservation-quote（PRICE_QUOTE 语义）
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":true,"data":{"quote_id":"quote_srv_9","price_micropeach":${quotePrice.get()}}}"""
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    planBodies.add(body.orEmpty())
+                    idemKeys.add(headers["Idempotency-Key"].orEmpty())
+                    postAttempts.incrementAndGet()
+                    """{"ok":true,"data":{"job_id":"job_quoted","plan_id":"plan_quoted"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+
+        // 服务端提供 quote 且与确认价一致 → 计划体携带 quote_id + expected_price
+        val created = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = 20_000L,
+            atMs = testNowMs + 1_000L
+        ).getOrThrow()
+        assertEquals(1, postAttempts.get())
+        val sentBody = org.json.JSONObject(planBodies.single())
+        assertEquals(20_000L, sentBody.getLong("expected_price_micropeach"))
+        assertEquals("quote_srv_9", sentBody.getString("quote_id"))
+        assertEquals(20_000L, created.priceMicropeach)
+
+        // 报价再次变化（quote=25000 vs 用户上次确认 20000）→ 计划 POST 前即漂移再确认，POST 计数不变
+        quotePrice.set(25_000L)
+        val err = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = 20_000L,
+            seat = "08桌 B座",
+            atMs = testNowMs + 2_000L
+        ).exceptionOrNull()
+        org.junit.Assert.assertTrue(err is CloudPlanPriceDriftException)
+        err as CloudPlanPriceDriftException
+        assertEquals(20_000L, err.expectedPriceMicropeach)
+        assertEquals(25_000L, err.currentPriceMicropeach)
+        assertEquals("quote 漂移必须短路在计划 POST 之前", 1, postAttempts.get())
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanAcceptedPriceDoesNotCarryOverAcrossIdentitiesAndRowKeepsOriginal() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_identity_iso")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        repo.cloudHttpTransportForTest = baseCloudCreateTransport(planBodies, idemKeys) { _ ->
+            """{"ok":true,"data":{"job_id":"job_iso","plan_id":"plan_iso"}}"""
+        }
+
+        // 身份 A：以确认价 20000 创建 → 行上持久化原成交价
+        val createdA = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = 20_000L,
+            atMs = testNowMs + 1_000L
+        ).getOrThrow()
+        assertEquals(20_000L, createdA.priceMicropeach)
+        assertEquals("cloud_user_A", createdA.ownerCloudUserId)
+
+        // A→B 换号：B 的全新创建绝不携带 A 的确认价残留，必须回退展示常量价 10000
+        saveTestCloudAccount(repo, "cloud_user_B")
+        val createdB = createCloudPlan(
+            repo,
+            seat = "09桌 C座",
+            atMs = testNowMs + 2_000L
+        ).getOrThrow()
+        assertEquals("cloud_user_B", createdB.ownerCloudUserId)
+        assertEquals(10_000L, createdB.priceMicropeach)
+        assertEquals(2, planBodies.size)
+        assertEquals(
+            "B 的创建不得携带 A 的确认价（无跨身份残留）",
+            10_000L,
+            org.json.JSONObject(planBodies[1]).getLong("expected_price_micropeach")
+        )
+        // A 的持久化记录在全局/换号之后仍保留原成交价 20000
+        assertEquals(20_000L, dao.getLibraryBookingPlanById(createdA.id)!!.priceMicropeach)
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanRowKeepsAcceptedPriceThroughCloudSyncMerge() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("price_sync_merge")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        repo.cloudHttpTransportForTest = baseCloudCreateTransport(planBodies, idemKeys) { _ ->
+            """{"ok":true,"data":{"job_id":"job_keep_price","plan_id":"plan_keep_price"}}"""
+        }
+
+        // 以确认价 25000 创建 → 行上持久化 25000
+        val created = createCloudPlan(
+            repo,
+            acceptedPriceMicropeach = 25_000L,
+            atMs = testNowMs + 1_000L
+        ).getOrThrow()
+        assertEquals(25_000L, created.priceMicropeach)
+        assertEquals("job_keep_price", created.cloudJobId)
+
+        // 之后全局价回落：云端同步快照返回同 jobId + 订单现价 1.0 🍑（10000）
+        // → 对账合并必须沿用本地原成交价 25000，绝不按今日全局价改写历史记录
+        repo.cloudHttpTransportForTest = { method, url, body, _, _ ->
+            when {
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"auth_version":1,"user":{"cloud_user_id":"cloud_user_A"},"consents":[{"id":"consent_1","school_id":"haut","auth_version":1}],"school_bindings":[{"id":"bind_1","school_id":"haut","student_no":"","consent_id":"consent_1","auth_version":1}]}}"""
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """
+                    {
+                      "ok": true,
+                      "data": {
+                        "auth_version": 1,
+                        "user": { "cloud_user_id": "cloud_user_A" },
+                        "wallet": { "peach_balance": 5.0 },
+                        "consents": [{ "id": "consent_1", "school_id": "haut", "auth_version": 1 }],
+                        "school_bindings": [{ "id": "bind_1", "school_id": "haut", "student_no": "", "consent_id": "consent_1", "auth_version": 1 }],
+                        "reservation_plans": [],
+                        "reservation_jobs": [
+                          { "id": "job_keep_price", "plan_id": "${created.id}", "booking_local_date": "2026-11-26", "target_local_time": "07:00:00", "state": "ARMED", "display_status": "ARMED", "user_intent_state": "ACTIVE", "external_execution_state": "NOT_DISPATCHED", "school_cancellation_state": "NOT_REQUESTED", "candidate_seats": ["05桌 A座"] }
+                        ],
+                        "orders": [
+                          { "id": "order_1", "job_id": "job_keep_price", "price_peach": 1.0, "payment_state": "DEBIT_PENDING", "created_at": "2026-11-25T14:00:00Z" }
+                        ],
+                        "parcels": []
+                      }
+                    }
+                    """.trimIndent()
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+
+        val syncRes = repo.syncWithCampusCloud()
+        org.junit.Assert.assertTrue("sync must succeed: ${syncRes.exceptionOrNull()}", syncRes.isSuccess)
+        val merged = dao.getLibraryBookingPlanById(created.id)!!
+        assertEquals(
+            "对账合并必须保留原成交价（25000），绝不按今日全局价/订单价覆盖",
+            25_000L,
+            merged.priceMicropeach
+        )
+        repo.cloudHttpTransportForTest = null
+    }
 }
