@@ -110,6 +110,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -149,11 +150,19 @@ fun EmptyClassroomScreen(
     }
     val campusDisplayName = if (selectedCampusKey == "songshanlu") "嵩山路校区" else "莲花街校区"
 
-    var selectedWeekOffset by remember { mutableIntStateOf(0) }
-    var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
-    val selectedDateInCurrentWeek = remember(weekMonday, selectedDayOfWeek, selectedWeekOffset) {
-        weekMonday.plusWeeks(selectedWeekOffset.toLong()).plusDays((selectedDayOfWeek.value - 1).toLong())
+    // 日期选择全部经 slotController 的「绝对日期」模型：
+    // 自动模式 selectedDate 恒等于最新 today——跨午夜后自动跟到新今日，
+    // 绝不把陈旧星期几投影进新一周（旧实现周日翻周一后跳到下周日的缺陷）；
+    // 手动点选固化为绝对日期，过期由 manualDateExpired 诚实标记。
+    val selectedDate = slotController.selectedDate
+    val selectedDayOfWeek = selectedDate.dayOfWeek
+    val selectedWeekOffset = remember(weekMonday, selectedDate) {
+        ChronoUnit.WEEKS.between(
+            weekMonday,
+            selectedDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        ).toInt()
     }
+    val selectedDateInCurrentWeek = selectedDate
     val selectedTeachingWeek = remember(selectedDateInCurrentWeek, currentTerm, calendarOverrides, currentTeachingWeek, selectedWeekOffset) {
         currentTerm?.let { TeachingWeekCalculator.resolveDate(selectedDateInCurrentWeek, it, calendarOverrides).teachingWeek }
             ?: (currentTeachingWeek + selectedWeekOffset)
@@ -314,12 +323,22 @@ fun EmptyClassroomScreen(
                     XPeachFilterPill(
                         label = "本周",
                         selected = selectedWeekOffset == 0,
-                        onClick = { selectedWeekOffset = 0 }
+                        onClick = {
+                            // 保持当前星期几，把选择固化为本周对应的绝对日期
+                            slotController.pickDate(
+                                weekMonday.plusDays((selectedDayOfWeek.value - 1).toLong())
+                            )
+                        }
                     )
                     XPeachFilterPill(
                         label = "下周",
                         selected = selectedWeekOffset == 1,
-                        onClick = { selectedWeekOffset = 1 }
+                        onClick = {
+                            slotController.pickDate(
+                                weekMonday.plusWeeks(1)
+                                    .plusDays((selectedDayOfWeek.value - 1).toLong())
+                            )
+                        }
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -334,7 +353,14 @@ fun EmptyClassroomScreen(
                         XPeachFilterPill(
                             label = if (isExactToday) "${day.ChineseLabel}(今)" else day.ChineseLabel,
                             selected = selectedDayOfWeek == day,
-                            onClick = { selectedDayOfWeek = day }
+                            onClick = {
+                                // 在当前展示周内点选星期几 → 固化为对应绝对日期，
+                                // 跨午夜后绝不随周一对齐漂移成别周同一天
+                                slotController.pickDate(
+                                    weekMonday.plusWeeks(selectedWeekOffset.toLong())
+                                        .plusDays((day.value - 1).toLong())
+                                )
+                            }
                         )
                     }
                 }
@@ -366,7 +392,12 @@ fun EmptyClassroomScreen(
                                 null
                             },
                             resolution = autoSlotResolution
-                        ),
+                        ) + if (slotController.manualDateExpired) {
+                            // 手动所选日期已早于今日：诚实标注过期，绝不静默改指下周
+                            " · 所选日期已过期"
+                        } else {
+                            ""
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -379,6 +410,17 @@ fun EmptyClassroomScreen(
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
                             Text("恢复自动定位", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (slotController.manualSelectedDate != null) {
+                        TextButton(
+                            onClick = {
+                                // 退出手动日期选择：选中日期立即重新跟随最新今日
+                                slotController.restoreAutoDate()
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("回到今天", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

@@ -4,6 +4,7 @@ import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -134,5 +135,62 @@ class EmptyClassroomSlotControllerTest {
         // 凌晨 0:05 早于首个槽位窗口 -> 预选 1-2节（index 0）
         assertEquals(0, c.autoSlotResolution.slotIndex)
         assertEquals(0, c.selectedSlotIndex)
+    }
+
+    // ---------- R4-D1a：跨午夜日期选择——自动跟新今日 / 手动绝对日期过期标记 ----------
+
+    @Test
+    fun `cross midnight auto mode selects new today not stale weekday next week`() {
+        // 周日 23:59 打开（自动模式）：selectedDate 即 today
+        val (clock, c) = newController(zdt(2026, 11, 15, 23, 59))
+        assertEquals(LocalDate.of(2026, 11, 15), c.today)
+        assertNull(c.manualSelectedDate)
+        assertEquals(LocalDate.of(2026, 11, 15), c.selectedDate)
+
+        // 跨午夜到周一：自动模式选中日期跟到新今日（周一），
+        // 绝不把陈旧"周日"选择投影成下周日 2026-11-22
+        clock.now = zdt(2026, 11, 16, 0, 1)
+        c.refreshNow(periodTimes = emptyList(), timeTableId = null)
+        assertEquals(LocalDate.of(2026, 11, 16), c.today)
+        assertEquals(
+            "自动模式跨午夜必须选中新今日，绝不滑入下周同星期",
+            LocalDate.of(2026, 11, 16),
+            c.selectedDate
+        )
+        // 凌晨 0:01 早于首个槽位窗口：自动槽位预选 1-2节（index 0）
+        assertEquals(0, c.autoSlotResolution.slotIndex)
+        assertEquals(0, c.selectedSlotIndex)
+    }
+
+    @Test
+    fun `manual picked date stays absolute and is flagged expired after rollover`() {
+        val (clock, c) = newController(zdt(2026, 11, 15, 20, 0))
+        // 手动点选当日：固化为绝对日期 11-15
+        c.pickDate(LocalDate.of(2026, 11, 15))
+        assertEquals(LocalDate.of(2026, 11, 15), c.selectedDate)
+        assertFalse(c.manualDateExpired)
+
+        // 跨午夜：所选仍是 11-15（绝不静默改指 11-22），并诚实标记过期
+        clock.now = zdt(2026, 11, 16, 0, 1)
+        c.refreshNow(periodTimes = emptyList(), timeTableId = null)
+        assertEquals(LocalDate.of(2026, 11, 15), c.selectedDate)
+        assertTrue("手动所选日期早于新 today 必须标记过期", c.manualDateExpired)
+
+        // 回到今天：退出手动日期模式，选中日期重新跟随新今日
+        c.restoreAutoDate()
+        assertNull(c.manualSelectedDate)
+        assertEquals(LocalDate.of(2026, 11, 16), c.selectedDate)
+        assertFalse(c.manualDateExpired)
+    }
+
+    @Test
+    fun `manual picked future date survives rollover without expired flag`() {
+        val (clock, c) = newController(zdt(2026, 11, 15, 20, 0))
+        // 手动点选未来日期（下周三）：跨午夜后仍有效，不标过期
+        c.pickDate(LocalDate.of(2026, 11, 18))
+        clock.now = zdt(2026, 11, 16, 0, 1)
+        c.refreshNow(periodTimes = emptyList(), timeTableId = null)
+        assertEquals(LocalDate.of(2026, 11, 18), c.selectedDate)
+        assertFalse(c.manualDateExpired)
     }
 }
