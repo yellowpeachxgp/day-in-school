@@ -968,16 +968,10 @@ class CampusRepository internal constructor(
                                 )
                                 changed = true
                             }
-                        } else if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
-                            // 曾待核对的行现在具备同步/导入证据 → 标记已解决
-                            toWrite += priorAudit.copy(
-                                newTermId = row.termId,
-                                evidenceRef = "${priorAudit.evidenceRef}|evidence_available",
-                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
-                                repairedAtEpochMilli = nowMs
-                            )
-                            changed = true
                         }
+                        // 注意：无来源行的学期级证据（学期曾同步/有导入审计、termId 形态合法）
+                        // 只能抑制「首次标记」，绝不能把既有 REVIEW_REQUIRED 翻成 RESOLVED_BY_RESYNC；
+                        // 该行何时解决只取决于自身证据（originTermId 一致 / 行被移除）。
                     }
                 }
             }
@@ -999,6 +993,19 @@ class CampusRepository internal constructor(
         }
         if (changed) notifyScheduleOrPolicyChanged("EXAM_TERM_REPAIR_V2")
     }
+
+    /** 可信同步管线考试行 id 形态：`exam_` + SHA-256（64 位小写 hex）。 */
+    private val TRUSTED_EXAM_ROW_ID = Regex("exam_[0-9a-f]{64}")
+
+    /**
+     * 自动去重所需的「同一考试会话」身份强度：
+     * 明确考试日期+开考时间（「时间待定」的考试无法凭内容指纹区分跨学期同名考试）
+     * 且行 id 为可信同步管线生成的稳定来源 id。两者缺一都不得自动删除旧行。
+     */
+    private fun hasTrustedExamSessionIdentity(row: ExamScheduleEntity): Boolean =
+        !row.examDateIso.isNullOrBlank() &&
+            !row.startTimeIso.isNullOrBlank() &&
+            TRUSTED_EXAM_ROW_ID.matches(row.id)
 
     /** 考试内容指纹：同一场考试的逻辑身份（不含学期列与同步时间戳）。 */
     private fun examFingerprint(row: ExamScheduleEntity): String = listOf(
@@ -2464,16 +2471,40 @@ class CampusRepository internal constructor(
             }
             dao.upsertExamSchedules(stamped)
             // 权威重同步去重：同一场考试（内容指纹一致）若在其他学期遗留无来源旧行，
-            // 一律视为历史错标残留并在同事务内清除+审计，保证修复后不存在重复考试。
+            // 视为历史错标残留并在同事务内清除+审计，保证修复后不存在重复考试。
+            // 但自动删除以「会话身份充足」为门槛：明确考试日期时间 + 可信管线稳定 id；
+            // 「时间待定」考试可在两学期字段全等撞指纹——证据不足时两行都保留并记 REVIEW_REQUIRED，
+            // 绝不因字段同为空而误删合法的跨学期待定考试。
             val staleFingerprints = mutableMapOf<String, ExamScheduleEntity>()
             dao.getExamSchedulesSnapshot()
                 .filter { it.originTermId.isNullOrBlank() }
                 .forEach { staleFingerprints[examFingerprint(it)] = it }
+            val auditsByRow = dao.getExamTermRepairAuditsSnapshot()
+                .filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
+                .associateBy { it.examRowId }
             val nowMs = System.currentTimeMillis()
             val mergedAudits = mutableListOf<ExamTermRepairAuditEntity>()
             for (incoming in stamped) {
                 val stale = staleFingerprints[examFingerprint(incoming)] ?: continue
                 if (stale.id == incoming.id || stale.termId == incoming.termId) continue
+                if (!hasTrustedExamSessionIdentity(incoming)) {
+                    val prior = auditsByRow[stale.id]
+                    if (prior?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED ||
+                        prior.previousTermId != stale.termId
+                    ) {
+                        mergedAudits += ExamTermRepairAuditEntity(
+                            id = "v2:${stale.id}",
+                            examRowId = stale.id,
+                            previousTermId = stale.termId,
+                            newTermId = null,
+                            evidenceRef = "fingerprint_match_insufficient_session_identity:${incoming.id}",
+                            ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                            disposition = ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                            repairedAtEpochMilli = nowMs
+                        )
+                    }
+                    continue
+                }
                 dao.deleteExamScheduleById(stale.id)
                 mergedAudits += ExamTermRepairAuditEntity(
                     id = "v2:${stale.id}",

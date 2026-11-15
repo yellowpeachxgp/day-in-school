@@ -190,13 +190,20 @@ class ExamTermRepairTest {
         assertEquals(springTerm, audit.newTermId)
     }
 
+    private fun trustedExamId(seed: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(seed.toByteArray(Charsets.UTF_8))
+        return "exam_" + digest.joinToString("") { "%02x".format(it) }
+    }
+
     @Test
     fun `权威重同步清除同指纹旧错标行并审计`() = runBlocking {
         dao.upsertExamSchedules(listOf(exam("ex_legacy", poisonTerm, originTermId = null)))
+        val newId = trustedExamId("ex_new")
         repo.saveImportedExams(
             exams = listOf(
                 ExamScheduleItem(
-                    id = "ex_new", termId = springTerm, courseCode = "CS101",
+                    id = newId, termId = springTerm, courseCode = "CS101",
                     courseName = "合成课程", examBatchName = "期末考试",
                     examStageLabel = "期末集中考", examFormat = "闭卷",
                     rawTimeText = "2026-06-20 09:00-11:00",
@@ -211,7 +218,7 @@ class ExamTermRepairTest {
         )
         val rows = exams()
         assertEquals(1, rows.size)
-        assertEquals("ex_new", rows.single().id)
+        assertEquals(newId, rows.single().id)
         assertEquals(springTerm, rows.single().originTermId)
         val audit = audits().single { it.examRowId == "ex_legacy" }
         assertEquals(ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE, audit.disposition)
@@ -362,5 +369,129 @@ class ExamTermRepairTest {
         } finally {
             fixtureB.close()
         }
+    }
+
+    // ---------- Round-2 C：证据收紧 ----------
+
+    @Test
+    fun `学期级证据不再解除 REVIEW_REQUIRED 待核对维持到行自身证据出现`() = runBlocking {
+        dao.upsertExamSchedules(listOf(exam("ex_hold", poisonTerm, originTermId = null)))
+        repo.ensureExamTermRepairV2IfNeeded()
+        assertEquals(
+            ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+            audits().single { it.examRowId == "ex_hold" }.disposition
+        )
+        // 学期级证据出现：该学期被保存为同步学期 + 存在该学期的课表导入审计
+        fixture.dataStore.edit {
+            it[stringPreferencesKey("saved_jw_sync_xnm")] = "2026"
+            it[stringPreferencesKey("saved_jw_sync_xqm")] = "3"
+        }
+        dao.insertImportAudit(
+            ImportAuditEntity(
+                id = "aud_term_only", termId = poisonTerm, importSource = "OFFICIAL_JW",
+                importedAtEpochMilli = 1L, rowCount = 20, conflictCount = 0, outcome = "导入"
+            )
+        )
+        repo.ensureExamTermRepairV2IfNeeded()
+        // 行自身仍无来源证明 → 维持待核对，绝不因学期级证据翻转
+        assertEquals(poisonTerm, exams().single { it.id == "ex_hold" }.termId)
+        val audit = audits().single { it.examRowId == "ex_hold" }
+        assertEquals(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED, audit.disposition)
+        assertNull(audit.newTermId)
+
+        // 行自身证据出现（权威重同步落库带来 originTermId）→ 才真正解决
+        dao.upsertExamSchedules(listOf(exam("ex_hold", poisonTerm, originTermId = poisonTerm)))
+        repo.ensureExamTermRepairV2IfNeeded()
+        assertEquals(
+            ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+            audits().single { it.examRowId == "ex_hold" }.disposition
+        )
+    }
+
+    @Test
+    fun `时间待定的跨学期同指纹考试不自动删除旧行 保留两行并标记待核对`() = runBlocking {
+        // 同一门课在两个学期各有「时间待定」考试：字段全等撞指纹，但属于不同场次，禁止自动删除
+        dao.upsertExamSchedules(listOf(
+            exam(
+                "ex_pending_old", springTerm,
+                examDateIso = null, startTimeIso = null, endTimeIso = null,
+                originTermId = null
+            )
+        ))
+        val newId = trustedExamId("pending_new")
+        repo.saveImportedExams(
+            exams = listOf(
+                ExamScheduleItem(
+                    id = newId, termId = poisonTerm, courseCode = "CS101",
+                    courseName = "合成课程", examBatchName = "期末考试",
+                    examStageLabel = "期末集中考", examFormat = "闭卷",
+                    rawTimeText = "时间待定",
+                    examDate = null, startTime = null, endTime = null,
+                    rawRoom = "1号教学楼1204", seatNumber = null
+                )
+            ),
+            replaceExisting = true,
+            targetTermId = poisonTerm
+        )
+        val rows = exams()
+        assertEquals(2, rows.size)
+        assertTrue(rows.any { it.id == "ex_pending_old" && it.termId == springTerm })
+        assertTrue(rows.any { it.id == newId && it.termId == poisonTerm })
+        val audit = audits().single { it.examRowId == "ex_pending_old" }
+        assertEquals(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED, audit.disposition)
+        assertNull(audit.newTermId)
+        assertTrue(audit.evidenceRef.contains("insufficient_session_identity"))
+    }
+
+    @Test
+    fun `明确日期但来源 id 非可信形态的同指纹考试不误删旧行`() = runBlocking {
+        dao.upsertExamSchedules(listOf(exam("ex_stale2", springTerm, originTermId = null)))
+        repo.saveImportedExams(
+            exams = listOf(
+                ExamScheduleItem(
+                    id = "ex_handcrafted", termId = poisonTerm, courseCode = "CS101",
+                    courseName = "合成课程", examBatchName = "期末考试",
+                    examStageLabel = "期末集中考", examFormat = "闭卷",
+                    rawTimeText = "2026-06-20 09:00-11:00",
+                    examDate = LocalDate.of(2026, 6, 20),
+                    rawRoom = "1号教学楼1204", seatNumber = null,
+                    startTime = java.time.LocalTime.of(9, 0),
+                    endTime = java.time.LocalTime.of(11, 0)
+                )
+            ),
+            replaceExisting = true,
+            targetTermId = poisonTerm
+        )
+        val rows = exams()
+        assertEquals(2, rows.size)
+        assertTrue(rows.any { it.id == "ex_stale2" })
+        assertEquals(
+            ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+            audits().single { it.examRowId == "ex_stale2" }.disposition
+        )
+    }
+
+    @Test
+    fun `指纹去重标记幂等 重复同步不重复写审计`() = runBlocking {
+        dao.upsertExamSchedules(listOf(
+            exam(
+                "ex_pending_rep", springTerm,
+                examDateIso = null, startTimeIso = null, endTimeIso = null,
+                originTermId = null
+            )
+        ))
+        val item = ExamScheduleItem(
+            id = trustedExamId("pending_rep"), termId = poisonTerm, courseCode = "CS101",
+            courseName = "合成课程", examBatchName = "期末考试",
+            examStageLabel = "期末集中考", examFormat = "闭卷",
+            rawTimeText = "时间待定",
+            examDate = null, startTime = null, endTime = null,
+            rawRoom = "1号教学楼1204", seatNumber = null
+        )
+        repo.saveImportedExams(listOf(item), replaceExisting = true, targetTermId = poisonTerm)
+        val firstAudits = audits()
+        assertEquals(1, firstAudits.size)
+        repo.saveImportedExams(listOf(item), replaceExisting = true, targetTermId = poisonTerm)
+        assertEquals(firstAudits, audits())
     }
 }
