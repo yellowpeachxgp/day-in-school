@@ -2895,7 +2895,15 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             )
                         },
                         onFailure = { err ->
-                            onFeedback(false, err.message ?: "设置失败，请重试")
+                            when (err) {
+                                // 报价漂移：如实展示新旧价格并要求重新确认创建（绝不自动按新价重试）
+                                is cn.edu.haut.campus.core.database.CloudPlanPriceDriftException ->
+                                    onFeedback(
+                                        false,
+                                        err.message ?: "云端抢座价格已调整，请核实最新价格后重新创建计划"
+                                    )
+                                else -> onFeedback(false, err.message ?: "设置失败，请重试")
+                            }
                         }
                     )
                 }

@@ -2186,4 +2186,93 @@ class CampusServicesUnitTest {
         assertEquals("学生宿舍F01", compClub.buildingName)
         assertEquals("W111", compClub.roomNumber)
     }
+
+    // ---------- R3 §5：expected_price_micropeach 报价钉死 + 409 诚实再确认 ----------
+
+    private fun submitPlanWithTransport(
+        expectedPriceMicropeach: Long?,
+        transport: (String, String, String?, String?, Map<String, String>) -> String
+    ): CampusCloudOidcHelper.CloudPlanSubmissionOutcome =
+        CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
+            accessToken = "tok_price_test",
+            studentNo = "2024000001",
+            delegatedSecret = "delegated_secret_ok",
+            targetDate = "2026-11-26",
+            targetExecuteAtIso = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            planIdempotencyKey = "plan_price_test_1",
+            expectedPriceMicropeach = expectedPriceMicropeach,
+            httpTransport = transport
+        )
+
+    @Test
+    fun `plan create pins displayed price and maps 409 price drift to re-confirm outcome`() {
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val driftOutcome = submitPlanWithTransport(expectedPriceMicropeach = 10_000L) { method, url, body, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    planBodies.add(body.orEmpty())
+                    """{"ok":false,"error":{"code":"PRICE_DRIFT","message":"云端服务价格已调整","detail":{"expected_price_micropeach":10000,"current_price_micropeach":15000}}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+
+        // 1) 请求体必须钉入创建时展示的价格
+        assertEquals(1, planBodies.size)
+        val planBody = JSONObject(planBodies.single())
+        assertTrue(planBody.has("expected_price_micropeach"))
+        assertEquals(10_000L, planBody.getLong("expected_price_micropeach"))
+
+        // 2) 409 价格漂移必须映射为诚实再确认结果（绝不静默改价重试）
+        assertTrue(driftOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict)
+        val drift = driftOutcome as CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
+        assertEquals(10_000L, drift.expectedPriceMicropeach)
+        assertEquals(15_000L, drift.currentPriceMicropeach)
+
+        // 3) 非价格类 CONFLICT 仍按普通明确拒绝处理（不得误判为价格漂移）
+        val genericOutcome = submitPlanWithTransport(expectedPriceMicropeach = 10_000L) { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") ->
+                    """{"ok":false,"error":{"code":"CONFLICT","message":"duplicate active plan"}}"""
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+        assertTrue(genericOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist)
+        assertFalse(genericOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict)
+
+        // 4) 云端接受时照常 Accepted，且钉价字段存在于请求体
+        val acceptOutcome = submitPlanWithTransport(expectedPriceMicropeach = 10_000L) { method, url, body, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    assertTrue(JSONObject(body).getLong("expected_price_micropeach") == 10_000L)
+                    """{"ok":true,"data":{"job_id":"job_srv_1","plan_id":"plan_srv_1"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+        assertEquals(
+            "job_srv_1",
+            (acceptOutcome as? CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)?.remoteJobOrPlanId
+        )
+    }
 }

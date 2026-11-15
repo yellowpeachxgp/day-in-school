@@ -179,6 +179,40 @@ data class AppPreferencesState(
     val customCampusZonesJson: String = "[]"
 )
 
+/** 微桃 → 🍑 整数/小数自适应显示（1.0 显示为 "1"，0.5 显示为 "0.5"） */
+private fun formatMicropeachAsPeach(micropeach: Long): String {
+    val whole = micropeach / 10_000L
+    val rem = micropeach % 10_000L
+    return if (rem == 0L) whole.toString() else (micropeach / 10_000.0).toString()
+}
+
+/**
+ * 云端预约计划报价漂移冲突（R3 §5 价格钉死诚实再确认）：
+ * 客户端按创建时向用户展示的价格提交 expected_price_micropeach，云端调价后以 409 拒绝。
+ * UI 必须如实向用户展示新旧价格并等待其重新发起创建——绝不自动按新价静默重试，
+ * 否则会在用户不知情的情况下改签合同价格。
+ */
+class CloudPlanPriceDriftException(
+    /** 创建时向用户展示/钉入请求的价格（微桃） */
+    val expectedPriceMicropeach: Long,
+    /** 云端错误 detail 中返回的现行价格（微桃），云端未提供时为 null */
+    val currentPriceMicropeach: Long?,
+    serverReason: String?
+) : IllegalStateException(
+    buildString {
+        append("云端抢座价格已调整")
+        if (currentPriceMicropeach != null && currentPriceMicropeach != expectedPriceMicropeach) {
+            append("：您创建时看到的价格为 ")
+            append(formatMicropeachAsPeach(expectedPriceMicropeach))
+            append(" 🍑，云端最新价格为 ")
+            append(formatMicropeachAsPeach(currentPriceMicropeach))
+            append(" 🍑")
+        }
+        serverReason?.takeIf { it.isNotBlank() }?.let { append("（").append(it).append("）") }
+        append("。请核实最新价格后重新创建计划")
+    }
+)
+
 class CampusRepository internal constructor(
     private val appContext: Context,
     private val database: HautDatabase,
@@ -6515,6 +6549,9 @@ class CampusRepository internal constructor(
                     planIdempotencyKey = planId,
                     cloudBaseUrl = cloudBaseUrl,
                     repeatDays = normalizedRepeatDays,
+                    // 报价钉死：把创建时向用户展示的价格写入 expected_price_micropeach，
+                    // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签
+                    expectedPriceMicropeach = executionMode.priceMicropeach,
                     httpTransport = cloudHttpTransportForTest
                 )
             }
@@ -6533,6 +6570,7 @@ class CampusRepository internal constructor(
                             planIdempotencyKey = planId,
                             cloudBaseUrl = cloudBaseUrl,
                             repeatDays = normalizedRepeatDays,
+                            expectedPriceMicropeach = executionMode.priceMicropeach,
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
@@ -6547,6 +6585,17 @@ class CampusRepository internal constructor(
                     // 云端在持久化计划前明确拒绝（4xx 或前置授权失败），云端无半途任务，安全补偿恢复原有本机排队计划
                     restoreStoppedLocalPlansSafely()
                     throw IllegalStateException("云端未能受理该抢座计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
+                }
+                is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict -> {
+                    // 报价漂移 409：云端价格已变更——恢复本机计划后抛出专用异常，
+                    // UI 必须向用户如实展示新旧价格并要求"重新确认创建"，绝不自动按新价重试
+                    restoreStoppedLocalPlansSafely()
+                    throw CloudPlanPriceDriftException(
+                        expectedPriceMicropeach = finalOutcome.expectedPriceMicropeach
+                            ?: executionMode.priceMicropeach,
+                        currentPriceMicropeach = finalOutcome.currentPriceMicropeach,
+                        serverReason = finalOutcome.reason
+                    )
                 }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous -> {
                     // 云端 POST /reservation-plans 已发出但响应丢失/超时：可能已在云端落库！
