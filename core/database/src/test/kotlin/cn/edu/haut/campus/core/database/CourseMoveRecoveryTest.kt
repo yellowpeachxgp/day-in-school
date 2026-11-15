@@ -84,8 +84,8 @@ class CourseMoveRecoveryTest {
             userModified = true
         )
 
-    private suspend fun occFor(rules: List<CourseScheduleRule>, date: LocalDate): ClassOccurrence {
-        val list = ScheduleEngine.resolveOccurrencesForDate(
+    private suspend fun resolveOcc(date: LocalDate, rules: List<CourseScheduleRule>): List<ClassOccurrence> =
+        ScheduleEngine.resolveOccurrencesForDate(
             date = date,
             term = term,
             courses = listOf(course),
@@ -94,7 +94,20 @@ class CourseMoveRecoveryTest {
             occurrenceOverrides = dao.getOccurrenceOverridesSnapshot().map { it.toDomain() },
             buildings = HautMockSeedData.lianhuajieBuildings
         )
-        return list.single()
+
+    private suspend fun canceledOcc(date: LocalDate, rules: List<CourseScheduleRule>): List<ClassOccurrence> =
+        ScheduleEngine.resolveCanceledOccurrencesForDate(
+            date = date,
+            term = term,
+            courses = listOf(course),
+            rules = rules,
+            periodTimes = HautMockSeedData.defaultPeriodTimes,
+            occurrenceOverrides = dao.getOccurrenceOverridesSnapshot().map { it.toDomain() },
+            buildings = HautMockSeedData.lianhuajieBuildings
+        )
+
+    private suspend fun occFor(rules: List<CourseScheduleRule>, date: LocalDate): ClassOccurrence {
+        return resolveOcc(date, rules).single()
     }
 
     private suspend fun overrides() = dao.getOccurrenceOverridesSnapshot()
@@ -247,14 +260,20 @@ class CourseMoveRecoveryTest {
         val r1 = rule("r_edit", 1, 2)
         dao.upsertRules(listOf(r1).map { it.toEntity() })
         val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
         repo.rescheduleSingleOccurrenceCrossDate(
             occ = occFor(listOf(r1), sourceDate), termId = term.id,
-            targetDate = LocalDate.of(2026, 10, 14),
+            targetDate = targetDate,
             newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
         )
         val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
-        // 用户随后编辑了调入课的教室（保留 moveId 关联）
-        dao.upsertOccurrenceOverride(target.copy(room = "改后教室", reason = "用户改教室"))
+        // 用户随后经真实同日编辑路径修改调入课节次/教室：moveId 关联必须保留
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+        repo.saveSingleDayOccurrenceEdit(targetOcc, term.id, 5, 6, "改后教室", reason = "用户改教室")
+        val edited = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        assertEquals(target.id, edited.id)
+        assertEquals(target.moveId, edited.moveId)
+        assertEquals("改后教室", edited.room)
         val result = repo.restoreCanceledOccurrence(
             date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
         )
@@ -475,5 +494,428 @@ class CourseMoveRecoveryTest {
             buildings = HautMockSeedData.lianhuajieBuildings
         )
         assertTrue(restoredTarget.isEmpty())
+    }
+
+    // ---------- Round-2 A1：moved-target 编辑/停课不得丢失 moveId ----------
+
+    @Test
+    fun `真实路径编辑调入目标保留 moveId 恢复源后不留任何残留`() = runBlocking {
+        val r1 = rule("r_tedit", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val moveId = overrides().single { it.courseRuleId == r1.id }.moveId!!
+        val targetBefore = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+
+        // 引擎解析目标日 occurrence（overrideId 指向 TARGET 行、mergedRuleIds 为空）→ 真实同日编辑
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == targetBefore.id }
+        assertTrue(targetOcc.mergedRuleIds.isEmpty())
+        repo.saveSingleDayOccurrenceEdit(targetOcc, term.id, 7, 8, "改后教室")
+
+        val edited = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        assertEquals(targetBefore.id, edited.id)
+        assertEquals(moveId, edited.moveId)
+        assertEquals(7, edited.startPeriod)
+        assertEquals(8, edited.endPeriod)
+        assertEquals("改后教室", edited.room)
+        assertFalse(edited.canceled)
+
+        // 恢复源：整次调课原子撤销，编辑后的目标行一并删除，不残留
+        val result = repo.restoreCanceledOccurrence(
+            date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
+        )
+        assertTrue(result.restoredMoveIds.contains(moveId))
+        assertTrue(result.deletedTargetOverrideIds.contains(targetBefore.id))
+        assertTrue(overrides().isEmpty())
+        assertEquals(1, resolveOcc(sourceDate, listOf(r1)).size)
+        assertTrue(resolveOcc(targetDate, listOf(r1)).isEmpty())
+    }
+
+    @Test
+    fun `调入目标暂停-恢复暂停-撤销整次调课 三态互不串`() = runBlocking {
+        val r1 = rule("r_pause", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val moveId = overrides().single { it.courseRuleId == r1.id }.moveId!!
+        val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        val source = overrides().single { it.courseRuleId == r1.id }
+
+        // 1) 暂停调入课：真实停课路径只置 canceled，保留 moveId/moveRole
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+        repo.cancelClassOccurrenceOnDate(targetOcc, term.id, reason = "临时停课")
+        val paused = overrides().single { it.id == target.id }
+        assertTrue(paused.canceled)
+        assertEquals(moveId, paused.moveId)
+        assertEquals(OccurrenceOverride.MOVE_ROLE_TARGET, paused.moveRole)
+        // 引擎视角：目标日不再有课；停课清单出现该独立停课行
+        assertTrue(resolveOcc(targetDate, listOf(r1)).isEmpty())
+        assertEquals(1, canceledOcc(targetDate, listOf(r1)).size)
+
+        // 2) 恢复暂停：仅取消标记，不撤销整次调课，源停课行保持
+        repo.restoreCanceledOccurrence(
+            date = targetDate, ruleId = null, overrideId = target.id, mergedRuleIds = emptyList()
+        )
+        val unpaused = overrides().single { it.id == target.id }
+        assertFalse(unpaused.canceled)
+        assertEquals(moveId, unpaused.moveId)
+        assertTrue(overrides().any { it.id == source.id && it.canceled })
+        assertEquals(1, resolveOcc(targetDate, listOf(r1)).size)
+
+        // 3) 撤销整次调课：经 SOURCE 行恢复，SOURCE+TARGET 全清
+        repo.restoreCanceledOccurrence(
+            date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id)
+        )
+        assertTrue(overrides().isEmpty())
+    }
+
+    @Test
+    fun `未暂停的调入目标被恢复视同撤销整次调课`() = runBlocking {
+        val r1 = rule("r_tgt_restore", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val moveId = overrides().single { it.courseRuleId == r1.id }.moveId!!
+        val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        // 直接对仍活跃的 TARGET 行触发恢复入口：原子撤销整次调课，而非只删目标留下源停课
+        val result = repo.restoreCanceledOccurrence(
+            date = targetDate, ruleId = null, overrideId = target.id
+        )
+        assertTrue(result.restoredMoveIds.contains(moveId))
+        assertTrue(result.deletedTargetOverrideIds.contains(target.id))
+        assertTrue(overrides().isEmpty())
+        assertEquals(1, resolveOcc(sourceDate, listOf(r1)).size)
+    }
+
+    @Test
+    fun `编辑后的调入目标再次跨日移动收敛为最新 moveId`() = runBlocking {
+        val r1 = rule("r_edit_chain", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val firstTarget = LocalDate.of(2026, 10, 14)
+        val secondTarget = LocalDate.of(2026, 10, 16)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = firstTarget, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室A"
+        )
+        val moveA = overrides().single { it.courseRuleId == r1.id }.moveId!!
+
+        // 先经真实路径编辑目标，再对编辑后的 occurrence 二次跨日移动
+        val firstTargetOcc = resolveOcc(firstTarget, listOf(r1)).single { it.overrideId != null }
+        repo.saveSingleDayOccurrenceEdit(firstTargetOcc, term.id, 3, 4, "教室A改")
+        val editedTarget = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        assertEquals(moveA, editedTarget.moveId)
+
+        val editedOcc = resolveOcc(firstTarget, listOf(r1)).single { it.overrideId == editedTarget.id }
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = editedOcc, termId = term.id,
+            targetDate = secondTarget, newStartPeriod = 5, newEndPeriod = 6, newRoom = "教室B"
+        )
+        val rows = overrides()
+        val moveIds = rows.mapNotNull { it.moveId }.toSet()
+        assertEquals(1, moveIds.size)
+        val moveB = moveIds.single()
+        assertNotEquals(moveA, moveB)
+        assertTrue(rows.none { it.moveId == moveA })
+        assertTrue(rows.any { it.courseRuleId == r1.id && it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.moveId == moveB })
+        assertTrue(rows.any { it.dateIso == secondTarget.toString() && it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET && it.moveId == moveB })
+
+        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = r1.id, mergedRuleIds = listOf(r1.id))
+        assertTrue(overrides().isEmpty())
+    }
+
+    @Test
+    fun `同课程同日两次独立调课编辑目标A后恢复A不干扰B`() = runBlocking {
+        val rA = rule("r_indep_a", 1, 2)
+        val rB = rule("r_indep_b", 5, 6)
+        dao.upsertRules(listOf(rA, rB).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(rA), sourceDate), termId = term.id,
+            targetDate = LocalDate.of(2026, 10, 14),
+            newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室A"
+        )
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(rB), sourceDate), termId = term.id,
+            targetDate = LocalDate.of(2026, 10, 15),
+            newStartPeriod = 5, newEndPeriod = 6, newRoom = "教室B"
+        )
+        val moveA = overrides().single { it.courseRuleId == rA.id }.moveId!!
+        val moveB = overrides().single { it.courseRuleId == rB.id }.moveId!!
+        val targetA = overrides().single { it.moveId == moveA && it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        val targetB = overrides().single { it.moveId == moveB && it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+
+        // 编辑目标 A（真实路径）
+        val targetAOcc = resolveOcc(LocalDate.of(2026, 10, 14), listOf(rA)).single { it.overrideId == targetA.id }
+        repo.saveSingleDayOccurrenceEdit(targetAOcc, term.id, 9, 10, "教室A2")
+        assertEquals(moveA, overrides().single { it.id == targetA.id }.moveId)
+
+        // 恢复 A：B 的源/目标完好
+        repo.restoreCanceledOccurrence(date = sourceDate, ruleId = rA.id, mergedRuleIds = listOf(rA.id))
+        val remaining = overrides()
+        assertTrue(remaining.none { it.moveId == moveA })
+        assertTrue(remaining.any { it.id == targetB.id && it.moveId == moveB })
+        assertTrue(remaining.any { it.courseRuleId == rB.id && it.moveId == moveB && it.canceled })
+        assertEquals(2, remaining.size)
+    }
+
+    @Test
+    fun `合并多源调课删除部分源规则目标存活 删尽全部源后孤儿目标被清理`() = runBlocking {
+        val r1 = rule("r_ms1", 1, 2)
+        val r2 = rule("r_ms2", 3, 4)
+        dao.upsertRules(listOf(r1, r2).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val merged = occFor(listOf(r1, r2), sourceDate)
+        assertEquals(listOf("r_ms1", "r_ms2"), merged.mergedRuleIds)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = merged, termId = term.id,
+            targetDate = LocalDate.of(2026, 10, 14),
+            newStartPeriod = 1, newEndPeriod = 4, newRoom = "大教室"
+        )
+        val moveId = overrides().mapNotNull { it.moveId }.toSet().single()
+
+        // 仅删除 r1：r2 的 SOURCE 仍在 → TARGET 不是孤儿，保留
+        repo.deleteCourseScheduleRules(listOf(r1.id), contextDate = sourceDate)
+        var remaining = overrides()
+        assertTrue(remaining.any { it.courseRuleId == r2.id && it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE })
+        assertTrue(remaining.any { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET && it.moveId == moveId })
+
+        // 再删除 r2：最后一条 SOURCE 消失 → 孤儿 TARGET 同事务清理
+        repo.deleteCourseScheduleRules(listOf(r2.id), contextDate = sourceDate)
+        remaining = overrides()
+        assertTrue(remaining.none { it.moveId == moveId })
+    }
+
+    @Test
+    fun `过期目标 id 的编辑与停课均为安全 no-op 绝不静默另建行`() = runBlocking {
+        val r1 = rule("r_stale", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val ghost = ClassOccurrence(
+            occurrenceId = "ghost",
+            courseId = course.id,
+            ruleId = null,
+            overrideId = "ov_expired_missing",
+            courseName = course.name,
+            colorArgb = course.colorArgb,
+            date = LocalDate.of(2026, 10, 14),
+            teachingWeek = 7,
+            weekday = DayOfWeek.WEDNESDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            startTime = java.time.LocalTime.of(8, 30),
+            endTime = java.time.LocalTime.of(10, 5),
+            rawRoom = "教室",
+            mergedRuleIds = emptyList()
+        )
+        // 编辑：目标行不存在 → 不落新行
+        repo.saveSingleDayOccurrenceEdit(ghost, term.id, 3, 4, "新教室")
+        assertTrue(overrides().isEmpty())
+        // 停课：同样不落新行
+        repo.cancelClassOccurrenceOnDate(ghost, term.id, reason = "临时停课")
+        assertTrue(overrides().isEmpty())
+        // 通用删除入口：安全 no-op
+        repo.deleteOccurrenceOverride("ov_expired_missing")
+        assertTrue(overrides().isEmpty())
+    }
+
+    @Test
+    fun `无 overrideId 的独立单日新增仍走兜底建行`() = runBlocking {
+        val standalone = ClassOccurrence(
+            occurrenceId = "standalone",
+            courseId = course.id,
+            ruleId = null,
+            overrideId = null,
+            courseName = course.name,
+            colorArgb = course.colorArgb,
+            date = LocalDate.of(2026, 10, 14),
+            teachingWeek = 7,
+            weekday = DayOfWeek.WEDNESDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            startTime = java.time.LocalTime.of(8, 30),
+            endTime = java.time.LocalTime.of(10, 5),
+            rawRoom = "合成教室101",
+            mergedRuleIds = emptyList()
+        )
+        repo.saveSingleDayOccurrenceEdit(standalone, term.id, 3, 4, "新教室")
+        val rows = overrides()
+        assertEquals(1, rows.size)
+        assertTrue(rows.single().id.startsWith("ov_mod_2026-10-14_"))
+        assertNull(rows.single().moveId)
+        assertEquals(3, rows.single().startPeriod)
+    }
+
+    @Test
+    fun `重复编辑与重复停课幂等 目标行 id 与 moveId 稳定`() = runBlocking {
+        val r1 = rule("r_repeat", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val moveId = overrides().single { it.courseRuleId == r1.id }.moveId!!
+        val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+
+        // 双击/重复编辑：行数不变，id 与 moveId 稳定
+        val occ1 = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+        repo.saveSingleDayOccurrenceEdit(occ1, term.id, 3, 4, "教室Y")
+        val occ2 = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+        repo.saveSingleDayOccurrenceEdit(occ2, term.id, 5, 6, "教室Z")
+        var rows = overrides()
+        assertEquals(2, rows.size)
+        val targetAfterEdits = rows.single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        assertEquals(target.id, targetAfterEdits.id)
+        assertEquals(moveId, targetAfterEdits.moveId)
+        assertEquals("教室Z", targetAfterEdits.room)
+
+        // 重复停课：仍只有一行 canceled TARGET
+        repo.cancelClassOccurrenceOnDate(occ2, term.id)
+        repo.cancelClassOccurrenceOnDate(occ2, term.id)
+        rows = overrides()
+        assertEquals(2, rows.size)
+        assertTrue(rows.single { it.id == target.id }.canceled)
+        assertEquals(moveId, rows.single { it.id == target.id }.moveId)
+    }
+
+    @Test
+    fun `目标编辑事务中途失败整体回滚保留 moveId 关联`() = runBlocking {
+        val r1 = rule("r_tx_edit", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val before = overrides()
+        val target = before.single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+
+        val crashed = runCatching {
+            fixture.database.withTransaction {
+                repo.saveSingleDayOccurrenceEdit(targetOcc, term.id, 9, 10, "不回滚教室")
+                error("模拟编辑事务中途失败")
+            }
+        }
+        assertTrue(crashed.isFailure)
+        assertEquals(before, overrides())
+        assertTrue(overrides().single { it.id == target.id }.moveId == target.moveId)
+    }
+
+    @Test
+    fun `跨学期写入目标行被拒绝 跨账号互不可见`() = runBlocking {
+        val r1 = rule("r_xterm", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val otherTerm = term.copy(id = "2026-2027-2", termNumber = 2, current = false)
+        dao.upsertTerms(listOf(otherTerm.toEntity()))
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+
+        // 跨学期写：行属于 term.id，用 otherTerm.id 发起编辑/停课 → 行原样保留
+        repo.saveSingleDayOccurrenceEdit(targetOcc, otherTerm.id, 9, 10, "越权教室")
+        repo.cancelClassOccurrenceOnDate(targetOcc, otherTerm.id)
+        val after = overrides().single { it.id == target.id }
+        assertEquals(target, after)
+
+        // 跨账号：另一独立账号仓库对同 id 行的读/删不可见，各自隔离
+        val fixtureB = RepairTestFixture.create(RuntimeEnvironment.getApplication(), "prof_move_b_${System.nanoTime()}")
+        try {
+            fixtureB.dao.upsertTerms(listOf(term.toEntity()))
+            fixtureB.dao.upsertPeriodTimes(HautMockSeedData.defaultPeriodTimes.map { it.toEntity() })
+            fixtureB.dao.upsertBuildings(HautMockSeedData.lianhuajieBuildings.map { it.toEntity() })
+            fixtureB.dao.upsertBuildingAliases(HautMockSeedData.defaultBuildingAliases.map { it.toEntity() })
+            fixtureB.dao.upsertCourse(course.toEntity())
+            assertTrue(fixtureB.dao.getOccurrenceOverridesSnapshot().isEmpty())
+            fixtureB.repository.deleteOccurrenceOverride(target.id) // 账号 B 中无此行 → 安全 no-op
+            assertEquals(target, overrides().single { it.id == target.id })
+        } finally {
+            fixtureB.close()
+        }
+    }
+
+    @Test
+    fun `通用入口一律拒绝触碰调课关联行`() = runBlocking {
+        val r1 = rule("r_guard", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val targetDate = LocalDate.of(2026, 10, 14)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = targetDate, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室X"
+        )
+        val moveId = overrides().single { it.courseRuleId == r1.id }.moveId!!
+        val target = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        val source = overrides().single { it.courseRuleId == r1.id }
+        val before = overrides()
+
+        // 通用单条删除：SOURCE 与 TARGET 均拒绝
+        repo.deleteOccurrenceOverride(target.id)
+        repo.deleteOccurrenceOverride(source.id)
+        assertEquals(before, overrides())
+
+        // 通用同日重置：无论作用于 TARGET occurrence 还是已停课源 occurrence 均拒绝
+        val targetOcc = resolveOcc(targetDate, listOf(r1)).single { it.overrideId == target.id }
+        repo.resetSingleDayOccurrenceEdit(targetOcc)
+        assertEquals(before, overrides())
+        val canceledSourceOcc = canceledOcc(sourceDate, listOf(r1)).single { it.ruleId == r1.id }
+        repo.resetSingleDayOccurrenceEdit(canceledSourceOcc)
+        assertEquals(before, overrides())
+
+        // 通用覆盖写入：同 id 丢失 moveId 的 REPLACE 拒绝；命中调课规则日期的删除也拒绝
+        repo.saveOccurrenceOverride(
+            target.toDomain().copy(room = "绕过改", moveId = null, moveRole = null)
+        )
+        assertEquals(before, overrides())
+        repo.saveOccurrenceOverride(
+            OccurrenceOverride(
+                id = "ov_bypass_edit", termId = term.id, courseId = course.id,
+                courseRuleId = r1.id, date = sourceDate, startPeriod = 3, endPeriod = 4,
+                room = "绕过改", canceled = false, reason = "单次调课"
+            )
+        )
+        assertEquals(before, overrides())
+
+        // 陈旧 occurrence（有规则但当日已存在调课行）触发的编辑/停课也整体拒绝
+        val staleRuleOcc = ClassOccurrence(
+            occurrenceId = "stale_rule",
+            courseId = course.id,
+            ruleId = r1.id,
+            overrideId = null,
+            courseName = course.name,
+            colorArgb = course.colorArgb,
+            date = sourceDate,
+            teachingWeek = 7,
+            weekday = DayOfWeek.MONDAY,
+            startPeriod = 1,
+            endPeriod = 2,
+            startTime = java.time.LocalTime.of(8, 30),
+            endTime = java.time.LocalTime.of(10, 5),
+            rawRoom = "合成教室101",
+            mergedRuleIds = listOf(r1.id)
+        )
+        repo.saveSingleDayOccurrenceEdit(staleRuleOcc, term.id, 3, 4, "绕过改")
+        repo.cancelClassOccurrenceOnDate(staleRuleOcc, term.id)
+        assertEquals(before, overrides())
+        assertTrue(overrides().all { it.moveId == moveId })
     }
 }

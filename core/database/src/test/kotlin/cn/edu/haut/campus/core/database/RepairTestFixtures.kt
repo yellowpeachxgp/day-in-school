@@ -31,7 +31,11 @@ internal data class RepairTestFixture(
     companion object {
         private var counter = 0
 
-        fun create(context: Context, profileSeed: String = "prof_repair_test"): RepairTestFixture {
+        fun create(
+            context: Context,
+            profileSeed: String = "prof_repair_test",
+            isLegacy: Boolean = false
+        ): RepairTestFixture {
             val n = ++counter
             val database = Room.inMemoryDatabaseBuilder(context, HautDatabase::class.java)
                 .allowMainThreadQueries()
@@ -54,7 +58,7 @@ internal data class RepairTestFixture(
                 campusName = "莲花街校区",
                 timeZoneId = "Asia/Shanghai",
                 label = "合成测试账号",
-                isLegacy = false,
+                isLegacy = isLegacy,
                 databaseName = storage.databaseName,
                 preferencesName = storage.preferencesName,
                 createdAtEpochMs = 1_000L
