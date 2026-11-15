@@ -197,7 +197,9 @@ class CloudPlanPriceDriftException(
     val expectedPriceMicropeach: Long,
     /** 云端错误 detail 中返回的现行价格（微桃），云端未提供时为 null */
     val currentPriceMicropeach: Long?,
-    serverReason: String?
+    serverReason: String?,
+    /** 预取报价短路时带回的完整新报价（quote_id/截止时间），409 路径为 null */
+    val proposedQuote: cn.edu.haut.campus.core.campusservices.CloudReservationQuote? = null
 ) : IllegalStateException(
     buildString {
         append("云端抢座价格已调整")
@@ -5425,6 +5427,14 @@ class CampusRepository internal constructor(
     @Volatile
     internal var syncCommitBarrierHookForTest: (suspend () -> Unit)? = null
 
+    /**
+     * 仅测试用：云端计划"401→令牌刷新→重提交"窗口的确定性闩锁（生产恒为 null）。
+     * 在身份复验①之后、resolveValidCloudAccessToken(forceRefresh) 之前调用，
+     * 供测试把切号/换址/换学号交错确定性地插入重提窗口。
+     */
+    @Volatile
+    internal var cloudSubmitRetryBarrierHookForTest: (suspend () -> Unit)? = null
+
     private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         val parts = token.split(".")
         if (parts.size != 3) return false
@@ -5438,12 +5448,36 @@ class CampusRepository internal constructor(
         }.getOrDefault(false)
     }
 
+    /**
+     * 业务提交携带的期望身份（[expectedIdentity]=提交开始时的会话快照 {cloudUserId,
+     * generation, base, ssoSubject}）与期望学号 [expectedStudentNo]：
+     * 刷新发起前 / 网络返回后 / 凭据写回前三点复验——任一不符即返回 "" 并丢弃刷新结果，
+     * 切号后旧提交绝不得携新 token 重试，旧 refresh 结果绝不写入当前凭据；
+     * 刷新网络地址一律沿用快照中已验证的 apiBaseUrl。
+     */
     private suspend fun resolveValidCloudAccessToken(
         forceRefresh: Boolean = false,
-        failedAccessToken: String? = null
+        failedAccessToken: String? = null,
+        expectedIdentity: CloudIdentitySessionSnapshot? = null,
+        expectedStudentNo: String? = null
     ): String =
         cloudTokenMutex.withLock {
             val nowMs = System.currentTimeMillis()
+
+            suspend fun studentNoStillExpected(): Boolean {
+                val expected = expectedStudentNo?.trim() ?: return true
+                val live = (buildDelegatedCredentialBundle().first
+                    ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                return live == expected
+            }
+
+            // 复验①（刷新发起前/快路径前）：旧身份提交一律不再碰令牌体系
+            if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+                return@withLock ""
+            }
+            if (!studentNoStillExpected()) {
+                return@withLock ""
+            }
             if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken, nowMs)) {
                 return@withLock cachedCloudAccessToken
             }
@@ -5473,24 +5507,52 @@ class CampusRepository internal constructor(
                 return@withLock storedAt
             }
             if (storedRt.isNotBlank()) {
+                // 刷新发起前再做一次即时复验（持锁期间身份仍可能被世代推进失效）
+                if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+                    return@withLock ""
+                }
+                if (!studentNoStillExpected()) {
+                    return@withLock ""
+                }
+                // 网络地址沿已验证 base：快照里的 apiBaseUrl 才是本次会话校验过的云端地址
+                val verifiedBase = expectedIdentity?.apiBaseUrl?.takeIf { it.isNotBlank() }
+                    ?: CampusCloudOidcHelper.DEFAULT_CLOUD_BASE_URL
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
-                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt, httpTransport = cloudHttpTransportForTest)
+                    val pair = CampusCloudOidcHelper.refreshCloudSession(
+                        storedRt,
+                        cloudBaseUrl = verifiedBase,
+                        httpTransport = cloudHttpTransportForTest
+                    )
                     if (pair != null) {
-                        cachedCloudAccessToken = pair.first
-                        cachedCloudRefreshToken = pair.second
-                        lastCloudTokenRefreshAtMs = System.currentTimeMillis()
-                        val sealedAt = runCatching { cloudTokenVault.seal(pair.first) }.getOrNull()
-                        val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
-                        if (sealedAt != null && sealedRt != null) {
-                            preferences.edit {
-                                it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
-                                it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                        // 复验②（凭据写回前）：刷新往返期间切号/换址/换学号的，
+                        // 旧会话 refresh 结果绝不写回当前凭据、绝不串 cache
+                        val writeBackAllowed =
+                            (expectedIdentity == null || isCloudIdentitySnapshotCurrent(expectedIdentity)) &&
+                                studentNoStillExpected()
+                        if (writeBackAllowed) {
+                            cachedCloudAccessToken = pair.first
+                            cachedCloudRefreshToken = pair.second
+                            lastCloudTokenRefreshAtMs = System.currentTimeMillis()
+                            val sealedAt = runCatching { cloudTokenVault.seal(pair.first) }.getOrNull()
+                            val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
+                            if (sealedAt != null && sealedRt != null) {
+                                preferences.edit {
+                                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
+                                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                                }
                             }
                         }
                     }
                     pair
                 }
                 if (refreshed != null) {
+                    // 复验③（返回后/重提前）：身份已变则令牌绝不交给旧会话调用方
+                    if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+                        return@withLock ""
+                    }
+                    if (!studentNoStillExpected()) {
+                        return@withLock ""
+                    }
                     return@withLock refreshed.first
                 }
             }
@@ -6942,9 +7004,17 @@ class CampusRepository internal constructor(
                     throw IllegalStateException("开启云端准点抢座需保存校园统一认证密码（避免凌晨登录态过期），请重新验证并保存学号与密码")
                 }
             }
-            var token = resolveValidCloudAccessToken(forceRefresh = false)
+            var token = resolveValidCloudAccessToken(
+                forceRefresh = false,
+                expectedIdentity = identitySessionAtStart,
+                expectedStudentNo = currentStudentNo
+            )
             if (token.isBlank()) {
-                token = resolveValidCloudAccessToken(forceRefresh = true)
+                token = resolveValidCloudAccessToken(
+                    forceRefresh = true,
+                    expectedIdentity = identitySessionAtStart,
+                    expectedStudentNo = currentStudentNo
+                )
             }
             if (token.isBlank()) {
                 throw IllegalStateException("云端会话已过期或当前离线，无法创建云端抢座计划；原有的本机排队计划已为您保留")
@@ -7127,12 +7197,48 @@ class CampusRepository internal constructor(
                     // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签；
                     // 存在用户确认报价时绝不再回落覆盖为 executionMode 常量价
                     expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
+                    // 报价归属校验：服务端返回他人 quote 必须保守拒绝重新取价
+                    expectedCloudUserId = identitySessionAtStart?.cloudUserId,
                     httpTransport = cloudHttpTransportForTest
                 )
             }
             if (submitOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist && submitOutcome.isAuthExpired) {
-                token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                // R5-C 令牌刷新重提前的身份/学号复验（复验①·发起前）：
+                // 首交后被 401 拒绝只能证明 pre-persist，切号/换址/换学号期间的旧会话提交
+                // 绝不得携新令牌重试——refresh 发起、返回、凭据写回三点再验（resolver 内），
+                // 此处先做业务侧复核，身份不符即恢复本机计划并中止
+                val liveStudentBeforeRetry = (buildDelegatedCredentialBundle().first
+                    ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                    liveStudentBeforeRetry != currentStudentNo
+                ) {
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端账号或学号在任务提交期间已切换，已停止旧会话的令牌刷新与重提交")
+                }
+                // 测试闩锁（生产为 null）：确定性覆盖"401→refresh"窗口的切号/换址交错
+                cloudSubmitRetryBarrierHookForTest?.invoke()
+                token = resolveValidCloudAccessToken(
+                    forceRefresh = true,
+                    failedAccessToken = token,
+                    expectedIdentity = identitySessionAtStart,
+                    expectedStudentNo = currentStudentNo
+                )
+                if (token.isBlank() && !isCloudIdentitySnapshotCurrent(identitySessionAtStart)) {
+                    // resolver 以身份失效为由拒绝：旧提交绝不得携新 token 重试
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端账号、学号或网络地址在任务提交期间已切换，已停止旧会话重提交")
+                }
                 if (token.isNotBlank()) {
+                    // 复验③·重提前：拿回的令牌必须仍属于开始时的身份会话与学号——
+                    // 切号后旧提交不得携新 token 重试，网络地址也继续沿用已验证 base
+                    val liveStudentAfterRetry = (buildDelegatedCredentialBundle().first
+                        ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                    if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                        liveStudentAfterRetry != currentStudentNo
+                    ) {
+                        restoreStoppedLocalPlansSafely()
+                        throw IllegalStateException("令牌刷新期间云端账号或学号已切换，已停止携新令牌重提旧提交")
+                    }
                     submitOutcome = withContext(Dispatchers.IO) {
                         CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
                             accessToken = token,
@@ -7147,6 +7253,7 @@ class CampusRepository internal constructor(
                             repeatDays = normalizedRepeatDays,
                             // 令牌刷新重提交仍钉入同一成交价（用户确认价优先于常量价），绝不漂移
                             expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
+                            expectedCloudUserId = identitySessionAtStart.cloudUserId,
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
@@ -7162,6 +7269,12 @@ class CampusRepository internal constructor(
                     restoreStoppedLocalPlansSafely()
                     throw IllegalStateException("云端未能受理该抢座计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
                 }
+                is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable -> {
+                    // 报价端点存在但返回坏数据/未知错误：提示重新获取报价，绝不静默降级
+                    // 到仅 expected_price 的 legacy 钉价路径；此时计划与绑定写均未发生
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端报价获取异常（${finalOutcome.reason}），请重新获取报价后再创建；已为您恢复原有本机排队计划")
+                }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict -> {
                     // 报价漂移 409：云端价格已变更——恢复本机计划后抛出专用异常，
                     // UI 必须向用户如实展示新旧价格并要求"重新确认创建"，绝不自动按新价重试
@@ -7170,7 +7283,8 @@ class CampusRepository internal constructor(
                         expectedPriceMicropeach = finalOutcome.expectedPriceMicropeach
                             ?: effectiveExpectedPriceMicropeach,
                         currentPriceMicropeach = finalOutcome.currentPriceMicropeach,
-                        serverReason = finalOutcome.reason
+                        serverReason = finalOutcome.reason,
+                        proposedQuote = finalOutcome.quote
                     )
                 }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous -> {

@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.database
 
 import androidx.room.Room
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -827,6 +828,10 @@ class BookingDispatchExclusiveClaimDaoTest {
         var localStatusObservedDuringCloudPost = ""
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
             when {
+                // legacy 云端无报价端点：明确 404 → legacy expected-price 路径（读端点不受断网影响，
+                // 仍按可达处理以保证流程到达 reservation-plans POST 处再断）
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"con_B_01","auth_version":1}}"""
                 method == "POST" && url.endsWith("/api/v1/school-bindings") ->
@@ -869,6 +874,9 @@ class BookingDispatchExclusiveClaimDaoTest {
         ).getOrThrow()
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
             when {
+                // legacy 云端无报价端点：明确 404 → legacy expected-price 路径
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"con_B_01","auth_version":1}}"""
                 method == "POST" && url.endsWith("/api/v1/school-bindings") ->
@@ -1709,7 +1717,10 @@ class BookingDispatchExclusiveClaimDaoTest {
         ).getOrThrow()
 
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
-            if (method == "POST" && url.endsWith("/api/v1/me/consents")) {
+            if (method == "GET" && url.endsWith("/api/v1/reservation-quote")) {
+                // legacy 云端无报价端点：明确 404 → 走 expected-price 路径继续（必须到达 consents 才能复现"在途取消"）
+                """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
+            } else if (method == "POST" && url.endsWith("/api/v1/me/consents")) {
                 // Simulate user explicitly cancelling/modifying the plan while Cloud request is in flight!
                 kotlinx.coroutines.runBlocking {
                     val cur = dao.getLibraryBookingPlanById(local27.id)!!
@@ -1753,6 +1764,9 @@ class BookingDispatchExclusiveClaimDaoTest {
 
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
             when {
+                // legacy 云端无报价端点：明确 404 → legacy expected-price 路径
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"con_A_28","auth_version":1}}"""
                 method == "POST" && url.endsWith("/api/v1/school-bindings") ->
@@ -2962,6 +2976,9 @@ class BookingDispatchExclusiveClaimDaoTest {
         var walletQueried = 0
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
             when {
+                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
+                    // legacy 云端无报价端点：明确 404 → legacy expected-price 路径
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
                 method == "GET" && url.endsWith("/api/v1/me/wallet") -> {
                     walletQueried += 1
                     """{"ok":true,"data":{"peach_balance":6.5,"micropeach_balance":65000}}"""
@@ -3353,6 +3370,16 @@ class BookingDispatchExclusiveClaimDaoTest {
         assertEquals(20_000L, org.json.JSONObject(planBodies[1]).getLong("expected_price_micropeach"))
         // 同一次业务尝试的重提交沿用同一幂等键（服务端幂等去重）
         assertEquals(idemKeys[0], idemKeys[1])
+        // 同身份 refresh 重提必须完整保留计划参数（日期/座位/区域/次数）
+        val firstBody = org.json.JSONObject(planBodies[0])
+        val secondBody = org.json.JSONObject(planBodies[1])
+        assertEquals(firstBody.getString("target_local_date"), secondBody.getString("target_local_date"))
+        assertEquals(
+            firstBody.getJSONArray("preferred_seat_ids").toString(),
+            secondBody.getJSONArray("preferred_seat_ids").toString()
+        )
+        assertEquals(firstBody.getString("area_name"), secondBody.getString("area_name"))
+        assertEquals(firstBody.getInt("repeat_days"), secondBody.getInt("repeat_days"))
         assertEquals("job_refreshed", created.cloudJobId)
         assertEquals(20_000L, created.priceMicropeach)
         repo.cloudHttpTransportForTest = null
@@ -3370,9 +3397,9 @@ class BookingDispatchExclusiveClaimDaoTest {
         val quotePrice = java.util.concurrent.atomic.AtomicLong(20_000L)
         repo.cloudHttpTransportForTest = { method, url, body, _, headers ->
             when {
-                // cloud 338d501+：提供 reservation-quote（PRICE_QUOTE 语义）
+                // cloud 338d501+：真实契约 reservation-quote envelope（PRICE_QUOTE 语义）
                 method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
-                    """{"ok":true,"data":{"quote_id":"quote_srv_9","price_micropeach":${quotePrice.get()}}}"""
+                    """{"ok":true,"data":{"quote_id":"quote_srv_9","cloud_user_id":"cloud_user_A","amount_micropeach":${quotePrice.get()},"price_version":1,"unit":"MICROPEACH","issued_at":"2026-11-15T17:00:00Z","expires_at":"2027-01-01T00:00:00Z","quote_hash":"h_srv9"}}"""
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
                 method == "POST" && url.endsWith("/api/v1/school-bindings") ->
@@ -3413,6 +3440,8 @@ class BookingDispatchExclusiveClaimDaoTest {
         err as CloudPlanPriceDriftException
         assertEquals(20_000L, err.expectedPriceMicropeach)
         assertEquals(25_000L, err.currentPriceMicropeach)
+        // 报价单短路的漂移必须带回完整新报价（quote_id），供 UI 如实再确认
+        assertEquals("quote_srv_9", err.proposedQuote?.quoteId)
         assertEquals("quote 漂移必须短路在计划 POST 之前", 1, postAttempts.get())
         repo.cloudHttpTransportForTest = null
     }
@@ -3517,6 +3546,191 @@ class BookingDispatchExclusiveClaimDaoTest {
             "对账合并必须保留原成交价（25000），绝不按今日全局价/订单价覆盖",
             25_000L,
             merged.priceMicropeach
+        )
+        repo.cloudHttpTransportForTest = null
+    }
+
+    // ---------- R5-C：令牌刷新重提交身份复验（发起前/返回后/凭据写回前三点 + studentNo + 已验证 base） ----------
+
+    @Test
+    fun cloudPlanSubmitRetryNeverFiresRefreshAfterAccountSwitch() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("r5c_switch_retry")
+        saveTestCloudAccount(
+            repo,
+            "cloud_user_A",
+            refreshToken = "ctseal1:ref_A",
+            accessToken = testCloudJwt("cloud_user_A")
+        )
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val refreshCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val base = baseCloudCreateTransport(planBodies, idemKeys) { attempt ->
+            postAttempts.incrementAndGet()
+            if (attempt == 1) {
+                // 首次 POST：服务端 401（pre-persist）→ 触发令牌刷新重提路径
+                """{"ok":false,"error":{"code":"CLOUD_AUTH_REQUIRED","message":"token expired"}}"""
+            } else {
+                """{"ok":true,"data":{"job_id":"job_should_never","plan_id":"plan_should_never"}}"""
+            }
+        }
+        repo.cloudHttpTransportForTest = { method, url, body, token, headers ->
+            if (method == "POST" && url.endsWith("/api/v1/auth/refresh")) {
+                refreshCalls.incrementAndGet()
+                """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A2"}}"""
+            } else {
+                base(method, url, body, token, headers)
+            }
+        }
+
+        // 首 POST 401 暂停 → 切号 A→B（refresh 发起前的确定性交错）→ 旧提交绝不得携新 token 重试
+        repo.cloudSubmitRetryBarrierHookForTest = {
+            saveTestCloudAccount(
+                repo,
+                "cloud_user_B",
+                refreshToken = "ctseal1:ref_B",
+                accessToken = testCloudJwt("cloud_user_B")
+            )
+        }
+
+        val res = createCloudPlan(repo, atMs = testNowMs + 1_000L)
+        org.junit.Assert.assertTrue(res.isFailure)
+        assertEquals("旧提交不得携新 token 重试：绝无第二笔计划 POST", 1, postAttempts.get())
+        assertEquals("切号后旧会话 refresh 绝不发起", 0, refreshCalls.get())
+        org.junit.Assert.assertTrue(
+            "切号后 A 的云计划绝不可落库",
+            dao.getLibraryBookingPlansSnapshot().none {
+                it.executionMode == "CLOUD_HOSTED" && it.ownerCloudUserId == "cloud_user_A" && it.status != "CANCELLED"
+            }
+        )
+        repo.cloudSubmitRetryBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanRefreshResultDroppedAndCacheUntouchedAfterBaseAba() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("r5c_base_aba")
+        saveTestCloudAccount(
+            repo,
+            "cloud_user_A",
+            refreshToken = "ctseal1:ref_A",
+            accessToken = expiredTestCloudJwt("cloud_user_A")
+        )
+        // 已验证 base：快照必须沿用它发起 refresh（绝不回落默认网关）
+        val verifiedBase = "https://mirror-r5a.example.com"
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = verifiedBase)
+        )
+
+        val refreshEntered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseRefresh = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val refreshUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val refreshTokenBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val refreshCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val base = baseCloudCreateTransport(planBodies, java.util.concurrent.CopyOnWriteArrayList()) { _ ->
+            postAttempts.incrementAndGet()
+            """{"ok":true,"data":{"job_id":"job_after_aba","plan_id":"plan_after_aba"}}"""
+        }
+        repo.cloudHttpTransportForTest = { method, url, body, token, headers ->
+            if (method == "POST" && url.endsWith("/api/v1/auth/refresh")) {
+                refreshUrls.add(url)
+                refreshTokenBodies.add(org.json.JSONObject(body ?: "{}").optString("refresh_token"))
+                if (refreshCalls.incrementAndGet() == 1) {
+                    refreshEntered.complete(Unit)
+                    kotlinx.coroutines.runBlocking {
+                        kotlinx.coroutines.withTimeout(15_000) { releaseRefresh.await() }
+                    }
+                    """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A2"}}"""
+                } else {
+                    """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A3"}}"""
+                }
+            } else {
+                base(method, url, body, token, headers)
+            }
+        }
+
+        // refresh 网络往返期间 base A→B→A：世代推进两次，旧会话快照永久失效
+        val submitJob = async(kotlinx.coroutines.Dispatchers.IO) {
+            createCloudPlan(repo, atMs = testNowMs + 1_000L)
+        }
+        kotlinx.coroutines.withTimeout(10_000) { refreshEntered.await() }
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = "https://mirror-r5b.example.com")
+        )
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = verifiedBase)
+        )
+        releaseRefresh.complete(Unit)
+        val firstRes = kotlinx.coroutines.withTimeout(10_000) { submitJob.await() }
+
+        org.junit.Assert.assertTrue("刷新期间身份已变更的旧提交必须失败", firstRes.isFailure)
+        assertEquals("被丢弃的 refresh 结果绝不许触发重提交", 0, postAttempts.get())
+        org.junit.Assert.assertTrue(
+            "refresh 网络地址必须沿已验证 base",
+            refreshUrls.isNotEmpty() && refreshUrls.all { it.startsWith(verifiedBase) }
+        )
+
+        // 新会话快照下的新提交：第二次 refresh 必须仍用原始 ref_A——
+        // 证明上一轮 refresh 结果（ref_A2）已被丢弃、凭据绝无被旧会话污染
+        val secondRes = createCloudPlan(repo, atMs = testNowMs + 2_000L)
+        org.junit.Assert.assertTrue("新会话提交应成功: ${secondRes.exceptionOrNull()}", secondRes.isSuccess)
+        assertEquals(2, refreshCalls.get())
+        assertEquals("ctseal1:ref_A", refreshTokenBodies[0])
+        assertEquals(
+            "旧会话 refresh 结果绝不许写入当前凭据（ref_A2 不得出现在第二次 refresh 请求）",
+            "ctseal1:ref_A",
+            refreshTokenBodies[1]
+        )
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun cloudPlanAmbiguousResponseNeverResubmitsBeforeKeyReconcile() = runBlocking {
+        java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
+        val repo = buildInMemoryTestRepo("r5c_ambiguous")
+        saveTestCloudAccount(repo, "cloud_user_A")
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val idemKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val postAttempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val deletedPlanKeys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        repo.cloudHttpTransportForTest = { method, url, body, _, headers ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    postAttempts.incrementAndGet()
+                    idemKeys.add(headers["Idempotency-Key"].orEmpty())
+                    // 已发出但响应中断：结果未知 → ResponseAmbiguous（绝不双发同一业务键！）
+                    throw java.io.IOException("connection reset mid-response")
+                }
+                method == "GET" && url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"reservation_plans":[],"reservation_jobs":[]}}"""
+                method == "DELETE" && url.contains("/api/v1/reservation-plans/") -> {
+                    deletedPlanKeys.add(url.substringAfterLast('/'))
+                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such plan"}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+
+        val res = createCloudPlan(repo, atMs = testNowMs + 1_000L)
+        org.junit.Assert.assertTrue(res.isFailure)
+        assertEquals("已发未知响应绝不可双发：计划 POST 恰一次", 1, postAttempts.get())
+        // 先按原业务键（idempotency key = planId）向云端权威核实，绝不盲发第二笔
+        assertEquals(1, idemKeys.size)
+        org.junit.Assert.assertTrue(
+            "核实撤回必须携带原业务键",
+            deletedPlanKeys.isNotEmpty() && deletedPlanKeys.all { it == idemKeys.single() }
         )
         repo.cloudHttpTransportForTest = null
     }
