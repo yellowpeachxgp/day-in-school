@@ -56,6 +56,7 @@ import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
 import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import cn.edu.haut.campus.core.campusservices.optCleanString
 import cn.edu.haut.campus.core.campusservices.optNullableCleanString
+import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
@@ -673,7 +674,7 @@ class CampusRepository internal constructor(
                 prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
             )
             val customBuildings = customZones.flatMap { it.buildings }
-            (songshan + base.filter { it.campusId != "songshanlu" && it.id !in setOf("b_canteen2", "b_canteen3") } + customBuildings)
+            (songshan + base.filter { it.campusId != "songshanlu" && it.id !in CampusDiningRecommender.CLOSED_CANTEEN_BUILDING_IDS } + customBuildings)
                 .distinctBy { it.id }
         }
 
@@ -4481,7 +4482,8 @@ class CampusRepository internal constructor(
         val periods = dao.getPeriodTimesSnapshot().map { it.toDomain() }
         val calOverrides = dao.getCalendarOverridesSnapshot().map { it.toDomain() }
         val occOverrides = dao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
-        val buildings = (dao.getBuildingsSnapshot().map { it.toDomain() } +
+        val buildings = (dao.getBuildingsSnapshot().map { it.toDomain() }
+            .filter { it.id !in CampusDiningRecommender.CLOSED_CANTEEN_BUILDING_IDS } +
             (if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS else emptyList()))
             .distinctBy { it.id }
         return DirectScheduleData(

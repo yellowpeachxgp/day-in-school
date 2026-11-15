@@ -23,10 +23,62 @@ data class CampusStudyPeriodSlot(
 )
 
 /**
+ * 自习教室名录「空闲」语义等级：诚实区分个人课表反推参考与校方实时占用数据。
+ */
+enum class StudyRoomAvailabilityMeaning(val label: String) {
+    /** 「无冲突」仅代表用户本地个人课表未占用，绝非校方官方实时空闲数据。 */
+    PERSONAL_REFERENCE_NOT_REALTIME("个人课表反推参考·非实时占用"),
+
+    /** 预留：未来接入校方官方实时教室占用/开放数据后的语义标记。 */
+    OFFICIAL_REALTIME_FEED("校方实时占用数据")
+}
+
+/**
+ * 单个校区自习教室名录的来源与核验状态（全部为可空字段，名录本身未经校方官方核验）。
+ */
+data class CampusStudyRoomCatalogProvenance(
+    val campusKey: String,
+    /** 名录条目来源说明（整理依据），未核验时为诚实说明而非「已核验」标记。 */
+    val sourceReference: String? = null,
+    /** 经官方来源逐条核验的日期；名录未经官方核验时保持 null，绝不伪造核验证据。 */
+    val verifiedAt: LocalDate? = null,
+    val availabilityMeaning: StudyRoomAvailabilityMeaning =
+        StudyRoomAvailabilityMeaning.PERSONAL_REFERENCE_NOT_REALTIME,
+    val note: String? = null
+)
+
+/**
  * 莲花街校区公共自习教室名录与空闲状态判定引擎，统一 `TodayScreen`、`EmptyClassroomScreen`
  * 与 `SettingsScreen`，消除多处硬编码教室表与时段判断漂移。
  */
 object CampusStudyRoomCatalog {
+
+    /**
+     * 莲花街校区自习教室候选名录来源标注：整理自历史教务课表教室文本与莲花街校区楼宇名录
+     * 交叉比对，并非校方发布的官方自习室名录；未经官方逐条核验，"空闲"仅为个人课表无冲突参考。
+     */
+    val LIANHUAJIE_CATALOG_PROVENANCE = CampusStudyRoomCatalogProvenance(
+        campusKey = "lianhuajie",
+        sourceReference = "教务历史课表教室文本 × 莲花街校区楼宇名录交叉整理（非官方自习室名录）",
+        verifiedAt = null,
+        availabilityMeaning = StudyRoomAvailabilityMeaning.PERSONAL_REFERENCE_NOT_REALTIME,
+        note = "候选教室仅表示个人课表在该时段无排课冲突，不代表校方实时开放或占用状态"
+    )
+
+    /**
+     * 嵩山路校区自习教室候选名录来源标注：整理自嵩山路校区教务教室文本（"嵩山X教/综合楼"前缀）
+     * 与 HAUT_SONGSHANLU_BUILDINGS 楼宇名录交叉比对，同样未经校方官方核验。
+     */
+    val SONGSHANLU_CATALOG_PROVENANCE = CampusStudyRoomCatalogProvenance(
+        campusKey = "songshanlu",
+        sourceReference = "嵩山路校区教务教室文本 × HAUT_SONGSHANLU_BUILDINGS 楼宇名录交叉整理（非官方自习室名录）",
+        verifiedAt = null,
+        availabilityMeaning = StudyRoomAvailabilityMeaning.PERSONAL_REFERENCE_NOT_REALTIME,
+        note = "候选教室仅表示个人课表在该时段无排课冲突，不代表校方实时开放或占用状态"
+    )
+
+    fun catalogProvenanceForCampus(campusId: String?): CampusStudyRoomCatalogProvenance =
+        if (isSongshanCampus(campusId)) SONGSHANLU_CATALOG_PROVENANCE else LIANHUAJIE_CATALOG_PROVENANCE
 
     val LIANHUAJIE_STUDY_ROOMS_MAP: Map<String, List<String>> = linkedMapOf(
         "3号教学楼" to listOf("3101", "3103", "3201", "3203", "3301", "3401"),
@@ -306,7 +358,12 @@ object CampusStudyRoomCatalog {
         val campusKey: String,
         val campusShortLabel: String,
         val freeRoomsCount: Int,
-        val totalCandidateRoomsCount: Int
+        val totalCandidateRoomsCount: Int,
+        /**
+         * 空闲统计是否有真实课表输入作依据：无排课/无时间表输入时为 false，
+         * 此时 freeRoomsCount 仅表示「未观测到冲突」，不得解读为"全部空闲"的官方结论。
+         */
+        val hasScheduleBasis: Boolean = true
     )
 
     fun computeAvailabilityForOccurrences(
@@ -322,7 +379,8 @@ object CampusStudyRoomCatalog {
             campusKey = if (isSongshan) "songshanlu" else "lianhuajie",
             campusShortLabel = if (isSongshan) "嵩山路" else "莲花街",
             freeRoomsCount = freeCount,
-            totalCandidateRoomsCount = candidates.size
+            totalCandidateRoomsCount = candidates.size,
+            hasScheduleBasis = occurrences.isNotEmpty()
         )
     }
 
@@ -354,7 +412,8 @@ object CampusStudyRoomCatalog {
             campusKey = if (isSongshan) "songshanlu" else "lianhuajie",
             campusShortLabel = if (isSongshan) "嵩山路" else "莲花街",
             freeRoomsCount = freeCount,
-            totalCandidateRoomsCount = candidates.size
+            totalCandidateRoomsCount = candidates.size,
+            hasScheduleBasis = rules.isNotEmpty() || occurrenceOverrides.isNotEmpty()
         )
     }
 
