@@ -492,18 +492,62 @@ fun TimetableScreen(
                                             selected = true,
                                             compact = true,
                                             onClick = {
+                                                // 点击瞬间固化意图与身份（termId/组内行/moveId），
+                                                // 绝不从刷新后的状态重推——双击与陈旧回调均安全。
+                                                val clickTermId = term?.id
+                                                val clickDate = ov.date
+                                                val groupRows = group.toList()
+                                                val groupMoveIds = groupRows
+                                                    .mapNotNull { it.moveId }
+                                                    .distinct()
                                                 scope.launch {
-                                                    val restoreResult = repository.restoreCanceledOccurrence(
-                                                        date = ov.date,
-                                                        ruleId = ov.courseRuleId,
-                                                        overrideId = ov.id,
-                                                        mergedRuleIds = group.mapNotNull { it.courseRuleId }
-                                                    )
-                                                    if (restoreResult.legacyReviewRequired) {
-                                                        pendingLegacyReviewTargets =
-                                                            restoreResult.legacyAmbiguousTargets
+                                                    if (clickTermId == null) return@launch
+                                                    val results =
+                                                        mutableListOf<CampusRepository.OccurrenceCommandResult>()
+                                                    if (groupMoveIds.size == 1) {
+                                                        // 调课关联组（含暂停的调入目标）：
+                                                        // 唯一显式入口原子撤销整次调课
+                                                        results += repository.undoMove(
+                                                            clickTermId,
+                                                            groupMoveIds.single()
+                                                        )
+                                                    } else {
+                                                        // 普通/旧版停课组：规则行按规则+日期恢复，
+                                                        // 纯覆盖行（单日新增）逐条恢复暂停
+                                                        val ruleIds = groupRows
+                                                            .mapNotNull { it.courseRuleId }
+                                                            .distinct()
+                                                        if (ruleIds.isNotEmpty()) {
+                                                            results += repository.restoreRuleCancellation(
+                                                                clickTermId,
+                                                                ruleIds,
+                                                                clickDate
+                                                            )
+                                                        }
+                                                        for (row in groupRows.filter {
+                                                            it.courseRuleId == null
+                                                        }) {
+                                                            results += repository.unpauseOccurrence(
+                                                                clickTermId,
+                                                                row.id,
+                                                                row.moveId
+                                                            )
+                                                        }
                                                     }
-                                                    WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                    if (results.any {
+                                                        it.status ==
+                                                            CampusRepository.OccurrenceCommandStatus.APPLIED
+                                                    }
+                                                    ) {
+                                                        WidgetRefreshCoordinator
+                                                            .requestImmediateRefreshAll(context)
+                                                    }
+                                                    val legacyTargets = results
+                                                        .flatMap { it.legacyAmbiguousTargets }
+                                                        .distinctBy { it.id }
+                                                    if (legacyTargets.isNotEmpty()) {
+                                                        pendingLegacyReviewTargets = legacyTargets
+                                                    }
                                                 }
                                             }
                                         )
