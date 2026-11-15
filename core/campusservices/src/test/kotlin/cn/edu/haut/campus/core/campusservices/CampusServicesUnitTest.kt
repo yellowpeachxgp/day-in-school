@@ -2276,82 +2276,196 @@ class CampusServicesUnitTest {
         )
     }
 
-    // ---------- R4-Q2：reservation-quote 报价单钉价（cloud 338d501+）+ quote 变更再确认 ----------
+    // ---------- R4-Q2/R5-D2：reservation-quote 报价单钉价（cloud 338d501+ 真实契约）+ quote 变更再确认 ----------
+
+    /**
+     * 真实 Cloud 338+ reservation-quote envelope 共同 fixture：
+     * {quote_id, cloud_user_id, amount_micropeach, price_version, unit, issued_at, expires_at, quote_hash}
+     */
+    private fun reservationQuoteEnvelope(
+        quoteId: String? = "quote_srv_1",
+        cloudUserId: String? = "cloud_user_A",
+        amountMicropeach: Any? = 20_000,
+        priceVersion: Any? = 1,
+        unit: String? = "MICROPEACH",
+        issuedAt: String? = "2026-11-15T17:00:00Z",
+        expiresAt: Any? = "2027-01-01T00:00:00Z",
+        quoteHash: String? = "quote_hash_fixture"
+    ): String {
+        val data = JSONObject()
+        quoteId?.let { data.put("quote_id", it) }
+        cloudUserId?.let { data.put("cloud_user_id", it) }
+        amountMicropeach?.let { data.put("amount_micropeach", it) }
+        priceVersion?.let { data.put("price_version", it) }
+        unit?.let { data.put("unit", it) }
+        issuedAt?.let { data.put("issued_at", it) }
+        expiresAt?.let { data.put("expires_at", it) }
+        quoteHash?.let { data.put("quote_hash", it) }
+        return JSONObject().put("ok", true).put("data", data).toString()
+    }
+
+    /** 基础成功应答桩：统计全部写操作（quote 短路必须证明真·零写，而非仅"计划未 POST"） */
+    private class CreatePlanStub {
+        val mutatingCallCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        var quoteResponse: () -> String = { """{"ok":false,"error":{"code":"NOT_FOUND","message":"no route"}}""" }
+        var planPostResponse: () -> String = { """{"ok":true,"data":{"job_id":"job_stub","plan_id":"plan_stub"}}""" }
+
+        fun transport(): (String, String, String?, String?, Map<String, String>) -> String =
+            { method, url, body, _, _ ->
+                when {
+                    method == "GET" && url.endsWith("/api/v1/reservation-quote") -> quoteResponse()
+                    method == "POST" -> {
+                        mutatingCallCount.incrementAndGet()
+                        when {
+                            url.endsWith("/api/v1/me/consents") ->
+                                """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                            url.endsWith("/api/v1/school-bindings") ->
+                                """{"ok":true,"data":{"id":"bind_1"}}"""
+                            url.endsWith("/complete") -> """{"ok":true,"data":{}}"""
+                            url.endsWith("/api/v1/reservation-plans") -> {
+                                planBodies.add(body.orEmpty())
+                                planPostResponse()
+                            }
+                            else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+                        }
+                    }
+                    else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+                }
+            }
+    }
 
     @Test
     fun `plan create carries quote_id when server offers matching quote and re-drifts when quote price moves`() {
-        // A) 服务端提供 reservation-quote 且价格与用户确认价一致 → 计划体同时携带 quote_id + expected_price
-        val bodiesWithQuote = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val acceptedWithQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L) { method, url, body, _, _ ->
-            when {
-                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
-                    """{"ok":true,"data":{"quote_id":"quote_srv_1","price_micropeach":20000}}"""
-                method == "POST" && url.endsWith("/api/v1/me/consents") ->
-                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
-                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
-                    """{"ok":true,"data":{"id":"bind_1"}}"""
-                method == "POST" && url.endsWith("/complete") ->
-                    """{"ok":true,"data":{}}"""
-                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
-                    bodiesWithQuote.add(body.orEmpty())
-                    """{"ok":true,"data":{"job_id":"job_q1","plan_id":"plan_q1"}}"""
-                }
-                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
-            }
-        }
+        // A) 真实 envelope：报价与确认价一致 → 计划体同时携带 quote_id + expected_price
+        val stub = CreatePlanStub()
+        stub.quoteResponse = { reservationQuoteEnvelope(quoteId = "quote_srv_1", amountMicropeach = 20_000) }
+        val acceptedWithQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L, transport = stub.transport())
         assertTrue(acceptedWithQuote is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
-        val sentBody = JSONObject(bodiesWithQuote.single())
+        val sentBody = JSONObject(stub.planBodies.single())
         assertEquals(20_000L, sentBody.getLong("expected_price_micropeach"))
         assertEquals("quote_srv_1", sentBody.getString("quote_id"))
 
-        // B) quote 报价与本次钉入价不符（用户确认后云端又调价）→ 计划 POST 前即 PriceDriftConflict：
-        //    POST /reservation-plans 从未发出（可证明 pre-persist），进入下一轮诚实再确认，绝不静默升级
-        val planPostCount = java.util.concurrent.atomic.AtomicInteger(0)
-        val driftedOnQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L) { method, url, _, _, _ ->
-            when {
-                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
-                    """{"ok":true,"data":{"quote_id":"quote_srv_2","price_micropeach":25000}}"""
-                method == "POST" && url.endsWith("/api/v1/me/consents") ->
-                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
-                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
-                    """{"ok":true,"data":{"id":"bind_1"}}"""
-                method == "POST" && url.endsWith("/complete") ->
-                    """{"ok":true,"data":{}}"""
-                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
-                    planPostCount.incrementAndGet()
-                    """{"ok":true,"data":{"job_id":"job_q2"}}"""
-                }
-                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
-            }
-        }
+        // B) quote 报价与本次钉入价不符 → 报价短路：真·零写（连同意/绑定 POST 都未发生）
+        val stubB = CreatePlanStub()
+        stubB.quoteResponse = { reservationQuoteEnvelope(quoteId = "quote_srv_2", amountMicropeach = 25_000) }
+        val driftedOnQuote = submitPlanWithTransport(expectedPriceMicropeach = 20_000L, transport = stubB.transport())
         assertTrue(driftedOnQuote is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict)
         val quoteDrift = driftedOnQuote as CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
         assertEquals(20_000L, quoteDrift.expectedPriceMicropeach)
         assertEquals(25_000L, quoteDrift.currentPriceMicropeach)
-        assertEquals("quote 报价漂移必须在计划 POST 前短路（provably pre-persist）", 0, planPostCount.get())
+        assertEquals("quote_srv_2", quoteDrift.quote?.quoteId)
+        assertEquals(
+            "quote 报价漂移必须在任何写操作之前短路（真·零写 pre-persist）",
+            0,
+            stubB.mutatingCallCount.get()
+        )
+        assertEquals(0, stubB.planBodies.size)
 
-        // C) legacy 云端无报价端点（404/未提供）→ 请求体不携带 quote_id，仅凭 expected_price 照常创建
-        val legacyBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val acceptedLegacy = submitPlanWithTransport(expectedPriceMicropeach = 10_000L) { method, url, body, _, _ ->
-            when {
-                method == "GET" && url.endsWith("/api/v1/reservation-quote") ->
-                    """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}"""
-                method == "POST" && url.endsWith("/api/v1/me/consents") ->
-                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
-                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
-                    """{"ok":true,"data":{"id":"bind_1"}}"""
-                method == "POST" && url.endsWith("/complete") ->
-                    """{"ok":true,"data":{}}"""
-                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
-                    legacyBodies.add(body.orEmpty())
-                    """{"ok":true,"data":{"job_id":"job_legacy_1"}}"""
-                }
-                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
-            }
-        }
+        // C) legacy 云端无报价端点（明确 404）→ 请求体不携带 quote_id，仅凭 expected_price 照常创建
+        val stubC = CreatePlanStub()
+        stubC.quoteResponse = { """{"ok":false,"error":{"code":"NOT_FOUND","message":"no such route"}}""" }
+        val acceptedLegacy = submitPlanWithTransport(expectedPriceMicropeach = 10_000L, transport = stubC.transport())
         assertTrue(acceptedLegacy is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
-        val legacyBody = JSONObject(legacyBodies.single())
+        val legacyBody = JSONObject(stubC.planBodies.single())
         assertFalse(legacyBody.has("quote_id"))
         assertEquals(10_000L, legacyBody.getLong("expected_price_micropeach"))
+    }
+
+    @Test
+    fun `quote bad data and unknown errors fail closed with QuoteUnusable and zero writes`() {
+        data class Case(val name: String, val response: () -> String)
+        val cases = listOf(
+            // 字符串金额（精度有损风险）→ 拒绝
+            Case("string amount") { reservationQuoteEnvelope(amountMicropeach = "20000") },
+            // 浮点金额 → 拒绝
+            Case("float amount") { reservationQuoteEnvelope(amountMicropeach = 20000.5) },
+            // 整型浮点 20000.0 → 仍为浮点类型，拒绝（手写原文避免序列化去尾零）
+            Case("float-typed amount") {
+                """{"ok":true,"data":{"quote_id":"q_f","cloud_user_id":"cloud_user_A","amount_micropeach":20000.0,"price_version":1,"unit":"MICROPEACH","issued_at":"2026-11-15T17:00:00Z","expires_at":"2027-01-01T00:00:00Z","quote_hash":"h"}}"""
+            },
+            // 负值 → 拒绝
+            Case("negative amount") { reservationQuoteEnvelope(amountMicropeach = -500) },
+            // 超界 → 拒绝
+            Case("out of range amount") { reservationQuoteEnvelope(amountMicropeach = 200_000_000_000L) },
+            // null 金额 → 拒绝
+            Case("null amount") { reservationQuoteEnvelope(amountMicropeach = null) },
+            // 未知计价单位 → 拒绝
+            Case("unknown unit") { reservationQuoteEnvelope(unit = "PEACH") },
+            // 未知报价版本 → 拒绝
+            Case("unknown price_version") { reservationQuoteEnvelope(priceVersion = 99) },
+            // expires_at 已过期 → 拒绝
+            Case("expired quote") { reservationQuoteEnvelope(expiresAt = "2020-01-01T00:00:00Z") },
+            // expires_at 不可解析 → 拒绝
+            Case("unparseable expires_at") { reservationQuoteEnvelope(expiresAt = "soon") },
+            // 金额字段并存但不一致 → 拒绝，绝不暗选
+            Case("inconsistent amount fields") {
+                val data = JSONObject(reservationQuoteEnvelope(amountMicropeach = 20_000))
+                    .getJSONObject("data")
+                    .put("price_micropeach", 25_000)
+                JSONObject().put("ok", true).put("data", data).toString()
+            },
+            // 非 JSON 且非 404 响应 → 未知错误，拒绝
+            Case("non-json non-404 body") { "<html><body>502 Bad Gateway</body></html>" },
+            // 未知服务端错误码（非 404 家族）→ 提示重取，绝不静默降级
+            Case("unknown server error") { """{"ok":false,"error":{"code":"INTERNAL","message":"boom"}}""" },
+            // data 缺失 → 拒绝
+            Case("missing data") { """{"ok":true}""" }
+        )
+        for (c in cases) {
+            val stub = CreatePlanStub()
+            stub.quoteResponse = c.response
+            val outcome = submitPlanWithTransport(expectedPriceMicropeach = 20_000L, transport = stub.transport())
+            assertTrue(
+                "case ${c.name} 必须是 QuoteUnusable，实际: $outcome",
+                outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable
+            )
+            assertEquals(
+                "case ${c.name} 必须真·零写（绝不附未知金额 quote_id 也绝不静默降级）",
+                0,
+                stub.mutatingCallCount.get()
+            )
+        }
+
+        // 传输层异常同样按"未知错误"提示重取，绝不静默降级为 legacy
+        val throwingStub = CreatePlanStub()
+        val throwOutcome = submitPlanWithTransport(expectedPriceMicropeach = 20_000L) { method, url, _, _, _ ->
+            if (method == "GET" && url.endsWith("/api/v1/reservation-quote")) {
+                throw java.io.IOException("connection reset")
+            }
+            throwingStub.transport()(method, url, null, null, emptyMap())
+        }
+        assertTrue(throwOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable)
+
+        // 网关层 404 纯文本（无路由 legacy）→ 明确不支持，走 legacy expected-price 路径
+        val text404Stub = CreatePlanStub()
+        text404Stub.quoteResponse = { "404 Not Found" }
+        val legacyOutcome = submitPlanWithTransport(expectedPriceMicropeach = 10_000L, transport = text404Stub.transport())
+        assertTrue(legacyOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
+        val legacyBody = JSONObject(text404Stub.planBodies.single())
+        assertFalse(legacyBody.has("quote_id"))
+        assertEquals(10_000L, legacyBody.getLong("expected_price_micropeach"))
+    }
+
+    @Test
+    fun `quote bound to a different cloud user is rejected conservatively`() {
+        // 报价归属他人账号 → 保守拒绝（绝不携带他人 quote_id 创建）
+        val stub = CreatePlanStub()
+        stub.quoteResponse = { reservationQuoteEnvelope(cloudUserId = "cloud_user_B", amountMicropeach = 20_000) }
+        val outcome = CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
+            accessToken = "tok_identity_test",
+            studentNo = "2024000001",
+            delegatedSecret = "delegated_secret_ok",
+            targetDate = "2026-11-26",
+            targetExecuteAtIso = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            planIdempotencyKey = "plan_identity_test_1",
+            expectedPriceMicropeach = 20_000L,
+            expectedCloudUserId = "cloud_user_A",
+            httpTransport = stub.transport()
+        )
+        assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable)
+        assertEquals(0, stub.mutatingCallCount.get())
     }
 }

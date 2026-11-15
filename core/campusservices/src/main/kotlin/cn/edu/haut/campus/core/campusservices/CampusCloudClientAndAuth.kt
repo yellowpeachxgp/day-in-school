@@ -147,15 +147,26 @@ data class CloudUnsyncedPlanUpsertDto(
 )
 
 /**
- * 云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`，PRICE_QUOTE 语义）：
- * 服务端按次给出带 quote_id 的现行价；客户端在创建计划时携带 quote_id 即按报价钉价。
- * 未提供报价接口（legacy 云端）或报价未含价格字段时 quoteId/priceMicropeach 为 null，
- * 调用方必须回退到仅携带 expected_price_micropeach 的 legacy 钉价路径。
+ * 云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`，PRICE_QUOTE 语义）。
+ * 真实契约 envelope：{quote_id, cloud_user_id, amount_micropeach, price_version, unit,
+ * issued_at, expires_at, quote_hash}。
+ *
+ * - [amountMicropeach] 为严格整数微桃金额：解析期已拒绝字符串/浮点/负值/null/超界值，
+ *   以及未知 unit / 未知 price_version / 多字段不一致的报价（保守失败，绝不暗选金额）；
+ * - [quoteId] 可空：报价只用于漂移检测而无 quote_id 时，创建路径只走 expected_price 钉价；
+ * - [expiresAtEpochMillis] 为已验证未过期的截止时间（缺省为服务端未提供）。
  */
 data class CloudReservationQuote(
     val quoteId: String?,
-    val priceMicropeach: Long?
-)
+    val amountMicropeach: Long,
+    val priceVersion: Int?,
+    val unit: String?,
+    val cloudUserId: String?,
+    val expiresAtEpochMillis: Long?
+) {
+    /** 兼容旧视图：钉价金额即 amount_micropeach */
+    val priceMicropeach: Long get() = amountMicropeach
+}
 
 data class CloudSyncItemOutcome(
     val itemType: String,
@@ -1152,8 +1163,20 @@ object CampusCloudOidcHelper {
         data class PriceDriftConflict(
             val reason: String,
             val expectedPriceMicropeach: Long?,
-            val currentPriceMicropeach: Long?
+            val currentPriceMicropeach: Long?,
+            /**
+             * 预取报价单漂移时带回的完整报价（含 quote_id/过期时间），供 UI 如实展示并再确认；
+             * 由 409 错误 detail 映射的漂移没有该报价（为 null）。
+             */
+            val quote: CloudReservationQuote? = null
         ) : CloudPlanSubmissionOutcome()
+
+        /**
+         * 报价端点存在但返回坏数据/未知错误（非"明确 404 不支持"）：
+         * 属"提示重取"语义——绝不静默降级为仅 expected_price 的 legacy 路径，
+         * 也绝不附带金额不明的 quote_id 继续创建。
+         */
+        data class QuoteUnusable(val reason: String) : CloudPlanSubmissionOutcome()
 
         data class ResponseAmbiguous(val reason: String) : CloudPlanSubmissionOutcome()
     }
@@ -1168,7 +1191,14 @@ object CampusCloudOidcHelper {
         "PRICE_CHANGED",
         "PRICE_MISMATCH",
         "EXPECTED_PRICE_MISMATCH",
-        "EXPECTED_PRICE_DRIFT"
+        "EXPECTED_PRICE_DRIFT",
+        // 报价单失效家族：服务重启丢 quote / quote 过期 / quote 与钉价不符——
+        // 一律走诚实再确认（确认时重新 GET 报价），绝不按旧 quote 静默重试
+        "QUOTE_EXPIRED",
+        "QUOTE_NOT_FOUND",
+        "QUOTE_MISMATCH",
+        "QUOTE_STALE",
+        "QUOTE_INVALID"
     )
 
     private fun isPriceDriftConflict(errCode: String, errObj: JSONObject?): Boolean {
@@ -1178,36 +1208,234 @@ object CampusCloudOidcHelper {
     }
 
     /**
-     * 尽力获取云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`）。
-     * 任何传输失败、非 ok 响应或缺失 data 一律返回 null —— legacy 云端没有该端点时
-     * 调用方按仅 expected_price_micropeach 的旧钉价路径继续，绝不因报价不可用而阻断创建。
+     * 报价端点应答的三分支语义（R5-D2）：
+     * - [Available]：报价通过严格校验，可用于漂移检测与 quote_id 钉价；
+     * - [EndpointUnsupported]：端点明确 404/未实现 → 调用方走仅 expected_price 的 legacy 路径；
+     * - [Unusable]：端点存在但返回坏数据/未知错误 → 提示用户重新获取报价，
+     *   绝不静默降级到 legacy、绝不附金额不明的 quote_id。
      */
-    private fun fetchReservationQuoteBestEffort(
-        transport: (String, String, String?, String?, Map<String, String>) -> String,
-        cleanBase: String,
-        accessToken: String
-    ): CloudReservationQuote? = runCatching {
-        val raw = transport(
-            "GET",
-            "$cleanBase/api/v1/reservation-quote",
-            null,
-            accessToken,
-            emptyMap()
-        )
-        val root = JSONObject(raw)
-        if (!root.optBoolean("ok", false)) return@runCatching null
-        val data = root.optJSONObject("data") ?: return@runCatching null
+    private sealed interface ReservationQuoteFetch {
+        data class Available(val quote: CloudReservationQuote) : ReservationQuoteFetch
+        data object EndpointUnsupported : ReservationQuoteFetch
+        data class Unusable(val reason: String) : ReservationQuoteFetch
+    }
+
+    /** 真实契约金额主字段 + 旧字段（仅一致性交叉校验，字段间不一致即拒绝） */
+    private val QUOTE_MICROPEACH_KEYS = listOf(
+        "amount_micropeach",
+        "price_micropeach",
+        "current_price_micropeach"
+    )
+
+    /** 报价金额合理上限：1000万 🍑（1e11 微桃），超出即异常报价 */
+    private const val MAX_QUOTE_AMOUNT_MICROPEACH = 100_000_000_000L
+
+    /** 已知计价单位：amount_micropeach 语义只接受 MICROPEACH */
+    private val SUPPORTED_QUOTE_UNITS = setOf("MICROPEACH")
+
+    /** 已知报价版本：cloud 338d501 首版契约为 v1；未知版本保守拒绝重新取价 */
+    private val SUPPORTED_QUOTE_PRICE_VERSIONS = setOf(1)
+
+    /** 端点"明确不支持"错误码 → legacy 路径；其余错误码一律按 Unusable 处理 */
+    private val QUOTE_UNSUPPORTED_ENDPOINT_CODES = setOf(
+        "NOT_FOUND",
+        "ROUTE_NOT_FOUND",
+        "ENDPOINT_NOT_FOUND",
+        "UNKNOWN_ROUTE",
+        "NO_SUCH_ROUTE",
+        "NOT_IMPLEMENTED",
+        "UNSUPPORTED"
+    )
+
+    /**
+     * 严格 JSON 整数值：只接受无精度损失的整数（Int/Long/BigInteger 在界内），
+     * 字符串、浮点、null、对象、数组一律返回 null（保守失败）。
+     */
+    private fun strictJsonIntegralLong(v: Any?): Long? = when (v) {
+        null, JSONObject.NULL -> null
+        is Int -> v.toLong()
+        is Long -> v
+        is java.math.BigInteger -> runCatching { v.longValueExact() }.getOrNull()
+        else -> null
+    }
+
+    /** 浮点"桃"字段换算微桃：仅当可无损折算才返回值，否则 null（绝不四舍五入暗改金额） */
+    private fun exactPeachToMicropeach(v: Any?): Long? = when (v) {
+        null, JSONObject.NULL -> null
+        is Number -> runCatching {
+            java.math.BigDecimal(v.toString())
+                .movePointRight(4)
+                .longValueExact()
+        }.getOrNull()
+        else -> null
+    }
+
+    /** expires_at / issued_at：接受 ISO-8601 文本或 epoch 秒/毫秒数字，其余返回 null */
+    private fun parseQuoteTimestampMillis(v: Any?): Long? = when (v) {
+        null, JSONObject.NULL -> null
+        is Number -> {
+            val l = v.toLong()
+            when {
+                l in 1L..99_999_999_999L -> l * 1_000L
+                l >= 100_000_000_000L -> l
+                else -> null
+            }
+        }
+        is String -> {
+            val s = v.trim()
+            runCatching { java.time.Instant.parse(s).toEpochMilli() }.getOrNull()
+                ?: runCatching { java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli() }.getOrNull()
+                ?: runCatching {
+                    val l = s.toLong()
+                    if (l in 1L..99_999_999_999L) l * 1_000L else l
+                }.getOrNull()
+        }
+        else -> null
+    }
+
+    /**
+     * 严格解析报价 data：金额必须无损、单一、界内；unit/price_version 存在时必须已知；
+     * cloud_user_id 与期望身份不一致即拒绝；expires_at 已过期或不可解析即拒绝。
+     */
+    private fun parseReservationQuoteData(
+        data: JSONObject,
+        expectedCloudUserId: String?,
+        nowEpochMillis: Long
+    ): ReservationQuoteFetch {
+        var sawMalformedAmountField = false
+        val amountCandidates = mutableListOf<Long>()
+        for (key in QUOTE_MICROPEACH_KEYS) {
+            if (data.has(key) && !data.isNull(key)) {
+                val v = strictJsonIntegralLong(data.opt(key))
+                if (v == null) {
+                    sawMalformedAmountField = true
+                } else {
+                    amountCandidates += v
+                }
+            }
+        }
+        // 浮点桃字段只参与一致性交叉校验，绝不单独作为金额来源（浮点精度有损）
+        if (data.has("price_peach") && !data.isNull("price_peach")) {
+            val micro = exactPeachToMicropeach(data.opt("price_peach"))
+            if (micro == null) {
+                sawMalformedAmountField = true
+            } else {
+                amountCandidates += micro
+            }
+        }
+        if (sawMalformedAmountField) {
+            return ReservationQuoteFetch.Unusable("云端报价金额字段格式异常（已拒绝字符串/浮点/超界值），请重新获取报价")
+        }
+        if (amountCandidates.isEmpty()) {
+            return ReservationQuoteFetch.Unusable("云端报价未含精确微桃金额，请重新获取报价")
+        }
+        val distinctAmounts = amountCandidates.distinct()
+        if (distinctAmounts.size > 1) {
+            return ReservationQuoteFetch.Unusable("云端报价各金额字段不一致，已拒绝暗选，请重新获取报价")
+        }
+        val amountMicropeach = distinctAmounts.single()
+        if (amountMicropeach < 0 || amountMicropeach > MAX_QUOTE_AMOUNT_MICROPEACH) {
+            return ReservationQuoteFetch.Unusable("云端报价金额超出合理范围，请重新获取报价")
+        }
+
+        val unit = data.optCleanString("unit").ifBlank { null }
+        if (unit != null && unit.uppercase() !in SUPPORTED_QUOTE_UNITS) {
+            return ReservationQuoteFetch.Unusable("云端报价使用未知计价单位，请重新获取报价")
+        }
+
+        var priceVersion: Int? = null
+        if (data.has("price_version") && !data.isNull("price_version")) {
+            val v = strictJsonIntegralLong(data.opt("price_version"))
+            if (v == null || v < Int.MIN_VALUE || v > Int.MAX_VALUE) {
+                return ReservationQuoteFetch.Unusable("云端报价版本格式异常，请重新获取报价")
+            }
+            if (v.toInt() !in SUPPORTED_QUOTE_PRICE_VERSIONS) {
+                return ReservationQuoteFetch.Unusable("云端报价版本暂不支持，请重新获取报价")
+            }
+            priceVersion = v.toInt()
+        }
+
+        val quoteCloudUserId = data.optCleanString("cloud_user_id").ifBlank { null }
+        if (!expectedCloudUserId.isNullOrBlank() &&
+            quoteCloudUserId != null &&
+            quoteCloudUserId != expectedCloudUserId.trim()
+        ) {
+            return ReservationQuoteFetch.Unusable("云端报价归属账号与当前登录账号不一致，已拒绝，请重新获取报价")
+        }
+
+        var expiresAtEpochMillis: Long? = null
+        if (data.has("expires_at") && !data.isNull("expires_at")) {
+            val parsed = parseQuoteTimestampMillis(data.opt("expires_at"))
+                ?: return ReservationQuoteFetch.Unusable("云端报价截止时间格式异常，请重新获取报价")
+            if (parsed <= nowEpochMillis) {
+                return ReservationQuoteFetch.Unusable("云端报价已过期，请重新获取报价")
+            }
+            expiresAtEpochMillis = parsed
+        }
+
         val quoteId = data.optCleanString("quote_id")
             .ifBlank { data.optCleanString("id") }
             .ifBlank { null }
-        val priceMicropeach = when {
-            data.has("price_micropeach") -> data.optLong("price_micropeach")
-            data.has("current_price_micropeach") -> data.optLong("current_price_micropeach")
-            data.has("price_peach") -> kotlin.math.round(data.optDouble("price_peach") * 10_000.0).toLong()
-            else -> null
+        return ReservationQuoteFetch.Available(
+            CloudReservationQuote(
+                quoteId = quoteId,
+                amountMicropeach = amountMicropeach,
+                priceVersion = priceVersion,
+                unit = unit,
+                cloudUserId = quoteCloudUserId,
+                expiresAtEpochMillis = expiresAtEpochMillis
+            )
+        )
+    }
+
+    /**
+     * 获取云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`）。
+     * 明确 404/未实现 → [ReservationQuoteFetch.EndpointUnsupported]（调用方走 legacy 路径，
+     * 仍必须携带用户批准价）；坏数据/未知错误 → [ReservationQuoteFetch.Unusable]（提示重取）。
+     */
+    private fun fetchReservationQuote(
+        transport: (String, String, String?, String?, Map<String, String>) -> String,
+        cleanBase: String,
+        accessToken: String,
+        expectedCloudUserId: String?,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): ReservationQuoteFetch {
+        val raw = try {
+            transport(
+                "GET",
+                "$cleanBase/api/v1/reservation-quote",
+                null,
+                accessToken,
+                emptyMap()
+            )
+        } catch (t: Throwable) {
+            return ReservationQuoteFetch.Unusable("云端报价请求失败，请检查网络后重新获取报价")
         }
-        CloudReservationQuote(quoteId = quoteId, priceMicropeach = priceMicropeach)
-    }.getOrNull()
+        val root = runCatching { JSONObject(raw) }.getOrNull()
+        if (root == null) {
+            // 网关层 404 纯文本/HTML（无该路由的 legacy 云端）→ 明确不支持；其余按坏数据处理
+            val looksLike404 = Regex("(?i)\\b404\\b|not\\s*found").containsMatchIn(raw)
+            return if (looksLike404) {
+                ReservationQuoteFetch.EndpointUnsupported
+            } else {
+                ReservationQuoteFetch.Unusable("云端报价响应格式异常，请重新获取报价")
+            }
+        }
+        if (!root.optBoolean("ok", false)) {
+            val errObj = root.optJSONObject("error")
+            val errCode = errObj?.optCleanString("code").orEmpty().uppercase()
+            if (errCode in QUOTE_UNSUPPORTED_ENDPOINT_CODES) {
+                return ReservationQuoteFetch.EndpointUnsupported
+            }
+            return ReservationQuoteFetch.Unusable(
+                errObj?.optCleanString("message")?.ifBlank { null }
+                    ?: "云端报价暂不可用，请重新获取报价"
+            )
+        }
+        val data = root.optJSONObject("data")
+            ?: return ReservationQuoteFetch.Unusable("云端报价缺少数据体，请重新获取报价")
+        return parseReservationQuoteData(data, expectedCloudUserId, nowEpochMillis)
+    }
 
     fun submitCloudHostedReservationPlanDetailed(
         accessToken: String,
@@ -1221,6 +1449,7 @@ object CampusCloudOidcHelper {
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
         repeatDays: Int = 1,
         expectedPriceMicropeach: Long? = null,
+        expectedCloudUserId: String? = null,
         httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): CloudPlanSubmissionOutcome {
         if (accessToken.isBlank()) {
@@ -1237,6 +1466,31 @@ object CampusCloudOidcHelper {
         val transport = httpTransport ?: ::httpJsonRequest
         val cleanBase = cloudBaseUrl.trimEnd('/')
         var planRequestSent = false
+        var quoteIdToAttach: String? = null
+        // 报价单钉价（cloud 338d501+，可选）：在任何写操作之前先做只读报价检查——
+        // 若报价明示价格与本次钉入价不符，等价于计划前的 409，立即 PriceDriftConflict
+        // 走诚实再确认（此时连同意/绑定写都未发生，可证明真正的零写 pre-persist）；
+        // 端点明确 404 → legacy expected-price 路径（仍钉入用户批准价）；
+        // 坏数据/未知错误 → QuoteUnusable 提示重取，绝不静默降级、不附未知金额 quote_id。
+        if (expectedPriceMicropeach != null) {
+            when (val quoteFetch = fetchReservationQuote(transport, cleanBase, accessToken, expectedCloudUserId)) {
+                is ReservationQuoteFetch.EndpointUnsupported -> Unit
+                is ReservationQuoteFetch.Unusable ->
+                    return CloudPlanSubmissionOutcome.QuoteUnusable(quoteFetch.reason)
+                is ReservationQuoteFetch.Available -> {
+                    val quote = quoteFetch.quote
+                    if (quote.amountMicropeach != expectedPriceMicropeach) {
+                        return CloudPlanSubmissionOutcome.PriceDriftConflict(
+                            reason = "云端预约报价已更新",
+                            expectedPriceMicropeach = expectedPriceMicropeach,
+                            currentPriceMicropeach = quote.amountMicropeach,
+                            quote = quote
+                        )
+                    }
+                    quoteIdToAttach = quote.quoteId?.trim()?.takeIf { it.isNotEmpty() }
+                }
+            }
+        }
         return try {
             val consentRaw = transport(
                 "POST",
@@ -1324,25 +1578,6 @@ object CampusCloudOidcHelper {
                 .forEach { candidateSeatsArr.put(it) }
 
             val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
-            // 报价单钉价（cloud 338d501+，可选）：服务端提供 GET /api/v1/reservation-quote 时
-            // 先取 quote —— 若报价明示价格且与本次钉入价不符，等价于一次计划前的 409：
-            // 立即返回 PriceDriftConflict 走诚实再确认（此时计划尚未 POST，可证明为 pre-persist），
-            // 绝不静默按报价新价改签；价一致或未提供报价端点则按 legacy 路径继续。
-            var quoteIdToAttach: String? = null
-            if (expectedPriceMicropeach != null) {
-                val quote = fetchReservationQuoteBestEffort(transport, cleanBase, accessToken)
-                if (quote != null) {
-                    val quotePrice = quote.priceMicropeach
-                    if (quotePrice != null && quotePrice != expectedPriceMicropeach) {
-                        return CloudPlanSubmissionOutcome.PriceDriftConflict(
-                            reason = "云端预约报价已更新",
-                            expectedPriceMicropeach = expectedPriceMicropeach,
-                            currentPriceMicropeach = quotePrice
-                        )
-                    }
-                    quoteIdToAttach = quote.quoteId?.trim()?.takeIf { it.isNotEmpty() }
-                }
-            }
             // 报价钉死：把创建时向用户展示/用户已重新确认的价格写入 expected_price_micropeach，
             // 云端一旦调价即 409 拒绝并走诚实再确认——绝不静默按新价改签
             val planBody = JSONObject()
