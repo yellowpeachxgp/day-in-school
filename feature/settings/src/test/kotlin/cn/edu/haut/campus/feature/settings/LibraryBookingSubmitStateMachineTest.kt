@@ -315,4 +315,51 @@ class LibraryBookingSubmitStateMachineTest {
 
         Unit
     }
+
+    @Test
+    fun `submit payload carries freshly read params after user edits date time and area`() = runBlocking {
+        // R6-2 接线契约：paramsProvider 每次复核现场读取——模拟屏幕 lambda 直读底层 state；
+        // 冻结首次组合值的 lambda 会令载荷永远携带旧日期/时间/区域。
+        val m = newMachine()
+        var params = paramsA
+        val submittedSnapshots = mutableListOf<BookingDraftSnapshot>()
+        val submitter = LibraryBookingPlanSubmitter(
+            machine = m,
+            identityProvider = { identityA },
+            paramsProvider = { params },
+            submitPlan = { snap ->
+                submittedSnapshots += snap
+                Result.success(Unit)
+            }
+        )
+
+        // 首次提交：载荷携带初始参数
+        val ev1 = submitter.submitNewAttempt()
+        assertTrue(ev1 is BookingSubmitEvent.Accepted)
+        submittedSnapshots.single().let { snap ->
+            assertEquals("2026-11-26", snap.targetDate)
+            assertEquals("07:00", snap.targetTime)
+            assertEquals("五层中区", snap.areaName)
+            assertEquals("05桌 A座", snap.seatLabel)
+        }
+
+        // 用户改日期/时间/区域/座位后再提交：新载荷必须携带新值而非首次捕获的旧值
+        params = paramsA.copy(
+            targetDate = "2026-11-27",
+            targetTime = "08:30",
+            areaName = "三层南区",
+            seatLabel = "12桌 C座"
+        )
+        val ev2 = submitter.submitNewAttempt()
+        assertTrue(ev2 is BookingSubmitEvent.Accepted)
+        assertEquals(2, submittedSnapshots.size)
+        submittedSnapshots.last().let { snap ->
+            assertEquals("2026-11-27", snap.targetDate)
+            assertEquals("08:30", snap.targetTime)
+            assertEquals("三层南区", snap.areaName)
+            assertEquals("12桌 C座", snap.seatLabel)
+        }
+
+        Unit
+    }
 }

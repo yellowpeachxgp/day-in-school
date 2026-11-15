@@ -77,6 +77,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1738,6 +1739,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val todayDate = remember { LocalDate.now(ZoneId.of("Asia/Shanghai")) }
     val tomorrowDate = remember(todayDate) { todayDate.plusDays(1) }
     val targetDate = if (useTomorrow) tomorrowDate else todayDate
+    // seatOverview 是组合参数：被 remember 长存的 lambda 读取时必须经 rememberUpdatedState
+    // 取最新值，否则捕获的是首次组合的旧快照（R6-2）
+    val latestSeatOverview by rememberUpdatedState(seatOverview)
 
     // 自动读取自习区域列表与下属座位号列表（全程点选，零手输）
     var regions by remember { mutableStateOf<List<LibraryStudyRegionItem>>(emptyList()) }
@@ -1778,11 +1782,20 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 )
             },
             paramsProvider = {
-                val areaName = selectedRegion?.regionName ?: recentRecord?.regionName.orEmpty()
+                // R6-2：此 lambda 在 remember(repository) 内创建后长存——绝不可读
+                // 组合期派生 val（targetDate/targetTimeText/recentRecord 首次组合即冻结），
+                // 必须直读底层 state 并按同一公式现场计算；todayDate 的 remember
+                // 午夜陈旧问题也一并由 lambda 内 now() 消除。
+                val nowToday = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+                val liveTargetDate = if (useTomorrow) nowToday.plusDays(1) else nowToday
+                val liveTargetTimeText = "%02d:%02d".format(selectedHour, selectedMinute)
+                val liveRecentRecord = latestSeatOverview?.currentBooking
+                    ?: latestSeatOverview?.recentHistory?.firstOrNull()
+                val areaName = selectedRegion?.regionName ?: liveRecentRecord?.regionName.orEmpty()
                 BookingDraftParams(
                     engine = selectedMode,
-                    targetDate = targetDate.toString(),
-                    targetTime = targetTimeText,
+                    targetDate = liveTargetDate.toString(),
+                    targetTime = liveTargetTimeText,
                     areaName = areaName,
                     seatLabel = selectedSeatNames.joinToString(", "),
                     repeatDays = selectedRepeatDays,
