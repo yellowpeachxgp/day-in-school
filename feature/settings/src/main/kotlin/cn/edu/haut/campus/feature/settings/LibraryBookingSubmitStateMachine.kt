@@ -35,7 +35,8 @@ data class BookingDraftSnapshot(
     val acceptedPriceMicropeach: Long?,
     /** 报价单钉价语义附带的 quote_id（仅服务端报价成功预取时存在） */
     val quoteId: String? = null,
-    val quoteExpiresAtEpochMillis: Long? = null
+    val quoteExpiresAtEpochMillis: Long? = null,
+    val dateRevision: Long = 0L
 ) {
     /** 身份五元组：切号/重登世代推进/base 换址/换学号 任一变化即不同身份 */
     fun sameIdentityAs(other: BookingIdentityContext): Boolean =
@@ -52,7 +53,7 @@ data class BookingDraftSnapshot(
             targetTime == other.targetTime &&
             areaName == other.areaName &&
             seatLabel == other.seatLabel &&
-            repeatDays == other.repeatDays
+            repeatDays == other.repeatDays && dateRevision == other.dateRevision
 }
 
 /** 当前会话身份上下文（云身份 + base + 学号） */
@@ -73,7 +74,8 @@ data class BookingDraftParams(
     val seatLabel: String,
     val repeatDays: Int,
     /** 当前向用户展示的单价：首次创建钉入价即此值 */
-    val displayedPriceMicropeach: Long?
+    val displayedPriceMicropeach: Long?,
+    val dateRevision: Long = 0L
 )
 
 /**
@@ -184,7 +186,8 @@ class LibraryBookingSubmitStateMachine(
             repeatDays = p.repeatDays,
             draftRevision = draftRevision,
             attemptId = attemptIdFactory(),
-            acceptedPriceMicropeach = p.displayedPriceMicropeach
+            acceptedPriceMicropeach = p.displayedPriceMicropeach,
+            dateRevision = p.dateRevision
         )
         inFlightAttempt = snap
         phase = BookingSubmitPhase.SUBMITTING
@@ -310,7 +313,9 @@ class LibraryBookingPlanSubmitter(
     val machine: LibraryBookingSubmitStateMachine,
     private val identityProvider: suspend () -> BookingIdentityContext,
     private val paramsProvider: () -> BookingDraftParams,
-    private val submitPlan: suspend (BookingDraftSnapshot) -> Result<Unit>
+    private val submitPlan: suspend (BookingDraftSnapshot) -> Result<Unit>,
+    private val prepareSubmission: () -> Boolean = { true },
+    private val nowEpochMillis: () -> Long = System::currentTimeMillis
 ) {
     /** 用最新身份 + 参数复核上下文（编辑变化/ON_RESUME/提交前后均调用） */
     suspend fun refreshContext() {
@@ -319,7 +324,18 @@ class LibraryBookingPlanSubmitter(
 
     /** 首次发起业务尝试：复核最新上下文后捕获不可变快照并提交 */
     suspend fun submitNewAttempt(): BookingSubmitEvent {
+        if (!prepareSubmission()) {
+            refreshContext()
+            return BookingSubmitEvent.StaleConfirmationRefused
+        }
+        val requestedParams = paramsProvider()
         refreshContext()
+        if (requestedParams != paramsProvider()) return BookingSubmitEvent.StaleConfirmationRefused
+        // 身份读取可能挂起并跨午夜，捕获快照前再校验页面查询日期。
+        if (!prepareSubmission()) {
+            refreshContext()
+            return BookingSubmitEvent.StaleConfirmationRefused
+        }
         val snap = machine.beginSubmission() ?: return BookingSubmitEvent.Busy
         return runAttempt(snap)
     }
@@ -368,7 +384,22 @@ class LibraryBookingPlanSubmitter(
      * 随后 USER_CONFIRMED → SUBMITTING 发起绑定该 draft 的新尝试。
      */
     suspend fun confirmPendingReconfirmation(): BookingSubmitEvent {
+        if (!prepareSubmission()) {
+            refreshContext()
+            machine.cancelPendingReconfirmation()
+            return BookingSubmitEvent.StaleConfirmationRefused
+        }
         refreshContext()
+        if (!prepareSubmission()) {
+            refreshContext()
+            machine.cancelPendingReconfirmation()
+            return BookingSubmitEvent.StaleConfirmationRefused
+        }
+        val expiresAt = machine.visiblePendingReconfirmation()?.proposedQuote?.expiresAtEpochMillis
+        if (expiresAt != null && expiresAt <= nowEpochMillis()) {
+            machine.cancelPendingReconfirmation()
+            return BookingSubmitEvent.StaleConfirmationRefused
+        }
         val confirmedAttempt = machine.confirmPendingReconfirmation()
             ?: return BookingSubmitEvent.StaleConfirmationRefused
         if (!machine.beginConfirmedAttempt(confirmedAttempt)) {

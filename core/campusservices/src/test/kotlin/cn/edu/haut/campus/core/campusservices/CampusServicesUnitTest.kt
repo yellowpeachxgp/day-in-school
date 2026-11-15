@@ -7,12 +7,23 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.Before
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
 import java.time.ZoneId
 
 class CampusServicesUnitTest {
+    @get:Rule
+    val authStorage = TemporaryFolder()
+
+    @Before
+    fun isolateAuthStorage() {
+        CampusCloudOidcHelper.configurePersistentAuthStorageDir(authStorage.root)
+    }
+
 
     @Test
     fun officialServiceRoutePolicy_enforcesHttpsAndDomainWhitelist() {
@@ -1153,7 +1164,7 @@ class CampusServicesUnitTest {
         assertEquals("MANUAL_ACTION_REQUIRED", stoppedConfirmed.schoolCancellationState)
 
         // Fail-closed persistence check: if disk write fails, in-memory confirmation must be rolled back
-        val tmpDir = java.nio.file.Files.createTempDirectory("auth_store_fail_closed").toFile()
+        val tmpDir = authStorage.newFolder("auth_store_fail_closed")
         val blockerFile = java.io.File(tmpDir, "not_a_directory")
         blockerFile.writeText("x")
         CampusCloudOidcHelper.configurePersistentAuthStoreFileForTest(
@@ -1178,7 +1189,7 @@ class CampusServicesUnitTest {
             threwOnPersistFail = true
         } finally {
             CampusCloudOidcHelper.configurePersistentAuthStorageDir(
-                java.nio.file.Files.createTempDirectory("auth_store_restored").toFile()
+                authStorage.newFolder("auth_store_restored")
             )
         }
         assertTrue(threwOnPersistFail)
@@ -2678,4 +2689,34 @@ class CampusServicesUnitTest {
             assertEquals(12_000L, drift.currentPriceMicropeach)
         }
     }
+    @Test
+    fun `Cloud 实际 handler 错误 fixture 保留未知状态且报价失败零写`() {
+        val raw = requireNotNull(javaClass.getResourceAsStream("/reservation-error-envelopes.json"))
+            .bufferedReader().use { it.readText() }
+        val cases = JSONObject(raw).getJSONArray("cases")
+        val quoteBody = reservationQuoteFixtureBody()
+        val quoteData = quoteBody.getJSONObject("data")
+        for (index in 0 until cases.length()) {
+            val item = cases.getJSONObject(index)
+            val body = item.getJSONObject("body").toString()
+            val stub = CreatePlanStub()
+            val creating = item.getString("name") == "create_unknown"
+            stub.quoteResponse = { if (creating) quoteBody.toString() else body }
+            if (creating) stub.planPostResponse = { body }
+            val outcome = submitPlanWithTransport(
+                expectedPriceMicropeach = quoteData.getLong("amount_micropeach"),
+                expectedCloudUserId = quoteData.getString("cloud_user_id"),
+                nowEpochMillis = fixtureIssuedNow(quoteBody),
+                transport = stub.transport()
+            )
+            if (creating) {
+                assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous)
+                assertEquals(1, stub.planBodies.size)
+            } else {
+                assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable)
+                assertEquals(0, stub.mutatingCallCount.get())
+            }
+        }
+    }
+
 }

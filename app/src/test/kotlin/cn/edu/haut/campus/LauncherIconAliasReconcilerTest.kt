@@ -1,5 +1,6 @@
 package cn.edu.haut.campus
 
+import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -15,7 +16,8 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [31])
+// 此测试只验证桌面别名；避免启动真实 Application 的异步账号和数据库任务。
+@Config(sdk = [31], application = Application::class)
 class LauncherIconAliasReconcilerTest {
 
     private fun activeOurLauncherAliases(context: Context): List<String> {

@@ -331,3 +331,7 @@ endpoints:
     operationId: listAdminAuditEvents
     auth: bearer_rbac
     owner: admin
+  - method: GET
+    path: /api/v1/reservation-quote
+    operationId: getReservationQuote
+    auth: bearer
