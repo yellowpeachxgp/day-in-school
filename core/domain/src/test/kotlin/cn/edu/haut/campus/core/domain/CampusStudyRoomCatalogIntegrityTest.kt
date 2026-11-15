@@ -1,6 +1,8 @@
 package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.Term
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -8,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 
 /**
  * #13 自习室名录完整性回归：名录条目唯一性、楼宇引用一致性、跨校区同名不合并、
@@ -124,5 +127,133 @@ class CampusStudyRoomCatalogIntegrityTest {
         assertEquals("lianhuajie", CampusStudyRoomCatalog.catalogProvenanceForCampus("unknown_x").campusKey)
         assertEquals("songshanlu", CampusStudyRoomCatalog.catalogProvenanceForCampus("嵩山").campusKey)
         assertEquals("嵩山路", CampusStudyRoomCatalog.campusShortLabel("嵩山"))
+    }
+
+    private fun testTerm(id: String = "2026-2027-1") = Term(
+        id = id,
+        academicYear = "2026-2027",
+        termNumber = 1,
+        startDate = LocalDate.of(2026, 8, 31),
+        weekStartDay = DayOfWeek.MONDAY,
+        weekCount = 20,
+        timeTableId = "tt_study",
+        current = true
+    )
+
+    private fun termRule(termId: String) = CourseScheduleRule(
+        id = "r_$termId",
+        courseId = "c1",
+        termId = termId,
+        weekday = DayOfWeek.MONDAY,
+        startPeriod = 1,
+        endPeriod = 2,
+        weeks = setOf(1),
+        rawRoom = "5号教学楼5101"
+    )
+
+    @Test
+    fun currentTermScheduleBasisRequiresTermScopedExpandableInputs() {
+        val term = testTerm()
+
+        // 无当前学期：即便残留其他学期 rules，也绝无课表依据（跨学期混杂不得当依据）
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = null,
+                rules = listOf(termRule("old_term_1"))
+            )
+        )
+
+        // rules 非空但全部属于其他学期：不足以证明本学期有可展开排课
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                rules = listOf(termRule("2025-2026-2"), termRule("2025-2026-1"))
+            )
+        )
+
+        // 本学期排课规则存在：依据成立（当日无课时的"全部无冲突"才是有效推导）
+        assertTrue(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                rules = listOf(termRule(term.id))
+            )
+        )
+
+        // 无规则但存在本学期单日覆盖（补课/停课调整）：同样构成依据
+        assertTrue(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                rules = emptyList(),
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_1",
+                        termId = term.id,
+                        courseRuleId = "r_x",
+                        date = LocalDate.of(2026, 9, 7),
+                        canceled = true
+                    )
+                )
+            )
+        )
+
+        // 其他学期覆盖不算数
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                rules = emptyList(),
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_2",
+                        termId = "old_term_1",
+                        courseRuleId = "r_x",
+                        date = LocalDate.of(2026, 9, 7),
+                        canceled = true
+                    )
+                )
+            )
+        )
+
+        // 学期存在但零排课输入：无依据
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                rules = emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun studySlotStatusLabelHonestAboutManualPickAndAutoTiming() {
+        val slot = CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[1] // "3-4节"
+        val upcoming = CampusStudyRoomCatalog.StudySlotResolution(
+            slot = slot,
+            timing = CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT,
+            usedFallbackTimetable = false
+        )
+        // 手动点选后：必须明示所选槽位，绝不再显示"已预选下一时段"
+        assertEquals(
+            "已手动选择：3-4节",
+            CampusStudyRoomCatalog.studySlotStatusLabel("3-4节", upcoming)
+        )
+        // 自动模式按命中性质区分
+        assertEquals(
+            "课间休息中 · 已预选下一时段：3-4节",
+            CampusStudyRoomCatalog.studySlotStatusLabel(null, upcoming)
+        )
+        val inSession = upcoming.copy(timing = CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION)
+        assertEquals(
+            "自动定位当前时段：3-4节",
+            CampusStudyRoomCatalog.studySlotStatusLabel(null, inSession)
+        )
+        val afterLast = upcoming.copy(timing = CampusStudyRoomCatalog.StudySlotTiming.AFTER_LAST)
+        assertEquals(
+            "今日课程已结束 · 参考时段：3-4节",
+            CampusStudyRoomCatalog.studySlotStatusLabel(null, afterLast)
+        )
+        // 手动选择优先于任何自动 timing
+        assertEquals(
+            "已手动选择：1-2节",
+            CampusStudyRoomCatalog.studySlotStatusLabel("1-2节", afterLast)
+        )
     }
 }

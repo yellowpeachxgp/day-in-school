@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -101,6 +102,7 @@ import cn.edu.haut.campus.core.model.CompetitionSeasonWindow
 import cn.edu.haut.campus.core.model.CompetitionSkillPreference
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
@@ -120,7 +122,9 @@ fun EmptyClassroomScreen(
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
 
-    val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    // 60s 时钟 tick：仅驱动自动槽位重定位与跨午夜日期翻页（手动选槽期间暂停，见下方 LaunchedEffect）
+    var nowMinuteTick by remember { mutableLongStateOf(0L) }
+    val today = remember(nowMinuteTick) { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val weekMonday = remember(today) {
         today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     }
@@ -150,11 +154,19 @@ fun EmptyClassroomScreen(
     val selectedDateShortLabel = remember(selectedDateInCurrentWeek) {
         String.format("%02d-%02d", selectedDateInCurrentWeek.monthValue, selectedDateInCurrentWeek.dayOfMonth)
     }
-    val autoSlotResolution = remember(currentTerm?.timeTableId, periodTimes) {
+    val autoSlotResolution = remember(currentTerm?.timeTableId, periodTimes, nowMinuteTick) {
         CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
             nowTime = ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime(),
             periodTimes = periodTimes,
             timeTableId = currentTerm?.timeTableId
+        )
+    }
+    // "个人无冲突"统计是否具备本学期课表依据：rules 非空不足以证明本学期有可展开排课
+    val hasScheduleBasis = remember(currentTerm, rules, occurrenceOverrides) {
+        CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+            term = currentTerm,
+            rules = rules,
+            occurrenceOverrides = occurrenceOverrides
         )
     }
     var selectedSlotIndex by remember { mutableIntStateOf(autoSlotResolution.slotIndex) }
@@ -163,6 +175,16 @@ fun EmptyClassroomScreen(
     LaunchedEffect(autoSlotResolution) {
         if (!slotManuallyPicked) {
             selectedSlotIndex = autoSlotResolution.slotIndex
+        }
+    }
+    // 自动槽位 ~60s 重定位：仅非手动模式 tick（前台驻留/回前台/跨午夜皆由此驱动）；
+    // 手动点选期间暂停自动重定位，"恢复自动定位"后重新进入 tick 循环
+    LaunchedEffect(slotManuallyPicked) {
+        if (!slotManuallyPicked) {
+            while (true) {
+                delay(60_000L)
+                nowMinuteTick++
+            }
         }
     }
     val campusRoomsMap = remember(selectedCampusKey) {
@@ -205,7 +227,11 @@ fun EmptyClassroomScreen(
     ) {
         XPeachTopBar(
             title = "自习教室与无课参考",
-            subtitle = "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考",
+            subtitle = if (hasScheduleBasis) {
+                "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考"
+            } else {
+                "$campusDisplayName · 名录 $totalCampusCandidateCount 间自习教室 · 尚无课表依据"
+            },
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -227,7 +253,11 @@ fun EmptyClassroomScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。",
+                    text = if (hasScheduleBasis) {
+                        "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
+                    } else {
+                        "尚无本学期课表依据：以下为校区公共教学楼自习教室完整名录（未做个人无冲突过滤），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -312,18 +342,33 @@ fun EmptyClassroomScreen(
                         )
                     }
                 }
-                Text(
-                    text = when (autoSlotResolution.timing) {
-                        CampusStudyRoomCatalog.StudySlotTiming.IN_SESSION ->
-                            "自动定位当前时段：${autoSlotResolution.slot.label}"
-                        CampusStudyRoomCatalog.StudySlotTiming.UPCOMING_NEXT ->
-                            "课间休息中 · 已预选下一时段：${autoSlotResolution.slot.label}"
-                        CampusStudyRoomCatalog.StudySlotTiming.AFTER_LAST ->
-                            "今日课程已结束 · 参考时段：${autoSlotResolution.slot.label}"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = CampusStudyRoomCatalog.studySlotStatusLabel(
+                            manuallyPickedSlotLabel = if (slotManuallyPicked) {
+                                CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[selectedSlotIndex].label
+                            } else {
+                                null
+                            },
+                            resolution = autoSlotResolution
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (slotManuallyPicked) {
+                        TextButton(
+                            onClick = {
+                                slotManuallyPicked = false
+                                selectedSlotIndex = autoSlotResolution.slotIndex
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("恢复自动定位", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -354,8 +399,13 @@ fun EmptyClassroomScreen(
 
             for (buildingName in buildingsToShow) {
                 val candidateRooms = campusRoomsMap[buildingName].orEmpty()
-                val freeRooms = candidateRooms.filter { code ->
-                    CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
+                val freeRooms = if (hasScheduleBasis) {
+                    candidateRooms.filter { code ->
+                        CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
+                    }
+                } else {
+                    // 无本学期课表依据：展示完整名录，绝不以跨学期/空输入冒充"全部空闲"
+                    candidateRooms
                 }
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -369,7 +419,11 @@ fun EmptyClassroomScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusDotText(
-                            text = "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间",
+                            text = if (hasScheduleBasis) {
+                                "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间"
+                            } else {
+                                "尚无课表依据"
+                            },
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }

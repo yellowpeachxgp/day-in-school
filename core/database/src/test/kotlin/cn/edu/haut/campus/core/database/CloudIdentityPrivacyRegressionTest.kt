@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.database
 
 import androidx.room.Room
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -11,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -469,6 +471,215 @@ class CloudIdentityPrivacyRegressionTest {
         assertFalse(commentBody.has("contact_info"))
         assertFalse(commentBody.has("client_request_id"))
         assertFalse(commentBody.has("client_message_id"))
+        repo.cloudHttpTransportForTest = null
+    }
+
+    // ---------- R2-A4: 提交屏障 —— 身份变更与同步"复核→写入"临界区互斥 ----------
+
+    private fun syncPayloadWithParcel(
+        cloudUserId: String,
+        displayName: String,
+        peach: Double,
+        trackingNumber: String
+    ): String = """
+        {"ok":true,"data":{"auth_version":1,
+          "user":{"cloud_user_id":"$cloudUserId","display_name":"$displayName"},
+          "wallet":{"peach_balance":$peach},
+          "school_bindings":[],"reservation_jobs":[],"orders":[],
+          "parcels":[{"id":"prc_srv_$trackingNumber","tracking_number":"$trackingNumber",
+            "carrier_code":"CAINIAO","carrier_name":"校园快递","status":"IN_TRANSIT",
+            "pickup_code":null,"station_name":"莲花街北苑菜鸟驿站","item_title":"测试件",
+            "raw_notification_text":null}]}}
+    """.trimIndent()
+
+    private class ArmedBarrier {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+    }
+
+    /** 一次性提交屏障：只拦截首个进入"复核后、首写前"临界区的同步 */
+    private fun armOneShotCommitBarrier(repo: CampusRepository, barrier: ArmedBarrier) {
+        val armed = AtomicBoolean(true)
+        repo.syncCommitBarrierHookForTest = {
+            if (armed.compareAndSet(true, false)) {
+                barrier.entered.complete(Unit)
+                barrier.release.await()
+            }
+        }
+    }
+
+    @Test
+    fun `commit barrier blocks mid-commit unlink until guarded sync writes finish`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_unlink")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    syncPayloadWithParcel("cloud_user_A", "User A", 33.0, "trk_barrier_unlink")
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val barrier = ArmedBarrier()
+        armOneShotCommitBarrier(repo, barrier)
+
+        val syncJob = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        withTimeout(10_000) { barrier.entered.await() } // 同步已进入"复核后、首写前"临界区
+
+        val mutation = async(Dispatchers.IO) { repo.unlinkXpeachCloudAccountAndRevokeCloudPlans() }
+        // 屏障持有期间解绑必须被阻塞：世代不得推进、绑定不得清除
+        delay(800)
+        assertFalse("解绑在提交屏障持有期间必须阻塞等待", mutation.isCompleted)
+        assertEquals("cloud_user_A", dao.getCloudIdentityBindingSnapshot()?.cloudUserId)
+
+        barrier.release.complete(Unit)
+        withTimeout(10_000) { syncJob.await() }
+        withTimeout(10_000) { mutation.await() }
+
+        // 放行后：临界区内写入已合法提交（先于解绑生效），随后解绑才落地
+        assertNull(dao.getCloudIdentityBindingSnapshot())
+        assertNotNull("屏障内的包裹写入在解绑生效前已提交", dao.getParcelByTrackingNumber("trk_barrier_unlink"))
+
+        // 变更生效后的新同步：身份复核必然失败，零过期写入
+        assertTrue(repo.syncWithCampusCloud().isFailure)
+        repo.syncCommitBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `commit barrier blocks mid-commit A to B relogin until guarded sync writes finish`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_ab")
+        val jwtA = testCloudJwt("cloud_user_A")
+        val jwtB = testCloudJwt("cloud_user_B")
+        repo.cloudHttpTransportForTest = { method, url, _, token, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    if (token == jwtA) syncPayloadWithParcel("cloud_user_A", "User A", 33.0, "trk_barrier_ab")
+                    else syncPayloadFor("cloud_user_B", "User B", 9.0)
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val barrier = ArmedBarrier()
+        armOneShotCommitBarrier(repo, barrier)
+
+        val syncJob = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        withTimeout(10_000) { barrier.entered.await() }
+
+        val mutation = async(Dispatchers.IO) {
+            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_B", jwtB, peach = 40_000L, displayName = "User B"))
+        }
+        // 屏障持有期间换号必须被阻塞：绑定仍保持 A、世代不得推进
+        delay(800)
+        assertFalse("换号登录在提交屏障持有期间必须阻塞等待", mutation.isCompleted)
+        assertEquals("cloud_user_A", dao.getCloudIdentityBindingSnapshot()?.cloudUserId)
+
+        barrier.release.complete(Unit)
+        withTimeout(10_000) { syncJob.await() }
+        withTimeout(10_000) { mutation.await() }
+
+        val finalBinding = dao.getCloudIdentityBindingSnapshot()!!
+        assertEquals("cloud_user_B", finalBinding.cloudUserId)
+        assertNotNull(dao.getParcelByTrackingNumber("trk_barrier_ab"))
+        repo.syncCommitBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `commit barrier blocks mid-commit ABA unlink and relogin sequence`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_aba")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    syncPayloadFor("cloud_user_A", "User A", 33.0)
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val generationBefore = repo.snapshotCloudIdentitySession()!!.generation
+        val barrier = ArmedBarrier()
+        armOneShotCommitBarrier(repo, barrier)
+
+        val syncJob = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        withTimeout(10_000) { barrier.entered.await() }
+
+        // A -> 解绑 -> 重绑 A：整段身份变更序列不得插入临界区
+        val mutation = async(Dispatchers.IO) {
+            repo.unlinkXpeachCloudAccountAndRevokeCloudPlans()
+            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, peach = 21_000L, displayName = "User A"))
+        }
+        delay(800)
+        assertFalse("ABA 变更在提交屏障持有期间必须阻塞等待", mutation.isCompleted)
+        assertEquals("cloud_user_A", dao.getCloudIdentityBindingSnapshot()?.cloudUserId)
+        assertEquals(generationBefore, repo.snapshotCloudIdentitySession()!!.generation)
+
+        barrier.release.complete(Unit)
+        withTimeout(10_000) { syncJob.await() }
+        withTimeout(10_000) { mutation.await() }
+
+        val after = repo.snapshotCloudIdentitySession()!!
+        assertEquals("cloud_user_A", after.cloudUserId)
+        assertTrue("ABA 重绑必须产生全新世代", after.generation > generationBefore)
+        repo.syncCommitBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `commit barrier blocks mid-commit cloud base-url change`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_baseurl")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    syncPayloadFor("cloud_user_A", "User A", 33.0)
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val baseBefore = repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl
+        val barrier = ArmedBarrier()
+        armOneShotCommitBarrier(repo, barrier)
+
+        val syncJob = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        withTimeout(10_000) { barrier.entered.await() }
+
+        val newBase = "https://r2barrier.example.com"
+        val mutation = async(Dispatchers.IO) {
+            repo.updateNetworkProxyConfig(
+                cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = newBase)
+            )
+        }
+        // 屏障持有期间换址必须被阻塞：apiBaseUrl 是身份会话快照成分
+        delay(800)
+        assertFalse("base-url 变更在提交屏障持有期间必须阻塞等待", mutation.isCompleted)
+        assertEquals(baseBefore, repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl)
+
+        barrier.release.complete(Unit)
+        withTimeout(10_000) { syncJob.await() }
+        withTimeout(10_000) { mutation.await() }
+
+        assertEquals(newBase, repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl)
+        repo.syncCommitBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `sync commits parcels normally when no barrier hook is installed`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_normal")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    syncPayloadWithParcel("cloud_user_A", "User A", 33.0, "trk_barrier_normal")
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        // 生产路径：hook 恒为 null，同步不得受闩锁影响
+        val res = withTimeout(10_000) { repo.syncWithCampusCloud() }
+        assertTrue(res.isSuccess)
+        assertNotNull(dao.getParcelByTrackingNumber("trk_barrier_normal"))
         repo.cloudHttpTransportForTest = null
     }
 }

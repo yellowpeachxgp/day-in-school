@@ -3275,26 +3275,37 @@ class CampusRepository internal constructor(
     }
 
     suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
-        preferences.edit { prefs ->
-            prefs[PrefKeys.PROXY_MODE] = config.mode.key
-            prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
-            prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
-            prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
-            prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
-            prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-            prefs[PrefKeys.CLOUD_API_BASE_URL] = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+        // CLOUD_API_BASE_URL 属于身份会话快照成分：其变更必须过提交屏障（全局锁序 booking→identity），
+        // 保证同步在锁内复核身份/世代/base-url 后，不存在"复核通过→写入前"间被换址的窗口
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                preferences.edit { prefs ->
+                    prefs[PrefKeys.PROXY_MODE] = config.mode.key
+                    prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
+                    prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
+                    prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
+                    prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
+                    prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
+                    prefs[PrefKeys.CLOUD_API_BASE_URL] = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+                }
+            }
         }
     }
 
     suspend fun resetNetworkProxyConfig() {
-        preferences.edit { prefs ->
-            prefs.remove(PrefKeys.PROXY_MODE)
-            prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
-            prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
-            prefs.remove(PrefKeys.PROXY_HOST)
-            prefs.remove(PrefKeys.PROXY_PORT)
-            prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
-            prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+        // 同上：reset 会清除 CLOUD_API_BASE_URL，同样属于身份会话变更，须过提交屏障
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                preferences.edit { prefs ->
+                    prefs.remove(PrefKeys.PROXY_MODE)
+                    prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
+                    prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
+                    prefs.remove(PrefKeys.PROXY_HOST)
+                    prefs.remove(PrefKeys.PROXY_PORT)
+                    prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
+                    prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+                }
+            }
         }
     }
 
@@ -4557,35 +4568,39 @@ class CampusRepository internal constructor(
         runCatching {
             java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
         }
-        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回
-        // （世代推进先于 Room 事务执行，避免在事务内嵌套身份锁）
-        cloudIdentityMutex.withLock {
-            bumpCloudIdentityGenerationLocked(
-                cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
-                markUnlinkTombstone = true
-            )
-        }
-        database.withTransaction {
-            dao.clearStudentProfile()
-            dao.clearCourses()
-            dao.clearRules()
-            dao.clearOccurrenceOverrides()
-            dao.clearGradeAttempts()
-            dao.clearExamSchedules()
-            dao.clearExamTermRepairAudits()
-            dao.clearUnscheduledCourses()
-            dao.clearImportAudits()
-            dao.clearWidgetConfigs()
-            reminderDao.clearAllTasks()
-            reminderDao.clearAllEventPrefs()
-            utilityAndFocusDao.clearAllDailySamples()
-            utilityAndFocusDao.clearAllOnlineRooms()
-            utilityAndFocusDao.clearAllReadings()
-            utilityAndFocusDao.clearAllMeters()
-            utilityAndFocusDao.clearAllFocusSessions()
-            cloudAndParcelDao.clearCloudIdentityBinding()
-            cloudAndParcelDao.clearLibraryBookingPlans()
-            cloudAndParcelDao.clearParcelItems()
+        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回。
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 世代推进先于 Room 事务执行（避免在事务内嵌套身份锁），
+        // 整个擦除事务与同步的"复核→写入"临界区互斥——在途同步要么整体先落库、要么在复核处失败。
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                bumpCloudIdentityGenerationLocked(
+                    cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                    markUnlinkTombstone = true
+                )
+            }
+            database.withTransaction {
+                dao.clearStudentProfile()
+                dao.clearCourses()
+                dao.clearRules()
+                dao.clearOccurrenceOverrides()
+                dao.clearGradeAttempts()
+                dao.clearExamSchedules()
+                dao.clearExamTermRepairAudits()
+                dao.clearUnscheduledCourses()
+                dao.clearImportAudits()
+                dao.clearWidgetConfigs()
+                reminderDao.clearAllTasks()
+                reminderDao.clearAllEventPrefs()
+                utilityAndFocusDao.clearAllDailySamples()
+                utilityAndFocusDao.clearAllOnlineRooms()
+                utilityAndFocusDao.clearAllReadings()
+                utilityAndFocusDao.clearAllMeters()
+                utilityAndFocusDao.clearAllFocusSessions()
+                cloudAndParcelDao.clearCloudIdentityBinding()
+                cloudAndParcelDao.clearLibraryBookingPlans()
+                cloudAndParcelDao.clearParcelItems()
+            }
         }
         cloudTokenMutex.withLock {
             cachedCloudAccessToken = ""
@@ -4770,12 +4785,32 @@ class CampusRepository internal constructor(
 
     private val cloudTokenMutex = Mutex()
     private val cloudSyncMutex = Mutex()
+
+    /**
+     * 预约计划/包裹落库与云身份变更的提交屏障锁。
+     *
+     * 全局锁序约定（唯一合法顺序）：bookingPlanStateMutex → cloudIdentityMutex。
+     * - 云端同步在持有本锁的临界区内复核身份快照（内部再取 identity 锁）后写入包裹/计划；
+     * - 一切身份变更路径（解绑、登录/同号重登、换 base-url、全量擦除）必须先取本锁，
+     *   再在本锁内取 cloudIdentityMutex 推进世代/改写绑定——
+     *   保证已进临界区的同步写入整体先于身份变更生效，未进临界区的同步在复核处必然失败，
+     *   二者之间不存在"世代校验通过后才发生的身份变更"窗口（E3 修复）。
+     * - 严禁反向嵌套（identity → booking），严禁在任一锁内做网络等待。
+     */
     private val bookingPlanStateMutex = Mutex()
     private val activeInProcessFireAttempts = ConcurrentHashMap<String, String>()
     private val activeDispatchedFireAttempts = ConcurrentHashMap<String, Boolean>()
 
     @Volatile
     internal var cloudHttpTransportForTest: ((String, String, String?, String?, Map<String, String>) -> String)? = null
+
+    /**
+     * 仅测试用：同步提交屏障内的挂起闩锁，在身份复核通过之后、首个落库写之前调用。
+     * 生产恒为 null（零开销）；测试注入后可确定性地把身份变更（解绑/换号/重登/换 base-url）
+     * 插入"复核→写入"窗口，断言提交屏障按 booking→identity 锁序拦截过期写入。
+     */
+    @Volatile
+    internal var syncCommitBarrierHookForTest: (suspend () -> Unit)? = null
 
     private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         val parts = token.split(".")
@@ -5065,11 +5100,15 @@ class CampusRepository internal constructor(
             linkedAtEpochMillis = profile.linkedAtEpochMillis,
             updatedAtEpochMillis = now
         )
-        cloudIdentityMutex.withLock {
-            // 登录、切换云账号、同账号重新登录一律推进世代：
-            // 任何在途网络响应（含旧会话余额/计划写回）自此一律失效
-            bumpCloudIdentityGenerationLocked(profile.cloudUserId, markUnlinkTombstone = false)
-            cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 已进临界区的同步写入整体先于本次登录生效，之后的同步在复核处必然失败
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                // 登录、切换云账号、同账号重新登录一律推进世代：
+                // 任何在途网络响应（含旧会话余额/计划写回）自此一律失效
+                bumpCloudIdentityGenerationLocked(profile.cloudUserId, markUnlinkTombstone = false)
+                cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+            }
         }
         repoScope.launch {
             runCatching { syncWithCampusCloud() }
@@ -5301,6 +5340,8 @@ class CampusRepository internal constructor(
                 if (expectedStudentNo.isNotEmpty() && liveStuLocked.isNotEmpty() && liveStuLocked != expectedStudentNo) {
                     throw IllegalStateException("同步落库前学号已切换，已放弃写入旧学号会话同步结果")
                 }
+                // 测试闩锁（生产为 null）：确定性覆盖"复核→首写"窗口的身份变更交错
+                syncCommitBarrierHookForTest?.invoke()
                     // 2) 合并云端快递包裹到本地 Room — moved INSIDE the identity-checked lock:
                     // a stale-session merge must never commit account-A parcels after
                     // an account switch that the final recheck would reject.
@@ -5830,12 +5871,14 @@ class CampusRepository internal constructor(
                 }
             }
         }
-        cloudIdentityMutex.withLock {
-            // 解绑推进世代并留存 tombstone：在途响应写回失效，A→解绑→重绑(ABA) 场景旧会话响应亦不复活
-            bumpCloudIdentityGenerationLocked(prevCloudUserId, markUnlinkTombstone = true)
-            cloudAndParcelDao.clearCloudIdentityBinding()
-        }
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 世代推进/绑定清除与计划隔离同属一个提交临界区，同步写入要么整体先于解绑、要么在复核处失败
         bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                // 解绑推进世代并留存 tombstone：在途响应写回失效，A→解绑→重绑(ABA) 场景旧会话响应亦不复活
+                bumpCloudIdentityGenerationLocked(prevCloudUserId, markUnlinkTombstone = true)
+                cloudAndParcelDao.clearCloudIdentityBinding()
+            }
             database.withTransaction {
                 val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 for (plan in plans) {

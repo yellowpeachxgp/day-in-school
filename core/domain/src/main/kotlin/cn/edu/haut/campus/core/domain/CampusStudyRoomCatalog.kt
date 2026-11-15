@@ -417,6 +417,42 @@ object CampusStudyRoomCatalog {
         )
     }
 
+    /**
+     * 当前学期课表是否构成"个人无冲突"统计的有效依据：
+     * 必须存在当前学期，且存在可展开为本学期课程事件的排课输入
+     * （本学期排课规则，或本学期单日停课/改期/补课覆盖）。
+     * 仅 rules 非空但全部属于其他学期、或当前学期缺失时，busy 计算退化为
+     * 跨学期混杂甚至全空——"全部无冲突"只是未观测假象，UI 必须改显示
+     * 「尚无课表依据」而非全空闲计数（#13 修复）。
+     */
+    fun hasCurrentTermScheduleBasis(
+        term: Term?,
+        rules: List<CourseScheduleRule>,
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList()
+    ): Boolean {
+        if (term == null) return false
+        return rules.any { it.termId == term.id } ||
+            occurrenceOverrides.any { it.termId == term.id }
+    }
+
+    /**
+     * 自习槽位状态行文案：手动点选时明示所选槽位（并配合"恢复自动定位"入口），
+     * 自动模式按命中性质区分"当前时段/预选下一时段/今日已结束"。
+     */
+    fun studySlotStatusLabel(
+        manuallyPickedSlotLabel: String?,
+        resolution: StudySlotResolution
+    ): String {
+        if (manuallyPickedSlotLabel != null) {
+            return "已手动选择：$manuallyPickedSlotLabel"
+        }
+        return when (resolution.timing) {
+            StudySlotTiming.IN_SESSION -> "自动定位当前时段：${resolution.slot.label}"
+            StudySlotTiming.UPCOMING_NEXT -> "课间休息中 · 已预选下一时段：${resolution.slot.label}"
+            StudySlotTiming.AFTER_LAST -> "今日课程已结束 · 参考时段：${resolution.slot.label}"
+        }
+    }
+
     fun computeFreeRoomsCount(
         rules: List<CourseScheduleRule>,
         activeTermId: String? = null,
