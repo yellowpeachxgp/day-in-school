@@ -682,4 +682,196 @@ class CloudIdentityPrivacyRegressionTest {
         assertNotNull(dao.getParcelByTrackingNumber("trk_barrier_normal"))
         repo.cloudHttpTransportForTest = null
     }
+
+    // ---------- R3-A2：base-url A→B→A 真实换址必须推进世代 ----------
+
+    @Test
+    fun `in-flight sync on base A is rejected after A-B-A base url round trip`() = runBlocking {
+        val repo = buildInMemoryTestRepo("aba_baseurl")
+        val jwtA = testCloudJwt("cloud_user_A")
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val gateOnce = AtomicBoolean(true)
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    if (gateOnce.compareAndSet(true, false)) {
+                        entered.countDown()
+                        release.await(30, TimeUnit.SECONDS)
+                        // 被挂起请求的旧会话迟到响应：包裹 + 33.0 余额若写回即证明 ABA 穿透
+                        syncPayloadWithParcel("cloud_user_A", "User A", 33.0, "trk_aba_base")
+                    } else {
+                        // ABA 之后新会话的同步响应：无包裹、余额 44.0，便于区分写回来源
+                        syncPayloadFor("cloud_user_A", "User A", 44.0)
+                    }
+                }
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val baseA = repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl
+        val snapshotBefore = repo.snapshotCloudIdentitySession()!!
+        val inFlight = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        assertTrue("首个同步应在传输层挂起", entered.await(10, TimeUnit.SECONDS))
+
+        // A -> B -> A：base-url 复原，但两次真实换址已令世代 +2，旧会话永不可复活
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(
+                customCloudApiBaseUrl = "https://mirror-b.example.com"
+            )
+        )
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+        )
+        release.countDown()
+        withTimeout(10_000) { inFlight.await() }
+
+        // ABA 后的新会话同步落定：其响应余额为 44.0；迟到写回若被接受会出现包裹与 33.0
+        val probe = withTimeout(10_000) { repo.syncWithCampusCloud() }
+        assertTrue(probe.isSuccess)
+        withTimeout(10_000) {
+            while (dao.getCloudIdentityBindingSnapshot()?.peachBalanceMicropeach != 440_000L) delay(30)
+        }
+        assertNull("A→B→A 后迟到响应绝不许写回包裹", dao.getParcelByTrackingNumber("trk_aba_base"))
+        val binding = dao.getCloudIdentityBindingSnapshot()!!
+        assertEquals("cloud_user_A", binding.cloudUserId)
+        assertNotEquals("旧会话 33.0 余额绝不许写回", 330_000L, binding.peachBalanceMicropeach)
+        assertFalse("A→B→A 复原后旧快照必须仍失效", repo.isCloudIdentitySnapshotCurrent(snapshotBefore))
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `same value base url and proxy only changes do not bump generation`() = runBlocking {
+        val repo = buildInMemoryTestRepo("same_base")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { _, _, _, _, _ -> """{"ok":true,"data":{}}""" }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val s1 = repo.snapshotCloudIdentitySession()!!
+
+        // 同值保存（尾斜杠等规范化等价写法）：世代绝不推进，在途会话不受误伤
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(
+                customCloudApiBaseUrl = s1.apiBaseUrl + "/"
+            )
+        )
+        assertTrue(repo.isCloudIdentitySnapshotCurrent(s1))
+        assertEquals(s1.generation, repo.snapshotCloudIdentitySession()!!.generation)
+
+        // 仅改代理选项（base-url 原值）：同样不得推进世代
+        val cfg = repo.getNetworkProxyConfigSnapshot()
+        repo.updateNetworkProxyConfig(cfg.copy(proxyHost = "10.0.0.2", proxyPort = 9999))
+        assertTrue(repo.isCloudIdentitySnapshotCurrent(s1))
+        assertEquals(s1.generation, repo.snapshotCloudIdentitySession()!!.generation)
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `single base change and reset-then-restore each bump generation exactly once`() = runBlocking {
+        val repo = buildInMemoryTestRepo("aba_reset")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { _, _, _, _, _ -> """{"ok":true,"data":{}}""" }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val gen0 = repo.snapshotCloudIdentitySession()!!.generation
+        val baseA = "https://mirror-a.example.com"
+        val baseB = "https://mirror-b.example.com"
+
+        // 单次 A->B（默认 -> B）：真实换址推进 +1
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseB)
+        )
+        assertEquals(gen0 + 1, repo.snapshotCloudIdentitySession()!!.generation)
+
+        // B -> A（自定义网关）：再 +1；此时快照 apiBaseUrl 应为 A
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+        )
+        val sA1 = repo.snapshotCloudIdentitySession()!!
+        assertEquals(gen0 + 2, sA1.generation)
+        assertEquals(baseA, sA1.apiBaseUrl)
+
+        // reset：A -> 默认（真实变化）+1，sA1 失效
+        repo.resetNetworkProxyConfig()
+        assertEquals(gen0 + 3, repo.snapshotCloudIdentitySession()!!.generation)
+        assertFalse(repo.isCloudIdentitySnapshotCurrent(sA1))
+
+        // reset -> set 回到 A（ABA 等价序列）：base 复原但世代再 +1，绝不可复活 sA1
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+        )
+        val sA2 = repo.snapshotCloudIdentitySession()!!
+        assertEquals(gen0 + 4, sA2.generation)
+        assertEquals(baseA, sA2.apiBaseUrl)
+        assertFalse(repo.isCloudIdentitySnapshotCurrent(sA1))
+
+        // A -> B -> A 两次真实换址：共推进两代
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseB)
+        )
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+        )
+        assertEquals(gen0 + 6, repo.snapshotCloudIdentitySession()!!.generation)
+
+        // 同值重复 set：世代不得推进
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+        )
+        assertEquals(gen0 + 6, repo.snapshotCloudIdentitySession()!!.generation)
+
+        // reset（A -> 默认）：+1；已在默认网关时再 reset：生效值不变，世代不推进
+        repo.resetNetworkProxyConfig()
+        assertEquals(gen0 + 7, repo.snapshotCloudIdentitySession()!!.generation)
+        repo.resetNetworkProxyConfig()
+        assertEquals(gen0 + 7, repo.snapshotCloudIdentitySession()!!.generation)
+        repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `commit barrier blocks base url ABA round trip until guarded sync commits`() = runBlocking {
+        val repo = buildInMemoryTestRepo("barrier_aba_base")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
+                    syncPayloadWithParcel("cloud_user_A", "User A", 33.0, "trk_aba_barrier")
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+        val baseA = repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl
+        val generationBefore = repo.snapshotCloudIdentitySession()!!.generation
+        val barrier = ArmedBarrier()
+        armOneShotCommitBarrier(repo, barrier)
+
+        val syncJob = async(Dispatchers.IO) { repo.syncWithCampusCloud() }
+        withTimeout(10_000) { barrier.entered.await() }
+
+        // A->B->A 两次真实换址：整段序列不得插入"复核→写入"临界区
+        val mutation = async(Dispatchers.IO) {
+            repo.updateNetworkProxyConfig(
+                cn.edu.haut.campus.core.model.NetworkProxyConfig(
+                    customCloudApiBaseUrl = "https://mirror-b2.example.com"
+                )
+            )
+            repo.updateNetworkProxyConfig(
+                cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = baseA)
+            )
+        }
+        delay(800)
+        assertFalse("base-url ABA 在提交屏障持有期间必须整体阻塞", mutation.isCompleted)
+        assertEquals(generationBefore, repo.snapshotCloudIdentitySession()!!.generation)
+        assertEquals(baseA, repo.getNetworkProxyConfigSnapshot().customCloudApiBaseUrl)
+
+        barrier.release.complete(Unit)
+        withTimeout(10_000) { syncJob.await() }
+        withTimeout(10_000) { mutation.await() }
+
+        // 临界区内同步按复核时身份合法提交；ABA 在其后落地并把世代推进 +2
+        assertNotNull(dao.getParcelByTrackingNumber("trk_aba_barrier"))
+        val after = repo.snapshotCloudIdentitySession()!!
+        assertEquals("A→B→A 两次真实换址必须恰好推进两代", generationBefore + 2, after.generation)
+        assertEquals(baseA, after.apiBaseUrl)
+        repo.syncCommitBarrierHookForTest = null
+        repo.cloudHttpTransportForTest = null
+    }
 }
