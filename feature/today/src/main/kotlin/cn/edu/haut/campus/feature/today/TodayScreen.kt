@@ -746,22 +746,68 @@ fun TodayScreen(
                                                 selected = true,
                                                 compact = true,
                                                 onClick = {
+                                                    // 点击瞬间固化 (termId, overrideId, moveId, 意图)——
+                                                    // 绝不从刷新后的选中态重推，避免双击/陈旧回调误撤整次调课。
+                                                    val clickTermId = term?.id
+                                                    val clickDate = canceledOcc.date
+                                                    val clickCourseName = canceledOcc.courseName
+                                                    val clickOverrideId = canceledOcc.overrideId
+                                                    val clickRuleIds = canceledOcc.mergedRuleIds
+                                                    val clickedRow = clickOverrideId?.let { oid ->
+                                                        occurrenceOverrides.firstOrNull { it.id == oid }
+                                                    }
                                                     scope.launch {
-                                                        val restoreResult = repository.restoreCanceledOccurrence(
-                                                            date = canceledOcc.date,
-                                                            ruleId = canceledOcc.ruleId,
-                                                            overrideId = canceledOcc.overrideId,
-                                                            mergedRuleIds = canceledOcc.mergedRuleIds
-                                                        )
-                                                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                                        if (restoreResult.legacyReviewRequired) {
-                                                            pendingLegacyRestoreTargets =
-                                                                restoreResult.legacyAmbiguousTargets
-                                                        }
-                                                        dynamicSyncBanner = if (restoreResult.legacyReviewRequired) {
-                                                            "已恢复「${canceledOcc.courseName}」，检测到可能关联的旧版调入记录，请核对"
+                                                        if (clickTermId == null) return@launch
+                                                        val restoreResult = if (
+                                                            clickOverrideId != null &&
+                                                            clickedRow?.courseRuleId == null
+                                                        ) {
+                                                            // 纯覆盖行（暂停的调入目标/单日新增）：显式恢复暂停
+                                                            repository.unpauseOccurrence(
+                                                                termId = clickTermId,
+                                                                overrideId = clickOverrideId,
+                                                                expectedMoveId = clickedRow?.moveId
+                                                            )
                                                         } else {
-                                                            "已恢复「${canceledOcc.courseName}」当日排课与提醒"
+                                                            // 规则停课行（含调课 SOURCE）：按规则+日期恢复，
+                                                            // 命中的调课源以点击时捕获的 moveId 校验后整组撤销
+                                                            val expectedMoveId = occurrenceOverrides
+                                                                .filter {
+                                                                    it.courseRuleId != null &&
+                                                                        it.courseRuleId in clickRuleIds &&
+                                                                        it.date == clickDate &&
+                                                                        it.canceled
+                                                                }
+                                                                .mapNotNull { it.moveId }
+                                                                .distinct()
+                                                                .singleOrNull()
+                                                            repository.restoreRuleCancellation(
+                                                                termId = clickTermId,
+                                                                ruleIds = clickRuleIds,
+                                                                date = clickDate,
+                                                                expectedMoveId = expectedMoveId
+                                                            )
+                                                        }
+                                                        if (restoreResult.status ==
+                                                            CampusRepository.OccurrenceCommandStatus.APPLIED
+                                                        ) {
+                                                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                                                            if (restoreResult.legacyReviewRequired) {
+                                                                pendingLegacyRestoreTargets =
+                                                                    restoreResult.legacyAmbiguousTargets
+                                                            }
+                                                        }
+                                                        dynamicSyncBanner = when (restoreResult.status) {
+                                                            CampusRepository.OccurrenceCommandStatus.APPLIED ->
+                                                                if (restoreResult.legacyReviewRequired) {
+                                                                    "已恢复「$clickCourseName」，检测到可能关联的旧版调入记录，请核对"
+                                                                } else {
+                                                                    "已恢复「$clickCourseName」当日排课与提醒"
+                                                                }
+                                                            CampusRepository.OccurrenceCommandStatus.CONFLICT ->
+                                                                "「$clickCourseName」的停课记录已变化，未能恢复，请稍后重试"
+                                                            CampusRepository.OccurrenceCommandStatus.NO_CHANGE ->
+                                                                "「$clickCourseName」已是上课状态"
                                                         }
                                                     }
                                                 }
