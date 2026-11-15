@@ -371,6 +371,181 @@ class CampusStudyRoomCatalogIntegrityTest {
     }
 
     @Test
+    fun scheduleBasisEvaluationSharedValidationAndHonestReasonStates() {
+        val term = testTerm()
+        val periods = termPeriods(term.timeTableId)
+        val course = termCourse()
+
+        // R4-D1b(a)：学期作息表零节次但规则自带合法 customStart/customEnd——
+        // 与展开器同一时间窗解析，仍能展开为真实事件 → Valid（旧实现一刀切误判无依据）
+        val customTimeRule = termRule(term.id).copy(
+            customStartTime = LocalTime.of(19, 0),
+            customEndTime = LocalTime.of(20, 30)
+        )
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Valid,
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(customTimeRule),
+                periodTimes = emptyList()
+            )
+        )
+
+        // 零节次且未自带任何时间输入：不可展开 → 「作息表不完整」原因态，
+        // 绝不坍缩为全绿，也不与"完全无输入"混同
+        val noTimeEval = CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = term,
+            courses = listOf(course),
+            rules = listOf(termRule(term.id)),
+            periodTimes = emptyList()
+        )
+        assertFalse(noTimeEval.hasBasis)
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.TIMETABLE_INCOMPLETE,
+            (noTimeEval as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete).reason
+        )
+
+        // R4-D1b(b)：周次全部越出学期有效周范围(1..20)——跨学期周范围在本学期
+        // 永不展开，不得计为依据；与学期周范围相交的周次仍有效
+        val outOfRangeEval = CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = term,
+            courses = listOf(course),
+            rules = listOf(termRule(term.id).copy(weeks = setOf(25, 30))),
+            periodTimes = periods
+        )
+        assertFalse(outOfRangeEval.hasBasis)
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE,
+            (outOfRangeEval as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete).reason
+        )
+        assertTrue(
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(termRule(term.id).copy(weeks = setOf(19, 25))),
+                periodTimes = periods
+            ).hasBasis
+        )
+
+        // R4-D1b(c)：覆盖行关联跨学期规则——关联无效，courseId 绝不可借自别学期规则
+        val foreignRule = termRule("old_term_1")
+        val foreignAssocEval = CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = term,
+            courses = listOf(course),
+            rules = listOf(foreignRule),
+            periodTimes = periods,
+            occurrenceOverrides = listOf(
+                OccurrenceOverride(
+                    id = "oo_foreign_link",
+                    termId = term.id,
+                    courseRuleId = foreignRule.id,
+                    date = LocalDate.of(2026, 9, 7),
+                    startPeriod = 1,
+                    endPeriod = 2,
+                    canceled = false
+                )
+            )
+        )
+        assertFalse("跨学期规则关联无效，不得构成依据", foreignAssocEval.hasBasis)
+
+        // 关联本学期现存规则（即便规则自身零周次不可展开）→ 经本学期规则解析出课程，有效依据
+        val localRule = termRule(term.id).copy(id = "r_local", weeks = emptySet())
+        assertTrue(
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(localRule),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_local_link",
+                        termId = term.id,
+                        courseRuleId = "r_local",
+                        date = LocalDate.of(2026, 9, 7),
+                        startPeriod = 1,
+                        endPeriod = 2,
+                        canceled = false
+                    )
+                )
+            ).hasBasis
+        )
+
+        // 跨学期关联被忽略后，覆盖行自带合法 courseId+节次仍能凭自身字段构成依据
+        assertTrue(
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(foreignRule),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_foreign_link_self",
+                        termId = term.id,
+                        courseRuleId = foreignRule.id,
+                        courseId = course.id,
+                        date = LocalDate.of(2026, 9, 7),
+                        startPeriod = 1,
+                        endPeriod = 2,
+                        canceled = false
+                    )
+                )
+            ).hasBasis
+        )
+
+        // R4-D1b(d)：原因态三分——零输入 Absent / 本学期输入不可展开 Incomplete / 可展开 Valid
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Absent,
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = emptyList(),
+                periodTimes = periods
+            )
+        )
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Absent,
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = null,
+                courses = listOf(course),
+                rules = listOf(foreignRule),
+                periodTimes = periods
+            )
+        )
+        // 其他学期残留 rules 不属于本学期输入 → Absent 而非 Incomplete
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Absent,
+            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(foreignRule),
+                periodTimes = periods
+            )
+        )
+        // 孤儿停课覆盖是「有本学期输入但不可展开」→ Incomplete 原因态
+        val orphanEval = CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = term,
+            courses = listOf(course),
+            rules = emptyList(),
+            periodTimes = periods,
+            occurrenceOverrides = listOf(
+                OccurrenceOverride(
+                    id = "oo_orphan",
+                    termId = term.id,
+                    courseRuleId = "r_gone",
+                    date = LocalDate.of(2026, 9, 7),
+                    canceled = true
+                )
+            )
+        )
+        assertFalse(orphanEval.hasBasis)
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE,
+            (orphanEval as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete).reason
+        )
+    }
+
+    @Test
     fun studySlotStatusLabelHonestAboutManualPickAndAutoTiming() {
         val slot = CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[1] // "3-4节"
         val upcoming = CampusStudyRoomCatalog.StudySlotResolution(

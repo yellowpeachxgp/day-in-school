@@ -172,9 +172,10 @@ fun EmptyClassroomScreen(
     }
     val autoSlotResolution = slotController.autoSlotResolution
     // "个人无冲突"统计是否具备本学期课表依据：与展开器共用严格"可展开输入"校验
-    // （孤儿停课覆盖/跨学期残留 rules/缺作息表均不构成依据）
-    val hasScheduleBasis = remember(currentTerm, courses, rules, periodTimes, occurrenceOverrides) {
-        CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+    // （孤儿停课覆盖/跨学期残留 rules/缺作息表且未自带合法时间均不构成依据）；
+    // 判定结果带原因态——依据不完整与尚无依据是两种不同的诚实文案
+    val scheduleBasisEvaluation = remember(currentTerm, courses, rules, periodTimes, occurrenceOverrides) {
+        CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
             term = currentTerm,
             courses = courses,
             rules = rules,
@@ -182,6 +183,8 @@ fun EmptyClassroomScreen(
             occurrenceOverrides = occurrenceOverrides
         )
     }
+    val hasScheduleBasis = scheduleBasisEvaluation.hasBasis
+    val basisReasonLabel = scheduleBasisEvaluation.reasonLabel ?: "尚无课表依据"
     val selectedSlotIndex = slotController.selectedSlotIndex
     val slotManuallyPicked = slotController.slotManuallyPicked
 
@@ -253,7 +256,7 @@ fun EmptyClassroomScreen(
             subtitle = if (hasScheduleBasis) {
                 "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考"
             } else {
-                "$campusDisplayName · 名录 $totalCampusCandidateCount 间自习教室 · 尚无课表依据"
+                "$campusDisplayName · 名录 $totalCampusCandidateCount 间自习教室 · $basisReasonLabel"
             },
             navigationIcon = {
                 XPeachIconButton(
@@ -279,7 +282,7 @@ fun EmptyClassroomScreen(
                     text = if (hasScheduleBasis) {
                         "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
                     } else {
-                        "尚无本学期课表依据：以下为校区公共教学楼自习教室完整名录（未做个人无冲突过滤），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
+                        "$basisReasonLabel：以下为校区公共教学楼自习教室完整名录（未做个人无冲突过滤），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -477,7 +480,7 @@ fun EmptyClassroomScreen(
                             text = if (hasScheduleBasis) {
                                 "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间"
                             } else {
-                                "尚无课表依据"
+                                basisReasonLabel
                             },
                             dotColor = XPeachTheme.readablePrimary
                         )

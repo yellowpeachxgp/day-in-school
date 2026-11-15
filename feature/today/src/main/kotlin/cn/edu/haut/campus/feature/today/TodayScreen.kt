@@ -262,9 +262,10 @@ fun TodayScreen(
     }
 
     // 「自习教室」卡片 N/N 无冲突计数是否具备本学期课表依据：
-    // 与展开器共用严格校验——孤儿停课覆盖/跨学期残留 rules/缺作息表一律无依据，改显示纯名录
-    val hasStudyScheduleBasis = remember(term, courses, rules, periodTimes, occurrenceOverrides) {
-        CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+    // 与展开器共用严格校验——孤儿停课覆盖/跨学期残留 rules/缺作息表且未自带合法时间
+    // 一律无依据，改显示纯名录；判定结果带原因态（依据不完整 ≠ 尚无依据）。
+    val studyScheduleBasis = remember(term, courses, rules, periodTimes, occurrenceOverrides) {
+        CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
             term = term,
             courses = courses,
             rules = rules,
@@ -272,6 +273,8 @@ fun TodayScreen(
             occurrenceOverrides = occurrenceOverrides
         )
     }
+    val hasStudyScheduleBasis = studyScheduleBasis.hasBasis
+    val studyBasisReasonLabel = studyScheduleBasis.reasonLabel
 
     val mealRecommendation = remember(
         selectedDate,
@@ -876,6 +879,7 @@ fun TodayScreen(
                 rules = rules,
                 resolvedDateOccurrences = snapshot.items.map { it.occurrence },
                 hasStudyScheduleBasis = hasStudyScheduleBasis,
+                studyBasisReasonLabel = studyBasisReasonLabel,
                 selectedCampusId = prefs.selectedCampusId,
                 activeTimeTableId = term?.timeTableId,
                 periodTimes = periodTimes,
@@ -2053,6 +2057,7 @@ private fun TodayCampusBentoSection(
     rules: List<CourseScheduleRule>,
     resolvedDateOccurrences: List<cn.edu.haut.campus.core.model.ClassOccurrence> = emptyList(),
     hasStudyScheduleBasis: Boolean = false,
+    studyBasisReasonLabel: String? = null,
     selectedCampusId: String = "",
     activeTimeTableId: String? = null,
     periodTimes: List<cn.edu.haut.campus.core.model.PeriodTime> = emptyList(),
@@ -2290,11 +2295,12 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            // 严格依据判定：无本学期可展开排课输入时只显示名录规模，绝不以 N/N 冒充"全部无冲突"
+            // 严格依据判定：无本学期可展开排课输入时只显示名录规模，绝不以 N/N 冒充"全部无冲突"；
+            // 副标题诚实带原因态（尚无依据 / 作息表不完整 / 依据不完整）
             subtitle = if (hasStudyScheduleBasis) {
                 "${studyAvailability.campusShortLabel} ${studyAvailability.freeRoomsCount}/${studyAvailability.totalCandidateRoomsCount} 间个人课表无冲突（参考）"
             } else {
-                "${studyAvailability.campusShortLabel} ${studyAvailability.totalCandidateRoomsCount} 间自习教室名录（个人无课参考）"
+                "${studyAvailability.campusShortLabel} ${studyAvailability.totalCandidateRoomsCount} 间自习教室名录（${studyBasisReasonLabel ?: "尚无课表依据"}）"
             },
             onClick = onNavigateToEmptyClassrooms
         ),

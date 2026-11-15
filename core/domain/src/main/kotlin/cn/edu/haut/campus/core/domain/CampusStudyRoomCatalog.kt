@@ -418,17 +418,110 @@ object CampusStudyRoomCatalog {
     }
 
     /**
-     * 当前学期课表是否构成"个人无冲突"统计的有效依据：
-     * 必须存在当前学期、学期作息表含有效节次，且存在真正可展开为本学期课程事件的输入——
-     * 与 [ScheduleEngine] 展开器共用同一校验（[ScheduleEngine.isExpandableScheduleRule] /
-     * [ScheduleEngine.isExpandableOccurrenceOverride]）：
-     * - 本学期排课规则：termId 匹配、有课周次非空、节次区间有效、课程可解析；
-     * - 本学期单日覆盖：仅非停课（补课/改期）且能解析出真实课程的覆盖算依据；
-     *   指向已删除规则的孤儿停课行自身绝不产生事件，不构成依据。
-     * 仅 rules 非空但全部属于其他学期、作息表缺失、或仅有孤儿覆盖时，busy 计算退化为
-     * 跨学期混杂甚至全空——"全部无冲突"只是未观测假象，UI 必须改显示
-     * 「尚无课表依据」而非全空闲计数（#13 修复，R3 收紧）。
-     * "完整个人课表但今日无课"仍为 true：依据判定看学期输入而非当日展开结果。
+     * 「个人无冲突」统计依据判定结果：诚实区分完整依据 / 依据不完整 / 尚无依据——
+     * 部分或非法输入绝不退化为全绿计数，也绝不与"完全无输入"混为一谈。
+     */
+    sealed class ScheduleBasisEvaluation {
+        abstract val hasBasis: Boolean
+
+        /** 供 UI 展示的诚实原因文案；[Valid] 时为 null。 */
+        abstract val reasonLabel: String?
+
+        /** 至少一条本学期输入可展开为真实课程事件 →「个人无冲突」计数可信。 */
+        data object Valid : ScheduleBasisEvaluation() {
+            override val hasBasis: Boolean get() = true
+            override val reasonLabel: String? get() = null
+        }
+
+        /**
+         * 存在本学期排课输入但全部不可展开（零周次/周次越出学期、跨学期关联、
+         * 孤儿覆盖、课程缺失、缺作息表且未自带合法自定义时间等）→「依据不完整」原因态。
+         */
+        data class Incomplete(val reason: Reason) : ScheduleBasisEvaluation() {
+            override val hasBasis: Boolean get() = false
+            override val reasonLabel: String get() = reason.label
+        }
+
+        /** 无当前学期或完全无本学期排课输入（其他学期残留不计）。 */
+        data object Absent : ScheduleBasisEvaluation() {
+            override val hasBasis: Boolean get() = false
+            override val reasonLabel: String get() = "尚无课表依据"
+        }
+
+        /** 「依据不完整」的具体原因。 */
+        enum class Reason(val label: String) {
+            /** 学期作息表无任何节次定义，且没有任何输入自带合法自定义时间 */
+            TIMETABLE_INCOMPLETE("学期作息表不完整"),
+
+            /** 本学期输入存在但全部不可展开（零/越界周次、跨学期关联、孤儿覆盖、缺课程等） */
+            INPUTS_UNEXPANDABLE("课表依据不完整")
+        }
+    }
+
+    /**
+     * 当前学期课表是否构成"个人无冲突"统计的有效依据（含原因态）：
+     * 必须存在当前学期，且存在真正可展开为本学期课程事件的输入——
+     * 与 [ScheduleEngine] 展开器共用同一校验与同一时间窗解析
+     * （[ScheduleEngine.isExpandableScheduleRule] /
+     * [ScheduleEngine.sameTermBaseRule] / [ScheduleEngine.expandableOverrideTimeWindow] /
+     * [ScheduleEngine.ruleSchedulePeriodWindow]）：
+     * - 本学期排课规则：termId 匹配、周次与学期有效周范围(1..weekCount)相交、节次有效、
+     *   课程可解析，且时间窗可解析（自带合法 customStart/customEnd 或作息表覆盖其节次——
+     *   无 PeriodTime 但自带完整自定义时间的课程同样计为有效依据）；
+     * - 本学期单日覆盖：仅非停课且能解析出真实课程与时间窗的覆盖算依据；
+     *   关联规则必须是本学期规则（跨学期关联无效）；孤儿停课行自身不产生事件，不构成依据。
+     * 输入存在但全部不可展开 → [ScheduleBasisEvaluation.Incomplete]（依据不完整原因态）；
+     * 无学期或零本学期输入 → [ScheduleBasisEvaluation.Absent]。
+     * "完整个人课表但今日无课"仍为 Valid：依据判定看学期输入而非当日展开结果。
+     */
+    fun evaluateCurrentTermScheduleBasis(
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList()
+    ): ScheduleBasisEvaluation {
+        if (term == null) return ScheduleBasisEvaluation.Absent
+        val courseIds = courses.mapTo(HashSet()) { it.id }
+        val rulesById = rules.associateBy { it.id }
+        val periodMap = periodTimes
+            .filter { it.timeTableId == term.timeTableId }
+            .associateBy { it.periodNo }
+
+        val termRules = rules.filter { it.termId == term.id }
+        val termOverrides = occurrenceOverrides.filter { it.termId == term.id }
+        if (termRules.isEmpty() && termOverrides.isEmpty()) {
+            // 其他学期残留的 rules/覆盖不属于本学期输入：诚实按"无输入"处理
+            return ScheduleBasisEvaluation.Absent
+        }
+
+        val anyExpandableRule = termRules.any { rule ->
+            ScheduleEngine.isExpandableScheduleRule(rule, term.id, courseIds, term.weekCount) &&
+                ScheduleEngine.ruleSchedulePeriodWindow(rule, periodMap).hasResolvedTime
+        }
+        if (anyExpandableRule) return ScheduleBasisEvaluation.Valid
+
+        val anyExpandableOverride = termOverrides.any { ov ->
+            ScheduleEngine.expandableOverrideTimeWindow(
+                ov, term.id, rulesById, courseIds, periodMap
+            )?.hasResolvedTime == true
+        }
+        if (anyExpandableOverride) return ScheduleBasisEvaluation.Valid
+
+        // 有本学期输入但没有任何一条能展开为真实课程事件：依据不完整而非无输入
+        return ScheduleBasisEvaluation.Incomplete(
+            if (periodMap.isEmpty()) {
+                ScheduleBasisEvaluation.Reason.TIMETABLE_INCOMPLETE
+            } else {
+                ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+            }
+        )
+    }
+
+    /**
+     * 当前学期课表是否构成"个人无冲突"统计的有效依据（布尔便捷入口）：
+     * 原因态请改用 [evaluateCurrentTermScheduleBasis]——「依据不完整」与「尚无依据」
+     * 在 UI 上是两种不同诚实文案，不可混同。
      */
     fun hasCurrentTermScheduleBasis(
         term: Term?,
@@ -436,17 +529,9 @@ object CampusStudyRoomCatalog {
         rules: List<CourseScheduleRule>,
         periodTimes: List<PeriodTime>,
         occurrenceOverrides: List<OccurrenceOverride> = emptyList()
-    ): Boolean {
-        if (term == null) return false
-        // 学期作息表无任何节次定义：排课无法落到有效时间段，不构成依据
-        if (periodTimes.none { it.timeTableId == term.timeTableId }) return false
-        val courseIds = courses.mapTo(HashSet()) { it.id }
-        val rulesById = rules.associateBy { it.id }
-        return rules.any { ScheduleEngine.isExpandableScheduleRule(it, term.id, courseIds) } ||
-            occurrenceOverrides.any {
-                ScheduleEngine.isExpandableOccurrenceOverride(it, term.id, rulesById, courseIds)
-            }
-    }
+    ): Boolean = evaluateCurrentTermScheduleBasis(
+        term, courses, rules, periodTimes, occurrenceOverrides
+    ).hasBasis
 
     /**
      * 自习槽位状态行文案：手动点选时明示所选槽位（并配合"恢复自动定位"入口），

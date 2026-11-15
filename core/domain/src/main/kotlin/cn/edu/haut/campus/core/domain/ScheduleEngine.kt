@@ -25,23 +25,40 @@ object ScheduleEngine {
 
     /**
      * 排课输入「可展开」统一校验（课表展开器与「课表依据」判定共用同一函数，绝不两套口径）：
-     * 规则须属于该学期、有课周次非空、节次区间有效且课程可解析——
-     * 跨学期残留、零周次空壳、倒序节次或缺课孤儿规则均不可展开，不得充当任何"课表依据"。
+     * 规则须属于该学期、有课周次与学期有效周范围(1..[termWeekCount])相交、节次区间有效且
+     * 课程可解析——跨学期残留、零周次空壳、周次全部越出学期范围、倒序节次或缺课孤儿规则
+     * 均不可展开，不得充当任何"课表依据"。
+     * [termWeekCount] 默认不限周范围（仅要求周次非空）；展开器与依据判定均传学期 weekCount。
      */
     fun isExpandableScheduleRule(
         rule: CourseScheduleRule,
         termId: String,
-        courseIds: Set<String>
+        courseIds: Set<String>,
+        termWeekCount: Int = Int.MAX_VALUE
     ): Boolean = rule.termId == termId &&
-        rule.weeks.isNotEmpty() &&
+        rule.weeks.any { it in 1..termWeekCount } &&
         rule.startPeriod >= 1 &&
         rule.startPeriod <= rule.endPeriod &&
         rule.courseId in courseIds
 
     /**
+     * 覆盖行关联规则的本学期解析：courseRuleId 必须指向**同一学期**的现存规则——
+     * 跨学期关联无效，一律按无关联处理（绝不允许借用别学期规则的课程/节次/时间字段）。
+     * 课程解析与时段回退共享此入口，与「课表依据」判定同一口径。
+     */
+    fun sameTermBaseRule(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>
+    ): CourseScheduleRule? = override.courseRuleId
+        ?.let { rulesById[it] }
+        ?.takeIf { it.termId == termId }
+
+    /**
      * 单日覆盖「可展开」统一校验：仅非停课覆盖（补课/改时间/改教室）才可能展开为课程事件，
-     * 且必须可解析出真实课程（自带 courseId，或经 courseRuleId 关联到现存规则再解析课程）。
-     * 停课覆盖只会屏蔽既有事件、自身绝不产生事件；指向已删除规则的孤儿停课行不构成任何依据。
+     * 且必须可解析出真实课程（自带 courseId，或经 courseRuleId 关联到**本学期**现存规则
+     * 再解析课程；跨学期关联无效）。停课覆盖只会屏蔽既有事件、自身绝不产生事件；
+     * 指向已删除规则的孤儿停课行不构成任何依据。
      */
     fun isExpandableOccurrenceOverride(
         override: OccurrenceOverride,
@@ -50,10 +67,53 @@ object ScheduleEngine {
         courseIds: Set<String>
     ): Boolean {
         if (override.termId != termId || override.canceled) return false
-        val baseRule = override.courseRuleId?.let { rulesById[it] }
+        val baseRule = sameTermBaseRule(override, termId, rulesById)
         val targetCourseId = override.courseId ?: baseRule?.courseId ?: return false
         return targetCourseId in courseIds
     }
+
+    /**
+     * 单日覆盖的「可展开时间窗」共享校验：与展开器完全同一取值顺序与同一解析路径——
+     * 不可展开返回 null；返回窗口的 hasResolvedTime=false 表示缺作息定义且未自带合法
+     * 自定义时间（展开器据此标注"节次时间待设置"展示，「课表依据」判定则要求
+     * hasResolvedTime=true 才可作为"个人无冲突"统计依据）。
+     */
+    fun expandableOverrideTimeWindow(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>,
+        courseIds: Set<String>,
+        periodMap: Map<Int, PeriodTime>
+    ): ResolvedPeriodWindow? {
+        if (!isExpandableOccurrenceOverride(override, termId, rulesById, courseIds)) return null
+        val baseRule = sameTermBaseRule(override, termId, rulesById)
+        val startPeriod = override.startPeriod ?: baseRule?.startPeriod ?: 1
+        val endPeriod = override.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
+        return resolvePeriodWindow(
+            startPeriod = startPeriod,
+            endPeriod = endPeriod,
+            customStart = override.startAt ?: baseRule?.customStartTime,
+            customEnd = override.endAt ?: baseRule?.customEndTime,
+            periodMap = periodMap
+        )
+    }
+
+    /**
+     * 排课规则自身时间输入的可解析窗口（与展开器同一解析路径，绝不另起口径）：
+     * 自带 customStart/customEnd 或学期作息表完整覆盖该节次区间时
+     * [ResolvedPeriodWindow.hasResolvedTime]=true——「课表依据」判定复用同一解析结果，
+     * 缺作息表但自带合法自定义时间的课程同样计为有效依据。
+     */
+    fun ruleSchedulePeriodWindow(
+        rule: CourseScheduleRule,
+        periodMap: Map<Int, PeriodTime>
+    ): ResolvedPeriodWindow = resolvePeriodWindow(
+        startPeriod = rule.startPeriod,
+        endPeriod = rule.endPeriod,
+        customStart = rule.customStartTime,
+        customEnd = rule.customEndTime,
+        periodMap = periodMap
+    )
 
     /**
      * 解析指定日期的实际课程列表（包含学期日历调休、单日停课/改教室/改时间、临时补课、连续同课合并与冲突分栏计算）。
@@ -94,7 +154,7 @@ object ScheduleEngine {
             val activeWeek = effectiveDate.teachingWeek
             val targetWeekday = effectiveDate.weekdayUsed
             val matchingRules = rules.filter { rule ->
-                isExpandableScheduleRule(rule, term.id, courseMap.keys) &&
+                isExpandableScheduleRule(rule, term.id, courseMap.keys, term.weekCount) &&
                     rule.weekday == targetWeekday &&
                     activeWeek in rule.weeks
             }
@@ -157,22 +217,22 @@ object ScheduleEngine {
         // 2. 单日临时补课或跨天调入课程（courseRuleId 不在今日常规触发集，或纯手工补课）
         val handledOverrideIds = rawOccurrences.mapNotNull { it.overrideId }.toSet()
         for (extraOverride in dayOverrides) {
-            if (extraOverride.id in handledOverrideIds ||
-                !isExpandableOccurrenceOverride(extraOverride, term.id, rulesById, courseMap.keys)
-            ) continue
-            val baseRule = extraOverride.courseRuleId?.let { rulesById[it] }
+            if (extraOverride.id in handledOverrideIds) continue
+            // 与「课表依据」判定共用同一校验与同一时间窗解析：
+            // 跨学期关联视为无关联，时间输入取值顺序完全一致。
+            val resolvedWindow = expandableOverrideTimeWindow(
+                override = extraOverride,
+                termId = term.id,
+                rulesById = rulesById,
+                courseIds = courseMap.keys,
+                periodMap = periodMap
+            ) ?: continue
+            val baseRule = sameTermBaseRule(extraOverride, term.id, rulesById)
             val targetCourseId = extraOverride.courseId ?: baseRule?.courseId ?: continue
             val course = courseMap[targetCourseId] ?: continue
 
             val startPeriod = extraOverride.startPeriod ?: baseRule?.startPeriod ?: 1
             val endPeriod = extraOverride.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
-            val resolvedWindow = resolvePeriodWindow(
-                startPeriod = startPeriod,
-                endPeriod = endPeriod,
-                customStart = extraOverride.startAt ?: baseRule?.customStartTime,
-                customEnd = extraOverride.endAt ?: baseRule?.customEndTime,
-                periodMap = periodMap
-            )
             val finalRoom = extraOverride.room ?: baseRule?.rawRoom ?: "待定教室"
             val finalBuildingId = extraOverride.buildingId ?: baseRule?.buildingId
 
@@ -378,7 +438,12 @@ object ScheduleEngine {
         return (mergedRuleCanceled + standaloneCanceled).sortedBy { it.startPeriod }
     }
 
-    private data class ResolvedPeriodWindow(
+    /**
+     * 节次时间窗解析结果（展开器与「课表依据」判定共用同一返回类型）：
+     * [hasResolvedTime]=false 表示缺少作息定义且未自带合法自定义时间，
+     * 起止时刻仅是按已知节次推导的单调排序锚点，绝非真实时刻。
+     */
+    data class ResolvedPeriodWindow(
         val startTime: LocalTime,
         val endTime: LocalTime,
         val hasResolvedTime: Boolean
