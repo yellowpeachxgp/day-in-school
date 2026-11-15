@@ -55,6 +55,20 @@ class LiquidGlassThemeSdkTest {
     }
 
     @Test
+    fun hautBluePaletteSeedIsExactSchoolBadgeBlue053968() {
+        // #14: 工大校徽深蓝主色种子必须精确锁定 #053968
+        val haut = PresetThemePalette.HAUT_BLUE
+        assertEquals("HAUT_BLUE", haut.key)
+        assertEquals(0xFF053968L, haut.seedArgb)
+        assertEquals(UiDesignStyle.FLUTTER_M3, haut.recommendedStyle)
+        assertTrue("Settings hint must surface the #053968 badge blue", haut.subtitle.contains("053968"))
+
+        // 工大蓝必须是预设名录中唯一使用 #053968 种子的条目
+        assertEquals(1, PresetThemePalette.entries.count { (it.seedArgb and 0xFFFFFFL) == 0x053968L })
+        assertEquals(PresetThemePalette.HAUT_BLUE, PresetThemePalette.fromKey("HAUT_BLUE"))
+    }
+
+    @Test
     fun liquidGlassOpticsPortMatchesGlassHqSpecification() {
         // 1. optics.ts edgeDisplacement: at boundary (d = 0), displacement is full amount (60);
         //    at or beyond 20px inward (d <= -20), displacement is 0.
