@@ -146,6 +146,17 @@ data class CloudUnsyncedPlanUpsertDto(
     val createdAuthVersion: Int = 0
 )
 
+/**
+ * 云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`，PRICE_QUOTE 语义）：
+ * 服务端按次给出带 quote_id 的现行价；客户端在创建计划时携带 quote_id 即按报价钉价。
+ * 未提供报价接口（legacy 云端）或报价未含价格字段时 quoteId/priceMicropeach 为 null，
+ * 调用方必须回退到仅携带 expected_price_micropeach 的 legacy 钉价路径。
+ */
+data class CloudReservationQuote(
+    val quoteId: String?,
+    val priceMicropeach: Long?
+)
+
 data class CloudSyncItemOutcome(
     val itemType: String,
     val itemId: String,
@@ -1166,6 +1177,38 @@ object CampusCloudOidcHelper {
         return detail.has("expected_price_micropeach") || detail.has("current_price_micropeach")
     }
 
+    /**
+     * 尽力获取云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`）。
+     * 任何传输失败、非 ok 响应或缺失 data 一律返回 null —— legacy 云端没有该端点时
+     * 调用方按仅 expected_price_micropeach 的旧钉价路径继续，绝不因报价不可用而阻断创建。
+     */
+    private fun fetchReservationQuoteBestEffort(
+        transport: (String, String, String?, String?, Map<String, String>) -> String,
+        cleanBase: String,
+        accessToken: String
+    ): CloudReservationQuote? = runCatching {
+        val raw = transport(
+            "GET",
+            "$cleanBase/api/v1/reservation-quote",
+            null,
+            accessToken,
+            emptyMap()
+        )
+        val root = JSONObject(raw)
+        if (!root.optBoolean("ok", false)) return@runCatching null
+        val data = root.optJSONObject("data") ?: return@runCatching null
+        val quoteId = data.optCleanString("quote_id")
+            .ifBlank { data.optCleanString("id") }
+            .ifBlank { null }
+        val priceMicropeach = when {
+            data.has("price_micropeach") -> data.optLong("price_micropeach")
+            data.has("current_price_micropeach") -> data.optLong("current_price_micropeach")
+            data.has("price_peach") -> kotlin.math.round(data.optDouble("price_peach") * 10_000.0).toLong()
+            else -> null
+        }
+        CloudReservationQuote(quoteId = quoteId, priceMicropeach = priceMicropeach)
+    }.getOrNull()
+
     fun submitCloudHostedReservationPlanDetailed(
         accessToken: String,
         studentNo: String,
@@ -1281,7 +1324,26 @@ object CampusCloudOidcHelper {
                 .forEach { candidateSeatsArr.put(it) }
 
             val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
-            // 报价钉死：把创建时向用户展示/获取的价格写入 expected_price_micropeach，
+            // 报价单钉价（cloud 338d501+，可选）：服务端提供 GET /api/v1/reservation-quote 时
+            // 先取 quote —— 若报价明示价格且与本次钉入价不符，等价于一次计划前的 409：
+            // 立即返回 PriceDriftConflict 走诚实再确认（此时计划尚未 POST，可证明为 pre-persist），
+            // 绝不静默按报价新价改签；价一致或未提供报价端点则按 legacy 路径继续。
+            var quoteIdToAttach: String? = null
+            if (expectedPriceMicropeach != null) {
+                val quote = fetchReservationQuoteBestEffort(transport, cleanBase, accessToken)
+                if (quote != null) {
+                    val quotePrice = quote.priceMicropeach
+                    if (quotePrice != null && quotePrice != expectedPriceMicropeach) {
+                        return CloudPlanSubmissionOutcome.PriceDriftConflict(
+                            reason = "云端预约报价已更新",
+                            expectedPriceMicropeach = expectedPriceMicropeach,
+                            currentPriceMicropeach = quotePrice
+                        )
+                    }
+                    quoteIdToAttach = quote.quoteId?.trim()?.takeIf { it.isNotEmpty() }
+                }
+            }
+            // 报价钉死：把创建时向用户展示/用户已重新确认的价格写入 expected_price_micropeach，
             // 云端一旦调价即 409 拒绝并走诚实再确认——绝不静默按新价改签
             val planBody = JSONObject()
                 .put("school_binding_id", bindId)
@@ -1298,6 +1360,7 @@ object CampusCloudOidcHelper {
                 .put("replace_existing", true)
                 .apply {
                     expectedPriceMicropeach?.let { put("expected_price_micropeach", it) }
+                    quoteIdToAttach?.let { put("quote_id", it) }
                 }
                 .toString()
 

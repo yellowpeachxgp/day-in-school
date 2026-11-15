@@ -114,6 +114,7 @@ import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.CloudIdentityBindingEntity
+import cn.edu.haut.campus.core.database.CloudPlanPriceDriftException
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -140,6 +141,13 @@ private data class PendingSeatActionRequest(
     val action: LibrarySeatActionType,
     val booking: LibrarySeatBookingRecord?
 )
+
+/** 微桃 → 🍑 整数/小数自适应显示（1.0 显示为 "1"，0.5 显示为 "0.5"） */
+private fun formatMicropeachPriceLabel(micropeach: Long): String {
+    val whole = micropeach / 10_000L
+    val rem = micropeach % 10_000L
+    return if (rem == 0L) whole.toString() else (micropeach / 10_000.0).toString()
+}
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1750,6 +1758,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionSnapshot by remember { mutableStateOf(LibrarySeatAlarmSubsystem.inspectPermissions(context)) }
     var showPermissionActivationDialog by remember { mutableStateOf(false) }
+    // 云端调价 409 → PRICE_CHANGED 诚实再确认弹窗状态：如实展示旧价 vs 云端新价，
+    // 用户取消即保持原有本机排队计划（不自动重发），用户确认才携带新价重新创建
+    var pendingPriceDriftReconfirm by remember { mutableStateOf<CloudPlanPriceDriftException?>(null) }
+    var isSubmittingBookingPlan by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -2871,41 +2883,60 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             )
 
-            fun saveBookingPlanNow() {
+            fun saveBookingPlanNow(acceptedPriceMicropeach: Long? = null) {
+                // 双击/旋转重入守卫：同一时刻只允许一个在途创建请求，
+                // 防止用户重复确认导致重复 POST /reservation-plans
+                if (isSubmittingBookingPlan) return
                 scope.launch {
-                    val result = repository.createDualEngineBookingPlan(
-                        executionMode = selectedMode,
-                        targetDate = targetDate,
-                        targetTimeText = targetTimeText,
-                        preferredAreaName = roomLabel,
-                        preferredSeatLabel = preferredSeatsText,
-                        repeatDays = selectedRepeatDays
-                    )
-                    result.fold(
-                        onSuccess = { created ->
-                            val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
-                            val modePrefix = if (created.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                                "已开启云端抢座"
-                            } else {
-                                "已开启本机定时抢座"
+                    isSubmittingBookingPlan = true
+                    try {
+                        val result = repository.createDualEngineBookingPlan(
+                            executionMode = selectedMode,
+                            targetDate = targetDate,
+                            targetTimeText = targetTimeText,
+                            preferredAreaName = roomLabel,
+                            preferredSeatLabel = preferredSeatsText,
+                            repeatDays = selectedRepeatDays,
+                            // 用户确认过新价时携带确认价（钉入 + 持久化），否则按展示常量价
+                            acceptedPriceMicropeach = acceptedPriceMicropeach
+                        )
+                        result.fold(
+                            onSuccess = { created ->
+                                pendingPriceDriftReconfirm = null
+                                val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
+                                val modePrefix = if (created.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
+                                    "已开启云端抢座"
+                                } else {
+                                    "已开启本机定时抢座"
+                                }
+                                onFeedback(
+                                    true,
+                                    "$modePrefix：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
+                                )
+                            },
+                            onFailure = { err ->
+                                when (err) {
+                                    // 报价漂移 409 → PRICE_CHANGED：如实展示新旧价格并等待用户明确再确认；
+                                    // 绝不自动按新价重试（静默改价会在用户不知情时改签合同价格）
+                                    is CloudPlanPriceDriftException -> {
+                                        if (err.currentPriceMicropeach != null &&
+                                            err.currentPriceMicropeach != err.expectedPriceMicropeach
+                                        ) {
+                                            pendingPriceDriftReconfirm = err
+                                        } else {
+                                            onFeedback(
+                                                false,
+                                                err.message ?: "云端抢座价格已调整，请核实最新价格后重新创建计划"
+                                            )
+                                        }
+                                    }
+                                    else -> onFeedback(false, err.message ?: "设置失败，请重试")
+                                }
                             }
-                            onFeedback(
-                                true,
-                                "$modePrefix：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
-                            )
-                        },
-                        onFailure = { err ->
-                            when (err) {
-                                // 报价漂移：如实展示新旧价格并要求重新确认创建（绝不自动按新价重试）
-                                is cn.edu.haut.campus.core.database.CloudPlanPriceDriftException ->
-                                    onFeedback(
-                                        false,
-                                        err.message ?: "云端抢座价格已调整，请核实最新价格后重新创建计划"
-                                    )
-                                else -> onFeedback(false, err.message ?: "设置失败，请重试")
-                            }
-                        }
-                    )
+                        )
+                    } finally {
+                        isSubmittingBookingPlan = false
+                    }
                 }
             }
 
@@ -2962,6 +2993,50 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     dismissButton = {
                         TextButton(onClick = { showPermissionActivationDialog = false }) {
                             Text("稍后")
+                        }
+                    }
+                )
+            }
+
+            // 云端调价再确认弹窗（PRICE_CHANGED）：如实对照旧价与云端新价 + 按次计费规则。
+            // 「取消」仅关闭弹窗——前次 409 已被云端证明 pre-persist，本机排队计划已被恢复，绝不自动重发；
+            // 「接受新价」才携带用户确认的新价发起全新业务键的重新创建。
+            pendingPriceDriftReconfirm?.let { drift ->
+                val newPrice = drift.currentPriceMicropeach
+                XPeachAlertDialog(
+                    onDismissRequest = { pendingPriceDriftReconfirm = null },
+                    title = { Text("云端抢座价格已调整") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "您创建时看到的价格为 ${formatMicropeachPriceLabel(drift.expectedPriceMicropeach)} 🍑，云端最新价格为 ${formatMicropeachPriceLabel(newPrice ?: drift.expectedPriceMicropeach)} 🍑（每次抢座成功扣减一次，未抢中不扣费）。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "接受新价将以最新价格重新创建云端抢座计划；取消则保留原有排队安排，不会自动提交。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            enabled = newPrice != null && !isSubmittingBookingPlan,
+                            onClick = {
+                                val confirmed = newPrice
+                                pendingPriceDriftReconfirm = null
+                                if (confirmed != null) {
+                                    // 用户明确接受新价：以确认价重新创建（绝不回填 error.detail 为自动接受价）
+                                    saveBookingPlanNow(acceptedPriceMicropeach = confirmed)
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("以 ${formatMicropeachPriceLabel(newPrice ?: 0L)} 🍑 重新创建")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingPriceDriftReconfirm = null }) {
+                            Text("取消")
                         }
                     }
                 )

@@ -5956,7 +5956,11 @@ class CampusRepository internal constructor(
                             else -> null
                         },
                         evidenceSha256 = if (isConfirmedOnSchool) rj.evidenceSha256.cleanNullableLiteral() else null,
-                        priceMicropeach = 10_000L,
+                        // 对账合并一律沿用本地记录的原成交价（用户创建时确认价）；
+                        // 无本地行时回退服务端订单实价，绝不按今日全局价覆盖历史记录
+                        priceMicropeach = matchingLocal?.priceMicropeach
+                            ?: matchingOrder?.pricePeach?.let { kotlin.math.round(it * 10_000.0).toLong() }
+                            ?: 10_000L,
                         paymentState = when {
                             effectiveStatus in setOf("DELEGATION_STOPPED_SCHOOL_CONFIRMED", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") ->
                                 "HELD_PENDING_REVIEW"
@@ -6415,12 +6419,26 @@ class CampusRepository internal constructor(
         preferredSeatLabel: String,
         allowAlternativeSeat: Boolean = true,
         repeatDays: Int = 1,
+        /**
+         * 用户已重新确认的成交价（微桃）：云端调价 409 之后由 UI 诚实再确认路径传入。
+         * 一旦存在用户确认的报价，本次创建钉入并持久化该价，绝不再回落覆盖为
+         * executionMode 常量价；仅 CLOUD_HOSTED 模式消费该值（本机/提醒恒为 0），
+         * 防止上一轮云端报价跨引擎/跨身份残留进入新的本机计划。
+         */
+        acceptedPriceMicropeach: Long? = null,
         nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
         CampusCloudOidcHelper.configurePersistentAuthStorageDir(
             java.io.File(appContext.filesDir, "cloud_auth_provenance")
         )
         val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
+        // 本次创建实际钉入/计费的单价：存在用户确认报价时一律用确认价，
+        // 否则回退为该执行模式向用户展示过的常量价（绝不静默按云端新价改签）。
+        val effectiveExpectedPriceMicropeach = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            (acceptedPriceMicropeach ?: executionMode.priceMicropeach).coerceAtLeast(0L)
+        } else {
+            executionMode.priceMicropeach
+        }
         val targetDateStr = targetDate.toString()
         val prefsSnap = preferencesFlow.first()
         val activeBindingSnap = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
@@ -6622,7 +6640,7 @@ class CampusRepository internal constructor(
                 throw IllegalStateException("云端会话已过期或当前离线，无法创建云端抢座计划；原有的本机排队计划已为您保留")
             }
             var effectiveBalanceMicropeach = binding.peachBalanceMicropeach
-            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
+            if (effectiveBalanceMicropeach < effectiveExpectedPriceMicropeach) {
                 val livePeach = withContext(Dispatchers.IO) {
                     CampusCloudOidcHelper.fetchLivePeachBalance(
                         accessToken = token,
@@ -6642,8 +6660,10 @@ class CampusRepository internal constructor(
                     }
                 }
             }
-            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("当前 XPeach 账户余额不足（云端抢座成功需 1 🍑，未抢中不扣费），请先前往 XPeach 账户补充余额，或改用「本机抢座」")
+            if (effectiveBalanceMicropeach < effectiveExpectedPriceMicropeach) {
+                throw IllegalStateException(
+                    "当前 XPeach 账户余额不足（云端抢座成功需 ${formatMicropeachAsPeach(effectiveExpectedPriceMicropeach)} 🍑，未抢中不扣费），请先前往 XPeach 账户补充余额，或改用「本机抢座」"
+                )
             }
             planOwnerCloudUserId = binding.cloudUserId
 
@@ -6793,9 +6813,10 @@ class CampusRepository internal constructor(
                     planIdempotencyKey = planId,
                     cloudBaseUrl = cloudBaseUrl,
                     repeatDays = normalizedRepeatDays,
-                    // 报价钉死：把创建时向用户展示的价格写入 expected_price_micropeach，
-                    // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签
-                    expectedPriceMicropeach = executionMode.priceMicropeach,
+                    // 报价钉死：把创建时向用户展示/用户已重新确认的价格写入 expected_price_micropeach，
+                    // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签；
+                    // 存在用户确认报价时绝不再回落覆盖为 executionMode 常量价
+                    expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
                     httpTransport = cloudHttpTransportForTest
                 )
             }
@@ -6814,7 +6835,8 @@ class CampusRepository internal constructor(
                             planIdempotencyKey = planId,
                             cloudBaseUrl = cloudBaseUrl,
                             repeatDays = normalizedRepeatDays,
-                            expectedPriceMicropeach = executionMode.priceMicropeach,
+                            // 令牌刷新重提交仍钉入同一成交价（用户确认价优先于常量价），绝不漂移
+                            expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
@@ -6836,7 +6858,7 @@ class CampusRepository internal constructor(
                     restoreStoppedLocalPlansSafely()
                     throw CloudPlanPriceDriftException(
                         expectedPriceMicropeach = finalOutcome.expectedPriceMicropeach
-                            ?: executionMode.priceMicropeach,
+                            ?: effectiveExpectedPriceMicropeach,
                         currentPriceMicropeach = finalOutcome.currentPriceMicropeach,
                         serverReason = finalOutcome.reason
                     )
@@ -6882,7 +6904,8 @@ class CampusRepository internal constructor(
                         cloudJobId = null,
                         externalBookingId = reconcile.externalBookingId,
                         evidenceSha256 = reconcile.evidenceSha256,
-                        priceMicropeach = executionMode.priceMicropeach,
+                        // 响应中断待核对单也必须记录本次钉入价，后续核对按原成交价对账
+                        priceMicropeach = effectiveExpectedPriceMicropeach,
                         paymentState = "HELD_PENDING_REVIEW",
                         status = closedStatus,
                         stateVersion = 1,
@@ -6928,8 +6951,10 @@ class CampusRepository internal constructor(
             cloudJobId = remoteCloudJobId,
             externalBookingId = null,
             evidenceSha256 = null,
-            priceMicropeach = executionMode.priceMicropeach,
-            paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
+            // 持久化本次钉入/用户确认的成交价：后续核对、续期与再分派一律以该原成交价为准，
+            // 绝不因云端后续调价而改写历史计划行
+            priceMicropeach = effectiveExpectedPriceMicropeach,
+            paymentState = if (effectiveExpectedPriceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
             status = initialStatus,
             stateVersion = 1,
             generation = 1,
