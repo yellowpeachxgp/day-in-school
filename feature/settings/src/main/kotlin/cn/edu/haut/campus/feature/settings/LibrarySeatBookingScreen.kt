@@ -114,7 +114,6 @@ import androidx.compose.foundation.verticalScroll
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.CloudIdentityBindingEntity
-import cn.edu.haut.campus.core.database.CloudPlanPriceDriftException
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
@@ -130,6 +129,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1758,10 +1758,55 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionSnapshot by remember { mutableStateOf(LibrarySeatAlarmSubsystem.inspectPermissions(context)) }
     var showPermissionActivationDialog by remember { mutableStateOf(false) }
-    // 云端调价 409 → PRICE_CHANGED 诚实再确认弹窗状态：如实展示旧价 vs 云端新价，
-    // 用户取消即保持原有本机排队计划（不自动重发），用户确认才携带新价重新创建
-    var pendingPriceDriftReconfirm by remember { mutableStateOf<CloudPlanPriceDriftException?>(null) }
-    var isSubmittingBookingPlan by remember { mutableStateOf(false) }
+    // R5-D3 预约提交草稿状态机（EDITING→SUBMITTING→PRICE_CHANGED→USER_CONFIRMED→SUBMITTING→ACCEPTED）：
+    // 待确认记录绑定不可变 BookingDraftSnapshot（身份/学号/世代/base/参数），
+    // 任何上下文变化 → revision++ 并清空 pending；取消绝不重发；确认绑定同一不可变 draft。
+    val submitMachine = remember { LibraryBookingSubmitStateMachine() }
+    // 提交接线层：identityProvider 每次复核取最新身份会话（含世代/base/学号），
+    // paramsProvider 每次取最新草稿参数；submitPlan 只消费不可变快照
+    val submitter = remember(repository) {
+        LibraryBookingPlanSubmitter(
+            machine = submitMachine,
+            identityProvider = {
+                val session = repository.snapshotCloudIdentitySession()
+                BookingIdentityContext(
+                    profileId = session?.profileId.orEmpty(),
+                    cloudUserId = session?.cloudUserId.orEmpty(),
+                    identityGeneration = session?.generation ?: -1L,
+                    normalizedBase = session?.apiBaseUrl.orEmpty(),
+                    studentNo = repository.preferencesFlow.first().savedStudentId.orEmpty()
+                )
+            },
+            paramsProvider = {
+                val areaName = selectedRegion?.regionName ?: recentRecord?.regionName.orEmpty()
+                BookingDraftParams(
+                    engine = selectedMode,
+                    targetDate = targetDate.toString(),
+                    targetTime = targetTimeText,
+                    areaName = areaName,
+                    seatLabel = selectedSeatNames.joinToString(", "),
+                    repeatDays = selectedRepeatDays,
+                    // 云端模式创建钉入展示常量价；本机/提醒引擎不按价钉价
+                    displayedPriceMicropeach = if (selectedMode == BookingExecutionMode.CLOUD_HOSTED) {
+                        selectedMode.priceMicropeach
+                    } else {
+                        null
+                    }
+                )
+            },
+            submitPlan = { snap ->
+                repository.createDualEngineBookingPlan(
+                    executionMode = snap.engine,
+                    targetDate = LocalDate.parse(snap.targetDate),
+                    targetTimeText = snap.targetTime,
+                    preferredAreaName = snap.areaName,
+                    preferredSeatLabel = snap.seatLabel,
+                    repeatDays = snap.repeatDays,
+                    acceptedPriceMicropeach = snap.acceptedPriceMicropeach
+                ).map { }
+            }
+        )
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1774,6 +1819,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             if (event == Lifecycle.Event.ON_RESUME) {
                 permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
                 scope.launch {
+                    // 回到前台即复核身份会话：跨页切号/换址/换学号后，
+                    // 状态机修订号推进并即时作废旧待确认快照
+                    runCatching { submitter.refreshContext() }
                     runCatching { repository.rescheduleActiveLocalBookingPlans() }
                 }
             }
@@ -1911,6 +1959,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
 
     val roomLabel = selectedRegion?.regionName ?: recentRecord?.regionName.orEmpty()
     val preferredSeatsText = selectedSeatNames.joinToString(", ")
+
+    // 上下文同步：身份（含世代/base 变更重写绑定行）与全部草稿参数任一变化
+    // → 状态机修订号 +1 并清空 pending（旧确认快照即刻作废）
+    LaunchedEffect(
+        selectedMode, targetDate, targetTimeText, roomLabel, preferredSeatsText,
+        selectedRepeatDays, cloudBinding?.cloudUserId, cloudBinding?.profileId,
+        cloudBinding?.updatedAtEpochMillis
+    ) {
+        submitter.refreshContext()
+    }
 
     Column(
         modifier = modifier
@@ -2883,60 +2941,41 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             )
 
-            fun saveBookingPlanNow(acceptedPriceMicropeach: Long? = null) {
-                // 双击/旋转重入守卫：同一时刻只允许一个在途创建请求，
-                // 防止用户重复确认导致重复 POST /reservation-plans
-                if (isSubmittingBookingPlan) return
-                scope.launch {
-                    isSubmittingBookingPlan = true
-                    try {
-                        val result = repository.createDualEngineBookingPlan(
-                            executionMode = selectedMode,
-                            targetDate = targetDate,
-                            targetTimeText = targetTimeText,
-                            preferredAreaName = roomLabel,
-                            preferredSeatLabel = preferredSeatsText,
-                            repeatDays = selectedRepeatDays,
-                            // 用户确认过新价时携带确认价（钉入 + 持久化），否则按展示常量价
-                            acceptedPriceMicropeach = acceptedPriceMicropeach
-                        )
-                        result.fold(
-                            onSuccess = { created ->
-                                pendingPriceDriftReconfirm = null
-                                val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
-                                val modePrefix = if (created.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                                    "已开启云端抢座"
-                                } else {
-                                    "已开启本机定时抢座"
-                                }
-                                onFeedback(
-                                    true,
-                                    "$modePrefix：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
-                                )
-                            },
-                            onFailure = { err ->
-                                when (err) {
-                                    // 报价漂移 409 → PRICE_CHANGED：如实展示新旧价格并等待用户明确再确认；
-                                    // 绝不自动按新价重试（静默改价会在用户不知情时改签合同价格）
-                                    is CloudPlanPriceDriftException -> {
-                                        if (err.currentPriceMicropeach != null &&
-                                            err.currentPriceMicropeach != err.expectedPriceMicropeach
-                                        ) {
-                                            pendingPriceDriftReconfirm = err
-                                        } else {
-                                            onFeedback(
-                                                false,
-                                                err.message ?: "云端抢座价格已调整，请核实最新价格后重新创建计划"
-                                            )
-                                        }
-                                    }
-                                    else -> onFeedback(false, err.message ?: "设置失败，请重试")
-                                }
-                            }
-                        )
-                    } finally {
-                        isSubmittingBookingPlan = false
+            // 提交事件统一落反馈：Accepted → 成功 toast；PriceReconfirmationRequired →
+            // 弹窗由状态机 pending 驱动；Stale* 一律诚实吸收，绝不污染新上下文
+            fun reportSubmitEvent(ev: BookingSubmitEvent) {
+                when (ev) {
+                    is BookingSubmitEvent.Accepted -> {
+                        val created = ev.snapshot
+                        val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
+                        val modePrefix = if (created.engine == BookingExecutionMode.CLOUD_HOSTED) {
+                            "已开启云端抢座"
+                        } else {
+                            "已开启本机定时抢座"
+                        }
+                        onFeedback(true, "$modePrefix：${created.targetDate} ${created.targetTime}$repeatTag · ${created.areaName}")
                     }
+                    is BookingSubmitEvent.PriceReconfirmationRequired -> {
+                        val newPrice = ev.pending.effectiveProposedPriceMicropeach
+                        if (newPrice == null || newPrice == ev.pending.oldPriceMicropeach) {
+                            // 无有效新价可确认：不弹死框，直接反馈
+                            submitter.cancelPendingReconfirmation()
+                            onFeedback(false, "云端抢座价格已调整，请核实最新价格后重新创建计划")
+                        }
+                        // 有效新价：弹窗由 submitMachine.visiblePendingReconfirmation() 渲染
+                    }
+                    is BookingSubmitEvent.Failed -> onFeedback(false, ev.message)
+                    is BookingSubmitEvent.StaleConfirmationRefused ->
+                        onFeedback(false, "页面或账号状态已变化，该确认已失效，请核实最新价格后重新发起")
+                    BookingSubmitEvent.Busy, BookingSubmitEvent.StaleResultIgnored -> Unit
+                }
+            }
+
+            fun saveBookingPlanNow() {
+                // 双击/旋转重入守卫：状态机至多一个在途业务尝试，重入被吸收
+                if (submitMachine.phase == BookingSubmitPhase.SUBMITTING) return
+                scope.launch {
+                    reportSubmitEvent(submitter.submitNewAttempt())
                 }
             }
 
@@ -2998,18 +3037,47 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 )
             }
 
-            // 云端调价再确认弹窗（PRICE_CHANGED）：如实对照旧价与云端新价 + 按次计费规则。
+            // 云端调价再确认弹窗（PRICE_CHANGED）：渲染复核（状态机仅当 pending 仍属
+            // 当前草稿才可见）。如实展示账户 + 计划摘要 + 旧价 vs 新价 + 按次计费规则。
             // 「取消」仅关闭弹窗——前次 409 已被云端证明 pre-persist，本机排队计划已被恢复，绝不自动重发；
-            // 「接受新价」才携带用户确认的新价发起全新业务键的重新创建。
-            pendingPriceDriftReconfirm?.let { drift ->
-                val newPrice = drift.currentPriceMicropeach
+            // 「接受新价」经确认按钮复核（同一不可变 draft）后才以新价发起全新业务键的重新创建。
+            submitMachine.visiblePendingReconfirmation()?.let { pending ->
+                val newPrice = pending.effectiveProposedPriceMicropeach
+                val oldPrice = pending.oldPriceMicropeach
+                    ?: pending.snapshot.acceptedPriceMicropeach
+                    ?: 0L
+                val accountLabel = cloudBinding?.displayName?.takeIf { it.isNotBlank() }
+                    ?: pending.snapshot.cloudUserId.takeIf { it.isNotBlank() }
+                    ?: "当前账号"
+                val planSummary = buildString {
+                    append(pending.snapshot.targetDate)
+                    append(" ")
+                    append(pending.snapshot.targetTime)
+                    append(" · ")
+                    append(pending.snapshot.areaName.ifBlank { "未选自习室" })
+                    append(" · ")
+                    append(pending.snapshot.seatLabel.ifBlank { "未选座位" })
+                    if (pending.snapshot.repeatDays > 1) {
+                        append(" · 连续 ")
+                        append(pending.snapshot.repeatDays)
+                        append(" 天")
+                    }
+                }
                 XPeachAlertDialog(
-                    onDismissRequest = { pendingPriceDriftReconfirm = null },
+                    onDismissRequest = { submitter.cancelPendingReconfirmation() },
                     title = { Text("云端抢座价格已调整") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                text = "您创建时看到的价格为 ${formatMicropeachPriceLabel(drift.expectedPriceMicropeach)} 🍑，云端最新价格为 ${formatMicropeachPriceLabel(newPrice ?: drift.expectedPriceMicropeach)} 🍑（每次抢座成功扣减一次，未抢中不扣费）。",
+                                text = "账户：$accountLabel",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "计划：$planSummary",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "您创建时看到的价格为 ${formatMicropeachPriceLabel(oldPrice)} 🍑，云端最新价格为 ${formatMicropeachPriceLabel(newPrice ?: oldPrice)} 🍑（每次抢座成功扣减一次，未抢中不扣费）。",
                                 style = MaterialTheme.typography.bodySmall
                             )
                             Text(
@@ -3020,13 +3088,12 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     },
                     confirmButton = {
                         Button(
-                            enabled = newPrice != null && !isSubmittingBookingPlan,
+                            enabled = newPrice != null && submitMachine.phase != BookingSubmitPhase.SUBMITTING,
                             onClick = {
-                                val confirmed = newPrice
-                                pendingPriceDriftReconfirm = null
-                                if (confirmed != null) {
-                                    // 用户明确接受新价：以确认价重新创建（绝不回填 error.detail 为自动接受价）
-                                    saveBookingPlanNow(acceptedPriceMicropeach = confirmed)
+                                scope.launch {
+                                    // 确认按钮复核：状态机验证 pending 仍属当前不可变 draft，
+                                    // 绑定该 draft 携带确认价 + 新 attemptId 发起新尝试
+                                    reportSubmitEvent(submitter.confirmPendingReconfirmation())
                                 }
                             },
                             shape = RoundedCornerShape(12.dp)
@@ -3035,7 +3102,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { pendingPriceDriftReconfirm = null }) {
+                        TextButton(onClick = { submitter.cancelPendingReconfirmation() }) {
                             Text("取消")
                         }
                     }
