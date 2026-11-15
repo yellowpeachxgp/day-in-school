@@ -275,4 +275,92 @@ class ExamTermRepairTest {
         assertEquals(2, exams().size)
         assertTrue(audits().isEmpty())
     }
+
+    // ---------- Round-2 A2：init 不再运行 V1 日期猜测 ----------
+
+    @Test
+    fun `完整初始化不再按日期猜学期 无来源一月行保留原学期并记 REVIEW_REQUIRED`() = runBlocking {
+        // schema8 形态旧库行：无 originTermId 证明；日期落在 2026-01-12（V1 曾猜归 2025-2026-2）
+        dao.upsertExamSchedules(listOf(
+            exam("ex_jan_init", poisonTerm, examDateIso = "2026-01-12", originTermId = null)
+        ))
+        repo.ensureInitialSeedIfNeeded()
+        val row = exams().single { it.id == "ex_jan_init" }
+        assertEquals(poisonTerm, row.termId)
+        assertNull(row.originTermId)
+        val audit = audits().single { it.examRowId == "ex_jan_init" }
+        assertEquals(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED, audit.disposition)
+        // 重复启动幂等：行与审计完全一致
+        val firstState = Pair(exams(), audits())
+        repo.ensureInitialSeedIfNeeded()
+        assertEquals(firstState, Pair(exams(), audits()))
+        assertEquals(1, audits().size)
+    }
+
+    @Test
+    fun `旧 V1 标志为 true 初始化仍不按日期猜学期`() = runBlocking {
+        fixture.dataStore.edit { it[booleanPreferencesKey("exam_term_poison_repaired_v1")] = true }
+        dao.upsertExamSchedules(listOf(
+            exam("ex_v1flag_init", poisonTerm, examDateIso = "2026-01-12", originTermId = null)
+        ))
+        repo.ensureInitialSeedIfNeeded()
+        assertEquals(poisonTerm, exams().single { it.id == "ex_v1flag_init" }.termId)
+        assertEquals(
+            ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+            audits().single { it.examRowId == "ex_v1flag_init" }.disposition
+        )
+    }
+
+    @Test
+    fun `legacy 账号初始化分支同样不运行 V1 日期猜测`() = runBlocking {
+        val legacy = RepairTestFixture.create(
+            RuntimeEnvironment.getApplication(), "prof_exam_legacy_${System.nanoTime()}", isLegacy = true
+        )
+        try {
+            legacy.dao.upsertExamSchedules(listOf(
+                exam("ex_legacy_jan", poisonTerm, examDateIso = "2026-01-12", originTermId = null)
+            ))
+            legacy.repository.ensureInitialSeedIfNeeded()
+            assertEquals(poisonTerm, legacy.dao.getExamSchedulesSnapshot().single { it.id == "ex_legacy_jan" }.termId)
+            assertEquals(
+                ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                legacy.dao.getExamTermRepairAuditsSnapshot().single { it.examRowId == "ex_legacy_jan" }.disposition
+            )
+        } finally {
+            legacy.close()
+        }
+    }
+
+    @Test
+    fun `已被 V1 误改学期的行绝不盲目反改`() = runBlocking {
+        // 该行表现如同 V1 已把 2026-01-12 考试改写进 2025-2026-2：无证据，禁止再按日期反猜
+        dao.upsertExamSchedules(listOf(
+            exam("ex_v1done", springTerm, examDateIso = "2026-01-12", originTermId = null)
+        ))
+        repo.ensureInitialSeedIfNeeded()
+        val row = exams().single { it.id == "ex_v1done" }
+        assertEquals(springTerm, row.termId)
+        // 学期格式合法且非已知污染签名 → 不产生审计，需权威重同步纠正
+        assertTrue(audits().isEmpty())
+    }
+
+    @Test
+    fun `多账号初始化各自独立完成修复互不干扰`() = runBlocking {
+        val fixtureB = RepairTestFixture.create(
+            RuntimeEnvironment.getApplication(), "prof_exam_b_${System.nanoTime()}"
+        )
+        try {
+            dao.upsertExamSchedules(listOf(exam("ex_a", poisonTerm, examDateIso = "2026-01-12", originTermId = null)))
+            fixtureB.dao.upsertExamSchedules(listOf(exam("ex_b", poisonTerm, examDateIso = "2026-01-13", originTermId = null)))
+            repo.ensureInitialSeedIfNeeded()
+            fixtureB.repository.ensureInitialSeedIfNeeded()
+            assertEquals(poisonTerm, exams().single { it.id == "ex_a" }.termId)
+            assertEquals(poisonTerm, fixtureB.dao.getExamSchedulesSnapshot().single { it.id == "ex_b" }.termId)
+            assertEquals(1, audits().size)
+            assertEquals(1, fixtureB.dao.getExamTermRepairAuditsSnapshot().size)
+            assertTrue(fixtureB.dao.getExamSchedulesSnapshot().none { it.id == "ex_a" })
+        } finally {
+            fixtureB.close()
+        }
+    }
 }

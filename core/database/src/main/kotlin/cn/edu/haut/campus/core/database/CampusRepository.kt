@@ -352,6 +352,11 @@ class CampusRepository internal constructor(
         val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
         val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
         val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
+        /**
+         * 历史标记：V1 日期窗口猜测修复（已移除调用路径）曾写入的完成位。
+         * 仅作为「该行可能曾被 V1 按日期改写」的历史证据保留，绝不再触发任何修复；
+         * 缺逐行来源证明的历史考试行由 V2 记 REVIEW_REQUIRED，已误改的行需权威重同步纠正。
+         */
         val EXAM_TERM_POISON_REPAIRED_V1 = booleanPreferencesKey("exam_term_poison_repaired_v1")
     }
 
@@ -767,7 +772,7 @@ class CampusRepository internal constructor(
                 syncCampusDictionaryV18Internal()
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
-            ensureExamTermPoisonRepairedIfNeeded()
+            // 不再运行 V1 日期猜测修复：无逐行来源证明的历史行一律交给 V2 记 REVIEW_REQUIRED。
             ensureExamTermRepairV2IfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
@@ -842,42 +847,19 @@ class CampusRepository internal constructor(
             }
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
-        ensureExamTermPoisonRepairedIfNeeded()
+        // 不再运行 V1 日期猜测修复：无逐行来源证明的历史行一律交给 V2 记 REVIEW_REQUIRED。
         ensureExamTermRepairV2IfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
-    }
-
-    /**
-     * 一次性修复历史版本将 2025-2026-2（2026年春季学期，考试日期 2026-01-01..2026-07-31）考试误归入 2026-2027-1 的残留记录。
-     */
-    internal suspend fun ensureExamTermPoisonRepairedIfNeeded() {
-        val prefs = preferences.data.first()
-        if (prefs[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] == true) return
-        database.withTransaction {
-            val allExams = dao.getExamSchedulesSnapshot()
-            val poisoned = allExams.filter { ex ->
-                val dateIso = ex.examDateIso
-                ex.termId == "2026-2027-1" &&
-                    dateIso != null &&
-                    dateIso >= "2026-01-01" &&
-                    dateIso <= "2026-07-31"
-            }
-            if (poisoned.isNotEmpty()) {
-                val repaired = poisoned.map { ex -> ex.copy(termId = "2025-2026-2") }
-                dao.upsertExamSchedules(repaired)
-            }
-        }
-        preferences.edit {
-            it[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] = true
-        }
     }
 
     /**
      * 考试学期修复 V2（逐条证据驱动，替代 V1 的纯日期窗口猜测）：
      * - 有权威来源证明（originTermId 由可信同步管线写入）且 termId 被篡改的行 → 修复回原始学期；
      * - 目标学期已存在相同指纹考试 → 删除错标副本并记 MERGED_DUPLICATE，不产生重复考试；
-     * - 旧库无来源行（originTermId == null）：学期有同步/导入证据 → 不动；
+     * - 旧库无来源行（originTermId == null）：学期有同步/导入证据 → 不动（仅用于抑制首次标记，不算解决证据）；
      *   学期为已知污染签名（"2026-2027-1"）或非法格式且无证据 → 保留并记 REVIEW_REQUIRED 待用户重同步核对；
+     *   解除 REVIEW_REQUIRED 必须凭该行自身证据（originTermId 落库或行被权威重同步移除），
+     *   学期级「该学期同步过/有导入审计」不再充当解决依据——证据不足一律维持待核对；
      * - 绝不凭显示日期猜学期（一月考试不当然属于春季学期），绝不盲目反改 V1 已修过的行；
      * - 修复与审计在同一事务内提交；无任何 DataStore 布尔门控——审计表即事实来源，
      *   进程在任何时刻崩溃重跑都安全（同一 examRowId+ruleVersion 的审计幂等覆盖）。
