@@ -24,6 +24,38 @@ import java.time.ZonedDateTime
 object ScheduleEngine {
 
     /**
+     * 排课输入「可展开」统一校验（课表展开器与「课表依据」判定共用同一函数，绝不两套口径）：
+     * 规则须属于该学期、有课周次非空、节次区间有效且课程可解析——
+     * 跨学期残留、零周次空壳、倒序节次或缺课孤儿规则均不可展开，不得充当任何"课表依据"。
+     */
+    fun isExpandableScheduleRule(
+        rule: CourseScheduleRule,
+        termId: String,
+        courseIds: Set<String>
+    ): Boolean = rule.termId == termId &&
+        rule.weeks.isNotEmpty() &&
+        rule.startPeriod >= 1 &&
+        rule.startPeriod <= rule.endPeriod &&
+        rule.courseId in courseIds
+
+    /**
+     * 单日覆盖「可展开」统一校验：仅非停课覆盖（补课/改时间/改教室）才可能展开为课程事件，
+     * 且必须可解析出真实课程（自带 courseId，或经 courseRuleId 关联到现存规则再解析课程）。
+     * 停课覆盖只会屏蔽既有事件、自身绝不产生事件；指向已删除规则的孤儿停课行不构成任何依据。
+     */
+    fun isExpandableOccurrenceOverride(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>,
+        courseIds: Set<String>
+    ): Boolean {
+        if (override.termId != termId || override.canceled) return false
+        val baseRule = override.courseRuleId?.let { rulesById[it] }
+        val targetCourseId = override.courseId ?: baseRule?.courseId ?: return false
+        return targetCourseId in courseIds
+    }
+
+    /**
      * 解析指定日期的实际课程列表（包含学期日历调休、单日停课/改教室/改时间、临时补课、连续同课合并与冲突分栏计算）。
      */
     fun resolveOccurrencesForDate(
@@ -37,6 +69,7 @@ object ScheduleEngine {
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val courseMap = courses.associateBy { it.id }
+        val rulesById = rules.associateBy { it.id }
         val periodMap = periodTimes
             .filter { it.timeTableId == term.timeTableId }
             .associateBy { it.periodNo }
@@ -61,7 +94,7 @@ object ScheduleEngine {
             val activeWeek = effectiveDate.teachingWeek
             val targetWeekday = effectiveDate.weekdayUsed
             val matchingRules = rules.filter { rule ->
-                rule.termId == term.id &&
+                isExpandableScheduleRule(rule, term.id, courseMap.keys) &&
                     rule.weekday == targetWeekday &&
                     activeWeek in rule.weeks
             }
@@ -124,8 +157,10 @@ object ScheduleEngine {
         // 2. 单日临时补课或跨天调入课程（courseRuleId 不在今日常规触发集，或纯手工补课）
         val handledOverrideIds = rawOccurrences.mapNotNull { it.overrideId }.toSet()
         for (extraOverride in dayOverrides) {
-            if (extraOverride.id in handledOverrideIds || extraOverride.canceled) continue
-            val baseRule = extraOverride.courseRuleId?.let { ruleId -> rules.firstOrNull { it.id == ruleId } }
+            if (extraOverride.id in handledOverrideIds ||
+                !isExpandableOccurrenceOverride(extraOverride, term.id, rulesById, courseMap.keys)
+            ) continue
+            val baseRule = extraOverride.courseRuleId?.let { rulesById[it] }
             val targetCourseId = extraOverride.courseId ?: baseRule?.courseId ?: continue
             val course = courseMap[targetCourseId] ?: continue
 
