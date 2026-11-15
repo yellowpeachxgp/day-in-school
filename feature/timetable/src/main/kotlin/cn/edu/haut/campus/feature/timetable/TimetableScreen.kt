@@ -521,7 +521,12 @@ fun TimetableScreen(
                                                             results += repository.restoreRuleCancellation(
                                                                 clickTermId,
                                                                 ruleIds,
-                                                                clickDate
+                                                                clickDate,
+                                                                // 按 moveId 折叠的调课组已走 undoMove；
+                                                                // 落至此分支即点击时无调课关联——
+                                                                // null 双向断言「全部为独立行」，
+                                                                // 命中后被改挂新 moveId 将判 CONFLICT。
+                                                                expectedMoveId = groupMoveIds.singleOrNull()
                                                             )
                                                         }
                                                         for (row in groupRows.filter {

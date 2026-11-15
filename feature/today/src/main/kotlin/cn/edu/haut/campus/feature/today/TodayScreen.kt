@@ -781,23 +781,55 @@ fun TodayScreen(
                                                                 expectedMoveId = clickedRow?.moveId
                                                             )
                                                         } else {
-                                                            // 规则停课行（含调课 SOURCE）：按规则+日期恢复，
-                                                            // 命中的调课源以点击时捕获的 moveId 校验后整组撤销
-                                                            val expectedMoveId = occurrenceOverrides
+                                                            // 规则停课行（含调课 SOURCE）：点击时捕获命中行的
+                                                            // moveId 集合——每个 moveId 先经 undoMove 原子撤销整组
+                                                            // （覆盖其全部 SOURCE+TARGET，多调课组逐组处理）；
+                                                            // 再由 restoreRuleCancellation(expectedMoveId=null)
+                                                            // 断言剩余命中行均为独立停课行——若点击后有行被
+                                                            // 再次调课改挂新 moveId，将判 CONFLICT 而非误撤新调课。
+                                                            val capturedMoveIds = occurrenceOverrides
                                                                 .filter {
                                                                     it.courseRuleId != null &&
                                                                         it.courseRuleId in clickRuleIds &&
                                                                         it.date == clickDate &&
                                                                         it.canceled
                                                                 }
-                                                                .mapNotNull { it.moveId }
+                                                                .mapNotNull {
+                                                                    it.moveId?.takeIf { m -> m.isNotBlank() }
+                                                                }
                                                                 .distinct()
-                                                                .singleOrNull()
-                                                            repository.restoreRuleCancellation(
+                                                            val partialResults =
+                                                                mutableListOf<CampusRepository.OccurrenceCommandResult>()
+                                                            for (capturedMoveId in capturedMoveIds) {
+                                                                partialResults += repository.undoMove(
+                                                                    clickTermId,
+                                                                    capturedMoveId
+                                                                )
+                                                            }
+                                                            partialResults += repository.restoreRuleCancellation(
                                                                 termId = clickTermId,
                                                                 ruleIds = clickRuleIds,
                                                                 date = clickDate,
-                                                                expectedMoveId = expectedMoveId
+                                                                expectedMoveId = null
+                                                            )
+                                                            CampusRepository.OccurrenceCommandResult(
+                                                                status = when {
+                                                                    partialResults.any {
+                                                                        it.status == CampusRepository.OccurrenceCommandStatus.CONFLICT
+                                                                    } -> CampusRepository.OccurrenceCommandStatus.CONFLICT
+                                                                    partialResults.any {
+                                                                        it.status == CampusRepository.OccurrenceCommandStatus.APPLIED
+                                                                    } -> CampusRepository.OccurrenceCommandStatus.APPLIED
+                                                                    else -> CampusRepository.OccurrenceCommandStatus.NO_CHANGE
+                                                                },
+                                                                restoredSourceOverrideIds = partialResults
+                                                                    .flatMap { it.restoredSourceOverrideIds },
+                                                                deletedTargetOverrideIds = partialResults
+                                                                    .flatMap { it.deletedTargetOverrideIds },
+                                                                restoredMoveIds = partialResults
+                                                                    .flatMap { it.restoredMoveIds },
+                                                                legacyAmbiguousTargets = partialResults
+                                                                    .flatMap { it.legacyAmbiguousTargets }
                                                             )
                                                         }
                                                         if (restoreResult.status ==

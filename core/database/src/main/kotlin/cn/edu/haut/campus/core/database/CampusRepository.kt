@@ -1979,8 +1979,11 @@ class CampusRepository internal constructor(
     /**
      * 「恢复暂停」命令：仅对**纯覆盖行**（暂停的调入目标/单日新增）取消 canceled 标记。
      * - 行不存在或已活跃 → [OccurrenceCommandStatus.NO_CHANGE]（双击/陈旧回调安全幂等）；
-     * - termId 不符、行实为规则关联行、或 [expectedMoveId] 与当前行 moveId 不符
-     *   （例如目标已被再次移走）→ [OccurrenceCommandStatus.CONFLICT]；
+     * - termId 不符、行实为规则关联行 → [OccurrenceCommandStatus.CONFLICT]；
+     * - [expectedMoveId] 为**双向断言**：传 null = 断言该行为独立非调课行（行当前带
+     *   moveId 即陈旧冲突）；非 null = 要求与当前行 moveId 精确一致——任何不一致
+     *   （例如点击后目标已被再次移走改挂新 moveId）一律 [OccurrenceCommandStatus.CONFLICT]，
+     *   绝不放行去改动新调课的 TARGET；
      * - 仅置 canceled=false，保留 id/moveId/moveRole/教室/节次等全部身份字段，
      *   绝不删除任何 SOURCE/TARGET——撤销整次调课只能走 [undoMove]。
      */
@@ -2020,8 +2023,11 @@ class CampusRepository internal constructor(
     /**
      * 「恢复规则停课」命令：恢复指定日期、给定规则集合下的已停课行。
      * - 普通停课行（无 moveId）：删除取消行；旧版「已调至 …」源顺带检出待核对候选目标；
-     * - 命中调课 SOURCE 行：提供 [expectedMoveId]（点击时捕获）且命中行 moveId 不符 →
-     *   [OccurrenceCommandStatus.CONFLICT] 整体拒绝；相符/未提供则按 moveId 原子撤销整组；
+     * - 命中调课 SOURCE 行：按 [expectedMoveId]（点击时捕获）做**双向断言**——
+     *   传 null = 断言命中行全部为独立非调课行（行被再次调课改挂 moveId 即陈旧冲突）；
+     *   非 null = 要求每条调课关联行的 moveId 精确一致。任一不符 →
+     *   [OccurrenceCommandStatus.CONFLICT] 整体拒绝，绝不顺手撤销别次新调课；
+     *   无 moveId 的普通停课行不与期望构成矛盾；
      * - 未命中任何行 → [OccurrenceCommandStatus.NO_CHANGE]，严格 termId 隔离。
      */
     suspend fun restoreRuleCancellation(
@@ -2044,18 +2050,20 @@ class CampusRepository internal constructor(
             if (rows.isEmpty()) {
                 OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
             } else {
-                // 身份核验：任一命中行 moveId 与点击时捕获的不一致 → 陈旧点击，整体拒绝。
+                // 双向身份核验：expectedMoveId=null 断言「命中行均为独立非调课行」，
+                // 命中任何 moveId 关联行即陈旧点击；非 null 要求每条调课关联行精确一致——
+                // 行在点击后被再次调课改挂新 moveId 同样判 CONFLICT，绝不误撤新调课。
+                // 无 moveId 的普通停课行不构成矛盾。空白串归一化为 null 后比较。
+                val expectedMid = expectedMoveId?.takeIf { it.isNotBlank() }
                 val moveIds = linkedSetOf<String>()
                 var conflict = false
                 for (row in rows) {
-                    val mid = row.moveId
-                    if (!mid.isNullOrBlank()) {
-                        if (expectedMoveId != null && mid != expectedMoveId) {
-                            conflict = true
-                            break
-                        }
-                        moveIds += mid
+                    val mid = row.moveId?.takeIf { it.isNotBlank() }
+                    if (mid != null && mid != expectedMid) {
+                        conflict = true
+                        break
                     }
+                    if (mid != null) moveIds += mid
                 }
                 if (conflict) {
                     Log.w(
@@ -2128,11 +2136,16 @@ class CampusRepository internal constructor(
             )
             return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
         }
-        if (expectedMoveId != null && row.moveId != expectedMoveId) {
+        // 双向断言：expectedMoveId=null 即「断言独立非调课行」——行当前带 moveId
+        // （点击后被再次移走/改挂新调课）绝不放行，否则会把新调课的 TARGET 静默改状态；
+        // 非 null 则要求精确一致。空白串一律归一化为 null 后比较。
+        val expectedMid = expectedMoveId?.takeIf { it.isNotBlank() }
+        val actualMid = row.moveId?.takeIf { it.isNotBlank() }
+        if (actualMid != expectedMid) {
             Log.w(
                 LOG_TAG,
                 "unpauseOccurrence: " + overrideId + " moveId=" + row.moveId +
-                    " 与期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
+                    " 与点击时捕获的期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
             )
             return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
         }
@@ -2224,8 +2237,12 @@ class CampusRepository internal constructor(
                 val existing = snapshot.firstOrNull { it.id == overrideId }
                 if (existing != null && existing.courseRuleId == null) {
                     // 纯覆盖行一律按「恢复暂停」处理：已活跃行安全幂等空操作，
-                    // 绝不因重复点击/陈旧回调撤销整次调课。
-                    val unpause = unpauseOccurrenceInTransaction(existing.termId, existing.id, null)
+                    // 绝不因重复点击/陈旧回调撤销整次调课。此处传入快照中该行自身的
+                    // moveId 作为期望（同一事务内必一致）——null 在双向断言下意为
+                    // 「断言独立非调课行」，会让暂停的调入目标误判 CONFLICT。
+                    val unpause = unpauseOccurrenceInTransaction(
+                        existing.termId, existing.id, existing.moveId
+                    )
                     unpausedIds += unpause.unpausedOverrideIds
                 } else if (existing != null) {
                     if (!existing.moveId.isNullOrBlank()) {

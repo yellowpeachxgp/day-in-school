@@ -1418,4 +1418,143 @@ class CourseMoveRecoveryTest {
         assertTrue(overrides().single { it.id == target.id }.canceled)
         assertTrue(notified.none { it == "OCCURRENCE_RESTORED" })
     }
+
+    // ---------- Round-4 A1：expectedMoveId 双向断言（null = 断言独立非调课行） ----------
+
+    @Test
+    fun `调入目标再移动后 null 期望恢复判 CONFLICT 新调课目标保持暂停`() = runBlocking {
+        val r1 = rule("r_r4_null_tgt", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val firstTarget = LocalDate.of(2026, 10, 14)
+        val secondTarget = LocalDate.of(2026, 10, 16)
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id,
+            targetDate = firstTarget, newStartPeriod = 1, newEndPeriod = 2, newRoom = "教室A"
+        )
+        val targetA = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+
+        // 调入目标再次移动 B→C：旧目标删除重建，源行整体改挂新 moveId
+        val movedInOcc = resolveOcc(firstTarget, listOf(r1)).single { it.overrideId == targetA.id }
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = movedInOcc, termId = term.id,
+            targetDate = secondTarget, newStartPeriod = 3, newEndPeriod = 4, newRoom = "教室B"
+        )
+        val moveB = overrides().mapNotNull { it.moveId }.toSet().single()
+        val targetB = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+        repo.cancelClassOccurrenceOnDate(
+            resolveOcc(secondTarget, listOf(r1)).single { it.overrideId == targetB.id },
+            term.id, reason = "临时停课"
+        )
+
+        // 迟到的泛化恢复携带 null 期望（旧实现跳过 moveId 校验直接复活新调课 TARGET）：
+        // 双向断言下 null = 断言独立非调课行 → 行带 moveB 即 CONFLICT，C 目标保持暂停
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.CONFLICT,
+            repo.unpauseOccurrence(term.id, targetB.id, expectedMoveId = null).status
+        )
+        val row = overrides().single { it.id == targetB.id }
+        assertTrue(row.canceled)
+        assertEquals(moveB, row.moveId)
+        assertEquals(OccurrenceOverride.MOVE_ROLE_TARGET, row.moveRole)
+        // 错误 moveId 同样 CONFLICT；点击时正确捕获 moveB 才能恢复
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.CONFLICT,
+            repo.unpauseOccurrence(term.id, targetB.id, expectedMoveId = "stale_move_id").status
+        )
+        assertTrue(overrides().single { it.id == targetB.id }.canceled)
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.APPLIED,
+            repo.unpauseOccurrence(term.id, targetB.id, expectedMoveId = moveB).status
+        )
+        assertFalse(overrides().single { it.id == targetB.id }.canceled)
+    }
+
+    @Test
+    fun `独立暂停行 null 期望恢复仍应用且重复调用安全幂等`() = runBlocking {
+        dao.upsertOccurrenceOverride(
+            OccurrenceOverride(
+                id = "ov_r4_standalone",
+                termId = term.id,
+                courseId = course.id,
+                courseRuleId = null,
+                date = LocalDate.of(2026, 10, 12),
+                startPeriod = 1,
+                endPeriod = 2,
+                canceled = true,
+                reason = "单日新增暂停"
+            ).toEntity()
+        )
+        // null 期望命中真正的独立非调课行：正常恢复
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.APPLIED,
+            repo.unpauseOccurrence(term.id, "ov_r4_standalone", expectedMoveId = null).status
+        )
+        assertFalse(overrides().single { it.id == "ov_r4_standalone" }.canceled)
+        // 已活跃行重复恢复：安全幂等 NO_CHANGE
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.NO_CHANGE,
+            repo.unpauseOccurrence(term.id, "ov_r4_standalone", expectedMoveId = null).status
+        )
+    }
+
+    @Test
+    fun `停课规则行点击后改挂调课 null 期望规则恢复判 CONFLICT 新调课不动`() = runBlocking {
+        val r1 = rule("r_r4_rule", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+        val sourceOcc = occFor(listOf(r1), sourceDate)
+
+        // 普通停课：规则行 moveId=null —— 点击时捕获 expectedMoveId=null
+        repo.cancelClassOccurrenceOnDate(sourceOcc, term.id, reason = "临时停课")
+        assertNull(overrides().single { it.courseRuleId == r1.id }.moveId)
+
+        // 点击后该行被再次调课：同 id 规则行改挂新 moveId，C 日期生成新 TARGET
+        repo.rescheduleSingleOccurrenceCrossDate(
+            occ = sourceOcc, termId = term.id,
+            targetDate = LocalDate.of(2026, 10, 16),
+            newStartPeriod = 3, newEndPeriod = 4, newRoom = "教室C"
+        )
+        val moveB = overrides().mapNotNull { it.moveId }.toSet().single()
+        val source = overrides().single { it.courseRuleId == r1.id }
+        val targetB = overrides().single { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET }
+
+        // 旧 null 期望的规则恢复：命中行已带 moveId → CONFLICT，新调课 TARGET 原样保留
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.CONFLICT,
+            repo.restoreRuleCancellation(term.id, listOf(r1.id), sourceDate, expectedMoveId = null).status
+        )
+        assertTrue(overrides().single { it.id == source.id }.canceled)
+        assertEquals(moveB, overrides().single { it.id == source.id }.moveId)
+        assertTrue(overrides().any { it.id == targetB.id && !it.canceled })
+
+        // 错误 moveId 同样 CONFLICT；正确捕获 moveB 才原子撤销整组
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.CONFLICT,
+            repo.restoreRuleCancellation(term.id, listOf(r1.id), sourceDate, expectedMoveId = "stale_move_id").status
+        )
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.APPLIED,
+            repo.restoreRuleCancellation(term.id, listOf(r1.id), sourceDate, expectedMoveId = moveB).status
+        )
+        assertTrue(overrides().isEmpty())
+        assertEquals(1, resolveOcc(sourceDate, listOf(r1)).size)
+    }
+
+    @Test
+    fun `普通停课 null 期望规则恢复保持应用 混合组含调课时逐组撤销`() = runBlocking {
+        val r1 = rule("r_r4_plain", 1, 2)
+        dao.upsertRules(listOf(r1).map { it.toEntity() })
+        val sourceDate = LocalDate.of(2026, 10, 12)
+
+        // 纯普通停课组（无任何 moveId）：null 期望断言成立 → 正常恢复
+        repo.cancelClassOccurrenceOnDate(
+            occ = occFor(listOf(r1), sourceDate), termId = term.id, reason = "临时停课"
+        )
+        assertEquals(
+            CampusRepository.OccurrenceCommandStatus.APPLIED,
+            repo.restoreRuleCancellation(term.id, listOf(r1.id), sourceDate, expectedMoveId = null).status
+        )
+        assertEquals(1, resolveOcc(sourceDate, listOf(r1)).size)
+    }
 }
