@@ -140,9 +140,9 @@ class CampusStudyRoomCatalogIntegrityTest {
         current = true
     )
 
-    private fun termRule(termId: String) = CourseScheduleRule(
+    private fun termRule(termId: String, courseId: String = "c1") = CourseScheduleRule(
         id = "r_$termId",
-        courseId = "c1",
+        courseId = courseId,
         termId = termId,
         weekday = DayOfWeek.MONDAY,
         startPeriod = 1,
@@ -151,15 +151,35 @@ class CampusStudyRoomCatalogIntegrityTest {
         rawRoom = "5号教学楼5101"
     )
 
+    private fun termPeriods(timeTableId: String = "tt_study") = listOf(
+        cn.edu.haut.campus.core.model.PeriodTime(
+            "p1", timeTableId, 1, LocalTime.of(8, 30), LocalTime.of(9, 15), "上午"
+        ),
+        cn.edu.haut.campus.core.model.PeriodTime(
+            "p2", timeTableId, 2, LocalTime.of(9, 20), LocalTime.of(10, 5), "上午"
+        )
+    )
+
+    private fun termCourse(id: String = "c1") = cn.edu.haut.campus.core.model.Course(
+        id = id,
+        name = "数据结构",
+        colorArgb = 0xFF2563EB,
+        source = cn.edu.haut.campus.core.model.CourseSource.OFFICIAL_JW
+    )
+
     @Test
-    fun currentTermScheduleBasisRequiresTermScopedExpandableInputs() {
+    fun currentTermScheduleBasisRequiresStrictExpandableInputs() {
         val term = testTerm()
+        val periods = termPeriods(term.timeTableId)
+        val course = termCourse()
 
         // 无当前学期：即便残留其他学期 rules，也绝无课表依据（跨学期混杂不得当依据）
         assertFalse(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = null,
-                rules = listOf(termRule("old_term_1"))
+                courses = listOf(course),
+                rules = listOf(termRule("old_term_1")),
+                periodTimes = periods
             )
         )
 
@@ -167,26 +187,71 @@ class CampusStudyRoomCatalogIntegrityTest {
         assertFalse(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = term,
-                rules = listOf(termRule("2025-2026-2"), termRule("2025-2026-1"))
+                courses = listOf(course),
+                rules = listOf(termRule("2025-2026-2"), termRule("2025-2026-1")),
+                periodTimes = periods
             )
         )
 
-        // 本学期排课规则存在：依据成立（当日无课时的"全部无冲突"才是有效推导）
+        // 本学期可展开规则存在：依据成立（当日无课时的"全部无冲突"才是有效推导）
         assertTrue(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = term,
-                rules = listOf(termRule(term.id))
+                courses = listOf(course),
+                rules = listOf(termRule(term.id)),
+                periodTimes = periods
             )
         )
 
-        // 无规则但存在本学期单日覆盖（补课/停课调整）：同样构成依据
+        // 完整个人课表但今日无课：依据仍成立（依据看学期输入而非当日展开结果）
         assertTrue(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = term,
+                courses = listOf(course),
+                rules = listOf(termRule(term.id).copy(weeks = setOf(19))),
+                periodTimes = periods
+            )
+        )
+
+        // 学期作息表无任何节次：排课无法落到有效时间段，不构成依据
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(termRule(term.id)),
+                periodTimes = emptyList()
+            )
+        )
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(termRule(term.id)),
+                periodTimes = termPeriods("other_timetable")
+            )
+        )
+
+        // 规则指向缺失课程：不可展开，不构成依据
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = emptyList(),
+                rules = listOf(termRule(term.id)),
+                periodTimes = periods
+            )
+        )
+
+        // R3 回归：孤儿停课覆盖（指向已删除规则 r_x，无支撑规则）绝不构成依据
+        assertFalse(
+            "orphan canceled override without backing rule must NOT be a basis",
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
                 rules = emptyList(),
+                periodTimes = periods,
                 occurrenceOverrides = listOf(
                     OccurrenceOverride(
-                        id = "oo_1",
+                        id = "oo_orphan_cancel",
                         termId = term.id,
                         courseRuleId = "r_x",
                         date = LocalDate.of(2026, 9, 7),
@@ -196,18 +261,99 @@ class CampusStudyRoomCatalogIntegrityTest {
             )
         )
 
+        // 停课覆盖即便自带 courseId 也不可展开为事件（停课只屏蔽不产生），同样不构成依据
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = emptyList(),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_cancel_with_course",
+                        termId = term.id,
+                        courseId = course.id,
+                        date = LocalDate.of(2026, 9, 7),
+                        canceled = true
+                    )
+                )
+            )
+        )
+
+        // 非停课补课覆盖可解析出真实课程：构成依据（无规则时的单日新增课）
+        assertTrue(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = emptyList(),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_makeup",
+                        termId = term.id,
+                        courseId = course.id,
+                        date = LocalDate.of(2026, 9, 7),
+                        startPeriod = 1,
+                        endPeriod = 2,
+                        canceled = false
+                    )
+                )
+            )
+        )
+
+        // 非停课覆盖经现存规则关联解析出课程：构成依据
+        // （支撑规则自身零周次不可展开，但覆盖行凭它解析到真实课程即可单独成立）
+        assertTrue(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = listOf(termRule(term.id).copy(id = "r_empty_weeks", weeks = emptySet())),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_linked",
+                        termId = term.id,
+                        courseRuleId = "r_empty_weeks",
+                        date = LocalDate.of(2026, 9, 7),
+                        canceled = false
+                    )
+                )
+            )
+        )
+
+        // 非停课覆盖但课程不可解析（无 courseId 且规则不存在）：不构成依据
+        assertFalse(
+            CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+                term = term,
+                courses = listOf(course),
+                rules = emptyList(),
+                periodTimes = periods,
+                occurrenceOverrides = listOf(
+                    OccurrenceOverride(
+                        id = "oo_unresolvable",
+                        termId = term.id,
+                        courseRuleId = "r_missing",
+                        date = LocalDate.of(2026, 9, 7),
+                        canceled = false
+                    )
+                )
+            )
+        )
+
         // 其他学期覆盖不算数
         assertFalse(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = term,
+                courses = listOf(course),
                 rules = emptyList(),
+                periodTimes = periods,
                 occurrenceOverrides = listOf(
                     OccurrenceOverride(
-                        id = "oo_2",
+                        id = "oo_foreign_term",
                         termId = "old_term_1",
-                        courseRuleId = "r_x",
+                        courseId = course.id,
                         date = LocalDate.of(2026, 9, 7),
-                        canceled = true
+                        canceled = false
                     )
                 )
             )
@@ -217,7 +363,9 @@ class CampusStudyRoomCatalogIntegrityTest {
         assertFalse(
             CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
                 term = term,
-                rules = emptyList()
+                courses = listOf(course),
+                rules = emptyList(),
+                periodTimes = periods
             )
         )
     }

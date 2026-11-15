@@ -261,6 +261,18 @@ fun TodayScreen(
         if (activeTermId != null) rules.filter { it.termId == activeTermId } else rules
     }
 
+    // 「自习教室」卡片 N/N 无冲突计数是否具备本学期课表依据：
+    // 与展开器共用严格校验——孤儿停课覆盖/跨学期残留 rules/缺作息表一律无依据，改显示纯名录
+    val hasStudyScheduleBasis = remember(term, courses, rules, periodTimes, occurrenceOverrides) {
+        CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            occurrenceOverrides = occurrenceOverrides
+        )
+    }
+
     val mealRecommendation = remember(
         selectedDate,
         currentNow,
@@ -831,6 +843,7 @@ fun TodayScreen(
                 teachingWeek = snapshot.teachingWeek ?: 1,
                 rules = rules,
                 resolvedDateOccurrences = snapshot.items.map { it.occurrence },
+                hasStudyScheduleBasis = hasStudyScheduleBasis,
                 selectedCampusId = prefs.selectedCampusId,
                 activeTimeTableId = term?.timeTableId,
                 periodTimes = periodTimes,
@@ -2007,6 +2020,7 @@ private fun TodayCampusBentoSection(
     teachingWeek: Int,
     rules: List<CourseScheduleRule>,
     resolvedDateOccurrences: List<cn.edu.haut.campus.core.model.ClassOccurrence> = emptyList(),
+    hasStudyScheduleBasis: Boolean = false,
     selectedCampusId: String = "",
     activeTimeTableId: String? = null,
     periodTimes: List<cn.edu.haut.campus.core.model.PeriodTime> = emptyList(),
@@ -2244,7 +2258,8 @@ private fun TodayCampusBentoSection(
             id = "EMPTY_CLASSROOM",
             title = HomeCardModule.EMPTY_CLASSROOM.title,
             badgeText = currentSlotLabel,
-            subtitle = if (rules.isNotEmpty() || resolvedDateOccurrences.isNotEmpty()) {
+            // 严格依据判定：无本学期可展开排课输入时只显示名录规模，绝不以 N/N 冒充"全部无冲突"
+            subtitle = if (hasStudyScheduleBasis) {
                 "${studyAvailability.campusShortLabel} ${studyAvailability.freeRoomsCount}/${studyAvailability.totalCandidateRoomsCount} 间个人课表无冲突（参考）"
             } else {
                 "${studyAvailability.campusShortLabel} ${studyAvailability.totalCandidateRoomsCount} 间自习教室名录（个人无课参考）"

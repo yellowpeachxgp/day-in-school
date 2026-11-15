@@ -179,6 +179,40 @@ data class AppPreferencesState(
     val customCampusZonesJson: String = "[]"
 )
 
+/** 微桃 → 🍑 整数/小数自适应显示（1.0 显示为 "1"，0.5 显示为 "0.5"） */
+private fun formatMicropeachAsPeach(micropeach: Long): String {
+    val whole = micropeach / 10_000L
+    val rem = micropeach % 10_000L
+    return if (rem == 0L) whole.toString() else (micropeach / 10_000.0).toString()
+}
+
+/**
+ * 云端预约计划报价漂移冲突（R3 §5 价格钉死诚实再确认）：
+ * 客户端按创建时向用户展示的价格提交 expected_price_micropeach，云端调价后以 409 拒绝。
+ * UI 必须如实向用户展示新旧价格并等待其重新发起创建——绝不自动按新价静默重试，
+ * 否则会在用户不知情的情况下改签合同价格。
+ */
+class CloudPlanPriceDriftException(
+    /** 创建时向用户展示/钉入请求的价格（微桃） */
+    val expectedPriceMicropeach: Long,
+    /** 云端错误 detail 中返回的现行价格（微桃），云端未提供时为 null */
+    val currentPriceMicropeach: Long?,
+    serverReason: String?
+) : IllegalStateException(
+    buildString {
+        append("云端抢座价格已调整")
+        if (currentPriceMicropeach != null && currentPriceMicropeach != expectedPriceMicropeach) {
+            append("：您创建时看到的价格为 ")
+            append(formatMicropeachAsPeach(expectedPriceMicropeach))
+            append(" 🍑，云端最新价格为 ")
+            append(formatMicropeachAsPeach(currentPriceMicropeach))
+            append(" 🍑")
+        }
+        serverReason?.takeIf { it.isNotBlank() }?.let { append("（").append(it).append("）") }
+        append("。请核实最新价格后重新创建计划")
+    }
+)
+
 class CampusRepository internal constructor(
     private val appContext: Context,
     private val database: HautDatabase,
@@ -3520,27 +3554,46 @@ class CampusRepository internal constructor(
 
     suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
         // CLOUD_API_BASE_URL 属于身份会话快照成分：其变更必须过提交屏障（全局锁序 booking→identity），
-        // 保证同步在锁内复核身份/世代/base-url 后，不存在"复核通过→写入前"间被换址的窗口
+        // 保证同步在锁内复核身份/世代/base-url 后，不存在"复核通过→写入前"间被换址的窗口。
+        // 真实换址（同一规范化口径下 old != new）还必须在同一锁内推进身份世代：
+        // 仅有 base-url 相等性复核挡不住 A→B→A——回到原址后迟到的在途响应会误判快照仍有效。
+        // 世代推进即令在途会话全部失效（非解绑，不留 tombstone）；同值保存、仅改代理选项绝不推进。
         bookingPlanStateMutex.withLock {
             cloudIdentityMutex.withLock {
+                var baseUrlChanged = false
                 preferences.edit { prefs ->
+                    // 与身份快照同一规范化口径（normalizeCloudApiBaseUrl 幂等，等价于快照读到的 apiBaseUrl）
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    val newBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+                    baseUrlChanged = oldBase != newBase
                     prefs[PrefKeys.PROXY_MODE] = config.mode.key
                     prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
                     prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
                     prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
                     prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
                     prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-                    prefs[PrefKeys.CLOUD_API_BASE_URL] = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+                    prefs[PrefKeys.CLOUD_API_BASE_URL] = newBase
+                }
+                if (baseUrlChanged) {
+                    // 同一 owner 保留：这是"换址失效"而非解绑，绝不写 tombstone
+                    bumpCloudIdentityGenerationLocked(
+                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                        markUnlinkTombstone = false
+                    )
                 }
             }
         }
     }
 
     suspend fun resetNetworkProxyConfig() {
-        // 同上：reset 会清除 CLOUD_API_BASE_URL，同样属于身份会话变更，须过提交屏障
+        // 同上：reset 会清除 CLOUD_API_BASE_URL（生效值回落默认网关），同样属于身份会话变更，
+        // 须过提交屏障；仅当规范化后的生效 base-url 真实变化时才推进世代
         bookingPlanStateMutex.withLock {
             cloudIdentityMutex.withLock {
+                var baseUrlChanged = false
                 preferences.edit { prefs ->
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    baseUrlChanged = oldBase != NetworkProxyConfig.normalizeCloudApiBaseUrl(null)
                     prefs.remove(PrefKeys.PROXY_MODE)
                     prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
                     prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
@@ -3548,6 +3601,12 @@ class CampusRepository internal constructor(
                     prefs.remove(PrefKeys.PROXY_PORT)
                     prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
                     prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+                }
+                if (baseUrlChanged) {
+                    bumpCloudIdentityGenerationLocked(
+                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                        markUnlinkTombstone = false
+                    )
                 }
             }
         }
@@ -6734,6 +6793,9 @@ class CampusRepository internal constructor(
                     planIdempotencyKey = planId,
                     cloudBaseUrl = cloudBaseUrl,
                     repeatDays = normalizedRepeatDays,
+                    // 报价钉死：把创建时向用户展示的价格写入 expected_price_micropeach，
+                    // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签
+                    expectedPriceMicropeach = executionMode.priceMicropeach,
                     httpTransport = cloudHttpTransportForTest
                 )
             }
@@ -6752,6 +6814,7 @@ class CampusRepository internal constructor(
                             planIdempotencyKey = planId,
                             cloudBaseUrl = cloudBaseUrl,
                             repeatDays = normalizedRepeatDays,
+                            expectedPriceMicropeach = executionMode.priceMicropeach,
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
@@ -6766,6 +6829,17 @@ class CampusRepository internal constructor(
                     // 云端在持久化计划前明确拒绝（4xx 或前置授权失败），云端无半途任务，安全补偿恢复原有本机排队计划
                     restoreStoppedLocalPlansSafely()
                     throw IllegalStateException("云端未能受理该抢座计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
+                }
+                is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict -> {
+                    // 报价漂移 409：云端价格已变更——恢复本机计划后抛出专用异常，
+                    // UI 必须向用户如实展示新旧价格并要求"重新确认创建"，绝不自动按新价重试
+                    restoreStoppedLocalPlansSafely()
+                    throw CloudPlanPriceDriftException(
+                        expectedPriceMicropeach = finalOutcome.expectedPriceMicropeach
+                            ?: executionMode.priceMicropeach,
+                        currentPriceMicropeach = finalOutcome.currentPriceMicropeach,
+                        serverReason = finalOutcome.reason
+                    )
                 }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous -> {
                     // 云端 POST /reservation-plans 已发出但响应丢失/超时：可能已在云端落库！

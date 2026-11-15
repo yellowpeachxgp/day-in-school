@@ -320,6 +320,139 @@ class MomentsContactComposerStateMachineTest {
         )
     }
 
+    // ---------- R3 §4：乱序/重复回执守卫 —— SUCCEEDED 终态 ----------
+
+    @Test
+    fun `same key late failure after success never regresses the settled record`() {
+        val m = newMachine()
+        m.updatePrivateMessage("申请说明")
+        m.updatePrivateContact("wx:a")
+        val send = m.captureSubmitPayload()
+        val key = send.clientMessageId
+
+        // 成功先到位：记录完结、草稿清空
+        m.onSubmitSucceeded(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+        assertEquals("", m.privateMessage)
+
+        // 同键迟到失败回执：绝不允许把成功回退成失败
+        m.onSubmitFailed(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+        // 草稿保持已清空状态，绝不因迟到失败复活旧文本
+        assertEquals("", m.privateMessage)
+        assertEquals("", m.privateContact)
+        // 且不再存在任何"可重发的失败载荷"
+        assertEquals(null, m.failedPendingSubmitPayload()?.clientMessageId)
+    }
+
+    @Test
+    fun `same key concurrent retry landing one success one failure keeps the success`() {
+        val m = newMachine()
+        m.updatePrivateMessage("同一载荷")
+        m.updatePrivateContact("wx:k")
+
+        // 同键并发：第一次发送在途时同载荷重试沿用同一 key
+        val first = m.captureSubmitPayload()
+        val retry = m.captureSubmitPayload()
+        assertEquals(first.clientMessageId, retry.clientMessageId)
+        val key = first.clientMessageId
+
+        // 失败先到位、成功后到位：允许 FAILED -> SUCCEEDED
+        m.onSubmitFailed(first)
+        m.onSubmitSucceeded(retry)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+
+        // 再来一次同键迟到失败：成功是终态，绝不翻转
+        m.onSubmitFailed(first)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+    }
+
+    @Test
+    fun `repeated success receipts are idempotent and stay succeeded`() {
+        val m = newMachine()
+        m.updatePrivateMessage("说明")
+        m.updatePrivateContact("wx:r")
+        val send = m.captureSubmitPayload()
+        val key = send.clientMessageId
+
+        m.onSubmitSucceeded(send)
+        m.onSubmitSucceeded(send)
+        m.onSubmitSucceeded(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+        assertEquals("", m.privateMessage)
+
+        // 成功终态连"显式重发标记"也吸收：只有 FAILED 记录才能显式回到 IN_FLIGHT
+        m.markPendingResubmitted(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(key)
+        )
+    }
+
+    @Test
+    fun `failed record can still return to in-flight via explicit resubmit`() {
+        val m = newMachine()
+        m.updatePrivateMessage("说明")
+        m.updatePrivateContact("wx:f")
+        val send = m.captureSubmitPayload()
+        m.onSubmitFailed(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.FAILED,
+            m.pendingStatusOf(send.clientMessageId)
+        )
+
+        // 显式重发旧载荷：FAILED -> IN_FLIGHT（合法新发送语义）
+        m.markPendingResubmitted(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.IN_FLIGHT,
+            m.pendingStatusOf(send.clientMessageId)
+        )
+        // 在途重发再失败：仍可落到 FAILED
+        m.onSubmitFailed(send)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.FAILED,
+            m.pendingStatusOf(send.clientMessageId)
+        )
+    }
+
+    @Test
+    fun `reply channel late failure after success also stays succeeded`() {
+        val m = newMachine()
+        m.updateReplyDraft("req_9", "回复内容")
+        val send = m.captureReplyPayload("req_9")
+
+        m.onReplySucceeded("req_9", send.clientMessageId)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(send.clientMessageId)
+        )
+        assertEquals("", m.replyDraft("req_9"))
+
+        // 同键迟到失败回执：成功终态吸收，草稿记录均不回退
+        m.onReplyFailed("req_9", send.clientMessageId)
+        assertEquals(
+            MomentsContactComposerStateMachine.PendingStatus.SUCCEEDED,
+            m.pendingStatusOf(send.clientMessageId)
+        )
+        assertEquals("", m.replyDraft("req_9"))
+        assertEquals(null, m.failedPendingReplyPayload("req_9"))
+    }
+
     @Test
     fun `post or viewer switch yields isolated composer state`() {
         val mA = newMachine(viewerId = "viewer_A")

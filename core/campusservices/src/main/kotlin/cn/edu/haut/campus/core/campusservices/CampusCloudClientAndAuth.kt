@@ -1132,7 +1132,38 @@ object CampusCloudOidcHelper {
     sealed class CloudPlanSubmissionOutcome {
         data class Accepted(val remoteJobOrPlanId: String) : CloudPlanSubmissionOutcome()
         data class RejectedPrePersist(val reason: String, val isAuthExpired: Boolean = false) : CloudPlanSubmissionOutcome()
+
+        /**
+         * 云端按 expected_price_micropeach 校验报价漂移后返回 409：
+         * 属诚实"再确认"信号——客户端必须把最新价格如实告知用户并等其重新发起，
+         * 绝不自动按新价静默重试（静默改价会在用户不知情时改签合同价格）。
+         */
+        data class PriceDriftConflict(
+            val reason: String,
+            val expectedPriceMicropeach: Long?,
+            val currentPriceMicropeach: Long?
+        ) : CloudPlanSubmissionOutcome()
+
         data class ResponseAmbiguous(val reason: String) : CloudPlanSubmissionOutcome()
+    }
+
+    /**
+     * 云端报价漂移 409 错误码集合（PRICE 前缀家族 + 契约描述文案），
+     * 命中任一即映射为 [CloudPlanSubmissionOutcome.PriceDriftConflict] 走诚实再确认。
+     */
+    private val PRICE_DRIFT_CONFLICT_CODES = setOf(
+        "PRICE_DRIFT",
+        "PRICE_CONFLICT",
+        "PRICE_CHANGED",
+        "PRICE_MISMATCH",
+        "EXPECTED_PRICE_MISMATCH",
+        "EXPECTED_PRICE_DRIFT"
+    )
+
+    private fun isPriceDriftConflict(errCode: String, errObj: JSONObject?): Boolean {
+        if (errCode in PRICE_DRIFT_CONFLICT_CODES) return true
+        val detail = errObj?.optJSONObject("detail") ?: return false
+        return detail.has("expected_price_micropeach") || detail.has("current_price_micropeach")
     }
 
     fun submitCloudHostedReservationPlanDetailed(
@@ -1146,6 +1177,7 @@ object CampusCloudOidcHelper {
         planIdempotencyKey: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
         repeatDays: Int = 1,
+        expectedPriceMicropeach: Long? = null,
         httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): CloudPlanSubmissionOutcome {
         if (accessToken.isBlank()) {
@@ -1249,6 +1281,8 @@ object CampusCloudOidcHelper {
                 .forEach { candidateSeatsArr.put(it) }
 
             val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
+            // 报价钉死：把创建时向用户展示/获取的价格写入 expected_price_micropeach，
+            // 云端一旦调价即 409 拒绝并走诚实再确认——绝不静默按新价改签
             val planBody = JSONObject()
                 .put("school_binding_id", bindId)
                 .put("consent_id", consentId)
@@ -1262,6 +1296,9 @@ object CampusCloudOidcHelper {
                 .put("repeat_days", normalizedRepeatDays)
                 .put("remaining_days", normalizedRepeatDays)
                 .put("replace_existing", true)
+                .apply {
+                    expectedPriceMicropeach?.let { put("expected_price_micropeach", it) }
+                }
                 .toString()
 
             // Mark external plan-creation write intent BEFORE invoking POST /api/v1/reservation-plans!
@@ -1280,6 +1317,20 @@ object CampusCloudOidcHelper {
                 val errObj = planRoot.optJSONObject("error")
                 val errCode = errObj?.optCleanString("code").orEmpty()
                 val errMsg = errObj?.optCleanString("message")?.ifBlank { "云端拒绝受理该代抢计划" } ?: "云端拒绝受理该代抢计划"
+                // 报价漂移 409：诚实再确认路径（错误 detail 中的现行价如实透出，绝不自动改价重试）
+                if (isPriceDriftConflict(errCode, errObj)) {
+                    val errDetail = errObj?.optJSONObject("detail")
+                    return CloudPlanSubmissionOutcome.PriceDriftConflict(
+                        reason = errMsg,
+                        expectedPriceMicropeach = errDetail
+                            ?.takeIf { it.has("expected_price_micropeach") }
+                            ?.optLong("expected_price_micropeach")
+                            ?: expectedPriceMicropeach,
+                        currentPriceMicropeach = errDetail
+                            ?.takeIf { it.has("current_price_micropeach") }
+                            ?.optLong("current_price_micropeach")
+                    )
+                }
                 val explicitClientRejectCodes = setOf(
                     "BAD_REQUEST",
                     "UNAUTHORIZED",
@@ -1351,7 +1402,8 @@ object CampusCloudOidcHelper {
         preferredSeatLabel: String,
         planIdempotencyKey: String,
         cloudBaseUrl: String = DEFAULT_CLOUD_BASE_URL,
-        repeatDays: Int = 1
+        repeatDays: Int = 1,
+        expectedPriceMicropeach: Long? = null
     ): String? {
         val outcome = submitCloudHostedReservationPlanDetailed(
             accessToken = accessToken,
@@ -1363,7 +1415,8 @@ object CampusCloudOidcHelper {
             preferredSeatLabel = preferredSeatLabel,
             planIdempotencyKey = planIdempotencyKey,
             cloudBaseUrl = cloudBaseUrl,
-            repeatDays = repeatDays
+            repeatDays = repeatDays,
+            expectedPriceMicropeach = expectedPriceMicropeach
         )
         return (outcome as? CloudPlanSubmissionOutcome.Accepted)?.remoteJobOrPlanId
     }

@@ -3013,4 +3013,88 @@ class BookingDispatchExclusiveClaimDaoTest {
         assertEquals(65_000L, dao.getCloudIdentityBindingSnapshot()?.peachBalanceMicropeach)
         repo.cloudHttpTransportForTest = null
     }
+
+    // ---------- R3 §5：expected_price_micropeach 钉价 + 409 诚实再确认 ----------
+
+    @Test
+    fun cloudPlanPriceDrift409SurfacesReconfirmExceptionAndRestoresLocalPlan() = runBlocking {
+        val repo = buildInMemoryTestRepo("price_drift_reconfirm")
+        val jwtA = testCloudJwt("cloud_user_A")
+        repo.saveVerifiedXpeachCloudAccount(
+            cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile(
+                cloudUserId = "cloud_user_A",
+                ssoIssuer = "https://auth.yellowpeachxgp.com",
+                ssoSubject = "sub_A",
+                displayName = "User A",
+                peachBalanceMicropeach = 50_000L,
+                holdSupported = false,
+                accessToken = jwtA,
+                refreshToken = "ctseal1:ref_A",
+                linkedAtEpochMillis = 1_000L
+            )
+        )
+        val nowMs = java.time.ZonedDateTime.of(2026, 11, 25, 22, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai"))
+            .toInstant().toEpochMilli()
+
+        // 先存在一条同日本机排队计划：云端创建走"先原子停止本机→提交→失败补偿恢复"交接路径
+        val localPlan = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = nowMs
+        ).getOrThrow()
+
+        val planBodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        repo.cloudHttpTransportForTest = { method, url, body, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_1","auth_version":1}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_1"}}"""
+                method == "POST" && url.endsWith("/complete") ->
+                    """{"ok":true,"data":{}}"""
+                method == "POST" && url.endsWith("/api/v1/reservation-plans") -> {
+                    planBodies.add(body.orEmpty())
+                    """{"ok":false,"error":{"code":"PRICE_DRIFT","message":"服务价格已调整","detail":{"expected_price_micropeach":10000,"current_price_micropeach":15000}}}"""
+                }
+                else -> """{"ok":false,"error":{"code":"NOT_FOUND","message":"unexpected"}}"""
+            }
+        }
+
+        val driftCreate = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.CLOUD_HOSTED,
+            targetDate = java.time.LocalDate.of(2026, 11, 26),
+            targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区",
+            preferredSeatLabel = "05桌 A座",
+            nowEpochMillis = nowMs + 1_000L
+        )
+
+        // 409 价格漂移：必须抛专用再确认异常（诚实 UI 路径），绝不自动按新价重试
+        org.junit.Assert.assertTrue(driftCreate.isFailure)
+        val err = driftCreate.exceptionOrNull()
+        org.junit.Assert.assertTrue(
+            "价格漂移必须抛 CloudPlanPriceDriftException，实际: " + err,
+            err is CloudPlanPriceDriftException
+        )
+        err as CloudPlanPriceDriftException
+        assertEquals(10_000L, err.expectedPriceMicropeach)
+        assertEquals(15_000L, err.currentPriceMicropeach)
+        org.junit.Assert.assertTrue(err.message!!.contains("重新创建计划"))
+        org.junit.Assert.assertTrue(err.message!!.contains("1.5"))
+
+        // 请求体必须钉入创建时向用户展示的价格
+        assertEquals(1, planBodies.size)
+        assertEquals(10_000L, org.json.JSONObject(planBodies.single()).getLong("expected_price_micropeach"))
+
+        // 被原子停止的本机排队计划必须按诚实补偿恢复，绝不双端并跑
+        val restored = dao.getLibraryBookingPlanById(localPlan.id)!!
+        org.junit.Assert.assertTrue(
+            "local plan must be restored, got " + restored.status,
+            restored.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+        )
+        repo.cloudHttpTransportForTest = null
+    }
 }

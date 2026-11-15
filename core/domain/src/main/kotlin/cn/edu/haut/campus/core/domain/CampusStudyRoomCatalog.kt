@@ -419,20 +419,33 @@ object CampusStudyRoomCatalog {
 
     /**
      * 当前学期课表是否构成"个人无冲突"统计的有效依据：
-     * 必须存在当前学期，且存在可展开为本学期课程事件的排课输入
-     * （本学期排课规则，或本学期单日停课/改期/补课覆盖）。
-     * 仅 rules 非空但全部属于其他学期、或当前学期缺失时，busy 计算退化为
+     * 必须存在当前学期、学期作息表含有效节次，且存在真正可展开为本学期课程事件的输入——
+     * 与 [ScheduleEngine] 展开器共用同一校验（[ScheduleEngine.isExpandableScheduleRule] /
+     * [ScheduleEngine.isExpandableOccurrenceOverride]）：
+     * - 本学期排课规则：termId 匹配、有课周次非空、节次区间有效、课程可解析；
+     * - 本学期单日覆盖：仅非停课（补课/改期）且能解析出真实课程的覆盖算依据；
+     *   指向已删除规则的孤儿停课行自身绝不产生事件，不构成依据。
+     * 仅 rules 非空但全部属于其他学期、作息表缺失、或仅有孤儿覆盖时，busy 计算退化为
      * 跨学期混杂甚至全空——"全部无冲突"只是未观测假象，UI 必须改显示
-     * 「尚无课表依据」而非全空闲计数（#13 修复）。
+     * 「尚无课表依据」而非全空闲计数（#13 修复，R3 收紧）。
+     * "完整个人课表但今日无课"仍为 true：依据判定看学期输入而非当日展开结果。
      */
     fun hasCurrentTermScheduleBasis(
         term: Term?,
+        courses: List<Course>,
         rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
         occurrenceOverrides: List<OccurrenceOverride> = emptyList()
     ): Boolean {
         if (term == null) return false
-        return rules.any { it.termId == term.id } ||
-            occurrenceOverrides.any { it.termId == term.id }
+        // 学期作息表无任何节次定义：排课无法落到有效时间段，不构成依据
+        if (periodTimes.none { it.timeTableId == term.timeTableId }) return false
+        val courseIds = courses.mapTo(HashSet()) { it.id }
+        val rulesById = rules.associateBy { it.id }
+        return rules.any { ScheduleEngine.isExpandableScheduleRule(it, term.id, courseIds) } ||
+            occurrenceOverrides.any {
+                ScheduleEngine.isExpandableOccurrenceOverride(it, term.id, rulesById, courseIds)
+            }
     }
 
     /**

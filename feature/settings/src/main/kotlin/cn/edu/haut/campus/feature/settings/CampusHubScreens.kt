@@ -49,14 +49,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,6 +103,9 @@ import cn.edu.haut.campus.core.model.CompetitionSeasonWindow
 import cn.edu.haut.campus.core.model.CompetitionSkillPreference
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
@@ -112,7 +116,8 @@ import java.time.ZonedDateTime
 fun EmptyClassroomScreen(
     repository: CampusRepository,
     onNavigateToMapWithRoom: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    nowProvider: () -> ZonedDateTime = { ZonedDateTime.now(HAUT_ZONE_ID) }
 ) {
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
@@ -121,10 +126,12 @@ fun EmptyClassroomScreen(
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // 60s 时钟 tick：仅驱动自动槽位重定位与跨午夜日期翻页（手动选槽期间暂停，见下方 LaunchedEffect）
-    var nowMinuteTick by remember { mutableLongStateOf(0L) }
-    val today = remember(nowMinuteTick) { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    // 时钟×槽位控制器：时钟 tick 永远推进（today + 自动槽位解析保持最新）；
+    // 手动选槽仅保护 selectedSlotIndex，绝不暂停时钟（修复手动模式冻结时钟/跨午夜不翻页缺陷）
+    val slotController = remember(nowProvider) { EmptyClassroomSlotController(nowProvider) }
+    val today = slotController.today
     val weekMonday = remember(today) {
         today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     }
@@ -154,38 +161,45 @@ fun EmptyClassroomScreen(
     val selectedDateShortLabel = remember(selectedDateInCurrentWeek) {
         String.format("%02d-%02d", selectedDateInCurrentWeek.monthValue, selectedDateInCurrentWeek.dayOfMonth)
     }
-    val autoSlotResolution = remember(currentTerm?.timeTableId, periodTimes, nowMinuteTick) {
-        CampusStudyRoomCatalog.resolveActiveSlotForTimeTable(
-            nowTime = ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime(),
-            periodTimes = periodTimes,
-            timeTableId = currentTerm?.timeTableId
-        )
-    }
-    // "个人无冲突"统计是否具备本学期课表依据：rules 非空不足以证明本学期有可展开排课
-    val hasScheduleBasis = remember(currentTerm, rules, occurrenceOverrides) {
+    val autoSlotResolution = slotController.autoSlotResolution
+    // "个人无冲突"统计是否具备本学期课表依据：与展开器共用严格"可展开输入"校验
+    // （孤儿停课覆盖/跨学期残留 rules/缺作息表均不构成依据）
+    val hasScheduleBasis = remember(currentTerm, courses, rules, periodTimes, occurrenceOverrides) {
         CampusStudyRoomCatalog.hasCurrentTermScheduleBasis(
             term = currentTerm,
+            courses = courses,
             rules = rules,
+            periodTimes = periodTimes,
             occurrenceOverrides = occurrenceOverrides
         )
     }
-    var selectedSlotIndex by remember { mutableIntStateOf(autoSlotResolution.slotIndex) }
-    var slotManuallyPicked by remember { mutableStateOf(false) }
-    // 作息表异步到达后跟随自动定位；用户手动点选节次后绝不覆盖其选择
-    LaunchedEffect(autoSlotResolution) {
-        if (!slotManuallyPicked) {
-            selectedSlotIndex = autoSlotResolution.slotIndex
+    val selectedSlotIndex = slotController.selectedSlotIndex
+    val slotManuallyPicked = slotController.slotManuallyPicked
+
+    // 时钟与作息数据的最新值（tick/ON_RESUME 协程内读取，避免闭包捕获过期值）
+    val latestPeriodTimes by rememberUpdatedState(periodTimes)
+    val latestTimeTableId by rememberUpdatedState(currentTerm?.timeTableId)
+
+    // 作息表/学期数据到达或变化时立即重解析（替代原 remember(nowMinuteTick) 依赖）
+    LaunchedEffect(periodTimes, currentTerm?.timeTableId) {
+        slotController.refreshNow(periodTimes, currentTerm?.timeTableId)
+    }
+    // 60s 时钟 tick：无条件推进——手动选槽期间也照常刷新 today 与自动解析（跨午夜翻页不冻结）
+    LaunchedEffect(slotController) {
+        while (true) {
+            delay(60_000L)
+            slotController.refreshNow(latestPeriodTimes, latestTimeTableId)
         }
     }
-    // 自动槽位 ~60s 重定位：仅非手动模式 tick（前台驻留/回前台/跨午夜皆由此驱动）；
-    // 手动点选期间暂停自动重定位，"恢复自动定位"后重新进入 tick 循环
-    LaunchedEffect(slotManuallyPicked) {
-        if (!slotManuallyPicked) {
-            while (true) {
-                delay(60_000L)
-                nowMinuteTick++
+    // 回前台立即重解析（ON_RESUME 不等下一个 tick）
+    DisposableEffect(lifecycleOwner, slotController) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                slotController.refreshNow(latestPeriodTimes, latestTimeTableId)
             }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val campusRoomsMap = remember(selectedCampusKey) {
         CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
@@ -336,8 +350,7 @@ fun EmptyClassroomScreen(
                             label = slot.label,
                             selected = selectedSlotIndex == idx,
                             onClick = {
-                                slotManuallyPicked = true
-                                selectedSlotIndex = idx
+                                slotController.pickSlot(idx)
                             }
                         )
                     }
@@ -360,8 +373,8 @@ fun EmptyClassroomScreen(
                     if (slotManuallyPicked) {
                         TextButton(
                             onClick = {
-                                slotManuallyPicked = false
-                                selectedSlotIndex = autoSlotResolution.slotIndex
+                                // 立即按注入时钟重解析并选中当前槽位，绝不复用旧解析结果
+                                slotController.restoreAuto(latestPeriodTimes, latestTimeTableId)
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
