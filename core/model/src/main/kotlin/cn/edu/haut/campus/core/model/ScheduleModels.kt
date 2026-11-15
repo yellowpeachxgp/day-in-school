@@ -120,7 +120,14 @@ data class OccurrenceOverride(
     val canceled: Boolean = false,
     val reason: String? = null,
     val moveId: String? = null,
-    val moveRole: String? = null
+    val moveRole: String? = null,
+    /**
+     * 不可复用行版本令牌：统一写入层在每次真实写入时盖印新的随机 UUID。
+     * 恢复/撤销命令以点击时捕获的令牌断言「行未被任何写路径改动」——同 ID 删除重建、
+     * 改挂调课、暂停-恢复等一切改写都会产生新令牌，旧命令立即判 CONFLICT 而非误删新行。
+     * 空串仅用于尚未持久化的临时对象；落库行永远持有非空令牌。
+     */
+    val mutationToken: String = ""
 ) {
     companion object {
         /** 跨日调课关联角色（受控值）：源停课行 = [MOVE_ROLE_SOURCE]，调入目标行 = [MOVE_ROLE_TARGET]。 */

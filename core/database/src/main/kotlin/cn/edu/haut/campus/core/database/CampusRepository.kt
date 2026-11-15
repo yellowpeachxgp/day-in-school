@@ -785,6 +785,16 @@ class CampusRepository internal constructor(
     val completedFocusSessionsFlow: Flow<List<FocusSessionDomain>> =
         utilityAndFocusDao.observeCompletedFocusSessions().map { list -> list.map { it.toDomain() } }
 
+    /**
+     * occurrence_overrides 统一写入口：任何路径的每一次真实写入都必须经此函数盖印
+     * 全新不可复用 mutationToken（随机 UUID）；跳过写入的纯重复/冲突路径自然保留旧令牌。
+     * 恢复/撤销命令以点击时捕获的令牌逐行断言身份——同 ID 重建、改挂调课、编辑、暂停
+     * 等一切改写都会使旧命令判 CONFLICT，绝不误删替换后的新行。
+     */
+    private suspend fun upsertOccurrenceOverrideStamped(entity: OccurrenceOverrideEntity) {
+        dao.upsertOccurrenceOverride(entity.copy(mutationToken = UUID.randomUUID().toString()))
+    }
+
     private suspend fun notifyScheduleOrPolicyChanged(reason: String) {
         runCatching { onScheduleOrPolicyChangedListener?.invoke(reason) }
     }
@@ -1287,7 +1297,11 @@ class CampusRepository internal constructor(
         dao.upsertStudentProfile(HautMockSeedData.defaultStudent.toEntity())
         dao.upsertCourses(HautMockSeedData.defaultCourses.map { it.toEntity() })
         dao.upsertRules(HautMockSeedData.defaultRules.map { it.toEntity() })
-        dao.upsertOccurrenceOverrides(HautMockSeedData.defaultOccurrenceOverrides.map { it.toEntity() })
+        dao.upsertOccurrenceOverrides(
+            HautMockSeedData.defaultOccurrenceOverrides.map {
+                it.toEntity().copy(mutationToken = UUID.randomUUID().toString())
+            }
+        )
         dao.upsertGradeAttempts(HautMockSeedData.defaultGradeAttempts.map { it.toEntity() })
     }
 
@@ -1554,7 +1568,7 @@ class CampusRepository internal constructor(
                 )
                 return@withTransaction false
             }
-            dao.upsertOccurrenceOverride(normalized.toEntity())
+            upsertOccurrenceOverrideStamped(normalized.toEntity())
             true
         }
         if (wrote) notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
@@ -1615,7 +1629,7 @@ class CampusRepository internal constructor(
                 }
                 val primaryRuleId = ruleIds.first()
                 dao.deleteOccurrenceOverridesForRuleOnDate(primaryRuleId, occ.date.toString())
-                dao.upsertOccurrenceOverride(
+                upsertOccurrenceOverrideStamped(
                     OccurrenceOverride(
                         id = occ.overrideId ?: "ov_mod_${occ.date}_$primaryRuleId",
                         termId = termId,
@@ -1632,7 +1646,7 @@ class CampusRepository internal constructor(
                 )
                 for (extraRuleId in ruleIds.drop(1)) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(extraRuleId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_merged_sup_${occ.date}_$extraRuleId",
                             termId = termId,
@@ -1659,7 +1673,7 @@ class CampusRepository internal constructor(
                         )
                     }
                     existing != null -> {
-                        dao.upsertOccurrenceOverride(
+                        upsertOccurrenceOverrideStamped(
                             existing.copy(
                                 startPeriod = sp,
                                 endPeriod = ep,
@@ -1682,7 +1696,7 @@ class CampusRepository internal constructor(
                     }
                     else -> {
                         // 无任何 overrideId 的独立单日新增（非调课目标）：保留既有兜底建行为
-                        dao.upsertOccurrenceOverride(
+                        upsertOccurrenceOverrideStamped(
                             OccurrenceOverride(
                                 id = "ov_mod_${occ.date}_${UUID.randomUUID().toString().take(8)}",
                                 termId = termId,
@@ -1771,7 +1785,7 @@ class CampusRepository internal constructor(
                 }
                 for (rId in allRuleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_cancel_${occ.date}_$rId",
                             termId = termId,
@@ -1801,7 +1815,7 @@ class CampusRepository internal constructor(
                         )
                     }
                     else -> {
-                        dao.upsertOccurrenceOverride(
+                        upsertOccurrenceOverrideStamped(
                             existing.copy(canceled = true, reason = reason)
                         )
                     }
@@ -1857,7 +1871,7 @@ class CampusRepository internal constructor(
             if (ruleIds.isNotEmpty()) {
                 for (rId in ruleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_cancel_${occ.date}_$rId",
                             termId = termId,
@@ -1877,11 +1891,11 @@ class CampusRepository internal constructor(
             if (!chainedMoveId.isNullOrBlank() && chainedMoveId != moveId) {
                 val oldMoveRows = dao.getOccurrenceOverridesForMove(termId, chainedMoveId)
                 for (row in oldMoveRows) {
-                    dao.upsertOccurrenceOverride(row.copy(moveId = moveId))
+                    upsertOccurrenceOverrideStamped(row.copy(moveId = moveId))
                 }
             }
 
-            dao.upsertOccurrenceOverride(
+            upsertOccurrenceOverrideStamped(
                 OccurrenceOverride(
                     id = "ov_move_${targetDate}_${UUID.randomUUID().toString().take(8)}",
                     termId = termId,
@@ -2152,7 +2166,7 @@ class CampusRepository internal constructor(
         if (!row.canceled) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
         occurrenceCommandInTransactionHook?.invoke("unpauseOccurrence")
         // 仅取消暂停标记：moveId/moveRole/id/教室等身份字段原样保留；reason 清空交由引擎回退展示。
-        dao.upsertOccurrenceOverride(row.copy(canceled = false, reason = null))
+        upsertOccurrenceOverrideStamped(row.copy(canceled = false, reason = null))
         return OccurrenceCommandResult(
             status = OccurrenceCommandStatus.APPLIED,
             unpausedOverrideIds = listOf(row.id)

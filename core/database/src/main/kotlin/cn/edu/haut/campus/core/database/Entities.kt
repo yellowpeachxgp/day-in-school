@@ -31,6 +31,7 @@ import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.util.UUID
 
 @Entity(tableName = "student_profile")
 data class StudentProfileEntity(
@@ -183,7 +184,12 @@ data class OccurrenceOverrideEntity(
     /** 跨日调课稳定关联 ID：同一次调课的全部源停课行与调入目标行共享，普通停课/旧数据为 null。 */
     val moveId: String?,
     /** 调课行角色（受控值 SOURCE/TARGET）；null 表示与调课无关。 */
-    val moveRole: String?
+    val moveRole: String?,
+    /**
+     * 不可复用行版本令牌：任何写入路径每次真实写入都盖印新的随机 UUID，
+     * 精确恢复命令以点击时捕获的令牌逐行断言身份；旧行由迁移一次性分配稳定且不重复。
+     */
+    val mutationToken: String = ""
 ) {
     fun toDomain() = OccurrenceOverride(
         id = id,
@@ -200,7 +206,8 @@ data class OccurrenceOverrideEntity(
         canceled = canceled,
         reason = reason,
         moveId = moveId,
-        moveRole = moveRole
+        moveRole = moveRole,
+        mutationToken = mutationToken
     )
 }
 
@@ -484,7 +491,9 @@ fun OccurrenceOverride.toEntity() = OccurrenceOverrideEntity(
     canceled = canceled,
     reason = reason,
     moveId = moveId,
-    moveRole = moveRole
+    moveRole = moveRole,
+    // 未盖印的领域对象（空令牌）在落库瞬间补齐随机令牌：持久化行永远持有非空令牌。
+    mutationToken = mutationToken.ifBlank { UUID.randomUUID().toString() }
 )
 
 fun GradeAttempt.toEntity() = GradeAttemptEntity(
@@ -601,6 +610,30 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         )
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_exam_term_repair_audits_examRowId` ON `exam_term_repair_audits` (`examRowId`)"
+        )
+    }
+}
+
+/**
+ * Room 9 -> 10：
+ * - occurrence_overrides 追加非空 mutationToken 列（不可复用行版本令牌）。
+ *   迁移为每条既有行独立分配随机的 UUID 形态令牌：randomblob 按行求值，保证稳定且不重复；
+ *   普通停课行、调课 SOURCE/TARGET、暂停目标、同 ID 历史行与旧版模糊调课行全部原样保留，
+ *   绝不按 reason/moveId 文本猜测改写任何语义字段，绝不删表重建。
+ */
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `occurrence_overrides` ADD COLUMN `mutationToken` TEXT NOT NULL DEFAULT ''")
+        db.execSQL(
+            """
+            UPDATE `occurrence_overrides` SET `mutationToken` =
+                lower(hex(randomblob(4))) || '-' ||
+                lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(2))) || '-' ||
+                lower(hex(randomblob(6)))
+            WHERE `mutationToken` = ''
+            """.trimIndent()
         )
     }
 }
