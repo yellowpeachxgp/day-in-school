@@ -89,6 +89,9 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertOccurrenceOverride(item: OccurrenceOverrideEntity)
 
+    @Query("SELECT * FROM occurrence_overrides WHERE id = :id")
+    suspend fun getOccurrenceOverrideById(id: String): OccurrenceOverrideEntity?
+
     @Query("DELETE FROM occurrence_overrides WHERE id = :id")
     suspend fun deleteOccurrenceOverrideById(id: String)
 

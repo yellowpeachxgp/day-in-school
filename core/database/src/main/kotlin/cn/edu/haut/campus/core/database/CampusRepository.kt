@@ -238,6 +238,12 @@ class CampusRepository internal constructor(
     @Volatile
     var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
 
+    /**
+     * 测试注入点：occurrence 恢复/撤销命令（unpauseOccurrence/undoMove/restoreRuleCancellation）
+     * 在事务内、写入判定完成后回调命令名。仅用于并发/回滚回归测试注入闩锁与故障，生产路径必须为 null。
+     */
+    internal var occurrenceCommandInTransactionHook: (suspend (command: String) -> Unit)? = null
+
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -1865,7 +1871,7 @@ class CampusRepository internal constructor(
     /**
      * 通用单条覆盖删除入口（旧版模糊调课待核对等场景）。
      * moveId 关联行（调课 SOURCE/TARGET）严禁经此路径删除——孤儿化对端会破坏原子恢复；
-     * 撤销调课的唯一入口是 [restoreCanceledOccurrence]。命中即记日志并安全 no-op。
+     * 撤销调课的合法入口只有 [undoMove]（或兼容适配器 [restoreCanceledOccurrence]）。命中即记日志并安全 no-op。
      */
     suspend fun deleteOccurrenceOverride(overrideId: String) {
         val existing = dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == overrideId }
@@ -1881,10 +1887,11 @@ class CampusRepository internal constructor(
     }
 
     /**
-     * 单次「恢复上课」的结构化结果：
-     * - [restoredSourceOverrideIds] 被恢复的源停课覆盖行（含按 moveId 原子恢复的整组源）；
+     * 单次「恢复上课」的结构化结果（[restoreCanceledOccurrence] 适配器返回值）：
+     * - [restoredSourceOverrideIds] 被恢复的源停课覆盖行（含按 moveId 原子撤销的整组源）；
      * - [deletedTargetOverrideIds] 被精确删除的调入目标行（仅限同一 moveId 的 TARGET）；
      * - [restoredMoveIds] 被整体撤销的跨日调课关联；
+     * - [unpausedOverrideIds] 仅取消暂停标记的纯覆盖行（暂停的调入目标/单日新增）；
      * - [legacyAmbiguousTargets] 旧数据（moveId==null）恢复时检出的疑似调入目标——绝不自动删除，
      *   交由 UI 提示用户显式选择删除或保留待核对。
      */
@@ -1892,18 +1899,276 @@ class CampusRepository internal constructor(
         val restoredSourceOverrideIds: List<String> = emptyList(),
         val deletedTargetOverrideIds: List<String> = emptyList(),
         val restoredMoveIds: List<String> = emptyList(),
+        val unpausedOverrideIds: List<String> = emptyList(),
         val legacyAmbiguousTargets: List<OccurrenceOverride> = emptyList()
     ) {
         val legacyReviewRequired: Boolean get() = legacyAmbiguousTargets.isNotEmpty()
+
+        /** 本次调用是否产生了任何实际写入（恢复源/删除目标/取消暂停）。 */
+        val changed: Boolean
+            get() = restoredSourceOverrideIds.isNotEmpty() ||
+                deletedTargetOverrideIds.isNotEmpty() ||
+                restoredMoveIds.isNotEmpty() ||
+                unpausedOverrideIds.isNotEmpty()
     }
 
     /**
-     * 恢复被停课的 occurrence：
-     * - 选中行带有 moveId 时，将同一学期内该 moveId 的全部 SOURCE 与 TARGET 行作为一次原子操作整体撤销；
-     * - 普通停课（无 moveId）只恢复用户选择的取消记录，绝不按 courseId+日期批量删除其他目标；
-     * - 旧版模糊调课（无 moveId、reason 为「已调至 …」）恢复源后，检出候选调入目标并返回待核对清单。
-     * 所有写入均在单一 Room 事务内提交；过期点击与重复恢复为安全 no-op。
+     * 恢复/撤销命令的统一终态：调用方以点击瞬间固化的（termId, overrideId, moveId, 意图）发起，
+     * 仓库绝不依据当前 canceled 状态反推用户意图。
      */
+    enum class OccurrenceCommandStatus {
+        /** 命令在单一事务内原子提交并产生实际状态变更（此时才会发出课表变更通知）。 */
+        APPLIED,
+
+        /** 目标行已不存在或已处于期望终态：安全幂等空操作，无任何写入、无通知。 */
+        NO_CHANGE,
+
+        /** 点击时捕获的身份（termId/moveId）与当前行不一致：陈旧点击整体拒绝，等待 UI 刷新重试。 */
+        CONFLICT
+    }
+
+    /** 显式意图恢复/撤销命令的结构化结果。 */
+    data class OccurrenceCommandResult(
+        val status: OccurrenceCommandStatus,
+        val unpausedOverrideIds: List<String> = emptyList(),
+        val restoredSourceOverrideIds: List<String> = emptyList(),
+        val deletedTargetOverrideIds: List<String> = emptyList(),
+        val restoredMoveIds: List<String> = emptyList(),
+        val legacyAmbiguousTargets: List<OccurrenceOverride> = emptyList()
+    ) {
+        val legacyReviewRequired: Boolean get() = legacyAmbiguousTargets.isNotEmpty()
+
+        /** 仅 [OccurrenceCommandStatus.APPLIED] 视为实际变更。 */
+        val changed: Boolean get() = status == OccurrenceCommandStatus.APPLIED
+    }
+
+    /**
+     * 「恢复暂停」命令：仅对**纯覆盖行**（暂停的调入目标/单日新增）取消 canceled 标记。
+     * - 行不存在或已活跃 → [OccurrenceCommandStatus.NO_CHANGE]（双击/陈旧回调安全幂等）；
+     * - termId 不符、行实为规则关联行、或 [expectedMoveId] 与当前行 moveId 不符
+     *   （例如目标已被再次移走）→ [OccurrenceCommandStatus.CONFLICT]；
+     * - 仅置 canceled=false，保留 id/moveId/moveRole/教室/节次等全部身份字段，
+     *   绝不删除任何 SOURCE/TARGET——撤销整次调课只能走 [undoMove]。
+     */
+    suspend fun unpauseOccurrence(
+        termId: String,
+        overrideId: String,
+        expectedMoveId: String? = null
+    ): OccurrenceCommandResult {
+        val result = database.withTransaction {
+            unpauseOccurrenceInTransaction(termId, overrideId, expectedMoveId)
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 「撤销调课」命令：原子删除同一学期内该 moveId 的全部 SOURCE+TARGET 行——
+     * 整次调课撤销的**唯一**入口。无此关联组 → [OccurrenceCommandStatus.NO_CHANGE]；
+     * 绝不按 courseId+日期模糊配对删除，严格 termId 隔离。
+     */
+    suspend fun undoMove(
+        termId: String,
+        moveId: String
+    ): OccurrenceCommandResult {
+        if (moveId.isBlank()) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        val result = database.withTransaction {
+            undoMoveInTransaction(termId, moveId)
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 「恢复规则停课」命令：恢复指定日期、给定规则集合下的已停课行。
+     * - 普通停课行（无 moveId）：删除取消行；旧版「已调至 …」源顺带检出待核对候选目标；
+     * - 命中调课 SOURCE 行：提供 [expectedMoveId]（点击时捕获）且命中行 moveId 不符 →
+     *   [OccurrenceCommandStatus.CONFLICT] 整体拒绝；相符/未提供则按 moveId 原子撤销整组；
+     * - 未命中任何行 → [OccurrenceCommandStatus.NO_CHANGE]，严格 termId 隔离。
+     */
+    suspend fun restoreRuleCancellation(
+        termId: String,
+        ruleIds: List<String>,
+        date: LocalDate,
+        expectedMoveId: String? = null
+    ): OccurrenceCommandResult {
+        val cleanRuleIds = ruleIds.distinct().filter { it.isNotBlank() }
+        if (cleanRuleIds.isEmpty()) {
+            return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        }
+        val dateIso = date.toString()
+        val result = database.withTransaction {
+            val snapshot = dao.getOccurrenceOverridesSnapshot()
+            val rows = snapshot.filter {
+                it.termId == termId && it.dateIso == dateIso && it.canceled &&
+                    it.courseRuleId != null && it.courseRuleId in cleanRuleIds
+            }
+            if (rows.isEmpty()) {
+                OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+            } else {
+                // 身份核验：任一命中行 moveId 与点击时捕获的不一致 → 陈旧点击，整体拒绝。
+                val moveIds = linkedSetOf<String>()
+                var conflict = false
+                for (row in rows) {
+                    val mid = row.moveId
+                    if (!mid.isNullOrBlank()) {
+                        if (expectedMoveId != null && mid != expectedMoveId) {
+                            conflict = true
+                            break
+                        }
+                        moveIds += mid
+                    }
+                }
+                if (conflict) {
+                    Log.w(
+                        LOG_TAG,
+                        "restoreRuleCancellation: " + cleanRuleIds + " on " + dateIso +
+                            " 命中行 moveId 与期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
+                    )
+                    OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                } else {
+                    occurrenceCommandInTransactionHook?.invoke("restoreRuleCancellation")
+                    val restoredSourceIds = linkedSetOf<String>()
+                    val deletedTargetIds = linkedSetOf<String>()
+                    val restoredMoveIds = linkedSetOf<String>()
+                    val legacySources = mutableListOf<OccurrenceOverrideEntity>()
+                    for (row in rows) {
+                        if (row.moveId.isNullOrBlank()) {
+                            dao.deleteOccurrenceOverrideById(row.id)
+                            restoredSourceIds += row.id
+                            legacySources += row
+                        }
+                    }
+                    for (mid in moveIds) {
+                        val undo = undoMoveInTransaction(termId, mid)
+                        restoredSourceIds += undo.restoredSourceOverrideIds
+                        deletedTargetIds += undo.deletedTargetOverrideIds
+                        if (undo.status == OccurrenceCommandStatus.APPLIED) restoredMoveIds += mid
+                    }
+                    val ambiguous = findLegacyAmbiguousTargets(snapshot, legacySources)
+                    OccurrenceCommandResult(
+                        status = OccurrenceCommandStatus.APPLIED,
+                        restoredSourceOverrideIds = restoredSourceIds.toList(),
+                        deletedTargetOverrideIds = deletedTargetIds.toList(),
+                        restoredMoveIds = restoredMoveIds.toList(),
+                        legacyAmbiguousTargets = ambiguous.map { it.toDomain() }
+                    )
+                }
+            }
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 事务内「恢复暂停」：按 id 精确读行，校验 termId 与点击时捕获的 [expectedMoveId]；
+     * 仅取消 canceled 标记，保留全部身份字段，绝不触碰任何其他行。
+     */
+    private suspend fun unpauseOccurrenceInTransaction(
+        termId: String,
+        overrideId: String,
+        expectedMoveId: String?
+    ): OccurrenceCommandResult {
+        val row = dao.getOccurrenceOverrideById(overrideId)
+            ?: return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        if (row.termId != termId) {
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " 属于 " + row.termId +
+                    "，拒绝跨学期恢复 " + termId
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (row.courseRuleId != null) {
+            // 规则关联行不是「恢复暂停」对象：规则停课走 restoreRuleCancellation，撤销调课走 undoMove。
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " 是规则关联行(rule=" + row.courseRuleId +
+                    ")，拒绝以恢复暂停入口处理"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (expectedMoveId != null && row.moveId != expectedMoveId) {
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " moveId=" + row.moveId +
+                    " 与期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (!row.canceled) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        occurrenceCommandInTransactionHook?.invoke("unpauseOccurrence")
+        // 仅取消暂停标记：moveId/moveRole/id/教室等身份字段原样保留；reason 清空交由引擎回退展示。
+        dao.upsertOccurrenceOverride(row.copy(canceled = false, reason = null))
+        return OccurrenceCommandResult(
+            status = OccurrenceCommandStatus.APPLIED,
+            unpausedOverrideIds = listOf(row.id)
+        )
+    }
+
+    /** 事务内整组撤销：删除同一学期该 moveId 全部 SOURCE+TARGET；无此组 → NO_CHANGE。 */
+    private suspend fun undoMoveInTransaction(
+        termId: String,
+        moveId: String
+    ): OccurrenceCommandResult {
+        val rows = dao.getOccurrenceOverridesForMove(termId, moveId)
+        if (rows.isEmpty()) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        occurrenceCommandInTransactionHook?.invoke("undoMove")
+        val restoredSourceIds = mutableListOf<String>()
+        val deletedTargetIds = mutableListOf<String>()
+        for (row in rows) {
+            dao.deleteOccurrenceOverrideById(row.id)
+            if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
+                deletedTargetIds += row.id
+            } else {
+                restoredSourceIds += row.id
+            }
+        }
+        return OccurrenceCommandResult(
+            status = OccurrenceCommandStatus.APPLIED,
+            restoredSourceOverrideIds = restoredSourceIds,
+            deletedTargetOverrideIds = deletedTargetIds,
+            restoredMoveIds = listOf(moveId)
+        )
+    }
+
+    /** 旧版模糊调课（moveId==null、reason 为「已调至 …」）的疑似调入目标检出：只列出不删除。 */
+    private fun findLegacyAmbiguousTargets(
+        snapshot: List<OccurrenceOverrideEntity>,
+        restoredSources: List<OccurrenceOverrideEntity>
+    ): List<OccurrenceOverrideEntity> {
+        val ambiguous = linkedMapOf<String, OccurrenceOverrideEntity>()
+        for (src in restoredSources) {
+            if (src.reason?.startsWith("已调至 ") != true) continue
+            val candidates = snapshot.filter { ov ->
+                ov.courseRuleId == null &&
+                    !ov.canceled &&
+                    ov.moveId.isNullOrBlank() &&
+                    ov.courseId == src.courseId &&
+                    ov.reason == "由 " + src.dateIso + " 调入"
+            }
+            for (c in candidates) {
+                ambiguous[c.id] = c
+            }
+        }
+        return ambiguous.values.toList()
+    }
+
+    /**
+     * 旧兼容适配器：请改用显式意图命令——暂停恢复 [unpauseOccurrence]、
+     * 规则停课恢复 [restoreRuleCancellation]、撤销整次调课 [undoMove]。
+     * 语义映射：纯覆盖行（TARGET/单日新增）一律按「恢复暂停」处理（已活跃 = 安全空操作，
+     * 绝不再顺手撤销整次调课）；SOURCE/规则停课行保持原有「恢复源 + 按 moveId 原子撤销」语义。
+     */
+    @Deprecated(
+        "意图不再依赖 canceled 状态推断：改用 unpauseOccurrence / restoreRuleCancellation / undoMove"
+    )
     suspend fun restoreCanceledOccurrence(
         date: LocalDate,
         ruleId: String?,
@@ -1917,19 +2182,20 @@ class CampusRepository internal constructor(
             val restoredSourceIds = linkedSetOf<String>()
             val deletedTargetIds = linkedSetOf<String>()
             val restoredMoveIds = linkedSetOf<String>()
+            val unpausedIds = linkedSetOf<String>()
             val legacySourcesRestored = mutableListOf<OccurrenceOverrideEntity>()
             val moveIdsToRestore = linkedMapOf<String, String>() // moveId -> termId
 
             if (!overrideId.isNullOrBlank()) {
                 val existing = snapshot.firstOrNull { it.id == overrideId }
-                if (existing != null && existing.courseRuleId == null && existing.canceled) {
-                    // 「暂停的调入课/单日新增」恢复＝仅取消暂停标记，moveId 关联保持不动，
-                    // 绝不顺手撤销整次调课——那需要经 SOURCE 行触发。
-                    dao.upsertOccurrenceOverride(existing.copy(canceled = false, reason = "临时调课/补课"))
+                if (existing != null && existing.courseRuleId == null) {
+                    // 纯覆盖行一律按「恢复暂停」处理：已活跃行安全幂等空操作，
+                    // 绝不因重复点击/陈旧回调撤销整次调课。
+                    val unpause = unpauseOccurrenceInTransaction(existing.termId, existing.id, null)
+                    unpausedIds += unpause.unpausedOverrideIds
                 } else if (existing != null) {
                     if (!existing.moveId.isNullOrBlank()) {
-                        // 未暂停的调课关联行（如仍活跃的 TARGET）被恢复＝撤销整次调课：
-                        // 原子删除该 moveId 全部 SOURCE+TARGET，绝不能只删单边留下孤儿。
+                        // SOURCE 行（含未暂停的）被恢复 = 撤销整次调课。
                         moveIdsToRestore[existing.moveId!!] = existing.termId
                         if (existing.canceled) {
                             restoredSourceIds += existing.id
@@ -1959,43 +2225,21 @@ class CampusRepository internal constructor(
             }
             // 有 moveId 的跨日调课视为一个原子操作：恢复其全部 SOURCE 并删除该 moveId 的 TARGET。
             for ((mid, termOfMove) in moveIdsToRestore) {
-                val moveRows = dao.getOccurrenceOverridesForMove(termOfMove, mid)
-                var touched = false
-                for (row in moveRows) {
-                    dao.deleteOccurrenceOverrideById(row.id)
-                    touched = true
-                    if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
-                        deletedTargetIds += row.id
-                    } else {
-                        restoredSourceIds += row.id
-                    }
-                }
-                if (touched) restoredMoveIds += mid
+                val undo = undoMoveInTransaction(termOfMove, mid)
+                restoredSourceIds += undo.restoredSourceOverrideIds
+                deletedTargetIds += undo.deletedTargetOverrideIds
+                if (undo.status == OccurrenceCommandStatus.APPLIED) restoredMoveIds += mid
             }
-            // 旧版无 moveId 的模糊调课源（reason = "已调至 YYYY-MM-DD"）：仅恢复所选源，
-            // 检出但绝不自动删除候选调入目标，提示用户显式核对。
-            val ambiguous = linkedMapOf<String, OccurrenceOverrideEntity>()
-            for (src in legacySourcesRestored) {
-                if (src.reason?.startsWith("已调至 ") != true) continue
-                val candidates = snapshot.filter { ov ->
-                    ov.courseRuleId == null &&
-                        !ov.canceled &&
-                        ov.moveId.isNullOrBlank() &&
-                        ov.courseId == src.courseId &&
-                        ov.reason == "由 ${src.dateIso} 调入"
-                }
-                for (c in candidates) {
-                    ambiguous[c.id] = c
-                }
-            }
+            val ambiguous = findLegacyAmbiguousTargets(snapshot, legacySourcesRestored)
             OccurrenceRestoreResult(
                 restoredSourceOverrideIds = restoredSourceIds.toList(),
                 deletedTargetOverrideIds = deletedTargetIds.toList(),
                 restoredMoveIds = restoredMoveIds.toList(),
-                legacyAmbiguousTargets = ambiguous.values.map { it.toDomain() }
+                unpausedOverrideIds = unpausedIds.toList(),
+                legacyAmbiguousTargets = ambiguous.map { it.toDomain() }
             )
         }
-        notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        if (result.changed) notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
         return result
     }
 
