@@ -112,8 +112,18 @@ class MomentsContactComposerStateMachine(
         fun latestFailed(): PendingSend? =
             sends.values.lastOrNull { it.status == PendingStatus.FAILED }
 
+        /**
+         * 状态迁移守卫（R3 §4 乱序回执修复）：
+         * - SUCCEEDED 为终态——其后的迟到 FAILED、重复回执、显式标记一律吸收，绝不回退；
+         *   同键并发重试"一成功一失败"落地时，先到位的成功绝不被后到的失败翻转；
+         * - FAILED 只允许经显式重发回到 IN_FLIGHT（[markPendingResubmitted] 或
+         *   capture 以同键换新 PendingSend 记录——二者均为"显式新发送"语义）。
+         */
         fun markStatus(key: String, status: PendingStatus) {
             val record = sends[key] ?: return
+            if (record.status == PendingStatus.SUCCEEDED && status != PendingStatus.SUCCEEDED) {
+                return
+            }
             sends[key] = record.copy(status = status)
         }
     }
@@ -289,7 +299,8 @@ class MomentsContactComposerStateMachine(
     private fun onSendSettled(payload: SubmitPayload, status: PendingStatus) {
         val channel = channelFor(payload.audience, payload.requestId)
         val record = channel.sends[payload.clientMessageId] ?: return
-        channel.sends[record.key] = record.copy(status = status)
+        // 经统一迁移守卫落地：SUCCEEDED 终态吸收迟到 FAILED/重复回执
+        channel.markStatus(record.key, status)
         if (status == PendingStatus.SUCCEEDED &&
             channel.currentDraft().revision == record.revision
         ) {
@@ -311,7 +322,7 @@ class MomentsContactComposerStateMachine(
     fun onReplySucceeded(requestId: String, clientMessageId: String) {
         val channel = replyChannels[requestId] ?: return
         val record = channel.sends[clientMessageId] ?: return
-        channel.sends[record.key] = record.copy(status = PendingStatus.SUCCEEDED)
+        channel.markStatus(record.key, PendingStatus.SUCCEEDED)
         if (channel.currentDraft().revision == record.revision) {
             channel.clearDraft()
         }
