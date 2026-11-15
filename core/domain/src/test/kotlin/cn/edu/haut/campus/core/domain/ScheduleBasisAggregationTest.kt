@@ -289,6 +289,116 @@ class ScheduleBasisAggregationTest {
         assertTrue(status.reasonCodes.contains(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN))
     }
 
+    // ---------- R6-3：模板豁免仅限"零产出"规则，常规规则问题绝不被覆盖抹掉 ----------
+
+    @Test
+    fun regularRuleInvalidTimeIsNotErasedByValidMakeupOverride() {
+        // R6-3 回归：常规规则（weeks∩学期非空）自身时间非法 + 合法单日补课覆盖指向它——
+        // 绝不允许借覆盖豁免抹掉 TIME_INVALID，其他日期的无效课程必须如实上报 → Incomplete
+        val ruleA = rule(
+            "r_a_bad_time",
+            customStart = LocalTime.of(10, 0), customEnd = LocalTime.of(9, 0)
+        )
+        val legalMakeup = ov(
+            "ov_legal_makeup", courseRuleId = "r_a_bad_time",
+            startAt = LocalTime.of(14, 0), endAt = LocalTime.of(15, 35)
+        )
+        val agg = aggregate(rules = listOf(ruleA), overrides = listOf(legalMakeup))
+        val status = agg.status as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete
+        assertEquals(1, agg.usableCount)   // 覆盖行自身合法、独立按 evidence 判为可用
+        assertEquals(1, agg.unresolvedCount)
+        assertEquals(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.TIME_INVALID, status.reason)
+        assertTrue(status.reasonCodes.contains(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.TIME_INVALID))
+    }
+
+    @Test
+    fun outOfTermWeeksTemplateIsStillExemptedByLegalMakeup() {
+        // R6-3：模板豁免的"零产出"口径包含"周次与学期有效周零相交"——
+        // weeks 全部越界(25,30 ∉ 1..20)的借字段载体被合法单日补课引用仍判纯模板，
+        // 其自身 INPUTS_UNEXPANDABLE 不判坏 → Valid（保持既有豁免语义）
+        val template = rule("r_template_far", weeks = setOf(25, 30))
+        val agg = aggregate(
+            rules = listOf(template),
+            overrides = listOf(
+                ov("ov_makeup_far", courseRuleId = "r_template_far", startPeriod = 3, endPeriod = 4)
+            )
+        )
+        assertEquals(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Valid, agg.status)
+        assertEquals(1, agg.usableCount)
+        assertEquals(0, agg.unresolvedCount)
+    }
+
+    @Test
+    fun regularRuleUnorderedPeriodsNotErasedByValidOverride() {
+        // R6-3：weeks 与学期相交但节次区间倒序的常规规则被合法覆盖引用——
+        // INPUTS_UNEXPANDABLE 必须保留为 unresolved，绝不被覆盖消费抹掉
+        val ruleB = rule("r_b_bad_periods", startPeriod = 5, endPeriod = 3)
+        val agg = aggregate(
+            rules = listOf(ruleB),
+            overrides = listOf(
+                ov("ov_fix_periods", courseRuleId = "r_b_bad_periods", startPeriod = 3, endPeriod = 4)
+            )
+        )
+        val status = agg.status as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete
+        assertEquals(1, agg.usableCount)
+        assertEquals(1, agg.unresolvedCount)
+        assertEquals(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE, status.reason)
+    }
+
+    @Test
+    fun regularRuleMissingCourseNotErasedByValidOverride() {
+        // R6-3：常规规则缺课程（weeks 与学期相交）+ 覆盖自带合法课程/节次——
+        // 覆盖行合法计为可用，但 MISSING_COURSE 必须保留，绝不借豁免冒充完整依据
+        val orphanRule = rule("r_no_course", courseId = "c_ghost")
+        val agg = aggregate(
+            rules = listOf(orphanRule),
+            overrides = listOf(
+                ov("ov_own_course", courseRuleId = "r_no_course", courseId = courseB.id,
+                    startPeriod = 5, endPeriod = 6)
+            )
+        )
+        val status = agg.status as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete
+        assertEquals(1, agg.usableCount)
+        assertEquals(1, agg.unresolvedCount)
+        assertEquals(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.MISSING_COURSE, status.reason)
+    }
+
+    @Test
+    fun invalidBaseRuleAndBrokenOverrideAreBothReported() {
+        // R6-3：覆盖引用一条无效常规规则且覆盖自身缺课程——
+        // 规则与覆盖行各自的问题都如实上报，绝不互相吞没
+        val ruleA = rule(
+            "r_a_invalid", customStart = LocalTime.of(10, 0), customEnd = LocalTime.of(9, 0)
+        )
+        val brokenOv = ov(
+            "ov_missing_course", courseRuleId = "r_a_invalid",
+            courseId = "c_ghost", startPeriod = 3, endPeriod = 4
+        )
+        val agg = aggregate(rules = listOf(ruleA), overrides = listOf(brokenOv))
+        val status = agg.status as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete
+        assertEquals(0, agg.usableCount)
+        assertEquals(2, agg.unresolvedCount)
+        assertTrue(status.reasonCodes.contains(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.TIME_INVALID))
+        assertTrue(status.reasonCodes.contains(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.MISSING_COURSE))
+    }
+
+    @Test
+    fun canceledOverrideDoesNotConsumeZeroWeekTemplate() {
+        // R6-3：停课覆盖（canceled=true）只屏蔽事件、自身绝不产出事件——
+        // 不消费模板规则，零周次模板自身的 INPUTS_UNEXPANDABLE 必须保留
+        val template = rule("r_template_cancel", weeks = emptySet())
+        val agg = aggregate(
+            rules = listOf(template),
+            overrides = listOf(
+                ov("ov_cancel_t", courseRuleId = "r_template_cancel", canceled = true)
+            )
+        )
+        val status = agg.status as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete
+        assertEquals(0, agg.usableCount)
+        assertEquals(1, agg.unresolvedCount)
+        assertEquals(CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE, status.reason)
+    }
+
     // ---------- 方案表：Absent 行 / 顺序不变 / 同结果消费 ----------
 
     @Test

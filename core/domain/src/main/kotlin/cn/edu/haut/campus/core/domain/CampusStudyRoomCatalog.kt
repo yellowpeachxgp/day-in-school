@@ -505,7 +505,9 @@ object CampusStudyRoomCatalog {
      *   关联问题（ASSOCIATION_BROKEN：孤儿行/跨学期关联/指向缺失课程）、
      *   零或越界周次与非法节次区间（INPUTS_UNEXPANDABLE）；
      * - neutral：正常停课覆盖（指向本学期现存规则或自带可解析课程）只屏蔽事件不算损坏；
-     *   被有效非停课覆盖引用的"模板规则"（如零周次模板）不因模板自身缺陷判坏。
+     *   被有效非停课覆盖引用的"纯模板规则"（自身周次为空或与学期有效周零相交、
+     *   绝不产出常规事件的借字段载体）不因模板自身缺陷判坏；weeks 与学期有效周
+     *   相交的常规规则一经引用绝不豁免其自身问题。
      * 判定：usableCount>0 且 unresolvedCount==0 → Valid；
      * unresolvedCount>0 → Incomplete（即使同时存在可用行也如实报不完整）；
      * 无任何本学期相关输入（或仅剩中性行）→ Absent。
@@ -620,15 +622,21 @@ object CampusStudyRoomCatalog {
             }
             if (problems.isEmpty()) {
                 usableItemKeys += itemKey
-                // 记录被有效非停课覆盖消费的模板规则（零周次模板+合法单日补课
-                // 不因模板判坏）。
-                if (baseRule != null) consumedTemplateRuleIds += baseRule.id
+                // 仅"纯模板规则"才被有效非停课覆盖消费豁免：自身周次为空或与学期
+                // 有效周(1..term.weekCount)零相交、绝不产出常规事件的借字段载体——
+                // weeks 与学期相交的常规规则自身问题必须保留为 unresolved，
+                // 一条合法单日覆盖绝不抹掉该规则在其他日期的非法/残缺输入。
+                if (baseRule != null &&
+                    baseRule.weeks.none { it in 1..term.weekCount }) {
+                    consumedTemplateRuleIds += baseRule.id
+                }
             } else {
                 unresolvedCodesByItem[itemKey] = problems
             }
         }
 
-        // 被有效非停课覆盖消费的模板规则：其自身缺陷不会独立展开为冲突事件，不计损坏
+        // 被有效非停课覆盖消费的纯模板规则：自身不产出任何常规事件，
+        // 其模板缺陷不会独立展开为冲突事件，不计损坏
         for (ruleId in consumedTemplateRuleIds) {
             unresolvedCodesByItem.remove("rule:$ruleId")
         }
