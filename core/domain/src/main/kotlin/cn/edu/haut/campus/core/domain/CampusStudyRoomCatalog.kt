@@ -7,6 +7,7 @@ import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.model.TimeEvidence
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -427,61 +428,100 @@ object CampusStudyRoomCatalog {
         /** 供 UI 展示的诚实原因文案；[Valid] 时为 null。 */
         abstract val reasonLabel: String?
 
-        /** 至少一条本学期输入可展开为真实课程事件 →「个人无冲突」计数可信。 */
+        /** 至少一条本学期输入可展开为真实课程事件且无任何未解析行 →「个人无冲突」计数可信。 */
         data object Valid : ScheduleBasisEvaluation() {
             override val hasBasis: Boolean get() = true
             override val reasonLabel: String? get() = null
         }
 
         /**
-         * 存在本学期排课输入但全部不可展开（零周次/周次越出学期、跨学期关联、
-         * 孤儿覆盖、课程缺失、缺作息表且未自带合法自定义时间等）→「依据不完整」原因态。
+         * 存在可能影响冲突判断的缺课程/缺时间/非法时间/关联问题（即使同时存在
+         * 可用行也不允许短路冒充完整依据）→「依据不完整」原因态。
+         * [reason] 为按严重度选出的主因文案，[reasonCodes] 为全部未解析行的原因集合。
          */
-        data class Incomplete(val reason: Reason) : ScheduleBasisEvaluation() {
+        data class Incomplete(
+            val reason: Reason,
+            val reasonCodes: Set<Reason> = setOf(reason)
+        ) : ScheduleBasisEvaluation() {
             override val hasBasis: Boolean get() = false
             override val reasonLabel: String get() = reason.label
         }
 
-        /** 无当前学期或完全无本学期排课输入（其他学期残留不计）。 */
+        /** 无当前学期或完全无本学期排课输入（其他学期残留、仅剩中性取消行均不计）。 */
         data object Absent : ScheduleBasisEvaluation() {
             override val hasBasis: Boolean get() = false
             override val reasonLabel: String get() = "尚无课表依据"
         }
 
-        /** 「依据不完整」的具体原因。 */
+        /** 「依据不完整」的具体原因码（一条输入行可同时携带多个原因）。 */
         enum class Reason(val label: String) {
-            /** 学期作息表无任何节次定义，且没有任何输入自带合法自定义时间 */
+            /** 学期作息表无任何节次定义，且输入未自带完整合法自定义时间 */
             TIMETABLE_INCOMPLETE("学期作息表不完整"),
 
-            /** 本学期输入存在但全部不可展开（零/越界周次、跨学期关联、孤儿覆盖、缺课程等） */
-            INPUTS_UNEXPANDABLE("课表依据不完整")
+            /** 本学期输入存在但不可展开（零/越界周次、非法节次区间等） */
+            INPUTS_UNEXPANDABLE("课表依据不完整"),
+
+            /** 输入引用的课程不存在/不可解析 */
+            MISSING_COURSE("课程信息缺失"),
+
+            /** 时间端缺失或仅能推算补全（作息未覆盖且无完整合法自定义时间） */
+            TIME_UNRESOLVED("课程时间未解析"),
+
+            /** 显式提供的时间非法（end<=start 反向/零时长） */
+            TIME_INVALID("课程时间非法"),
+
+            /** 覆盖行关联失效：孤儿行、跨学期关联或指向缺失课程 */
+            ASSOCIATION_BROKEN("课表关联失效")
         }
     }
 
     /**
-     * 当前学期课表是否构成"个人无冲突"统计的有效依据（含原因态）：
-     * 必须存在当前学期，且存在真正可展开为本学期课程事件的输入——
-     * 与 [ScheduleEngine] 展开器共用同一校验与同一时间窗解析
+     * 「个人无冲突」统计依据的聚合结果——单遍聚合产出，绝不以
+     * "任一可用行"短路 Valid 而掩盖其余未解析行（混合输入必须如实暴露）。
+     */
+    data class ScheduleBasisAggregation(
+        /** 三态判定：Valid=有可用输入且无未解析项；Incomplete=存在未解析项；Absent=无本学期相关输入 */
+        val status: ScheduleBasisEvaluation,
+        /** 可展开且时间证据可信（EXPLICIT_VALID/TIMETABLE_VALID）的本学期输入行数 */
+        val usableCount: Int,
+        /** 存在影响冲突判断问题（缺课程/缺时间/非法时间/关联问题）的本学期输入行数 */
+        val unresolvedCount: Int,
+        /** 全部未解析行的诚实原因码集合（Valid/Absent 时为空） */
+        val reasonCodes: Set<ScheduleBasisEvaluation.Reason>
+    )
+
+    /**
+     * 当前学期课表是否构成"个人无冲突"统计的有效依据——单遍聚合判定（不短路）：
+     * 必须存在当前学期；逐条盘点本学期排课规则与单日覆盖行，
+     * 与 [ScheduleEngine] 展开器共用同一校验与同一时间窗证据解析
      * （[ScheduleEngine.isExpandableScheduleRule] /
      * [ScheduleEngine.sameTermBaseRule] / [ScheduleEngine.expandableOverrideTimeWindow] /
-     * [ScheduleEngine.ruleSchedulePeriodWindow]）：
-     * - 本学期排课规则：termId 匹配、周次与学期有效周范围(1..weekCount)相交、节次有效、
-     *   课程可解析，且时间窗可解析（自带合法 customStart/customEnd 或作息表覆盖其节次——
-     *   无 PeriodTime 但自带完整自定义时间的课程同样计为有效依据）；
-     * - 本学期单日覆盖：仅非停课且能解析出真实课程与时间窗的覆盖算依据；
-     *   关联规则必须是本学期规则（跨学期关联无效）；孤儿停课行自身不产生事件，不构成依据。
-     * 输入存在但全部不可展开 → [ScheduleBasisEvaluation.Incomplete]（依据不完整原因态）；
-     * 无学期或零本学期输入 → [ScheduleBasisEvaluation.Absent]。
+     * [ScheduleEngine.ruleSchedulePeriodWindow] / [TimeEvidence]）：
+     * - usable：可展开且时间证据可信（EXPLICIT_VALID/TIMETABLE_VALID）——
+     *   缺作息表但自带完整合法 customStart/customEnd 同样可信（EXPLICIT_VALID），
+     *   推算补全（ESTIMATED）/无法解析（UNRESOLVED）/非法反向（INVALID）一律不采信；
+     * - unresolved：存在影响冲突判断问题的行——缺课程（MISSING_COURSE）、
+     *   缺时间/推算时间（TIME_UNRESOLVED/TIMETABLE_INCOMPLETE）、非法时间（TIME_INVALID）、
+     *   关联问题（ASSOCIATION_BROKEN：孤儿行/跨学期关联/指向缺失课程）、
+     *   零或越界周次与非法节次区间（INPUTS_UNEXPANDABLE）；
+     * - neutral：正常停课覆盖（指向本学期现存规则或自带可解析课程）只屏蔽事件不算损坏；
+     *   被有效非停课覆盖引用的"模板规则"（如零周次模板）不因模板自身缺陷判坏。
+     * 判定：usableCount>0 且 unresolvedCount==0 → Valid；
+     * unresolvedCount>0 → Incomplete（即使同时存在可用行也如实报不完整）；
+     * 无任何本学期相关输入（或仅剩中性行）→ Absent。
+     * 结果与输入行顺序无关——"有效/无效输入顺序交换"绝不改变判定。
      * "完整个人课表但今日无课"仍为 Valid：依据判定看学期输入而非当日展开结果。
      */
-    fun evaluateCurrentTermScheduleBasis(
+    fun aggregateCurrentTermScheduleBasis(
         term: Term?,
         courses: List<Course>,
         rules: List<CourseScheduleRule>,
         periodTimes: List<PeriodTime>,
         occurrenceOverrides: List<OccurrenceOverride> = emptyList()
-    ): ScheduleBasisEvaluation {
-        if (term == null) return ScheduleBasisEvaluation.Absent
+    ): ScheduleBasisAggregation {
+        if (term == null) {
+            return ScheduleBasisAggregation(ScheduleBasisEvaluation.Absent, 0, 0, emptySet())
+        }
         val courseIds = courses.mapTo(HashSet()) { it.id }
         val rulesById = rules.associateBy { it.id }
         val periodMap = periodTimes
@@ -492,31 +532,153 @@ object CampusStudyRoomCatalog {
         val termOverrides = occurrenceOverrides.filter { it.termId == term.id }
         if (termRules.isEmpty() && termOverrides.isEmpty()) {
             // 其他学期残留的 rules/覆盖不属于本学期输入：诚实按"无输入"处理
-            return ScheduleBasisEvaluation.Absent
+            return ScheduleBasisAggregation(ScheduleBasisEvaluation.Absent, 0, 0, emptySet())
         }
 
-        val anyExpandableRule = termRules.any { rule ->
-            ScheduleEngine.isExpandableScheduleRule(rule, term.id, courseIds, term.weekCount) &&
-                ScheduleEngine.ruleSchedulePeriodWindow(rule, periodMap).hasResolvedTime
-        }
-        if (anyExpandableRule) return ScheduleBasisEvaluation.Valid
+        val usableItemKeys = linkedSetOf<String>()
+        val unresolvedCodesByItem = linkedMapOf<String, Set<ScheduleBasisEvaluation.Reason>>()
 
-        val anyExpandableOverride = termOverrides.any { ov ->
-            ScheduleEngine.expandableOverrideTimeWindow(
-                ov, term.id, rulesById, courseIds, periodMap
-            )?.hasResolvedTime == true
+        fun timeWindowProblemCodes(evidence: TimeEvidence): Set<ScheduleBasisEvaluation.Reason> = when {
+            evidence.isBasisTrustworthy -> emptySet()
+            evidence == TimeEvidence.INVALID ->
+                setOf(ScheduleBasisEvaluation.Reason.TIME_INVALID)
+            periodMap.isEmpty() ->
+                setOf(ScheduleBasisEvaluation.Reason.TIMETABLE_INCOMPLETE)
+            else -> // ESTIMATED 推算锚点 / UNRESOLVED 无法解析：时间依据不足
+                setOf(ScheduleBasisEvaluation.Reason.TIME_UNRESOLVED)
         }
-        if (anyExpandableOverride) return ScheduleBasisEvaluation.Valid
 
-        // 有本学期输入但没有任何一条能展开为真实课程事件：依据不完整而非无输入
-        return ScheduleBasisEvaluation.Incomplete(
-            if (periodMap.isEmpty()) {
-                ScheduleBasisEvaluation.Reason.TIMETABLE_INCOMPLETE
+        for (rule in termRules) {
+            // 与展开器共用同一「可展开」校验为唯一口径（绝不另起判定逻辑），
+            // 不可展开时再按同一判定的组成项细分原因码。
+            val expandable = ScheduleEngine.isExpandableScheduleRule(
+                rule, term.id, courseIds, term.weekCount
+            )
+            val problems = mutableSetOf<ScheduleBasisEvaluation.Reason>()
+            if (!expandable) {
+                if (rule.courseId !in courseIds) {
+                    problems += ScheduleBasisEvaluation.Reason.MISSING_COURSE
+                }
+                val weeksUsable = rule.weeks.any { it in 1..term.weekCount }
+                val periodsOrdered = rule.startPeriod >= 1 && rule.startPeriod <= rule.endPeriod
+                if (!weeksUsable || !periodsOrdered) {
+                    problems += ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+                }
             } else {
-                ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+                // 可展开规则再查自身时间窗证据等级（与展开器同一解析路径）
+                problems += timeWindowProblemCodes(
+                    ScheduleEngine.ruleSchedulePeriodWindow(rule, periodMap).evidence
+                )
             }
-        )
+            if (problems.isEmpty()) {
+                usableItemKeys += "rule:${rule.id}"
+            } else {
+                unresolvedCodesByItem["rule:${rule.id}"] = problems
+            }
+        }
+
+        val consumedTemplateRuleIds = mutableSetOf<String>()
+        for (ov in termOverrides) {
+            val itemKey = "override:${ov.id}"
+            val baseRule = ScheduleEngine.sameTermBaseRule(ov, term.id, rulesById)
+            if (ov.canceled) {
+                // 正常停课覆盖不算损坏：指向本学期现存规则、或自带可解析课程的
+                // 独立停课行只屏蔽事件、不产生事件；孤立/跨学期关联的取消 = 关联问题，
+                // 绝不等于完整依据。
+                val brokenAssociation = (ov.courseRuleId != null && baseRule == null) ||
+                    (ov.courseRuleId == null &&
+                        (ov.courseId == null || ov.courseId !in courseIds))
+                if (brokenAssociation) {
+                    unresolvedCodesByItem[itemKey] =
+                        setOf(ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN)
+                }
+                continue
+            }
+            // 非停课覆盖：与展开器共用同一「可展开」校验为唯一口径；
+            // 缺课程/关联问题与覆盖行实际时间窗一并盘点——rule 合法但
+            // override 非法必须按 override 实际字段判定，不得借规则遮丑。
+            val problems = mutableSetOf<ScheduleBasisEvaluation.Reason>()
+            val expandable = ScheduleEngine.isExpandableOccurrenceOverride(
+                ov, term.id, rulesById, courseIds
+            )
+            if (ov.courseRuleId != null && baseRule == null) {
+                problems += ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN
+            }
+            val targetCourseId = ov.courseId ?: baseRule?.courseId
+            if (targetCourseId == null || targetCourseId !in courseIds) {
+                problems += ScheduleBasisEvaluation.Reason.MISSING_COURSE
+            }
+            if (expandable) {
+                val window = ScheduleEngine.expandableOverrideTimeWindow(
+                    ov, term.id, rulesById, courseIds, periodMap
+                )
+                if (window == null) {
+                    problems += ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+                } else {
+                    problems += timeWindowProblemCodes(window.evidence)
+                }
+            }
+            if (problems.isEmpty()) {
+                usableItemKeys += itemKey
+                // 记录被有效非停课覆盖消费的模板规则（零周次模板+合法单日补课
+                // 不因模板判坏）。
+                if (baseRule != null) consumedTemplateRuleIds += baseRule.id
+            } else {
+                unresolvedCodesByItem[itemKey] = problems
+            }
+        }
+
+        // 被有效非停课覆盖消费的模板规则：其自身缺陷不会独立展开为冲突事件，不计损坏
+        for (ruleId in consumedTemplateRuleIds) {
+            unresolvedCodesByItem.remove("rule:$ruleId")
+        }
+
+        val usableCount = usableItemKeys.size
+        val unresolvedCount = unresolvedCodesByItem.size
+        val reasonCodes = linkedSetOf<ScheduleBasisEvaluation.Reason>().apply {
+            unresolvedCodesByItem.values.forEach { addAll(it) }
+        }
+        val status = when {
+            unresolvedCount > 0 -> ScheduleBasisEvaluation.Incomplete(
+                reason = primaryBasisReason(reasonCodes),
+                reasonCodes = reasonCodes
+            )
+            usableCount > 0 -> ScheduleBasisEvaluation.Valid
+            else -> ScheduleBasisEvaluation.Absent // 仅剩中性行 → 无任何可用排课依据
+        }
+        return ScheduleBasisAggregation(status, usableCount, unresolvedCount, reasonCodes)
     }
+
+    /** 主因优先级：按对用户决策影响排序，保证混合原因时文案确定性。 */
+    private val BASIS_REASON_PRIORITY: List<ScheduleBasisEvaluation.Reason> = listOf(
+        ScheduleBasisEvaluation.Reason.TIME_INVALID,
+        ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN,
+        ScheduleBasisEvaluation.Reason.MISSING_COURSE,
+        ScheduleBasisEvaluation.Reason.TIMETABLE_INCOMPLETE,
+        ScheduleBasisEvaluation.Reason.TIME_UNRESOLVED,
+        ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+    )
+
+    private fun primaryBasisReason(
+        codes: Set<ScheduleBasisEvaluation.Reason>
+    ): ScheduleBasisEvaluation.Reason =
+        BASIS_REASON_PRIORITY.firstOrNull { it in codes }
+            ?: ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE
+
+    /**
+     * 当前学期课表是否构成"个人无冲突"统计的有效依据（含原因态）——
+     * 由 [aggregateCurrentTermScheduleBasis] 单遍聚合产出；Today 自习室卡片与
+     * 校园 Hub 自习教室页消费同一判定结果，绝不两套口径。
+     */
+    fun evaluateCurrentTermScheduleBasis(
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList()
+    ): ScheduleBasisEvaluation = aggregateCurrentTermScheduleBasis(
+        term, courses, rules, periodTimes, occurrenceOverrides
+    ).status
 
     /**
      * 当前学期课表是否构成"个人无冲突"统计的有效依据（布尔便捷入口）：
