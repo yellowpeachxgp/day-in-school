@@ -70,8 +70,8 @@ class LibraryBookingSubmitStateMachineTest {
         val quote = CloudReservationQuote(
             quoteId = "quote_srv_1",
             amountMicropeach = 25_000L,
-            priceVersion = 1,
-            unit = "MICROPEACH",
+            priceVersion = "price-library-cloud-2026-11-v1",
+            unit = "PER_CONFIRMED_RESERVATION",
             cloudUserId = "cloud_user_A",
             expiresAtEpochMillis = 1_900_000_000_000L
         )

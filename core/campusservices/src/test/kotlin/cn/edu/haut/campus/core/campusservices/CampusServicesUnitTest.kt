@@ -2191,6 +2191,8 @@ class CampusServicesUnitTest {
 
     private fun submitPlanWithTransport(
         expectedPriceMicropeach: Long?,
+        expectedCloudUserId: String? = null,
+        nowEpochMillis: Long? = null,
         transport: (String, String, String?, String?, Map<String, String>) -> String
     ): CampusCloudOidcHelper.CloudPlanSubmissionOutcome =
         CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
@@ -2203,6 +2205,8 @@ class CampusServicesUnitTest {
             preferredSeatLabel = "05桌 A座",
             planIdempotencyKey = "plan_price_test_1",
             expectedPriceMicropeach = expectedPriceMicropeach,
+            expectedCloudUserId = expectedCloudUserId,
+            nowEpochMillis = nowEpochMillis ?: System.currentTimeMillis(),
             httpTransport = transport
         )
 
@@ -2279,8 +2283,11 @@ class CampusServicesUnitTest {
     // ---------- R4-Q2/R5-D2：reservation-quote 报价单钉价（cloud 338d501+ 真实契约）+ quote 变更再确认 ----------
 
     /**
-     * 真实 Cloud 338+ reservation-quote envelope 共同 fixture：
-     * {quote_id, cloud_user_id, amount_micropeach, price_version, unit, issued_at, expires_at, quote_hash}
+     * 真实 Cloud reservation-quote envelope 合成辅助（R6 起契约源头为
+     * test/resources/reservation-quote-envelope.json，真实 handler 输出）：
+     * {quote_id, cloud_user_id, amount_micropeach, price_version, unit, issued_at, expires_at, quote_hash}。
+     * 默认值保留已发布旧契约形态（unit=MICROPEACH 兼容别名、price_version=1 旧整数），
+     * 新契约形态由共享 fixture 用例覆盖。
      */
     private fun reservationQuoteEnvelope(
         quoteId: String? = "quote_srv_1",
@@ -2390,10 +2397,25 @@ class CampusServicesUnitTest {
             Case("out of range amount") { reservationQuoteEnvelope(amountMicropeach = 200_000_000_000L) },
             // null 金额 → 拒绝
             Case("null amount") { reservationQuoteEnvelope(amountMicropeach = null) },
-            // 未知计价单位 → 拒绝
+            // 未知计价单位 → 拒绝（允许集：PER_CONFIRMED_RESERVATION 契约值 + MICROPEACH 兼容别名）
             Case("unknown unit") { reservationQuoteEnvelope(unit = "PEACH") },
-            // 未知报价版本 → 拒绝
-            Case("unknown price_version") { reservationQuoteEnvelope(priceVersion = 99) },
+            // price_version 为不透明 STRING token：浮点/布尔/空串等畸形形态一律拒绝
+            Case("float price_version") {
+                val data = JSONObject(reservationQuoteEnvelope(priceVersion = null))
+                    .getJSONObject("data")
+                data.put("price_version", 1.5)
+                JSONObject().put("ok", true).put("data", data).toString()
+            },
+            Case("blank price_version") { reservationQuoteEnvelope(priceVersion = "") },
+            Case("boolean price_version") {
+                val data = JSONObject(reservationQuoteEnvelope(priceVersion = null))
+                    .getJSONObject("data")
+                data.put("price_version", true)
+                JSONObject().put("ok", true).put("data", data).toString()
+            },
+            Case("overlong price_version") {
+                reservationQuoteEnvelope(priceVersion = "v".repeat(200))
+            },
             // expires_at 已过期 → 拒绝
             Case("expired quote") { reservationQuoteEnvelope(expiresAt = "2020-01-01T00:00:00Z") },
             // expires_at 不可解析 → 拒绝
@@ -2467,5 +2489,193 @@ class CampusServicesUnitTest {
         )
         assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable)
         assertEquals(0, stub.mutatingCallCount.get())
+    }
+
+    // ---------- R6-1：共享契约 fixture（cloud apps/api 真实 handler 输出） ----------
+
+    /**
+     * 跨仓库共享契约 fixture（core/campusservices/src/test/resources/reservation-quote-envelope.json，
+     * 由 cloud-in-school apps/api GET /api/v1/reservation-quote 真实 handler 生成）。
+     * 消费 envelope 的 body 字段作为传输层原始响应——绝不自写一份等价 mock。
+     */
+    private fun reservationQuoteFixtureBody(): JSONObject {
+        val raw = requireNotNull(javaClass.getResourceAsStream("/reservation-quote-envelope.json")) {
+            "缺少共享契约 fixture reservation-quote-envelope.json"
+        }.bufferedReader().use { it.readText() }
+        val envelope = JSONObject(raw)
+        assertEquals(200, envelope.getInt("http_status"))
+        val body = envelope.getJSONObject("body")
+        assertTrue(body.getBoolean("ok"))
+        return body
+    }
+
+    /** 以 fixture 为底对 data 字段做单点变更，返回响应体字符串（拒绝路径用例） */
+    private fun fixtureBodyVariant(body: JSONObject, mutate: (JSONObject) -> Unit): String {
+        val copy = JSONObject(body.toString())
+        mutate(copy.getJSONObject("data"))
+        return copy.toString()
+    }
+
+    /** fixture 签发后 1 分钟：报价仍处有效期内的判定时刻 */
+    private fun fixtureIssuedNow(body: JSONObject): Long =
+        java.time.Instant.parse(body.getJSONObject("data").getString("issued_at"))
+            .toEpochMilli() + 60_000L
+
+    @Test
+    fun `real cloud reservation-quote fixture parses to usable quote and pins quote_id plus expected price`() {
+        val body = reservationQuoteFixtureBody()
+        val data = body.getJSONObject("data")
+        val nowMs = fixtureIssuedNow(body)
+
+        // 1) 真实 envelope（unit=PER_CONFIRMED_RESERVATION + 不透明字符串 price_version）
+        //    解析为合法报价；与钉入价一致 → 创建请求同时携带 quote_id + expected_price_micropeach
+        val stub = CreatePlanStub()
+        stub.quoteResponse = { body.toString() }
+        val outcome = submitPlanWithTransport(
+            expectedPriceMicropeach = data.getLong("amount_micropeach"),
+            expectedCloudUserId = data.getString("cloud_user_id"),
+            nowEpochMillis = nowMs,
+            transport = stub.transport()
+        )
+        assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
+        val sent = JSONObject(stub.planBodies.single())
+        assertEquals(data.getString("quote_id"), sent.getString("quote_id"))
+        assertEquals(data.getLong("amount_micropeach"), sent.getLong("expected_price_micropeach"))
+
+        // 2) fixture 金额变体（再涨价）→ 预报价短路为诚实再确认；带回的合法 quote 对象
+        //    如实透出真实契约字段（字符串 price_version token / PER_CONFIRMED_RESERVATION unit）
+        val stubDrift = CreatePlanStub()
+        stubDrift.quoteResponse = {
+            fixtureBodyVariant(body) { it.put("amount_micropeach", 15_000) }
+        }
+        val driftOutcome = submitPlanWithTransport(
+            expectedPriceMicropeach = data.getLong("amount_micropeach"),
+            expectedCloudUserId = data.getString("cloud_user_id"),
+            nowEpochMillis = nowMs,
+            transport = stubDrift.transport()
+        )
+        assertTrue(driftOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict)
+        val drift = driftOutcome as CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
+        assertEquals(10_000L, drift.expectedPriceMicropeach)
+        assertEquals(15_000L, drift.currentPriceMicropeach)
+        val quote = drift.quote!!
+        assertEquals(data.getString("quote_id"), quote.quoteId)
+        assertEquals("price-library-cloud-2026-11-v1", quote.priceVersion)
+        assertEquals("PER_CONFIRMED_RESERVATION", quote.unit)
+        assertEquals(data.getString("cloud_user_id"), quote.cloudUserId)
+        assertEquals(
+            java.time.Instant.parse(data.getString("expires_at")).toEpochMilli(),
+            quote.expiresAtEpochMillis
+        )
+        assertEquals("报价漂移必须在任何写操作之前短路（真·零写）", 0, stubDrift.mutatingCallCount.get())
+    }
+
+    @Test
+    fun `fixture variants fail closed for expired malformed or legacy-shaped quotes`() {
+        val body = reservationQuoteFixtureBody()
+        val data = body.getJSONObject("data")
+        val nowMs = fixtureIssuedNow(body)
+        val fixtureAmount = data.getLong("amount_micropeach")
+        val cloudUserId = data.getString("cloud_user_id")
+        val expiredNowMs = java.time.Instant.parse(data.getString("expires_at"))
+            .toEpochMilli() + 1_000L
+
+        data class Case(val name: String, val now: Long = nowMs, val response: () -> String)
+        val unusableCases = listOf(
+            // 原始 fixture 的 expires_at 已早于判定时刻 → 过期拒绝
+            Case("expired fixture quote", now = expiredNowMs) { body.toString() },
+            // expires_at 不可解析 → 拒绝
+            Case("unparseable expires_at") {
+                fixtureBodyVariant(body) { it.put("expires_at", "soon") }
+            },
+            // amount 缺失 → 拒绝
+            Case("missing amount") {
+                fixtureBodyVariant(body) { it.remove("amount_micropeach") }
+            },
+            // amount 字符串（有损风险）→ 拒绝
+            Case("string amount") {
+                fixtureBodyVariant(body) { it.put("amount_micropeach", "10000") }
+            },
+            // 未知计价单位 → 拒绝
+            Case("unknown unit") {
+                fixtureBodyVariant(body) { it.put("unit", "PER_HOUR") }
+            },
+            // 畸形 price_version（浮点/布尔/空串）→ 拒绝
+            Case("float price_version") {
+                fixtureBodyVariant(body) { it.put("price_version", 1.5) }
+            },
+            Case("blank price_version") {
+                fixtureBodyVariant(body) { it.put("price_version", "  ") }
+            },
+            // 报价归属他人账号 → 拒绝
+            Case("foreign cloud_user_id") {
+                fixtureBodyVariant(body) { it.put("cloud_user_id", "someone_else") }
+            }
+        )
+        for (c in unusableCases) {
+            val stub = CreatePlanStub()
+            stub.quoteResponse = c.response
+            val outcome = submitPlanWithTransport(
+                expectedPriceMicropeach = fixtureAmount,
+                expectedCloudUserId = cloudUserId,
+                nowEpochMillis = c.now,
+                transport = stub.transport()
+            )
+            assertTrue(
+                "case ${c.name} 必须是 QuoteUnusable，实际: $outcome",
+                outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable
+            )
+            assertEquals("case ${c.name} 必须真·零写", 0, stub.mutatingCallCount.get())
+        }
+
+        // 已发布旧契约形态仍兼容：unit=MICROPEACH 别名 + price_version 旧整数 → 合法报价
+        val stubLegacy = CreatePlanStub()
+        stubLegacy.quoteResponse = {
+            fixtureBodyVariant(body) {
+                it.put("unit", "MICROPEACH")
+                it.put("price_version", 1)
+            }
+        }
+        val legacyOutcome = submitPlanWithTransport(
+            expectedPriceMicropeach = fixtureAmount,
+            expectedCloudUserId = cloudUserId,
+            nowEpochMillis = nowMs,
+            transport = stubLegacy.transport()
+        )
+        assertTrue(legacyOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.Accepted)
+        assertEquals(
+            data.getString("quote_id"),
+            JSONObject(stubLegacy.planBodies.single()).getString("quote_id")
+        )
+    }
+
+    @Test
+    fun `expired or lost quote at plan post maps to honest price reconfirmation`() {
+        val body = reservationQuoteFixtureBody()
+        val data = body.getJSONObject("data")
+        val nowMs = fixtureIssuedNow(body)
+
+        // 预报价合法 → 但 POST 时服务端报价已过期/服务重启丢 quote/钉价不符：
+        // 409 报价失效家族一律映射为诚实再确认（绝不按旧 quote 静默重试）
+        for (code in listOf("QUOTE_EXPIRED", "QUOTE_NOT_FOUND", "QUOTE_STALE", "QUOTE_MISMATCH")) {
+            val stub = CreatePlanStub()
+            stub.quoteResponse = { body.toString() }
+            stub.planPostResponse = {
+                """{"ok":false,"error":{"code":"$code","message":"quote no longer valid","detail":{"expected_price_micropeach":10000,"current_price_micropeach":12000}}}"""
+            }
+            val outcome = submitPlanWithTransport(
+                expectedPriceMicropeach = data.getLong("amount_micropeach"),
+                expectedCloudUserId = data.getString("cloud_user_id"),
+                nowEpochMillis = nowMs,
+                transport = stub.transport()
+            )
+            assertTrue(
+                "code=$code 必须映射为诚实再确认，实际: $outcome",
+                outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
+            )
+            val drift = outcome as CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict
+            assertEquals(10_000L, drift.expectedPriceMicropeach)
+            assertEquals(12_000L, drift.currentPriceMicropeach)
+        }
     }
 }

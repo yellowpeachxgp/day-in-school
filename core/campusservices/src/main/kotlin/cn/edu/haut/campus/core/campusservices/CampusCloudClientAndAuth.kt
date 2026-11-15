@@ -149,17 +149,20 @@ data class CloudUnsyncedPlanUpsertDto(
 /**
  * 云端预约报价单（cloud 338d501+ `GET /api/v1/reservation-quote`，PRICE_QUOTE 语义）。
  * 真实契约 envelope：{quote_id, cloud_user_id, amount_micropeach, price_version, unit,
- * issued_at, expires_at, quote_hash}。
+ * issued_at, expires_at, quote_hash}——以 Cloud 真实响应为契约源头
+ * （unit=PER_CONFIRMED_RESERVATION 按次计价，price_version 为不透明字符串版本标记）。
  *
  * - [amountMicropeach] 为严格整数微桃金额：解析期已拒绝字符串/浮点/负值/null/超界值，
- *   以及未知 unit / 未知 price_version / 多字段不一致的报价（保守失败，绝不暗选金额）；
+ *   以及未知 unit / 畸形 price_version / 多字段不一致的报价（保守失败，绝不暗选金额）；
+ * - [priceVersion] 为不透明版本标记 token：Cloud 真实契约下发非空字符串，
+ *   已发布旧契约的整数版本在解析期归一化为十进制字符串；
  * - [quoteId] 可空：报价只用于漂移检测而无 quote_id 时，创建路径只走 expected_price 钉价；
  * - [expiresAtEpochMillis] 为已验证未过期的截止时间（缺省为服务端未提供）。
  */
 data class CloudReservationQuote(
     val quoteId: String?,
     val amountMicropeach: Long,
-    val priceVersion: Int?,
+    val priceVersion: String?,
     val unit: String?,
     val cloudUserId: String?,
     val expiresAtEpochMillis: Long?
@@ -1230,11 +1233,18 @@ object CampusCloudOidcHelper {
     /** 报价金额合理上限：1000万 🍑（1e11 微桃），超出即异常报价 */
     private const val MAX_QUOTE_AMOUNT_MICROPEACH = 100_000_000_000L
 
-    /** 已知计价单位：amount_micropeach 语义只接受 MICROPEACH */
-    private val SUPPORTED_QUOTE_UNITS = setOf("MICROPEACH")
+    /**
+     * 已知计价单位（以 Cloud 真实响应为契约源头）：
+     * PER_CONFIRMED_RESERVATION = 按次计价单位（真实下发值）；
+     * MICROPEACH = 已发布旧契约的兼容别名。其余一律保守拒绝。
+     */
+    private val SUPPORTED_QUOTE_UNITS = setOf("PER_CONFIRMED_RESERVATION", "MICROPEACH")
 
-    /** 已知报价版本：cloud 338d501 首版契约为 v1；未知版本保守拒绝重新取价 */
-    private val SUPPORTED_QUOTE_PRICE_VERSIONS = setOf(1)
+    /**
+     * price_version 为不透明版本标记 token：非空、有界即接受，绝不按整数白名单解释；
+     * 已发布旧契约的整数版本兼容接受并归一化为十进制字符串。
+     */
+    private const val MAX_QUOTE_PRICE_VERSION_TOKEN_LENGTH = 128
 
     /** 端点"明确不支持"错误码 → legacy 路径；其余错误码一律按 Unusable 处理 */
     private val QUOTE_UNSUPPORTED_ENDPOINT_CODES = setOf(
@@ -1294,7 +1304,8 @@ object CampusCloudOidcHelper {
     }
 
     /**
-     * 严格解析报价 data：金额必须无损、单一、界内；unit/price_version 存在时必须已知；
+     * 严格解析报价 data：金额必须无损、单一、界内；unit 存在时必须在已知计价单位内；
+     * price_version 为不透明 token（字符串非空有界，旧整数版本兼容归一化）；
      * cloud_user_id 与期望身份不一致即拒绝；expires_at 已过期或不可解析即拒绝。
      */
     private fun parseReservationQuoteData(
@@ -1343,16 +1354,27 @@ object CampusCloudOidcHelper {
             return ReservationQuoteFetch.Unusable("云端报价使用未知计价单位，请重新获取报价")
         }
 
-        var priceVersion: Int? = null
+        var priceVersion: String? = null
         if (data.has("price_version") && !data.isNull("price_version")) {
-            val v = strictJsonIntegralLong(data.opt("price_version"))
-            if (v == null || v < Int.MIN_VALUE || v > Int.MAX_VALUE) {
-                return ReservationQuoteFetch.Unusable("云端报价版本格式异常，请重新获取报价")
+            val rawVersion = data.opt("price_version")
+            if (rawVersion is String) {
+                // 真实契约为不透明 STRING token：非空、有界即接受，不解释其内容
+                val token = rawVersion.trim()
+                if (token.isEmpty() || token.length > MAX_QUOTE_PRICE_VERSION_TOKEN_LENGTH) {
+                    return ReservationQuoteFetch.Unusable("云端报价版本标记格式异常，请重新获取报价")
+                }
+                priceVersion = token
+            } else {
+                // 已发布旧契约的整数版本：兼容接受并归一化为十进制字符串 token
+                val legacyVersion = strictJsonIntegralLong(rawVersion)
+                if (legacyVersion == null ||
+                    legacyVersion < Int.MIN_VALUE ||
+                    legacyVersion > Int.MAX_VALUE
+                ) {
+                    return ReservationQuoteFetch.Unusable("云端报价版本标记格式异常，请重新获取报价")
+                }
+                priceVersion = legacyVersion.toString()
             }
-            if (v.toInt() !in SUPPORTED_QUOTE_PRICE_VERSIONS) {
-                return ReservationQuoteFetch.Unusable("云端报价版本暂不支持，请重新获取报价")
-            }
-            priceVersion = v.toInt()
         }
 
         val quoteCloudUserId = data.optCleanString("cloud_user_id").ifBlank { null }
@@ -1450,6 +1472,8 @@ object CampusCloudOidcHelper {
         repeatDays: Int = 1,
         expectedPriceMicropeach: Long? = null,
         expectedCloudUserId: String? = null,
+        /** 报价过期判定时钟：测试可注入以确定性消费固定契约 fixture */
+        nowEpochMillis: Long = System.currentTimeMillis(),
         httpTransport: ((String, String, String?, String?, Map<String, String>) -> String)? = null
     ): CloudPlanSubmissionOutcome {
         if (accessToken.isBlank()) {
@@ -1473,7 +1497,9 @@ object CampusCloudOidcHelper {
         // 端点明确 404 → legacy expected-price 路径（仍钉入用户批准价）；
         // 坏数据/未知错误 → QuoteUnusable 提示重取，绝不静默降级、不附未知金额 quote_id。
         if (expectedPriceMicropeach != null) {
-            when (val quoteFetch = fetchReservationQuote(transport, cleanBase, accessToken, expectedCloudUserId)) {
+            when (val quoteFetch = fetchReservationQuote(
+                transport, cleanBase, accessToken, expectedCloudUserId, nowEpochMillis
+            )) {
                 is ReservationQuoteFetch.EndpointUnsupported -> Unit
                 is ReservationQuoteFetch.Unusable ->
                     return CloudPlanSubmissionOutcome.QuoteUnusable(quoteFetch.reason)
