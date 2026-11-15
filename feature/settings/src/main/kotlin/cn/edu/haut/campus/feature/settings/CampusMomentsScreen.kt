@@ -1911,13 +1911,13 @@ private fun MomentsPostDetailDialog(
                                         compact = true,
                                         onClick = {
                                             val payload = composer.captureReplyPayload(req.id)
-                                            val cleanReply = payload.text.trim().take(240)
+                                            val cleanReply = payload.text
                                             if (cleanReply.isNotEmpty()) {
                                                 onHandleContactRequestAction(req.id, "REPLY", cleanReply, payload.clientMessageId) { ok ->
                                                     if (ok) {
                                                         composer.onReplySucceeded(req.id, payload.clientMessageId)
                                                     } else {
-                                                        composer.onReplyFailed(req.id)
+                                                        composer.onReplyFailed(req.id, payload.clientMessageId)
                                                     }
                                                 }
                                             }
@@ -1930,12 +1930,12 @@ private fun MomentsPostDetailDialog(
                                             compact = true,
                                             onClick = {
                                                 val payload = composer.captureReplyPayload(req.id)
-                                                val cleanReply = payload.text.trim().take(240).ifBlank { null }
+                                                val cleanReply = payload.text.ifBlank { null }
                                                 onHandleContactRequestAction(req.id, "APPROVE", cleanReply, payload.clientMessageId) { ok ->
                                                     if (ok) {
                                                         composer.onReplySucceeded(req.id, payload.clientMessageId)
                                                     } else {
-                                                        composer.onReplyFailed(req.id)
+                                                        composer.onReplyFailed(req.id, payload.clientMessageId)
                                                     }
                                                 }
                                             }
@@ -2265,21 +2265,21 @@ private fun MomentsPostDetailDialog(
                         composer.publicComment.trim().isNotEmpty()
                 },
                 onClick = {
-                    // 捕获不可变载荷 {postId, viewerId, audience, text, contact, clientMessageId}，
-                    // 由调用方按当前身份复核后发送；成功且匹配本次发送才清空对应草稿
+                    // 捕获的已是规范化载荷（trim + 长度上限）：同载荷重试同键，编辑后新键；
+                    // 成功回执按草稿修订号清草稿——发送后编辑过的新草稿绝不被旧回执清掉
                     val payload = composer.captureSubmitPayload()
                     if (payload.audience == ContactComposerAudience.PRIVATE_REQUEST) {
                         onSubmitContactRequest(
-                            payload.text.trim().take(240),
-                            payload.contact.trim().take(64),
+                            payload.text,
+                            payload.contact,
                             payload.clientMessageId
                         ) { ok ->
                             if (ok) composer.onSubmitSucceeded(payload) else composer.onSubmitFailed(payload)
                         }
                     } else {
                         onSubmitComment(
-                            payload.text.trim().take(240),
-                            payload.contact.trim().take(64),
+                            payload.text,
+                            payload.contact,
                             payload.clientMessageId
                         ) { ok ->
                             if (ok) composer.onSubmitSucceeded(payload) else composer.onSubmitFailed(payload)
