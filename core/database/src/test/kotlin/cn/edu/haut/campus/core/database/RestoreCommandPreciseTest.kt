@@ -83,6 +83,30 @@ class RestoreCommandPreciseTest {
 
     private suspend fun overrides() = dao.getOccurrenceOverridesSnapshot()
 
+    @Test
+    fun `拒绝覆盖调课目标前不得删除另一规则的既有覆盖`() = runBlocking {
+        val date = LocalDate.of(2026, 10, 14)
+        val ordinary = OccurrenceOverride(
+            id = "ov_ordinary", termId = term.id, courseId = course.id,
+            courseRuleId = "r_other", date = date, canceled = true, reason = "普通停课"
+        ).toEntity()
+        val target = OccurrenceOverride(
+            id = "ov_protected_target", termId = term.id, courseId = course.id,
+            courseRuleId = null, date = date, canceled = false, reason = "调入",
+            moveId = "move_protected", moveRole = OccurrenceOverride.MOVE_ROLE_TARGET
+        ).toEntity()
+        dao.upsertOccurrenceOverrides(listOf(ordinary, target))
+        val before = overrides()
+        var notifications = 0
+        repo.onScheduleOrPolicyChangedListener = { notifications++ }
+        // 陈旧对象复用目标 id，同时携带另一规则。所有拒绝条件必须先于任何删除。
+        repo.saveOccurrenceOverride(target.toDomain().copy(
+            courseRuleId = ordinary.courseRuleId, moveId = null, moveRole = null
+        ))
+        assertEquals(before, overrides())
+        assertEquals(0, notifications)
+    }
+
     private suspend fun resolveOcc(date: LocalDate, rules: List<CourseScheduleRule>): List<ClassOccurrence> =
         ScheduleEngine.resolveOccurrencesForDate(
             date = date, term = term, courses = listOf(course), rules = rules,

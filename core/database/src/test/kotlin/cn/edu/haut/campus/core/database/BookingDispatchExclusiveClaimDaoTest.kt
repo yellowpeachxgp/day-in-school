@@ -3190,7 +3190,8 @@ class BookingDispatchExclusiveClaimDaoTest {
         preferredAreaName = "五层中区",
         preferredSeatLabel = seat,
         acceptedPriceMicropeach = acceptedPriceMicropeach,
-        nowEpochMillis = atMs
+        nowEpochMillis = atMs,
+        expectedIdentity = repo.snapshotBookingSubmissionIdentity()
     )
 
     @Test

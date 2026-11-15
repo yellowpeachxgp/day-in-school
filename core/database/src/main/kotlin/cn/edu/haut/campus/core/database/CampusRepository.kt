@@ -1549,6 +1549,14 @@ class CampusRepository internal constructor(
         val normalized = override.copy(buildingId = resolvedBuildingId)
         val wrote = database.withTransaction {
             val snapshot = dao.getOccurrenceOverridesSnapshot()
+            // 先完成全部拒绝条件，再执行任何删除；事务内提前返回不会自动回滚此前写入。
+            val existingById = snapshot.firstOrNull { it.id == normalized.id }
+            if (existingById != null && !existingById.moveId.isNullOrBlank() &&
+                normalized.moveId.isNullOrBlank()
+            ) {
+                Log.w(LOG_TAG, "saveOccurrenceOverride: 调课关联行不能被普通覆盖替换，已拒绝写入")
+                return@withTransaction false
+            }
             val ruleId = normalized.courseRuleId
             if (!ruleId.isNullOrBlank()) {
                 // 将要被「规则+日期」清除的行若带 moveId，是普通覆盖写入不能触碰的调课关联行：
@@ -1565,17 +1573,6 @@ class CampusRepository internal constructor(
                     return@withTransaction false
                 }
                 dao.deleteOccurrenceOverridesForRuleOnDate(ruleId, normalized.date.toString())
-            }
-            // 同 id 覆盖写入：若既有行是调课关联行而新行未携带 moveId，REPLACE 会抹掉关联，拒绝。
-            val existingById = snapshot.firstOrNull { it.id == normalized.id }
-            if (existingById != null && !existingById.moveId.isNullOrBlank() &&
-                normalized.moveId.isNullOrBlank()
-            ) {
-                Log.w(
-                    LOG_TAG,
-                    "saveOccurrenceOverride: ${normalized.id} 是调课关联行(moveId=${existingById.moveId})，拒绝丢失 moveId 的覆盖"
-                )
-                return@withTransaction false
             }
             upsertOccurrenceOverrideStamped(normalized.toEntity())
             true
@@ -1931,16 +1928,16 @@ class CampusRepository internal constructor(
      * 撤销调课的合法入口只有 [undoMove]（或兼容适配器 [restoreCanceledOccurrence]）。命中即记日志并安全 no-op。
      */
     suspend fun deleteOccurrenceOverride(overrideId: String) {
-        val existing = dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == overrideId }
-        if (existing != null && !existing.moveId.isNullOrBlank()) {
-            Log.w(
-                LOG_TAG,
-                "deleteOccurrenceOverride: $overrideId 是调课关联行(moveId=${existing.moveId},role=${existing.moveRole})，拒绝单条删除"
-            )
-            return
+        val deleted = database.withTransaction {
+            val existing = dao.getOccurrenceOverrideById(overrideId) ?: return@withTransaction false
+            if (!existing.moveId.isNullOrBlank()) {
+                Log.w(LOG_TAG, "deleteOccurrenceOverride: 调课关联行拒绝单条删除")
+                return@withTransaction false
+            }
+            dao.deleteOccurrenceOverrideById(overrideId)
+            true
         }
-        dao.deleteOccurrenceOverrideById(overrideId)
-        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
+        if (deleted) notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
     }
 
     /**
@@ -6721,6 +6718,25 @@ class CampusRepository internal constructor(
     suspend fun getAllLibraryBookingPlansForAuditSnapshot(): List<LibraryBookingPlanEntity> =
         cloudAndParcelDao.getLibraryBookingPlansSnapshot()
 
+    /** UI 确认绑定的身份；仓库入口必须消费它，不能另取新身份执行旧确认。 */
+    data class BookingSubmissionIdentity(
+        val profileId: String,
+        val cloudUserId: String,
+        val generation: Long,
+        val apiBaseUrl: String,
+        val studentNo: String
+    )
+
+    suspend fun snapshotBookingSubmissionIdentity(): BookingSubmissionIdentity {
+        val session = snapshotCloudIdentitySession()
+        val prefs = preferencesFlow.first()
+        return BookingSubmissionIdentity(
+            profileId, session?.cloudUserId.orEmpty(), session?.generation ?: -1L,
+            session?.apiBaseUrl ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs.networkProxyConfig.customCloudApiBaseUrl),
+            (buildDelegatedCredentialBundle().first ?: prefs.savedStudentId.orEmpty()).trim()
+        )
+    }
+
     suspend fun createDualEngineBookingPlan(
         executionMode: BookingExecutionMode,
         targetDate: LocalDate,
@@ -6736,7 +6752,8 @@ class CampusRepository internal constructor(
          * 防止上一轮云端报价跨引擎/跨身份残留进入新的本机计划。
          */
         acceptedPriceMicropeach: Long? = null,
-        nowEpochMillis: Long = System.currentTimeMillis()
+        nowEpochMillis: Long = System.currentTimeMillis(),
+        expectedIdentity: BookingSubmissionIdentity? = null
     ): Result<LibraryBookingPlanEntity> = runCatching {
         CampusCloudOidcHelper.configurePersistentAuthStorageDir(
             java.io.File(appContext.filesDir, "cloud_auth_provenance")
@@ -6757,6 +6774,16 @@ class CampusRepository internal constructor(
         val identitySessionAtStart = snapshotCloudIdentitySession()
         val (studentNoBundlePre, delegatedBundlePre) = buildDelegatedCredentialBundle()
         val currentStudentNo = (studentNoBundlePre ?: prefsSnap.savedStudentId.orEmpty()).trim()
+        if (expectedIdentity != null) {
+            requireActiveSession()
+            val actualIdentity = BookingSubmissionIdentity(
+                profileId, identitySessionAtStart?.cloudUserId.orEmpty(),
+                identitySessionAtStart?.generation ?: -1L,
+                identitySessionAtStart?.apiBaseUrl ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsSnap.networkProxyConfig.customCloudApiBaseUrl),
+                currentStudentNo
+            )
+            check(actualIdentity == expectedIdentity) { "确认身份已变化，请刷新页面后重新确认创建" }
+        }
 
         // 0) 跨引擎切换与同日同人防重协调：统一按真实学校身份（学号）与明确 owner 归属判重（不同人隔离不误伤，同一学号跨账号仍严格防重！）
         val allPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
@@ -7105,7 +7132,8 @@ class CampusRepository internal constructor(
             //    提交前即时复核：身份/世代/base-url 与学号必须仍与开始快照一致，
             //    切号期间的排队提交一律停止并恢复原有本机计划
             if (identitySessionAtStart == null ||
-                !isCloudIdentitySnapshotCurrent(identitySessionAtStart)
+                !isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                (expectedIdentity != null && !isSessionActive)
             ) {
                 restoreStoppedLocalPlansSafely()
                 throw IllegalStateException("云端账号在任务创建期间已切换或解绑，已停止向云端提交旧会话委托")
@@ -7336,6 +7364,11 @@ class CampusRepository internal constructor(
             ownerStudentId = currentStudentNo.ifBlank { null }
         )
         bookingPlanStateMutex.withLock {
+            // 云端已受理时必须保留原归属回执；本机尚未创建则在实际落库前复核旧确认。
+            if (expectedIdentity != null && executionMode != BookingExecutionMode.CLOUD_HOSTED) {
+                requireActiveSession()
+                check(snapshotBookingSubmissionIdentity() == expectedIdentity) { "确认身份已变化，请刷新页面后重新确认创建" }
+            }
             cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         }
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {

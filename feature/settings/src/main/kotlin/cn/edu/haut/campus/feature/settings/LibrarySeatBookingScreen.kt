@@ -1776,13 +1776,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         LibraryBookingPlanSubmitter(
             machine = submitMachine,
             identityProvider = {
-                val session = repository.snapshotCloudIdentitySession()
+                val session = repository.snapshotBookingSubmissionIdentity()
                 BookingIdentityContext(
-                    profileId = session?.profileId.orEmpty(),
-                    cloudUserId = session?.cloudUserId.orEmpty(),
-                    identityGeneration = session?.generation ?: -1L,
-                    normalizedBase = session?.apiBaseUrl.orEmpty(),
-                    studentNo = repository.preferencesFlow.first().savedStudentId.orEmpty()
+                    profileId = session.profileId,
+                    cloudUserId = session.cloudUserId,
+                    identityGeneration = session.generation,
+                    normalizedBase = session.apiBaseUrl,
+                    studentNo = session.studentNo
                 )
             },
             paramsProvider = {
@@ -1804,7 +1804,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     preferredAreaName = snap.areaName,
                     preferredSeatLabel = snap.seatLabel,
                     repeatDays = snap.repeatDays,
-                    acceptedPriceMicropeach = snap.acceptedPriceMicropeach
+                    acceptedPriceMicropeach = snap.acceptedPriceMicropeach,
+                    expectedIdentity = CampusRepository.BookingSubmissionIdentity(
+                        snap.profileId, snap.cloudUserId, snap.identityGeneration, snap.normalizedBase, snap.studentNo
+                    )
                 ).map { }
             }
         )
