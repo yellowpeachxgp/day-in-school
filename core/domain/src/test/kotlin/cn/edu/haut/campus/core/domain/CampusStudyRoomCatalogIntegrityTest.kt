@@ -471,26 +471,30 @@ class CampusStudyRoomCatalogIntegrityTest {
             ).hasBasis
         )
 
-        // 跨学期关联被忽略后，覆盖行自带合法 courseId+节次仍能凭自身字段构成依据
-        assertTrue(
-            CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
-                term = term,
-                courses = listOf(course),
-                rules = listOf(foreignRule),
-                periodTimes = periods,
-                occurrenceOverrides = listOf(
-                    OccurrenceOverride(
-                        id = "oo_foreign_link_self",
-                        termId = term.id,
-                        courseRuleId = foreignRule.id,
-                        courseId = course.id,
-                        date = LocalDate.of(2026, 9, 7),
-                        startPeriod = 1,
-                        endPeriod = 2,
-                        canceled = false
-                    )
+        // R5-D4：覆盖行自带合法 courseId+节次虽可凭自身字段展开，但声明的跨学期
+        // 关联是"关联问题"——必须报告原因态，绝不与可用输入短路冒充完整依据
+        val foreignLinkSelfEval = CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = term,
+            courses = listOf(course),
+            rules = listOf(foreignRule),
+            periodTimes = periods,
+            occurrenceOverrides = listOf(
+                OccurrenceOverride(
+                    id = "oo_foreign_link_self",
+                    termId = term.id,
+                    courseRuleId = foreignRule.id,
+                    courseId = course.id,
+                    date = LocalDate.of(2026, 9, 7),
+                    startPeriod = 1,
+                    endPeriod = 2,
+                    canceled = false
                 )
-            ).hasBasis
+            )
+        )
+        assertFalse("跨学期关联必须报告原因态", foreignLinkSelfEval.hasBasis)
+        assertEquals(
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN,
+            (foreignLinkSelfEval as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete).reason
         )
 
         // R4-D1b(d)：原因态三分——零输入 Absent / 本学期输入不可展开 Incomplete / 可展开 Valid
@@ -540,7 +544,7 @@ class CampusStudyRoomCatalogIntegrityTest {
         )
         assertFalse(orphanEval.hasBasis)
         assertEquals(
-            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.INPUTS_UNEXPANDABLE,
+            CampusStudyRoomCatalog.ScheduleBasisEvaluation.Reason.ASSOCIATION_BROKEN,
             (orphanEval as CampusStudyRoomCatalog.ScheduleBasisEvaluation.Incomplete).reason
         )
     }
