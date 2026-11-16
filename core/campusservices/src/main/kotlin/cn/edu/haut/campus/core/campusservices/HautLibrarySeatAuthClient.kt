@@ -361,7 +361,8 @@ data class LibraryRegionSeatsSnapshot(
     val startTime: String,
     val endTime: String,
     val canSetTime: Boolean,
-    val seats: List<LibrarySeatItem>
+    val seats: List<LibrarySeatItem>,
+    val isCachedLayout: Boolean = false
 )
 
 data class LibrarySeatOverviewSnapshot(
