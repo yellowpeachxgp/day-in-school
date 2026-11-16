@@ -45,7 +45,7 @@ class CloudSessionDeviceTest {
         val storage = isolatedAccountStoragePartition(id)
         val profile = AccountProfileEntity(id = id, accountId = id, schoolId = "haut", schoolName = "河南工业大学",
             province = "河南省", city = "郑州市", campusId = "lianhuajie", campusName = "莲花街校区",
-            timeZoneId = "Asia/Shanghai", label = "隔离设备测试", isLegacy = true,
+            timeZoneId = "Asia/Shanghai", label = "隔离设备测试", isLegacy = false,
             databaseName = storage.databaseName, preferencesName = storage.preferencesName, createdAtEpochMs = 1)
         val database = Room.inMemoryDatabaseBuilder(context, HautDatabase::class.java).build()
         val file = File(context.filesDir, "$id.preferences_pb")

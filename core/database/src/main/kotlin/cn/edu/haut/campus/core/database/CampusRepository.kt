@@ -5436,9 +5436,9 @@ class CampusRepository internal constructor(
             var prefs = preferences.data.first()
             val legacyAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
             val legacyRt = prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty()
-            // v0.20.2 前的旧档案保存原文令牌。仅在原账号归属一致时一次性密封，
+            // v0.20.2 前所有档案都可能保存原文令牌。仅在原账号归属一致时一次性密封，
             // 不能把另一账号的旧凭据带入当前会话，也不能在加密失败时发送原文。
-            if (accountProfile.isLegacy && identitySnapshot != null &&
+            if (identitySnapshot != null &&
                 legacyAt.isNotBlank() && legacyRt.isNotBlank() &&
                 !legacyAt.startsWith(CloudTokenSecureVault.SEALED_PREFIX) &&
                 !legacyRt.startsWith(CloudTokenSecureVault.SEALED_PREFIX)

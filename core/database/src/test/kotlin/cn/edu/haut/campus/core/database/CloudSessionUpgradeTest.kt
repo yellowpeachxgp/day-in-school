@@ -82,8 +82,10 @@ class CloudSessionUpgradeTest {
         return f
     }
     private fun syncBody() = """{"ok":true,"data":{"auth_version":1,"user":{"cloud_user_id":"$owner","display_name":"迁移测试"},"wallet":{"peach_balance":2.0},"school_bindings":[],"reservation_jobs":[],"orders":[],"parcels":[]}}"""
-    @Test fun `旧版真实明文令牌经过实际同步入口续期加密并在仓库重建后可用`() = runBlocking {
-        val f = fixture(true)
+    @Test fun `原有档案的旧令牌可安全升级`() = runBlocking { verifyUpgrade(true) }
+    @Test fun `后来添加的档案也可通过实际同步入口升级旧格式令牌`() = runBlocking { verifyUpgrade(false) }
+    private suspend fun verifyUpgrade(legacy: Boolean) {
+        val f = fixture(legacy)
         val live = jwt(owner, 4102444800)
         var refreshCalls = 0
         f.repository.cloudHttpTransportForTest = { method, url, body, token, _ ->
@@ -111,10 +113,12 @@ class CloudSessionUpgradeTest {
         recreated.syncWithCampusCloud().getOrThrow()
         Unit
     }
-    @Test fun `非旧档案不采纳未密封令牌且零网络请求`() = runBlocking {
+    @Test fun `没有云账号绑定时不迁移旧令牌且不联网`() = runBlocking {
         val f = fixture(false); var calls = 0
+        f.database.cloudAndParcelDao().clearCloudIdentityBinding()
         f.repository.cloudHttpTransportForTest = { _, _, _, _, _ -> calls++; error("禁止发送") }
         assertTrue(f.repository.syncWithCampusCloud().isFailure); assertEquals(0, calls)
+        assertEquals("legacy-refresh-secret", f.dataStore.data.first()[rt])
     }
     @Test fun `旧令牌属其他云账号时不迁移不串号且零网络请求`() = runBlocking {
         val f = fixture(true, "another-user"); var calls = 0
