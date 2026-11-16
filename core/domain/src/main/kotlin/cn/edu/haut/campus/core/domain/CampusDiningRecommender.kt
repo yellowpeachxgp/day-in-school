@@ -191,6 +191,13 @@ object CanteenDishReviewCodec {
 
 object CampusDiningRecommender {
 
+    /**
+     * 已停业餐厅楼宇 ID 单一事实源（#5）：第二餐厅/第三餐厅已停止营业并从楼宇字典移除。
+     * 所有「活跃」就餐推荐、楼宇流、课表快照等对外数据路径统一引用此集合过滤，
+     * 仅允许用户历史评价在持久层原样保留（归档兼容），绝不把已停业餐厅重新带进活跃候选。
+     */
+    val CLOSED_CANTEEN_BUILDING_IDS: Set<String> = setOf("b_canteen2", "b_canteen3")
+
     const val LEAD_MINUTES_BEFORE_CLASS_END = 60L
     private const val MAX_CONSECUTIVE_BREAK_MINUTES = 25L
 
@@ -470,7 +477,7 @@ object CampusDiningRecommender {
         for ((key, list) in reviewsByKey) {
             if (key in handledKeys) continue
             val latest = list.maxByOrNull { it.updatedAtEpochMs } ?: continue
-            if (latest.canteenBuildingId in setOf("b_canteen2", "b_canteen3")) continue
+            if (latest.canteenBuildingId in CLOSED_CANTEEN_BUILDING_IDS) continue
             if (canteenBuildingIdFilter != null && latest.canteenBuildingId != canteenBuildingIdFilter) continue
             val shortName = canteenMap[latest.canteenBuildingId]?.shortName ?: "食堂"
             val avg = list.map { it.stars }.average().toFloat().coerceIn(1f, 5f)

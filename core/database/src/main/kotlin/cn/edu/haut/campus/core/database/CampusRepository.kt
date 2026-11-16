@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.database
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -56,6 +57,7 @@ import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
 import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import cn.edu.haut.campus.core.campusservices.optCleanString
 import cn.edu.haut.campus.core.campusservices.optNullableCleanString
+import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.ReminderRevision
@@ -177,6 +179,42 @@ data class AppPreferencesState(
     val customCampusZonesJson: String = "[]"
 )
 
+/** 微桃 → 🍑 整数/小数自适应显示（1.0 显示为 "1"，0.5 显示为 "0.5"） */
+private fun formatMicropeachAsPeach(micropeach: Long): String {
+    val whole = micropeach / 10_000L
+    val rem = micropeach % 10_000L
+    return if (rem == 0L) whole.toString() else (micropeach / 10_000.0).toString()
+}
+
+/**
+ * 云端预约计划报价漂移冲突（R3 §5 价格钉死诚实再确认）：
+ * 客户端按创建时向用户展示的价格提交 expected_price_micropeach，云端调价后以 409 拒绝。
+ * UI 必须如实向用户展示新旧价格并等待其重新发起创建——绝不自动按新价静默重试，
+ * 否则会在用户不知情的情况下改签合同价格。
+ */
+class CloudPlanPriceDriftException(
+    /** 创建时向用户展示/钉入请求的价格（微桃） */
+    val expectedPriceMicropeach: Long,
+    /** 云端错误 detail 中返回的现行价格（微桃），云端未提供时为 null */
+    val currentPriceMicropeach: Long?,
+    serverReason: String?,
+    /** 预取报价短路时带回的完整新报价（quote_id/截止时间），409 路径为 null */
+    val proposedQuote: cn.edu.haut.campus.core.campusservices.CloudReservationQuote? = null
+) : IllegalStateException(
+    buildString {
+        append("云端抢座价格已调整")
+        if (currentPriceMicropeach != null && currentPriceMicropeach != expectedPriceMicropeach) {
+            append("：您创建时看到的价格为 ")
+            append(formatMicropeachAsPeach(expectedPriceMicropeach))
+            append(" 🍑，云端最新价格为 ")
+            append(formatMicropeachAsPeach(currentPriceMicropeach))
+            append(" 🍑")
+        }
+        serverReason?.takeIf { it.isNotBlank() }?.let { append("（").append(it).append("）") }
+        append("。请核实最新价格后重新创建计划")
+    }
+)
+
 class CampusRepository internal constructor(
     private val appContext: Context,
     private val database: HautDatabase,
@@ -235,6 +273,19 @@ class CampusRepository internal constructor(
 
     @Volatile
     var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
+
+    /**
+     * 测试注入点：occurrence 恢复/撤销命令（unpauseOccurrence/undoMove/restoreRuleCancellation）
+     * 在事务内、写入判定完成后回调命令名。仅用于并发/回滚回归测试注入闩锁与故障，生产路径必须为 null。
+     */
+    internal var occurrenceCommandInTransactionHook: (suspend (command: String) -> Unit)? = null
+
+    /**
+     * 测试注入点：恢复/撤销命令事务内每完成一条破坏性写入（删除行/盖印改写）回调
+     * （命令名, 已写行 id）——覆盖「写中」阶段，可在删一半后注入故障验证整体回滚
+     * 与零通知。仅用于回归测试，生产路径必须为 null。
+     */
+    internal var occurrenceCommandWriteProgressHook: (suspend (command: String, rowId: String) -> Unit)? = null
 
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
@@ -341,10 +392,20 @@ class CampusRepository internal constructor(
         val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
         val CLOUD_ACCESS_TOKEN = stringPreferencesKey("cloud_access_token_v1")
         val CLOUD_REFRESH_TOKEN = stringPreferencesKey("cloud_refresh_token_v1")
+        // 云身份会话世代（严格单调，存于 Room schema 之外的 DataStore，按 profileId 隔离）：
+        // 登录/换号/解绑均推进世代；解绑另存 tombstone，旧会话在途响应一律失效
+        val CLOUD_IDENTITY_GENERATION = longPreferencesKey("cloud_identity_generation_v1")
+        val CLOUD_IDENTITY_GENERATION_OWNER = stringPreferencesKey("cloud_identity_generation_owner_v1")
+        val CLOUD_IDENTITY_UNLINK_TOMBSTONE = stringPreferencesKey("cloud_identity_unlink_tombstone_v1")
         val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
         val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
         val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
         val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
+        /**
+         * 历史标记：V1 日期窗口猜测修复（已移除调用路径）曾写入的完成位。
+         * 仅作为「该行可能曾被 V1 按日期改写」的历史证据保留，绝不再触发任何修复；
+         * 缺逐行来源证明的历史考试行由 V2 记 REVIEW_REQUIRED，已误改的行需权威重同步纠正。
+         */
         val EXAM_TERM_POISON_REPAIRED_V1 = booleanPreferencesKey("exam_term_poison_repaired_v1")
     }
 
@@ -668,7 +729,7 @@ class CampusRepository internal constructor(
                 prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
             )
             val customBuildings = customZones.flatMap { it.buildings }
-            (songshan + base.filter { it.campusId != "songshanlu" && it.id !in setOf("b_canteen2", "b_canteen3") } + customBuildings)
+            (songshan + base.filter { it.campusId != "songshanlu" && it.id !in CampusDiningRecommender.CLOSED_CANTEEN_BUILDING_IDS } + customBuildings)
                 .distinctBy { it.id }
         }
 
@@ -689,6 +750,10 @@ class CampusRepository internal constructor(
 
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
+
+    /** 学期无法自动确认、需用户重新选择学期同步核对的考试记录审计（V2 逐条修复审计）。 */
+    val examTermReviewAuditsFlow: Flow<List<ExamTermRepairAuditEntity>> =
+        dao.observeExamTermRepairAuditsByDisposition(ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED)
 
     val examSchedulesFlow: Flow<List<ExamScheduleItem>> =
         dao.observeExamSchedules().map { list -> list.map { it.toDomain() } }
@@ -729,6 +794,16 @@ class CampusRepository internal constructor(
     val completedFocusSessionsFlow: Flow<List<FocusSessionDomain>> =
         utilityAndFocusDao.observeCompletedFocusSessions().map { list -> list.map { it.toDomain() } }
 
+    /**
+     * occurrence_overrides 统一写入口：任何路径的每一次真实写入都必须经此函数盖印
+     * 全新不可复用 mutationToken（随机 UUID）；跳过写入的纯重复/冲突路径自然保留旧令牌。
+     * 恢复/撤销命令以点击时捕获的令牌逐行断言身份——同 ID 重建、改挂调课、编辑、暂停
+     * 等一切改写都会使旧命令判 CONFLICT，绝不误删替换后的新行。
+     */
+    private suspend fun upsertOccurrenceOverrideStamped(entity: OccurrenceOverrideEntity) {
+        dao.upsertOccurrenceOverride(entity.copy(mutationToken = UUID.randomUUID().toString()))
+    }
+
     private suspend fun notifyScheduleOrPolicyChanged(reason: String) {
         runCatching { onScheduleOrPolicyChangedListener?.invoke(reason) }
     }
@@ -756,7 +831,8 @@ class CampusRepository internal constructor(
                 syncCampusDictionaryV18Internal()
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
-            ensureExamTermPoisonRepairedIfNeeded()
+            // 不再运行 V1 日期猜测修复：无逐行来源证明的历史行一律交给 V2 记 REVIEW_REQUIRED。
+            ensureExamTermRepairV2IfNeeded()
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
@@ -830,34 +906,179 @@ class CampusRepository internal constructor(
             }
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
-        ensureExamTermPoisonRepairedIfNeeded()
+        // 不再运行 V1 日期猜测修复：无逐行来源证明的历史行一律交给 V2 记 REVIEW_REQUIRED。
+        ensureExamTermRepairV2IfNeeded()
         ensureSeasonalTermRolloverIfNeeded()
     }
 
     /**
-     * 一次性修复历史版本将 2025-2026-2（2026年春季学期，考试日期 2026-01-01..2026-07-31）考试误归入 2026-2027-1 的残留记录。
+     * 考试学期修复 V2（逐条证据驱动，替代 V1 的纯日期窗口猜测）：
+     * - 有权威来源证明（originTermId 由可信同步管线写入）且 termId 被篡改的行 → 修复回原始学期；
+     * - 目标学期已存在相同指纹考试 → 删除错标副本并记 MERGED_DUPLICATE，不产生重复考试；
+     * - 旧库无来源行（originTermId == null）：学期有同步/导入证据 → 不动（仅用于抑制首次标记，不算解决证据）；
+     *   学期为已知污染签名（"2026-2027-1"）或非法格式且无证据 → 保留并记 REVIEW_REQUIRED 待用户重同步核对；
+     *   解除 REVIEW_REQUIRED 必须凭该行自身证据（originTermId 落库或行被权威重同步移除），
+     *   学期级「该学期同步过/有导入审计」不再充当解决依据——证据不足一律维持待核对；
+     * - 绝不凭显示日期猜学期（一月考试不当然属于春季学期），绝不盲目反改 V1 已修过的行；
+     * - 修复与审计在同一事务内提交；无任何 DataStore 布尔门控——审计表即事实来源，
+     *   进程在任何时刻崩溃重跑都安全（同一 examRowId+ruleVersion 的审计幂等覆盖）。
      */
-    internal suspend fun ensureExamTermPoisonRepairedIfNeeded() {
+    internal suspend fun ensureExamTermRepairV2IfNeeded() {
         val prefs = preferences.data.first()
-        if (prefs[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] == true) return
+        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
+            runCatching { HautAcademicEndpoints.toTermId(savedXnm, savedXqm) }.getOrNull()
+        } else null
+        var changed = false
         database.withTransaction {
-            val allExams = dao.getExamSchedulesSnapshot()
-            val poisoned = allExams.filter { ex ->
-                val dateIso = ex.examDateIso
-                ex.termId == "2026-2027-1" &&
-                    dateIso != null &&
-                    dateIso >= "2026-01-01" &&
-                    dateIso <= "2026-07-31"
+            val exams = dao.getExamSchedulesSnapshot()
+            val audits = dao.getExamTermRepairAuditsSnapshot()
+            val auditsByRow = audits.filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
+                .associateBy { it.examRowId }
+            val importAuditTermIds = dao.observeImportAudits().first()
+                .map { it.termId }.filter { it.isNotBlank() }.toSet()
+            val evidencedTermIds = buildSet {
+                savedSyncTermId?.let(::add)
+                addAll(importAuditTermIds)
             }
-            if (poisoned.isNotEmpty()) {
-                val repaired = poisoned.map { ex -> ex.copy(termId = "2025-2026-2") }
-                dao.upsertExamSchedules(repaired)
+            val termIdPattern = Regex("\\d{4}-\\d{4}-\\d+")
+            val nowMs = System.currentTimeMillis()
+            val toWrite = mutableListOf<ExamTermRepairAuditEntity>()
+            val toRepair = mutableListOf<ExamScheduleEntity>()
+            val examsById = exams.associateBy { it.id }
+            val fingerprintIndex = exams.groupBy { examFingerprint(it) }
+
+            for (row in exams) {
+                val priorAudit = auditsByRow[row.id]
+                val provenance = row.originTermId?.takeIf { it.isNotBlank() }
+                when {
+                    provenance != null && provenance != row.termId -> {
+                        // 确定错标且有原始来源证明 → 修复（同事务写审计）
+                        val duplicates = fingerprintIndex[examFingerprint(row)].orEmpty()
+                            .filter { it.id != row.id && it.termId == provenance }
+                        if (duplicates.isNotEmpty()) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId+duplicate:${duplicates.first().id}",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            dao.deleteExamScheduleById(row.id)
+                            changed = true
+                        } else {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REPAIRED ||
+                                priorAudit.previousTermId != row.termId ||
+                                priorAudit.newTermId != provenance
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = provenance,
+                                    evidenceRef = "originTermId",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REPAIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                            }
+                            toRepair += row.copy(termId = provenance)
+                            changed = true
+                        }
+                    }
+                    provenance != null -> {
+                        // 一致：可信来源与存储学期相符；若曾被标记待核对则标记为已由重同步解决
+                        if (priorAudit?.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED) {
+                            toWrite += priorAudit.copy(
+                                newTermId = row.termId,
+                                evidenceRef = "${priorAudit.evidenceRef}|resync_verified",
+                                disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                                repairedAtEpochMilli = nowMs
+                            )
+                            changed = true
+                        }
+                    }
+                    else -> {
+                        // 旧库无来源行：绝不按日期猜学期。
+                        val suspicious = row.termId.isBlank() ||
+                            !termIdPattern.matches(row.termId) ||
+                            (row.termId == "2026-2027-1" && row.termId !in evidencedTermIds)
+                        if (suspicious) {
+                            if (priorAudit?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED ||
+                                priorAudit.previousTermId != row.termId
+                            ) {
+                                toWrite += ExamTermRepairAuditEntity(
+                                    id = "v2:${row.id}",
+                                    examRowId = row.id,
+                                    previousTermId = row.termId,
+                                    newTermId = null,
+                                    evidenceRef = "missing_provenance",
+                                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                                    disposition = ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                                    repairedAtEpochMilli = nowMs
+                                )
+                                changed = true
+                            }
+                        }
+                        // 注意：无来源行的学期级证据（学期曾同步/有导入审计、termId 形态合法）
+                        // 只能抑制「首次标记」，绝不能把既有 REVIEW_REQUIRED 翻成 RESOLVED_BY_RESYNC；
+                        // 该行何时解决只取决于自身证据（originTermId 一致 / 行被移除）。
+                    }
+                }
             }
+            // 审计引用已不存在的数据行 → 视为已由重同步/清理解决
+            for (audit in auditsByRow.values) {
+                if (audit.disposition == ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED &&
+                    audit.examRowId !in examsById
+                ) {
+                    toWrite += audit.copy(
+                        evidenceRef = "${audit.evidenceRef}|row_removed",
+                        disposition = ExamTermRepairAuditEntity.DISPOSITION_RESOLVED_BY_RESYNC,
+                        repairedAtEpochMilli = nowMs
+                    )
+                    changed = true
+                }
+            }
+            if (toRepair.isNotEmpty()) dao.upsertExamSchedules(toRepair)
+            if (toWrite.isNotEmpty()) dao.upsertExamTermRepairAudits(toWrite)
         }
-        preferences.edit {
-            it[PrefKeys.EXAM_TERM_POISON_REPAIRED_V1] = true
-        }
+        if (changed) notifyScheduleOrPolicyChanged("EXAM_TERM_REPAIR_V2")
     }
+
+    /** 可信同步管线考试行 id 形态：`exam_` + SHA-256（64 位小写 hex）。 */
+    private val TRUSTED_EXAM_ROW_ID = Regex("exam_[0-9a-f]{64}")
+
+    /**
+     * 自动去重所需的「同一考试会话」身份强度：
+     * 明确考试日期+开考时间（「时间待定」的考试无法凭内容指纹区分跨学期同名考试）
+     * 且行 id 为可信同步管线生成的稳定来源 id。两者缺一都不得自动删除旧行。
+     */
+    private fun hasTrustedExamSessionIdentity(row: ExamScheduleEntity): Boolean =
+        !row.examDateIso.isNullOrBlank() &&
+            !row.startTimeIso.isNullOrBlank() &&
+            TRUSTED_EXAM_ROW_ID.matches(row.id)
+
+    /** 考试内容指纹：同一场考试的逻辑身份（不含学期列与同步时间戳）。 */
+    private fun examFingerprint(row: ExamScheduleEntity): String = listOf(
+        row.courseCode,
+        row.courseName,
+        row.examBatchName,
+        row.examStageLabel,
+        row.examFormat,
+        row.examDateIso.orEmpty(),
+        row.startTimeIso.orEmpty(),
+        row.endTimeIso.orEmpty(),
+        row.rawRoom,
+        row.isRetake.toString()
+    ).joinToString("|")
 
     /**
      * 为升级老用户补齐 11–12 节晚间默认作息时间（不覆盖用户已自定义编辑的 1–10 节作息）：
@@ -1085,7 +1306,11 @@ class CampusRepository internal constructor(
         dao.upsertStudentProfile(HautMockSeedData.defaultStudent.toEntity())
         dao.upsertCourses(HautMockSeedData.defaultCourses.map { it.toEntity() })
         dao.upsertRules(HautMockSeedData.defaultRules.map { it.toEntity() })
-        dao.upsertOccurrenceOverrides(HautMockSeedData.defaultOccurrenceOverrides.map { it.toEntity() })
+        dao.upsertOccurrenceOverrides(
+            HautMockSeedData.defaultOccurrenceOverrides.map {
+                it.toEntity().copy(mutationToken = UUID.randomUUID().toString())
+            }
+        )
         dao.upsertGradeAttempts(HautMockSeedData.defaultGradeAttempts.map { it.toEntity() })
     }
 
@@ -1266,6 +1491,14 @@ class CampusRepository internal constructor(
         weeks: Set<Int>,
         colorArgb: Long
     ) {
+        // 输入校验：拒绝静默兜底——空周次/越界节次/空课程名一律明确报错，
+        // 不把用户的空输入悄悄变成「第 1 节全学期」的错误排课。
+        require(name.isNotBlank()) { "课程名称不能为空" }
+        require(termId.isNotBlank()) { "学期不能为空" }
+        require(startPeriod in 1..12) { "开始节次必须在 1-12 节之间" }
+        require(endPeriod in startPeriod..12) { "结束节次必须不小于开始节次且不超过第 12 节" }
+        require(weeks.isNotEmpty()) { "周次不能为空，请填写有效周次范围" }
+        require(weeks.all { it in 1..30 }) { "周次超出有效范围(1-30)" }
         val courseId = "c_manual_${UUID.randomUUID().toString().take(8)}"
         val ruleId = "r_manual_${UUID.randomUUID().toString().take(8)}"
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
@@ -1314,14 +1547,37 @@ class CampusRepository internal constructor(
             override.buildingId
         }
         val normalized = override.copy(buildingId = resolvedBuildingId)
-        database.withTransaction {
+        val wrote = database.withTransaction {
+            val snapshot = dao.getOccurrenceOverridesSnapshot()
+            // 先完成全部拒绝条件，再执行任何删除；事务内提前返回不会自动回滚此前写入。
+            val existingById = snapshot.firstOrNull { it.id == normalized.id }
+            if (existingById != null && !existingById.moveId.isNullOrBlank() &&
+                normalized.moveId.isNullOrBlank()
+            ) {
+                Log.w(LOG_TAG, "saveOccurrenceOverride: 调课关联行不能被普通覆盖替换，已拒绝写入")
+                return@withTransaction false
+            }
             val ruleId = normalized.courseRuleId
             if (!ruleId.isNullOrBlank()) {
+                // 将要被「规则+日期」清除的行若带 moveId，是普通覆盖写入不能触碰的调课关联行：
+                // 删掉它们会把 TARGET 变成孤儿复活一节课，必须整体拒绝（专用撤销入口除外）。
+                val moveLinked = snapshot.any {
+                    it.courseRuleId == ruleId && it.dateIso == normalized.date.toString() &&
+                        !it.moveId.isNullOrBlank()
+                }
+                if (moveLinked) {
+                    Log.w(
+                        LOG_TAG,
+                        "saveOccurrenceOverride: rule $ruleId on ${normalized.date} 存在调课关联行，拒绝覆盖写入；请走调课恢复入口"
+                    )
+                    return@withTransaction false
+                }
                 dao.deleteOccurrenceOverridesForRuleOnDate(ruleId, normalized.date.toString())
             }
-            dao.upsertOccurrenceOverride(normalized.toEntity())
+            upsertOccurrenceOverrideStamped(normalized.toEntity())
+            true
         }
-        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
+        if (wrote) notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
     }
 
     /**
@@ -1352,8 +1608,9 @@ class CampusRepository internal constructor(
         val explicitRuleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
 
         database.withTransaction {
+            val daySnapshot = dao.getOccurrenceOverridesSnapshot()
             val companionIds = if (explicitRuleIds.isNotEmpty()) {
-                dao.getOccurrenceOverridesSnapshot()
+                daySnapshot
                     .filter { ov ->
                         ov.dateIso == occ.date.toString() &&
                             !ov.courseRuleId.isNullOrBlank() &&
@@ -1363,9 +1620,22 @@ class CampusRepository internal constructor(
             } else emptyList()
             val ruleIds = (explicitRuleIds + companionIds).distinct()
             if (ruleIds.isNotEmpty()) {
+                // 编辑会先按「规则+日期」删除旧覆盖：若旧行是调课 SOURCE 等 moveId 关联行，
+                // 直接删除会孤儿化 TARGET（凭空复活一节课）。整体拒绝，调课请走专用撤销入口。
+                val moveLinked = daySnapshot.any { ov ->
+                    ov.dateIso == occ.date.toString() && !ov.moveId.isNullOrBlank() &&
+                        ov.courseRuleId != null && ov.courseRuleId in ruleIds
+                }
+                if (moveLinked) {
+                    Log.w(
+                        LOG_TAG,
+                        "saveSingleDayOccurrenceEdit: $ruleIds on ${occ.date} 命中调课关联行，拒绝同日编辑覆盖"
+                    )
+                    return@withTransaction
+                }
                 val primaryRuleId = ruleIds.first()
                 dao.deleteOccurrenceOverridesForRuleOnDate(primaryRuleId, occ.date.toString())
-                dao.upsertOccurrenceOverride(
+                upsertOccurrenceOverrideStamped(
                     OccurrenceOverride(
                         id = occ.overrideId ?: "ov_mod_${occ.date}_$primaryRuleId",
                         termId = termId,
@@ -1382,7 +1652,7 @@ class CampusRepository internal constructor(
                 )
                 for (extraRuleId in ruleIds.drop(1)) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(extraRuleId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_merged_sup_${occ.date}_$extraRuleId",
                             termId = termId,
@@ -1395,21 +1665,60 @@ class CampusRepository internal constructor(
                     )
                 }
             } else {
-                dao.upsertOccurrenceOverride(
-                    OccurrenceOverride(
-                        id = occ.overrideId ?: "ov_mod_${occ.date}_${UUID.randomUUID().toString().take(8)}",
-                        termId = termId,
-                        courseId = occ.courseId,
-                        courseRuleId = null,
-                        date = occ.date,
-                        startPeriod = sp,
-                        endPeriod = ep,
-                        room = cleanRoom,
-                        buildingId = verifiedBuildingId,
-                        canceled = false,
-                        reason = reason
-                    ).toEntity()
-                )
+                // 纯 TARGET/单日新增覆盖行：按 overrideId+termId 读取既有行，仅更新可编辑字段，
+                // 保留 moveId/moveRole/稳定 id——否则 Room REPLACE 会抹掉调课关联，恢复源后目标残留。
+                val existing = occ.overrideId?.let { oid ->
+                    daySnapshot.firstOrNull { it.id == oid }
+                }
+                when {
+                    existing != null && existing.termId != termId -> {
+                        // 跨学期行不属于本次编辑范围：显式冲突，拒绝写入。
+                        Log.w(
+                            LOG_TAG,
+                            "saveSingleDayOccurrenceEdit: override ${existing.id} 属于 ${existing.termId}，拒绝跨学期写入 $termId"
+                        )
+                    }
+                    existing != null -> {
+                        upsertOccurrenceOverrideStamped(
+                            existing.copy(
+                                startPeriod = sp,
+                                endPeriod = ep,
+                                // 清除手工时刻：节次编辑后以作息表/新节次解析为准
+                                startAtIso = null,
+                                endAtIso = null,
+                                room = cleanRoom,
+                                buildingId = verifiedBuildingId,
+                                canceled = false,
+                                reason = reason
+                            )
+                        )
+                    }
+                    !occ.overrideId.isNullOrBlank() -> {
+                        // 目标行已过期/被删：绝不静默另建关联行，本次编辑显式 no-op。
+                        Log.w(
+                            LOG_TAG,
+                            "saveSingleDayOccurrenceEdit: 目标覆盖 ${occ.overrideId} 已不存在，编辑被忽略"
+                        )
+                    }
+                    else -> {
+                        // 无任何 overrideId 的独立单日新增（非调课目标）：保留既有兜底建行为
+                        upsertOccurrenceOverrideStamped(
+                            OccurrenceOverride(
+                                id = "ov_mod_${occ.date}_${UUID.randomUUID().toString().take(8)}",
+                                termId = termId,
+                                courseId = occ.courseId,
+                                courseRuleId = null,
+                                date = occ.date,
+                                startPeriod = sp,
+                                endPeriod = ep,
+                                room = cleanRoom,
+                                buildingId = verifiedBuildingId,
+                                canceled = false,
+                                reason = reason
+                            ).toEntity()
+                        )
+                    }
+                }
             }
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_SAVED")
@@ -1418,22 +1727,34 @@ class CampusRepository internal constructor(
     suspend fun resetSingleDayOccurrenceEdit(occ: cn.edu.haut.campus.core.model.ClassOccurrence) {
         val dateIso = occ.date.toString()
         val ruleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }.toSet()
-        database.withTransaction {
+        val reset = database.withTransaction {
+            val snapshot = dao.getOccurrenceOverridesSnapshot()
+            // 本次重置将删除的全部行；其中任何一条带 moveId 的调课关联行都不允许经此通用入口抹掉，
+            // 否则 TARGET 孤儿化。专用撤销入口 restoreCanceledOccurrence 是唯一合法路径。
+            val targeted = snapshot.filter { ov ->
+                (occ.overrideId != null && ov.id == occ.overrideId) ||
+                    (ov.dateIso == dateIso && ov.courseRuleId != null && ov.courseRuleId in ruleIds) ||
+                    (ov.dateIso == dateIso && ruleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" })
+            }
+            if (targeted.any { !it.moveId.isNullOrBlank() }) {
+                Log.w(
+                    LOG_TAG,
+                    "resetSingleDayOccurrenceEdit: ${occ.date} 命中调课关联行，拒绝绕过 moveId 撤销的单条重置"
+                )
+                return@withTransaction false
+            }
             if (!occ.overrideId.isNullOrBlank()) {
                 dao.deleteOccurrenceOverrideById(occ.overrideId!!)
             }
             for (rId in ruleIds) {
                 dao.deleteOccurrenceOverridesForRuleOnDate(rId, dateIso)
             }
-            val companions = dao.getOccurrenceOverridesSnapshot().filter { ov ->
-                ov.dateIso == dateIso &&
-                    ruleIds.any { rId -> ov.reason == "MERGED_INTO:$rId" }
-            }
-            for (comp in companions) {
+            for (comp in targeted.filter { it.reason?.startsWith("MERGED_INTO:") == true }) {
                 dao.deleteOccurrenceOverrideById(comp.id)
             }
+            true
         }
-        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
+        if (reset) notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
     }
 
     suspend fun cancelClassOccurrenceOnDate(
@@ -1443,8 +1764,9 @@ class CampusRepository internal constructor(
     ) {
         val explicitRuleIds = occ.mergedRuleIds.distinct().filter { it.isNotBlank() }
         database.withTransaction {
+            val daySnapshot = dao.getOccurrenceOverridesSnapshot()
             val companionRuleIds = if (explicitRuleIds.isNotEmpty()) {
-                dao.getOccurrenceOverridesSnapshot()
+                daySnapshot
                     .filter { ov ->
                         ov.dateIso == occ.date.toString() &&
                             ov.courseRuleId != null &&
@@ -1454,9 +1776,22 @@ class CampusRepository internal constructor(
             } else emptyList()
             val allRuleIds = (explicitRuleIds + companionRuleIds).distinct()
             if (allRuleIds.isNotEmpty()) {
+                // 停课前会先删「规则+日期」旧覆盖：命中 moveId 关联行（如调课 SOURCE）时整体拒绝，
+                // 防止 TARGET 孤儿化——撤销调课必须走 restoreCanceledOccurrence。
+                val moveLinked = daySnapshot.any { ov ->
+                    ov.dateIso == occ.date.toString() && !ov.moveId.isNullOrBlank() &&
+                        ov.courseRuleId != null && ov.courseRuleId in allRuleIds
+                }
+                if (moveLinked) {
+                    Log.w(
+                        LOG_TAG,
+                        "cancelClassOccurrenceOnDate: $allRuleIds on ${occ.date} 命中调课关联行，拒绝停课覆盖"
+                    )
+                    return@withTransaction
+                }
                 for (rId in allRuleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_cancel_${occ.date}_$rId",
                             termId = termId,
@@ -1469,23 +1804,28 @@ class CampusRepository internal constructor(
                     )
                 }
             } else if (!occ.overrideId.isNullOrBlank()) {
-                dao.upsertOccurrenceOverride(
-                    OccurrenceOverride(
-                        id = occ.overrideId!!,
-                        termId = termId,
-                        courseId = occ.courseId,
-                        courseRuleId = null,
-                        date = occ.date,
-                        startPeriod = occ.startPeriod,
-                        endPeriod = occ.endPeriod,
-                        startAt = if (occ.hasResolvedTime) occ.startTime else null,
-                        endAt = if (occ.hasResolvedTime) occ.endTime else null,
-                        room = occ.rawRoom,
-                        buildingId = occ.buildingId,
-                        canceled = true,
-                        reason = reason
-                    ).toEntity()
-                )
+                // 纯 TARGET/单日新增覆盖行：按 overrideId+termId 读既有行，仅置 canceled/reason，
+                // 保留 moveId/moveRole 与其余字段——「暂停调入课」不等于「撤销整次调课」。
+                val existing = daySnapshot.firstOrNull { it.id == occ.overrideId }
+                when {
+                    existing == null -> {
+                        Log.w(
+                            LOG_TAG,
+                            "cancelClassOccurrenceOnDate: 目标覆盖 ${occ.overrideId} 已不存在，停课被忽略"
+                        )
+                    }
+                    existing.termId != termId -> {
+                        Log.w(
+                            LOG_TAG,
+                            "cancelClassOccurrenceOnDate: override ${existing.id} 属于 ${existing.termId}，拒绝跨学期停课 $termId"
+                        )
+                    }
+                    else -> {
+                        upsertOccurrenceOverrideStamped(
+                            existing.copy(canceled = true, reason = reason)
+                        )
+                    }
+                }
             }
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_CANCELED")
@@ -1522,10 +1862,22 @@ class CampusRepository internal constructor(
                     .mapNotNull { it.courseRuleId }
             } else emptyList()
             val ruleIds = (explicitRuleIds + companionIds).distinct()
+            // 每一次跨日调课生成唯一 moveId：同一次调课的全部源停课行与调入目标行共享该关联，
+            // 恢复时按 moveId 原子撤销，绝不再按 courseId+日期文本猜测配对。
+            val moveId = UUID.randomUUID().toString()
+            // 若被移动对象本身是上一次调课的调入目标（moveRole=TARGET），把旧调课的源停课行
+            // 整体改挂到新 moveId，旧 moveId 随之消亡：恢复新调课即回到最初规则原时段，不残留双份排课。
+            val movingTargetOverride = occ.overrideId?.let { oid ->
+                dao.getOccurrenceOverridesSnapshot().firstOrNull { it.id == oid }
+            }
+            val chainedMoveId = movingTargetOverride
+                ?.takeIf { it.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET && it.courseRuleId == null }
+                ?.moveId
+                ?.takeIf { it.isNotBlank() }
             if (ruleIds.isNotEmpty()) {
                 for (rId in ruleIds) {
                     dao.deleteOccurrenceOverridesForRuleOnDate(rId, occ.date.toString())
-                    dao.upsertOccurrenceOverride(
+                    upsertOccurrenceOverrideStamped(
                         OccurrenceOverride(
                             id = "ov_cancel_${occ.date}_$rId",
                             termId = termId,
@@ -1533,15 +1885,23 @@ class CampusRepository internal constructor(
                             courseRuleId = rId,
                             date = occ.date,
                             canceled = true,
-                            reason = "已调至 $targetDate"
+                            reason = "已调至 $targetDate",
+                            moveId = moveId,
+                            moveRole = OccurrenceOverride.MOVE_ROLE_SOURCE
                         ).toEntity()
                     )
                 }
             } else if (!occ.overrideId.isNullOrBlank()) {
                 dao.deleteOccurrenceOverrideById(occ.overrideId!!)
             }
+            if (!chainedMoveId.isNullOrBlank() && chainedMoveId != moveId) {
+                val oldMoveRows = dao.getOccurrenceOverridesForMove(termId, chainedMoveId)
+                for (row in oldMoveRows) {
+                    upsertOccurrenceOverrideStamped(row.copy(moveId = moveId))
+                }
+            }
 
-            dao.upsertOccurrenceOverride(
+            upsertOccurrenceOverrideStamped(
                 OccurrenceOverride(
                     id = "ov_move_${targetDate}_${UUID.randomUUID().toString().take(8)}",
                     termId = termId,
@@ -1553,62 +1913,615 @@ class CampusRepository internal constructor(
                     room = cleanRoom,
                     buildingId = verifiedBuildingId,
                     canceled = false,
-                    reason = reason?.trim()?.takeIf { it.isNotBlank() } ?: "由 ${occ.date} 调入"
+                    reason = reason?.trim()?.takeIf { it.isNotBlank() } ?: "由 ${occ.date} 调入",
+                    moveId = moveId,
+                    moveRole = OccurrenceOverride.MOVE_ROLE_TARGET
                 ).toEntity()
             )
         }
         notifyScheduleOrPolicyChanged("OCCURRENCE_MOVED_CROSS_DATE")
     }
 
+    /**
+     * 通用单条覆盖删除入口（旧版模糊调课待核对等场景）。
+     * moveId 关联行（调课 SOURCE/TARGET）严禁经此路径删除——孤儿化对端会破坏原子恢复；
+     * 撤销调课的合法入口只有 [undoMove]（或兼容适配器 [restoreCanceledOccurrence]）。命中即记日志并安全 no-op。
+     */
     suspend fun deleteOccurrenceOverride(overrideId: String) {
-        dao.deleteOccurrenceOverrideById(overrideId)
-        notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
+        val deleted = database.withTransaction {
+            val existing = dao.getOccurrenceOverrideById(overrideId) ?: return@withTransaction false
+            if (!existing.moveId.isNullOrBlank()) {
+                Log.w(LOG_TAG, "deleteOccurrenceOverride: 调课关联行拒绝单条删除")
+                return@withTransaction false
+            }
+            dao.deleteOccurrenceOverrideById(overrideId)
+            true
+        }
+        if (deleted) notifyScheduleOrPolicyChanged("OCCURRENCE_OVERRIDE_DELETED")
     }
 
+    /**
+     * 单次「恢复上课」的结构化结果（[restoreCanceledOccurrence] 适配器返回值）：
+     * - [restoredSourceOverrideIds] 被恢复的源停课覆盖行（含按 moveId 原子撤销的整组源）；
+     * - [deletedTargetOverrideIds] 被精确删除的调入目标行（仅限同一 moveId 的 TARGET）；
+     * - [restoredMoveIds] 被整体撤销的跨日调课关联；
+     * - [unpausedOverrideIds] 仅取消暂停标记的纯覆盖行（暂停的调入目标/单日新增）；
+     * - [legacyAmbiguousTargets] 旧数据（moveId==null）恢复时检出的疑似调入目标——绝不自动删除，
+     *   交由 UI 提示用户显式选择删除或保留待核对。
+     */
+    data class OccurrenceRestoreResult(
+        val restoredSourceOverrideIds: List<String> = emptyList(),
+        val deletedTargetOverrideIds: List<String> = emptyList(),
+        val restoredMoveIds: List<String> = emptyList(),
+        val unpausedOverrideIds: List<String> = emptyList(),
+        val legacyAmbiguousTargets: List<OccurrenceOverride> = emptyList()
+    ) {
+        val legacyReviewRequired: Boolean get() = legacyAmbiguousTargets.isNotEmpty()
+
+        /** 本次调用是否产生了任何实际写入（恢复源/删除目标/取消暂停）。 */
+        val changed: Boolean
+            get() = restoredSourceOverrideIds.isNotEmpty() ||
+                deletedTargetOverrideIds.isNotEmpty() ||
+                restoredMoveIds.isNotEmpty() ||
+                unpausedOverrideIds.isNotEmpty()
+    }
+
+    /**
+     * 恢复/撤销命令的统一终态：调用方以点击瞬间固化的（termId, overrideId, moveId, 意图）发起，
+     * 仓库绝不依据当前 canceled 状态反推用户意图。
+     */
+    enum class OccurrenceCommandStatus {
+        /** 命令在单一事务内原子提交并产生实际状态变更（此时才会发出课表变更通知）。 */
+        APPLIED,
+
+        /** 目标行已不存在或已处于期望终态：安全幂等空操作，无任何写入、无通知。 */
+        NO_CHANGE,
+
+        /** 点击时捕获的身份（termId/moveId）与当前行不一致：陈旧点击整体拒绝，等待 UI 刷新重试。 */
+        CONFLICT
+    }
+
+    /** 显式意图恢复/撤销命令的结构化结果。 */
+    data class OccurrenceCommandResult(
+        val status: OccurrenceCommandStatus,
+        val unpausedOverrideIds: List<String> = emptyList(),
+        val restoredSourceOverrideIds: List<String> = emptyList(),
+        val deletedTargetOverrideIds: List<String> = emptyList(),
+        val restoredMoveIds: List<String> = emptyList(),
+        val legacyAmbiguousTargets: List<OccurrenceOverride> = emptyList()
+    ) {
+        val legacyReviewRequired: Boolean get() = legacyAmbiguousTargets.isNotEmpty()
+
+        /** 仅 [OccurrenceCommandStatus.APPLIED] 视为实际变更。 */
+        val changed: Boolean get() = status == OccurrenceCommandStatus.APPLIED
+    }
+
+    /** 恢复命令的显式意图：UI 在点击瞬间固化，仓库绝不从当前行状态反推意图。 */
+    enum class RestoreIntent {
+        /** 仅恢复暂停的纯覆盖行（暂停的调入目标/单日新增）：selectedRows 必须全部 ruleId==null。 */
+        UNPAUSE,
+
+        /** 仅按 moveId 整组撤销跨日调课：selectedRows 必须为空、selectedMoves 非空。 */
+        UNDO_MOVES,
+
+        /** 点击时选中的混合集合原子恢复：规则停课行删除 + 纯覆盖行解除暂停 + 调课组整组撤销。 */
+        RESTORE_SELECTION
+    }
+
+    /**
+     * 行级调课关联断言：[NoMove] 是显式断言「该行不得携带任何 moveId」，
+     * 绝不与「不校验」共用 null；[Move] 要求行 moveId 精确相等。
+     */
+    sealed interface ExpectedMove {
+        data object NoMove : ExpectedMove
+        data class Move(val moveId: String) : ExpectedMove
+    }
+
+    /** 行身份锚点：稳定 id + 不可复用版本令牌（任何真实写入都会换新令牌）。 */
+    data class RowIdentity(val id: String, val mutationToken: String)
+
+    /** 点击时冻结的单行选择：id+令牌+结构断言（rule/date/move/role），绝不按 rule/date 扩展。 */
+    data class SelectedOverride(
+        val id: String,
+        val mutationToken: String,
+        val ruleId: String?,
+        val dateIso: String,
+        val expectedMove: ExpectedMove,
+        val role: String?
+    )
+
+    /** 点击时冻结的整组调课选择：[expectedMembers] 必须覆盖该 moveId 在命令学期内的全部行。 */
+    data class SelectedMove(
+        val moveId: String,
+        val expectedMembers: List<RowIdentity>
+    )
+
+    /**
+     * 点击瞬间固化的不可变恢复命令：包含全部行/调课组选择与版本令牌断言。
+     * 单事务执行：按选中 ID 精确读取（禁止 rule/date 扩展）→ 逐条验
+     * token+term+rule/date+NoMove/Move+role+调课成员集合 → 任一冲突整组
+     * [OccurrenceCommandStatus.CONFLICT] 零写；全部消失
+     * [OccurrenceCommandStatus.NO_CHANGE]；部分消失 CONFLICT（保守）。
+     * 不设持久回执表：验证「旧 ID 消失→NO_CHANGE、活跃行身份变更→CONFLICT」即可。
+     */
+    data class RestoreCommand(
+        val commandId: String,
+        val accountProfileId: String,
+        val termId: String,
+        val intent: RestoreIntent,
+        val selectedRows: List<SelectedOverride> = emptyList(),
+        val selectedMoves: List<SelectedMove> = emptyList()
+    )
+
+    /**
+     * 「恢复暂停」命令：仅对**纯覆盖行**（暂停的调入目标/单日新增）取消 canceled 标记。
+     * - 行不存在或已活跃 → [OccurrenceCommandStatus.NO_CHANGE]（双击/陈旧回调安全幂等）；
+     * - termId 不符、行实为规则关联行 → [OccurrenceCommandStatus.CONFLICT]；
+     * - [expectedMoveId] 为**双向断言**：传 null = 断言该行为独立非调课行（行当前带
+     *   moveId 即陈旧冲突）；非 null = 要求与当前行 moveId 精确一致——任何不一致
+     *   （例如点击后目标已被再次移走改挂新 moveId）一律 [OccurrenceCommandStatus.CONFLICT]，
+     *   绝不放行去改动新调课的 TARGET；
+     * - 仅置 canceled=false，保留 id/moveId/moveRole/教室/节次等全部身份字段，
+     *   绝不删除任何 SOURCE/TARGET——撤销整次调课只能走 [undoMove]。
+     */
+    suspend fun unpauseOccurrence(
+        termId: String,
+        overrideId: String,
+        expectedMoveId: String? = null
+    ): OccurrenceCommandResult {
+        val result = database.withTransaction {
+            unpauseOccurrenceInTransaction(termId, overrideId, expectedMoveId)
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 「撤销调课」命令：原子删除同一学期内该 moveId 的全部 SOURCE+TARGET 行——
+     * 整次调课撤销的**唯一**入口。无此关联组 → [OccurrenceCommandStatus.NO_CHANGE]；
+     * 绝不按 courseId+日期模糊配对删除，严格 termId 隔离。
+     */
+    suspend fun undoMove(
+        termId: String,
+        moveId: String
+    ): OccurrenceCommandResult {
+        if (moveId.isBlank()) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        val result = database.withTransaction {
+            undoMoveInTransaction(termId, moveId)
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 「恢复规则停课」命令：恢复指定日期、给定规则集合下的已停课行。
+     * - 普通停课行（无 moveId）：删除取消行；旧版「已调至 …」源顺带检出待核对候选目标；
+     * - 命中调课 SOURCE 行：按 [expectedMoveId]（点击时捕获）做**双向断言**——
+     *   传 null = 断言命中行全部为独立非调课行（行被再次调课改挂 moveId 即陈旧冲突）；
+     *   非 null = 要求每条调课关联行的 moveId 精确一致。任一不符 →
+     *   [OccurrenceCommandStatus.CONFLICT] 整体拒绝，绝不顺手撤销别次新调课；
+     *   无 moveId 的普通停课行不与期望构成矛盾；
+     * - 未命中任何行 → [OccurrenceCommandStatus.NO_CHANGE]，严格 termId 隔离。
+     */
+    suspend fun restoreRuleCancellation(
+        termId: String,
+        ruleIds: List<String>,
+        date: LocalDate,
+        expectedMoveId: String? = null
+    ): OccurrenceCommandResult {
+        val cleanRuleIds = ruleIds.distinct().filter { it.isNotBlank() }
+        if (cleanRuleIds.isEmpty()) {
+            return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        }
+        val dateIso = date.toString()
+        val result = database.withTransaction {
+            val snapshot = dao.getOccurrenceOverridesSnapshot()
+            val rows = snapshot.filter {
+                it.termId == termId && it.dateIso == dateIso && it.canceled &&
+                    it.courseRuleId != null && it.courseRuleId in cleanRuleIds
+            }
+            if (rows.isEmpty()) {
+                OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+            } else {
+                // 双向身份核验：expectedMoveId=null 断言「命中行均为独立非调课行」，
+                // 命中任何 moveId 关联行即陈旧点击；非 null 要求每条调课关联行精确一致——
+                // 行在点击后被再次调课改挂新 moveId 同样判 CONFLICT，绝不误撤新调课。
+                // 无 moveId 的普通停课行不构成矛盾。空白串归一化为 null 后比较。
+                val expectedMid = expectedMoveId?.takeIf { it.isNotBlank() }
+                val moveIds = linkedSetOf<String>()
+                var conflict = false
+                for (row in rows) {
+                    val mid = row.moveId?.takeIf { it.isNotBlank() }
+                    if (mid != null && mid != expectedMid) {
+                        conflict = true
+                        break
+                    }
+                    if (mid != null) moveIds += mid
+                }
+                if (conflict) {
+                    Log.w(
+                        LOG_TAG,
+                        "restoreRuleCancellation: " + cleanRuleIds + " on " + dateIso +
+                            " 命中行 moveId 与期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
+                    )
+                    OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                } else {
+                    occurrenceCommandInTransactionHook?.invoke("restoreRuleCancellation")
+                    val restoredSourceIds = linkedSetOf<String>()
+                    val deletedTargetIds = linkedSetOf<String>()
+                    val restoredMoveIds = linkedSetOf<String>()
+                    val legacySources = mutableListOf<OccurrenceOverrideEntity>()
+                    for (row in rows) {
+                        if (row.moveId.isNullOrBlank()) {
+                            dao.deleteOccurrenceOverrideById(row.id)
+                            restoredSourceIds += row.id
+                            legacySources += row
+                        }
+                    }
+                    for (mid in moveIds) {
+                        val undo = undoMoveInTransaction(termId, mid)
+                        restoredSourceIds += undo.restoredSourceOverrideIds
+                        deletedTargetIds += undo.deletedTargetOverrideIds
+                        if (undo.status == OccurrenceCommandStatus.APPLIED) restoredMoveIds += mid
+                    }
+                    val ambiguous = findLegacyAmbiguousTargets(snapshot, legacySources)
+                    OccurrenceCommandResult(
+                        status = OccurrenceCommandStatus.APPLIED,
+                        restoredSourceOverrideIds = restoredSourceIds.toList(),
+                        deletedTargetOverrideIds = deletedTargetIds.toList(),
+                        restoredMoveIds = restoredMoveIds.toList(),
+                        legacyAmbiguousTargets = ambiguous.map { it.toDomain() }
+                    )
+                }
+            }
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 执行 [RestoreCommand]：唯一接受「点击时冻结的完整不可变选择」的原子恢复入口。
+     *
+     * 单一事务内：
+     * 1. 账号/term/结构校验——跨账号、空 term、重复 id、空白令牌、意图形态不符
+     *    （UNPAUSE 混入规则行/调课组、UNDO_MOVES 混入单选行、RESTORE_SELECTION 空选）
+     *    一律整体拒绝，绝不写任何东西；
+     * 2. 按选中 ID 精确读取（禁止 rule/date 扩展），逐条验
+     *    mutationToken + termId + ruleId + dateIso + expectedMove + role，
+     *    调课组额外验成员集合（id+token 全等）；
+     * 3. 任一冲突 → 整组 [OccurrenceCommandStatus.CONFLICT] 零写；
+     *    全部选中行/组消失 → [OccurrenceCommandStatus.NO_CHANGE]；
+     *    部分消失 → CONFLICT（保守），绝不顺手恢复幸存行；
+     * 4. 全部校验通过后一次性提交写入，事务外仅通知一次。
+     *
+     * 旧规则停课/调课行若 reason 为「已调至 …」且 moveId 缺失，恢复后仍检出
+     * 旧版模糊调入目标交由用户核对，绝不自动猜测删除。
+     */
+    suspend fun executeRestoreCommand(command: RestoreCommand): OccurrenceCommandResult {
+        // 形态校验：结构性非法输入整体拒绝（含重复 id / 空白字段 / 意图-选择形态不符）。
+        val malformed = run {
+            if (command.termId.isBlank() || command.accountProfileId.isBlank()) return@run true
+            val rowIds = command.selectedRows.map { it.id }
+            if (rowIds.size != rowIds.toSet().size) return@run true
+            if (command.selectedRows.any { sel ->
+                    sel.id.isBlank() || sel.mutationToken.isBlank() || sel.dateIso.isBlank() ||
+                        (sel.expectedMove as? ExpectedMove.Move)?.moveId?.isBlank() == true
+                }
+            ) return@run true
+            val rowIdSet = rowIds.toSet()
+            val moveIds = command.selectedMoves.map { it.moveId }
+            if (moveIds.size != moveIds.toSet().size) return@run true
+            if (command.selectedMoves.any { sm ->
+                    sm.moveId.isBlank() || sm.expectedMembers.isEmpty() ||
+                        sm.expectedMembers.any { it.id.isBlank() || it.mutationToken.isBlank() } ||
+                        sm.expectedMembers.map { it.id }.toSet().size != sm.expectedMembers.size
+                }
+            ) return@run true
+            when (command.intent) {
+                RestoreIntent.UNPAUSE ->
+                    command.selectedMoves.isNotEmpty() ||
+                        command.selectedRows.any { it.ruleId != null }
+                RestoreIntent.UNDO_MOVES ->
+                    command.selectedRows.isNotEmpty() || command.selectedMoves.isEmpty()
+                RestoreIntent.RESTORE_SELECTION -> false
+            }
+        }
+        if (malformed || command.accountProfileId != profileId) {
+            Log.w(
+                LOG_TAG,
+                "executeRestoreCommand: " + command.commandId + " 账号/结构校验失败 " +
+                    "(profile=" + command.accountProfileId + ",term=" + command.termId + ")，整体拒绝"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (command.selectedRows.isEmpty() && command.selectedMoves.isEmpty()) {
+            return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        }
+        val result = database.withTransaction {
+            // 旧版模糊调入目标检出需要删除前快照：先于任何写入截取
+            val preWriteSnapshot = dao.getOccurrenceOverridesSnapshot()
+            // 仅按选中 ID 精确读取——绝不按 rule/date 扩展选中范围
+            val resolvedRows = LinkedHashMap<String, OccurrenceOverrideEntity>()
+            var missingSelections = 0
+            for (sel in command.selectedRows) {
+                val row = dao.getOccurrenceOverrideById(sel.id)
+                if (row == null) missingSelections++ else resolvedRows[sel.id] = row
+            }
+            val resolvedMoves = LinkedHashMap<String, List<OccurrenceOverrideEntity>>()
+            for (sm in command.selectedMoves) {
+                val members = dao.getOccurrenceOverridesForMove(command.termId, sm.moveId)
+                if (members.isEmpty()) missingSelections++ else resolvedMoves[sm.moveId] = members
+            }
+            when {
+                // 全部选中行/组消失：旧命令目标已不存在 → 安全幂等 NO_CHANGE
+                resolvedRows.isEmpty() && resolvedMoves.isEmpty() ->
+                    OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+                // 部分消失：保守整体拒绝，绝不只恢复幸存行
+                missingSelections > 0 -> {
+                    Log.w(
+                        LOG_TAG,
+                        "executeRestoreCommand " + command.commandId + ": " + missingSelections +
+                            " 条选择已消失，整体拒绝"
+                    )
+                    OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                }
+                else -> {
+                    var conflict = false
+                    fun fail(reason: String) {
+                        Log.w(LOG_TAG, "executeRestoreCommand " + command.commandId + ": " + reason)
+                        conflict = true
+                    }
+                    for (sel in command.selectedRows) {
+                        val row = resolvedRows.getValue(sel.id)
+                        if (row.termId != command.termId) {
+                            fail("行 " + sel.id + " 属于 " + row.termId + "，拒绝跨学期恢复")
+                            break
+                        }
+                        if (row.mutationToken != sel.mutationToken) {
+                            fail("行 " + sel.id + " 已被改写，旧令牌失效")
+                            break
+                        }
+                        if (row.courseRuleId?.takeIf { it.isNotBlank() } !=
+                            sel.ruleId?.takeIf { it.isNotBlank() }
+                        ) {
+                            fail("行 " + sel.id + " 规则关联与选择不符")
+                            break
+                        }
+                        if (row.dateIso != sel.dateIso) {
+                            fail("行 " + sel.id + " 日期与选择不符")
+                            break
+                        }
+                        val expectedMid = (sel.expectedMove as? ExpectedMove.Move)
+                            ?.moveId?.takeIf { it.isNotBlank() }
+                        if (row.moveId?.takeIf { it.isNotBlank() } != expectedMid) {
+                            fail("行 " + sel.id + " moveId=" + row.moveId + " 与期望不符")
+                            break
+                        }
+                        if (row.moveRole?.takeIf { it.isNotBlank() } !=
+                            sel.role?.takeIf { it.isNotBlank() }
+                        ) {
+                            fail("行 " + sel.id + " 调课角色与选择不符")
+                            break
+                        }
+                        // 规则关联的调课行（SOURCE）只能随其调课组整体撤销——
+                        // 组未随命令选中则孤儿化对端，保守拒绝；
+                        // 纯覆盖行的 moveId（暂停的调入目标）不在此限——可单独解除暂停
+                        if (row.courseRuleId != null && !row.moveId.isNullOrBlank() &&
+                            resolvedMoves.keys.none { it == row.moveId }
+                        ) {
+                            fail("行 " + sel.id + " 属调课组 " + row.moveId + " 但组未被选中")
+                            break
+                        }
+                    }
+                    if (!conflict) {
+                        for (sm in command.selectedMoves) {
+                            val members = resolvedMoves.getValue(sm.moveId)
+                            val expected = sm.expectedMembers
+                                .map { it.id to it.mutationToken }.toSet()
+                            val actual = members
+                                .map { it.id to it.mutationToken }.toSet()
+                            if (expected != actual) {
+                                fail("调课组 " + sm.moveId + " 成员集合与点击时捕获的不符")
+                                break
+                            }
+                        }
+                    }
+                    if (conflict) {
+                        OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+                    } else {
+                        occurrenceCommandInTransactionHook?.invoke("restoreCommand")
+                        val restoredSourceIds = linkedSetOf<String>()
+                        val deletedTargetIds = linkedSetOf<String>()
+                        val restoredMoveIds = linkedSetOf<String>()
+                        val unpausedIds = linkedSetOf<String>()
+                        val legacySources = mutableListOf<OccurrenceOverrideEntity>()
+                        var wrote = false
+                        for (sm in command.selectedMoves) {
+                            for (row in resolvedMoves.getValue(sm.moveId)) {
+                                dao.deleteOccurrenceOverrideById(row.id)
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
+                                    deletedTargetIds += row.id
+                                } else {
+                                    restoredSourceIds += row.id
+                                }
+                                wrote = true
+                            }
+                            restoredMoveIds += sm.moveId
+                        }
+                        for (sel in command.selectedRows) {
+                            val row = resolvedRows.getValue(sel.id)
+                            if (row.courseRuleId != null) {
+                                // 带 moveId 的规则行由上方调课组删除覆盖，跳过单独动作
+                                if (!row.moveId.isNullOrBlank()) continue
+                                dao.deleteOccurrenceOverrideById(row.id)
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                restoredSourceIds += row.id
+                                if (row.reason?.startsWith("已调至 ") == true) legacySources += row
+                                wrote = true
+                            } else if (row.canceled) {
+                                // 纯覆盖行仅解除暂停：保留 id/moveId/moveRole 等全部身份字段，
+                                // 统一写层盖印新令牌
+                                upsertOccurrenceOverrideStamped(
+                                    row.copy(canceled = false, reason = null)
+                                )
+                                occurrenceCommandWriteProgressHook?.invoke("restoreCommand", row.id)
+                                unpausedIds += row.id
+                                wrote = true
+                            }
+                        }
+                        val ambiguous = findLegacyAmbiguousTargets(preWriteSnapshot, legacySources)
+                        OccurrenceCommandResult(
+                            status = if (wrote) {
+                                OccurrenceCommandStatus.APPLIED
+                            } else {
+                                OccurrenceCommandStatus.NO_CHANGE
+                            },
+                            unpausedOverrideIds = unpausedIds.toList(),
+                            restoredSourceOverrideIds = restoredSourceIds.toList(),
+                            deletedTargetOverrideIds = deletedTargetIds.toList(),
+                            restoredMoveIds = restoredMoveIds.toList(),
+                            legacyAmbiguousTargets = ambiguous.map { it.toDomain() }
+                        )
+                    }
+                }
+            }
+        }
+        if (result.status == OccurrenceCommandStatus.APPLIED) {
+            notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+        }
+        return result
+    }
+
+    /**
+     * 事务内「恢复暂停」：按 id 精确读行，校验 termId 与点击时捕获的 [expectedMoveId]；
+     * 仅取消 canceled 标记，保留全部身份字段，绝不触碰任何其他行。
+     */
+    private suspend fun unpauseOccurrenceInTransaction(
+        termId: String,
+        overrideId: String,
+        expectedMoveId: String?
+    ): OccurrenceCommandResult {
+        val row = dao.getOccurrenceOverrideById(overrideId)
+            ?: return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        if (row.termId != termId) {
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " 属于 " + row.termId +
+                    "，拒绝跨学期恢复 " + termId
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (row.courseRuleId != null) {
+            // 规则关联行不是「恢复暂停」对象：规则停课走 restoreRuleCancellation，撤销调课走 undoMove。
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " 是规则关联行(rule=" + row.courseRuleId +
+                    ")，拒绝以恢复暂停入口处理"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        // 双向断言：expectedMoveId=null 即「断言独立非调课行」——行当前带 moveId
+        // （点击后被再次移走/改挂新调课）绝不放行，否则会把新调课的 TARGET 静默改状态；
+        // 非 null 则要求精确一致。空白串一律归一化为 null 后比较。
+        val expectedMid = expectedMoveId?.takeIf { it.isNotBlank() }
+        val actualMid = row.moveId?.takeIf { it.isNotBlank() }
+        if (actualMid != expectedMid) {
+            Log.w(
+                LOG_TAG,
+                "unpauseOccurrence: " + overrideId + " moveId=" + row.moveId +
+                    " 与点击时捕获的期望 " + expectedMoveId + " 不符，拒绝陈旧恢复"
+            )
+            return OccurrenceCommandResult(OccurrenceCommandStatus.CONFLICT)
+        }
+        if (!row.canceled) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        occurrenceCommandInTransactionHook?.invoke("unpauseOccurrence")
+        // 仅取消暂停标记：moveId/moveRole/id/教室等身份字段原样保留；reason 清空交由引擎回退展示。
+        upsertOccurrenceOverrideStamped(row.copy(canceled = false, reason = null))
+        return OccurrenceCommandResult(
+            status = OccurrenceCommandStatus.APPLIED,
+            unpausedOverrideIds = listOf(row.id)
+        )
+    }
+
+    /** 事务内整组撤销：删除同一学期该 moveId 全部 SOURCE+TARGET；无此组 → NO_CHANGE。 */
+    private suspend fun undoMoveInTransaction(
+        termId: String,
+        moveId: String
+    ): OccurrenceCommandResult {
+        val rows = dao.getOccurrenceOverridesForMove(termId, moveId)
+        if (rows.isEmpty()) return OccurrenceCommandResult(OccurrenceCommandStatus.NO_CHANGE)
+        occurrenceCommandInTransactionHook?.invoke("undoMove")
+        val restoredSourceIds = mutableListOf<String>()
+        val deletedTargetIds = mutableListOf<String>()
+        for (row in rows) {
+            dao.deleteOccurrenceOverrideById(row.id)
+            occurrenceCommandWriteProgressHook?.invoke("undoMove", row.id)
+            if (row.moveRole == OccurrenceOverride.MOVE_ROLE_TARGET) {
+                deletedTargetIds += row.id
+            } else {
+                restoredSourceIds += row.id
+            }
+        }
+        return OccurrenceCommandResult(
+            status = OccurrenceCommandStatus.APPLIED,
+            restoredSourceOverrideIds = restoredSourceIds,
+            deletedTargetOverrideIds = deletedTargetIds,
+            restoredMoveIds = listOf(moveId)
+        )
+    }
+
+    /** 旧版模糊调课（moveId==null、reason 为「已调至 …」）的疑似调入目标检出：只列出不删除。 */
+    private fun findLegacyAmbiguousTargets(
+        snapshot: List<OccurrenceOverrideEntity>,
+        restoredSources: List<OccurrenceOverrideEntity>
+    ): List<OccurrenceOverrideEntity> {
+        val ambiguous = linkedMapOf<String, OccurrenceOverrideEntity>()
+        for (src in restoredSources) {
+            if (src.reason?.startsWith("已调至 ") != true) continue
+            val candidates = snapshot.filter { ov ->
+                ov.courseRuleId == null &&
+                    !ov.canceled &&
+                    ov.moveId.isNullOrBlank() &&
+                    ov.courseId == src.courseId &&
+                    ov.reason == "由 " + src.dateIso + " 调入"
+            }
+            for (c in candidates) {
+                ambiguous[c.id] = c
+            }
+        }
+        return ambiguous.values.toList()
+    }
+
+    /**
+     * 旧兼容适配器（R5 起保守 no-op）：规则+日期的模糊选择在执行时以当前版本「补齐」
+     * 为旧选择本身就是 R5-D1 的缺陷根因——同 ID 删除重建的行会被旧命令误删。
+     * 本入口不再执行任何写入：仅记日志并发出一次刷新提示，让陈旧调用方把界面
+     * 刷新到最新快照后重新以 [executeRestoreCommand] 精确选择。返回值恒为未变更。
+     */
+    @Deprecated(
+        "模糊选择已于 R5 废止：改用 executeRestoreCommand(RestoreCommand) 提交点击时冻结的完整不可变命令"
+    )
     suspend fun restoreCanceledOccurrence(
         date: LocalDate,
         ruleId: String?,
         overrideId: String? = null,
         mergedRuleIds: List<String> = emptyList()
-    ) {
-        val dateIso = date.toString()
-        val allRuleIds = (mergedRuleIds + listOfNotNull(ruleId)).distinct().filter { it.isNotBlank() }
-        database.withTransaction {
-            val snapshot = dao.getOccurrenceOverridesSnapshot()
-            val restoredCanceledList = mutableListOf<OccurrenceOverrideEntity>()
-            if (!overrideId.isNullOrBlank()) {
-                val existing = snapshot.firstOrNull { it.id == overrideId }
-                if (existing != null && existing.courseRuleId == null && existing.canceled) {
-                    dao.upsertOccurrenceOverride(existing.copy(canceled = false, reason = "临时调课/补课"))
-                } else {
-                    if (existing != null) restoredCanceledList += existing
-                    dao.deleteOccurrenceOverrideById(overrideId)
-                }
-            }
-            for (rId in allRuleIds) {
-                restoredCanceledList += snapshot.filter {
-                    it.dateIso == dateIso && it.courseRuleId == rId && it.canceled
-                }
-                dao.deleteCanceledOccurrenceOverridesForRuleOnDate(rId, dateIso)
-            }
-            // 若恢复的原停课记录是由跨日调课产生（reason = "已调至 YYYY-MM-DD"），同步清理对应的调入临时记录，避免恢复后产生双份排课
-            val movedTargetCourseIds = restoredCanceledList
-                .filter { it.reason?.startsWith("已调至 ") == true }
-                .mapNotNull { it.courseId }
-                .toSet()
-            if (movedTargetCourseIds.isNotEmpty()) {
-                val pairedMoves = snapshot.filter { ov ->
-                    ov.courseRuleId == null &&
-                        !ov.canceled &&
-                        ov.courseId in movedTargetCourseIds &&
-                        ov.reason == "由 $dateIso 调入"
-                }
-                for (mv in pairedMoves) {
-                    dao.deleteOccurrenceOverrideById(mv.id)
-                }
-            }
-        }
-        notifyScheduleOrPolicyChanged("OCCURRENCE_RESTORED")
+    ): OccurrenceRestoreResult {
+        Log.w(
+            LOG_TAG,
+            "restoreCanceledOccurrence 已弃用且零写入(date=" + date.toString() +
+                ",rule=" + ruleId + ",override=" + overrideId + ")——请改用 executeRestoreCommand"
+        )
+        // 刷新提示：让调用方/小组件按最新快照重绘，绝不按旧选择补做任何恢复
+        notifyScheduleOrPolicyChanged("DEPRECATED_RESTORE_IGNORED")
+        return OccurrenceRestoreResult()
     }
 
     suspend fun deleteCourseScheduleRule(ruleId: String) {
@@ -1642,9 +2555,29 @@ class CampusRepository internal constructor(
             val targetRules = rules.filter { it.id in cleanIds }
             if (targetRules.isEmpty()) return@withTransaction
             val affectedCourseIds = targetRules.map { it.courseId }.toSet()
+            // 记录将被规则删除波及的调课源行 moveId：若删除后该调课不再有任何 SOURCE，
+            // 其 TARGET 沦为无源孤儿行（会凭空复活一节课），必须同事务内一并清理。
+            val moveIdsLosingSources = allOverrides
+                .filter { ov ->
+                    !ov.moveId.isNullOrBlank() &&
+                        ov.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE &&
+                        ov.courseRuleId != null && ov.courseRuleId in cleanIds
+                }
+                .associate { it.moveId!! to it.termId }
             for (rId in cleanIds) {
                 dao.deleteRuleById(rId)
                 dao.deleteOccurrenceOverridesByRuleId(rId)
+            }
+            for ((mid, termOfMove) in moveIdsLosingSources) {
+                val remaining = dao.getOccurrenceOverridesForMove(termOfMove, mid)
+                val hasSurvivingSource = remaining.any {
+                    it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.courseRuleId != null
+                }
+                if (!hasSurvivingSource) {
+                    for (orphan in remaining) {
+                        dao.deleteOccurrenceOverrideById(orphan.id)
+                    }
+                }
             }
             for (ov in allOverrides) {
                 if (cleanIds.any { id -> ov.reason == "MERGED_INTO:$id" }) {
@@ -1721,6 +2654,12 @@ class CampusRepository internal constructor(
         weeks: Set<Int>,
         colorArgb: Long = 0xFF0D9488
     ) {
+        require(unscheduled.termId.isNotBlank()) { "实践课学期不能为空" }
+        require(unscheduled.sourceKey.isNotBlank()) { "实践课来源标识不能为空" }
+        require(startPeriod in 1..12) { "开始节次必须在 1-12 节之间" }
+        require(endPeriod in startPeriod..12) { "结束节次必须不小于开始节次且不超过第 12 节" }
+        require(weeks.isNotEmpty()) { "周次不能为空，请填写有效周次范围" }
+        require(weeks.all { it in 1..30 }) { "周次超出有效范围(1-30)" }
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val cleanRoom = rawRoom.trim().ifBlank { "实践场地" }
@@ -1756,15 +2695,25 @@ class CampusRepository internal constructor(
                 courseId = courseId,
                 termId = unscheduled.termId,
                 weekday = weekday,
-                startPeriod = startPeriod.coerceIn(1, 12),
-                endPeriod = endPeriod.coerceIn(startPeriod.coerceIn(1, 12), 12),
-                weeks = weeks.ifEmpty { (1..16).toSet() },
+                startPeriod = startPeriod,
+                endPeriod = endPeriod,
+                weeks = weeks,
                 rawRoom = cleanRoom,
                 buildingId = resolved.building?.id,
                 userModified = true
             )
             dao.upsertCourse(course.toEntity())
-            dao.upsertRule(rule.toEntity())
+            // 幂等保护：完全相同的目标时段已存在时不重复插入（防止双击/重复提交产生重复排课），
+            // 不同时段的另一次排课仍正常追加。
+            val identicalSlotExists = dao.getRulesSnapshot().any { r ->
+                r.courseId == courseId && r.termId == unscheduled.termId &&
+                    r.weekdayIso == weekday.value &&
+                    r.startPeriod == startPeriod && r.endPeriod == endPeriod &&
+                    r.weeksCsv == weeks.sorted().joinToString(",")
+            }
+            if (!identicalSlotExists) {
+                dao.upsertRule(rule.toEntity())
+            }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
@@ -2038,7 +2987,64 @@ class CampusRepository internal constructor(
             } else {
                 exams
             }
-            dao.upsertExamSchedules(filteredToUpsert.map { it.toEntity() })
+            // 可信同步管线：写入时记录每行的原始学期为权威证据（originTermId）。
+            // 后续任何把 termId 写坏的缺陷都可凭此列确定修复方向；旧库行的该列为 NULL。
+            val stamped = filteredToUpsert.map { item ->
+                item.toEntity().copy(
+                    originTermId = item.originTermId ?: item.termId
+                )
+            }
+            dao.upsertExamSchedules(stamped)
+            // 权威重同步去重：同一场考试（内容指纹一致）若在其他学期遗留无来源旧行，
+            // 视为历史错标残留并在同事务内清除+审计，保证修复后不存在重复考试。
+            // 但自动删除以「会话身份充足」为门槛：明确考试日期时间 + 可信管线稳定 id；
+            // 「时间待定」考试可在两学期字段全等撞指纹——证据不足时两行都保留并记 REVIEW_REQUIRED，
+            // 绝不因字段同为空而误删合法的跨学期待定考试。
+            val staleFingerprints = mutableMapOf<String, ExamScheduleEntity>()
+            dao.getExamSchedulesSnapshot()
+                .filter { it.originTermId.isNullOrBlank() }
+                .forEach { staleFingerprints[examFingerprint(it)] = it }
+            val auditsByRow = dao.getExamTermRepairAuditsSnapshot()
+                .filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
+                .associateBy { it.examRowId }
+            val nowMs = System.currentTimeMillis()
+            val mergedAudits = mutableListOf<ExamTermRepairAuditEntity>()
+            for (incoming in stamped) {
+                val stale = staleFingerprints[examFingerprint(incoming)] ?: continue
+                if (stale.id == incoming.id || stale.termId == incoming.termId) continue
+                if (!hasTrustedExamSessionIdentity(incoming)) {
+                    val prior = auditsByRow[stale.id]
+                    if (prior?.disposition != ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED ||
+                        prior.previousTermId != stale.termId
+                    ) {
+                        mergedAudits += ExamTermRepairAuditEntity(
+                            id = "v2:${stale.id}",
+                            examRowId = stale.id,
+                            previousTermId = stale.termId,
+                            newTermId = null,
+                            evidenceRef = "fingerprint_match_insufficient_session_identity:${incoming.id}",
+                            ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                            disposition = ExamTermRepairAuditEntity.DISPOSITION_REVIEW_REQUIRED,
+                            repairedAtEpochMilli = nowMs
+                        )
+                    }
+                    continue
+                }
+                dao.deleteExamScheduleById(stale.id)
+                mergedAudits += ExamTermRepairAuditEntity(
+                    id = "v2:${stale.id}",
+                    examRowId = stale.id,
+                    previousTermId = stale.termId,
+                    newTermId = incoming.termId,
+                    evidenceRef = "authoritative_resync_fingerprint:${incoming.id}",
+                    ruleVersion = EXAM_TERM_REPAIR_RULE_V2,
+                    disposition = ExamTermRepairAuditEntity.DISPOSITION_MERGED_DUPLICATE,
+                    repairedAtEpochMilli = nowMs
+                )
+            }
+            if (mergedAudits.isNotEmpty()) {
+                dao.upsertExamTermRepairAudits(mergedAudits)
+            }
         }
         notifyScheduleOrPolicyChanged("EXAMS_IMPORTED")
     }
@@ -2794,26 +3800,62 @@ class CampusRepository internal constructor(
     }
 
     suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
-        preferences.edit { prefs ->
-            prefs[PrefKeys.PROXY_MODE] = config.mode.key
-            prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
-            prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
-            prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
-            prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
-            prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-            prefs[PrefKeys.CLOUD_API_BASE_URL] = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+        // CLOUD_API_BASE_URL 属于身份会话快照成分：其变更必须过提交屏障（全局锁序 booking→identity），
+        // 保证同步在锁内复核身份/世代/base-url 后，不存在"复核通过→写入前"间被换址的窗口。
+        // 真实换址（同一规范化口径下 old != new）还必须在同一锁内推进身份世代：
+        // 仅有 base-url 相等性复核挡不住 A→B→A——回到原址后迟到的在途响应会误判快照仍有效。
+        // 世代推进即令在途会话全部失效（非解绑，不留 tombstone）；同值保存、仅改代理选项绝不推进。
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                var baseUrlChanged = false
+                preferences.edit { prefs ->
+                    // 与身份快照同一规范化口径（normalizeCloudApiBaseUrl 幂等，等价于快照读到的 apiBaseUrl）
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    val newBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
+                    baseUrlChanged = oldBase != newBase
+                    prefs[PrefKeys.PROXY_MODE] = config.mode.key
+                    prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
+                    prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
+                    prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
+                    prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
+                    prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
+                    prefs[PrefKeys.CLOUD_API_BASE_URL] = newBase
+                }
+                if (baseUrlChanged) {
+                    // 同一 owner 保留：这是"换址失效"而非解绑，绝不写 tombstone
+                    bumpCloudIdentityGenerationLocked(
+                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                        markUnlinkTombstone = false
+                    )
+                }
+            }
         }
     }
 
     suspend fun resetNetworkProxyConfig() {
-        preferences.edit { prefs ->
-            prefs.remove(PrefKeys.PROXY_MODE)
-            prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
-            prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
-            prefs.remove(PrefKeys.PROXY_HOST)
-            prefs.remove(PrefKeys.PROXY_PORT)
-            prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
-            prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+        // 同上：reset 会清除 CLOUD_API_BASE_URL（生效值回落默认网关），同样属于身份会话变更，
+        // 须过提交屏障；仅当规范化后的生效 base-url 真实变化时才推进世代
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                var baseUrlChanged = false
+                preferences.edit { prefs ->
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    baseUrlChanged = oldBase != NetworkProxyConfig.normalizeCloudApiBaseUrl(null)
+                    prefs.remove(PrefKeys.PROXY_MODE)
+                    prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
+                    prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
+                    prefs.remove(PrefKeys.PROXY_HOST)
+                    prefs.remove(PrefKeys.PROXY_PORT)
+                    prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
+                    prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+                }
+                if (baseUrlChanged) {
+                    bumpCloudIdentityGenerationLocked(
+                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                        markUnlinkTombstone = false
+                    )
+                }
+            }
         }
     }
 
@@ -3011,7 +4053,8 @@ class CampusRepository internal constructor(
     suspend fun addMomentsComment(
         postId: String,
         content: String,
-        contactHint: String = ""
+        contactHint: String = "",
+        clientMessageId: String? = null
     ): Result<cn.edu.haut.campus.core.model.MomentsPostItem> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanContent = content.trim().take(240)
@@ -3028,8 +4071,10 @@ class CampusRepository internal constructor(
                 authorName = authorName,
                 content = cleanContent,
                 contactHint = contactHint.trim().take(48),
+                clientMessageId = clientMessageId,
                 cloudBaseUrl = baseUrl,
-                bearerToken = token.takeIf { it.isNotBlank() }
+                bearerToken = token.takeIf { it.isNotBlank() },
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("网络未连接或服务端拒绝（如已被发起人屏蔽），留言未能提交，请联网重试")
             val curSnap = prefsState.campusMomentsSnapshot
             val nextPosts = curSnap.posts.map { if (it.id == postId) cloudUpdated else it }
@@ -3045,7 +4090,8 @@ class CampusRepository internal constructor(
     suspend fun submitMomentsContactRequest(
         postId: String,
         message: String,
-        contactInfo: String
+        contactInfo: String,
+        clientMessageId: String? = null
     ): Result<CampusCloudOidcHelper.MomentsContactRequestDto> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanMsg = message.trim().take(240)
@@ -3062,7 +4108,9 @@ class CampusRepository internal constructor(
             val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                 prefsState.networkProxyConfig.customCloudApiBaseUrl
             )
-            val idempotencyKey = "mcr_${postId}_${cleanMsg.hashCode()}_${cleanContact.hashCode()}"
+            // 幂等键绑定"用户这一次发送"的 clientMessageId（失败重试沿用，新的发送换新键）；
+            // 绝不用正文/联系方式 hash 兜底——两条有意相同的留言必须都能送达
+            val idempotencyKey = "mcr_${postId}_${clientMessageId?.trim()?.takeIf { it.isNotEmpty() }?.take(64) ?: UUID.randomUUID().toString().replace("-", "")}"
             val dto = CampusCloudOidcHelper.submitMomentsContactRequestToCloud(
                 postId = postId,
                 senderName = senderName,
@@ -3070,7 +4118,8 @@ class CampusRepository internal constructor(
                 contactInfo = cleanContact,
                 idempotencyKey = idempotencyKey,
                 bearerToken = token,
-                cloudBaseUrl = baseUrl
+                cloudBaseUrl = baseUrl,
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("联系申请提交失败：可能网络未连接、无法向本人发起申请、该帖已结案或发起人已屏蔽申请")
             runCatching { refreshCampusMomentsSnapshot() }
             dto
@@ -3089,7 +4138,8 @@ class CampusRepository internal constructor(
         CampusCloudOidcHelper.fetchMomentsContactRequestsResultFromCloud(
             postId = postId,
             bearerToken = token,
-            cloudBaseUrl = baseUrl
+            cloudBaseUrl = baseUrl,
+            httpTransport = cloudHttpTransportForTest
         )
     }
 
@@ -3137,7 +4187,8 @@ class CampusRepository internal constructor(
         requestId: String,
         action: String,
         replyMessage: String? = null,
-        reason: String? = null
+        reason: String? = null,
+        clientMessageId: String? = null
     ): Result<CampusCloudOidcHelper.MomentsContactRequestDto> = withContext(Dispatchers.IO) {
         runCatching {
             val token = resolveValidCloudAccessToken(forceRefresh = false)
@@ -3152,8 +4203,10 @@ class CampusRepository internal constructor(
                 action = action,
                 replyMessage = replyMessage,
                 reason = reason,
+                clientMessageId = clientMessageId,
                 bearerToken = token,
-                cloudBaseUrl = baseUrl
+                cloudBaseUrl = baseUrl,
+                httpTransport = cloudHttpTransportForTest
             ) ?: throw IllegalStateException("处理联系申请失败，请检查网络连接或权限")
             runCatching { refreshCampusMomentsSnapshot() }
             dto
@@ -4065,26 +5118,39 @@ class CampusRepository internal constructor(
         runCatching {
             java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
         }
-        database.withTransaction {
-            dao.clearStudentProfile()
-            dao.clearCourses()
-            dao.clearRules()
-            dao.clearOccurrenceOverrides()
-            dao.clearGradeAttempts()
-            dao.clearExamSchedules()
-            dao.clearUnscheduledCourses()
-            dao.clearImportAudits()
-            dao.clearWidgetConfigs()
-            reminderDao.clearAllTasks()
-            reminderDao.clearAllEventPrefs()
-            utilityAndFocusDao.clearAllDailySamples()
-            utilityAndFocusDao.clearAllOnlineRooms()
-            utilityAndFocusDao.clearAllReadings()
-            utilityAndFocusDao.clearAllMeters()
-            utilityAndFocusDao.clearAllFocusSessions()
-            cloudAndParcelDao.clearCloudIdentityBinding()
-            cloudAndParcelDao.clearLibraryBookingPlans()
-            cloudAndParcelDao.clearParcelItems()
+        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回。
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 世代推进先于 Room 事务执行（避免在事务内嵌套身份锁），
+        // 整个擦除事务与同步的"复核→写入"临界区互斥——在途同步要么整体先落库、要么在复核处失败。
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                bumpCloudIdentityGenerationLocked(
+                    cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
+                    markUnlinkTombstone = true
+                )
+            }
+            database.withTransaction {
+                dao.clearStudentProfile()
+                dao.clearCourses()
+                dao.clearRules()
+                dao.clearOccurrenceOverrides()
+                dao.clearGradeAttempts()
+                dao.clearExamSchedules()
+                dao.clearExamTermRepairAudits()
+                dao.clearUnscheduledCourses()
+                dao.clearImportAudits()
+                dao.clearWidgetConfigs()
+                reminderDao.clearAllTasks()
+                reminderDao.clearAllEventPrefs()
+                utilityAndFocusDao.clearAllDailySamples()
+                utilityAndFocusDao.clearAllOnlineRooms()
+                utilityAndFocusDao.clearAllReadings()
+                utilityAndFocusDao.clearAllMeters()
+                utilityAndFocusDao.clearAllFocusSessions()
+                cloudAndParcelDao.clearCloudIdentityBinding()
+                cloudAndParcelDao.clearLibraryBookingPlans()
+                cloudAndParcelDao.clearParcelItems()
+            }
         }
         cloudTokenMutex.withLock {
             cachedCloudAccessToken = ""
@@ -4128,7 +5194,8 @@ class CampusRepository internal constructor(
         val periods = dao.getPeriodTimesSnapshot().map { it.toDomain() }
         val calOverrides = dao.getCalendarOverridesSnapshot().map { it.toDomain() }
         val occOverrides = dao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
-        val buildings = (dao.getBuildingsSnapshot().map { it.toDomain() } +
+        val buildings = (dao.getBuildingsSnapshot().map { it.toDomain() }
+            .filter { it.id !in CampusDiningRecommender.CLOSED_CANTEEN_BUILDING_IDS } +
             (if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS else emptyList()))
             .distinctBy { it.id }
         return DirectScheduleData(
@@ -4158,6 +5225,105 @@ class CampusRepository internal constructor(
     val cloudIdentityBindingFlow: Flow<CloudIdentityBindingEntity?> =
         cloudAndParcelDao.observeCloudIdentityBinding()
 
+    /**
+     * 云身份生命周期协调锁：统一 (binding, generation, apiBase) 快照读取顺序、世代推进与
+     * 响应写回复核。持锁期间只做本地 DAO/DataStore 操作，绝不在锁内发起网络请求。
+     */
+    private val cloudIdentityMutex = Mutex()
+
+    /**
+     * 云身份会话快照：请求开始时捕获 (profileId, cloudUserId, generation, apiBase, token subject)，
+     * 网络响应写回前必须重新逐项比对——任一项不一致即丢弃，绝不写回或复活过期绑定。
+     */
+    data class CloudIdentitySessionSnapshot(
+        val profileId: String,
+        val cloudUserId: String,
+        val generation: Long,
+        val apiBaseUrl: String,
+        val ssoSubject: String
+    )
+
+    private suspend fun readCloudIdentityGeneration(): Long =
+        preferences.data.first()[PrefKeys.CLOUD_IDENTITY_GENERATION] ?: 0L
+
+    /** 必须在 cloudIdentityMutex 内调用：世代严格单调递增，同账号重新登录也推进世代。 */
+    private suspend fun bumpCloudIdentityGenerationLocked(
+        cloudUserId: String?,
+        markUnlinkTombstone: Boolean
+    ): Long {
+        val next = readCloudIdentityGeneration() + 1L
+        preferences.edit {
+            it[PrefKeys.CLOUD_IDENTITY_GENERATION] = next
+            if (cloudUserId.isNullOrBlank()) {
+                it.remove(PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER)
+            } else {
+                it[PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER] = cloudUserId.trim()
+            }
+            if (markUnlinkTombstone) {
+                it[PrefKeys.CLOUD_IDENTITY_UNLINK_TOMBSTONE] =
+                    "${cloudUserId.orEmpty().trim()}:$next:${System.currentTimeMillis()}"
+            }
+        }
+        return next
+    }
+
+    /** 统一快照读取入口：身份锁内原子读取 (binding, generation, apiBase)。 */
+    suspend fun snapshotCloudIdentitySession(): CloudIdentitySessionSnapshot? =
+        cloudIdentityMutex.withLock {
+            val binding = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withLock null
+            val prefsSnap = preferencesFlow.first()
+            CloudIdentitySessionSnapshot(
+                profileId = binding.profileId,
+                cloudUserId = binding.cloudUserId,
+                generation = readCloudIdentityGeneration(),
+                apiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                    prefsSnap.networkProxyConfig.customCloudApiBaseUrl
+                ),
+                ssoSubject = binding.ssoSubject
+            )
+        }
+
+    /** 必须在 cloudIdentityMutex 内调用 */
+    private suspend fun isCloudIdentitySnapshotCurrentLocked(
+        snapshot: CloudIdentitySessionSnapshot
+    ): Boolean {
+        val live = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return false
+        val liveBase = runCatching {
+            NetworkProxyConfig.normalizeCloudApiBaseUrl(
+                preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
+            )
+        }.getOrNull()
+        return live.profileId == snapshot.profileId &&
+            live.cloudUserId.trim() == snapshot.cloudUserId.trim() &&
+            live.ssoSubject.trim() == snapshot.ssoSubject.trim() &&
+            readCloudIdentityGeneration() == snapshot.generation &&
+            liveBase == snapshot.apiBaseUrl
+    }
+
+    /** 提交云委托/写回前的即时复核：切号、解绑、同号重登、换 base-url 一律视为已失效。 */
+    suspend fun isCloudIdentitySnapshotCurrent(snapshot: CloudIdentitySessionSnapshot): Boolean =
+        cloudIdentityMutex.withLock { isCloudIdentitySnapshotCurrentLocked(snapshot) }
+
+    /**
+     * 网络响应写回：身份锁内复核快照仍有效后执行条件 UPDATE（rows=0 即丢弃），
+     * 绝不从网络响应 INSERT 过期绑定行。
+     */
+    private suspend fun writeBackCloudBindingIfCurrent(
+        snapshot: CloudIdentitySessionSnapshot,
+        newPeachBalanceMicropeach: Long? = null,
+        newDisplayName: String? = null
+    ): Boolean = cloudIdentityMutex.withLock {
+        if (!isCloudIdentitySnapshotCurrentLocked(snapshot)) return@withLock false
+        val live = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withLock false
+        cloudAndParcelDao.updateCloudIdentityBindingMutableFieldsIfIdentityMatches(
+            profileId = snapshot.profileId,
+            cloudUserId = snapshot.cloudUserId,
+            displayName = newDisplayName?.takeIf { it.isNotBlank() } ?: live.displayName,
+            peachBalanceMicropeach = newPeachBalanceMicropeach ?: live.peachBalanceMicropeach,
+            updatedAtEpochMillis = System.currentTimeMillis()
+        ) > 0
+    }
+
     @Volatile
     private var cachedCloudAccessToken: String = ""
 
@@ -4169,12 +5335,40 @@ class CampusRepository internal constructor(
 
     private val cloudTokenMutex = Mutex()
     private val cloudSyncMutex = Mutex()
+
+    /**
+     * 预约计划/包裹落库与云身份变更的提交屏障锁。
+     *
+     * 全局锁序约定（唯一合法顺序）：bookingPlanStateMutex → cloudIdentityMutex。
+     * - 云端同步在持有本锁的临界区内复核身份快照（内部再取 identity 锁）后写入包裹/计划；
+     * - 一切身份变更路径（解绑、登录/同号重登、换 base-url、全量擦除）必须先取本锁，
+     *   再在本锁内取 cloudIdentityMutex 推进世代/改写绑定——
+     *   保证已进临界区的同步写入整体先于身份变更生效，未进临界区的同步在复核处必然失败，
+     *   二者之间不存在"世代校验通过后才发生的身份变更"窗口（E3 修复）。
+     * - 严禁反向嵌套（identity → booking），严禁在任一锁内做网络等待。
+     */
     private val bookingPlanStateMutex = Mutex()
     private val activeInProcessFireAttempts = ConcurrentHashMap<String, String>()
     private val activeDispatchedFireAttempts = ConcurrentHashMap<String, Boolean>()
 
     @Volatile
     internal var cloudHttpTransportForTest: ((String, String, String?, String?, Map<String, String>) -> String)? = null
+
+    /**
+     * 仅测试用：同步提交屏障内的挂起闩锁，在身份复核通过之后、首个落库写之前调用。
+     * 生产恒为 null（零开销）；测试注入后可确定性地把身份变更（解绑/换号/重登/换 base-url）
+     * 插入"复核→写入"窗口，断言提交屏障按 booking→identity 锁序拦截过期写入。
+     */
+    @Volatile
+    internal var syncCommitBarrierHookForTest: (suspend () -> Unit)? = null
+
+    /**
+     * 仅测试用：云端计划"401→令牌刷新→重提交"窗口的确定性闩锁（生产恒为 null）。
+     * 在身份复验①之后、resolveValidCloudAccessToken(forceRefresh) 之前调用，
+     * 供测试把切号/换址/换学号交错确定性地插入重提窗口。
+     */
+    @Volatile
+    internal var cloudSubmitRetryBarrierHookForTest: (suspend () -> Unit)? = null
 
     private fun isJwtNotExpired(token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         val parts = token.split(".")
@@ -4189,12 +5383,38 @@ class CampusRepository internal constructor(
         }.getOrDefault(false)
     }
 
+    /**
+     * 业务提交携带的期望身份（[expectedIdentity]=提交开始时的会话快照 {cloudUserId,
+     * generation, base, ssoSubject}）与期望学号 [expectedStudentNo]：
+     * 刷新发起前 / 网络返回后 / 凭据写回前三点复验——任一不符即返回 "" 并丢弃刷新结果，
+     * 切号后旧提交绝不得携新 token 重试，旧 refresh 结果绝不写入当前凭据；
+     * 刷新网络地址一律沿用快照中已验证的 apiBaseUrl。
+     */
     private suspend fun resolveValidCloudAccessToken(
         forceRefresh: Boolean = false,
-        failedAccessToken: String? = null
+        failedAccessToken: String? = null,
+        expectedIdentity: CloudIdentitySessionSnapshot? = null,
+        expectedStudentNo: String? = null
     ): String =
         cloudTokenMutex.withLock {
             val nowMs = System.currentTimeMillis()
+            // 自动同步、余额等旧调用同样使用当前身份和已配置地址，不能回到默认云端刷新。
+            val identitySnapshot = expectedIdentity ?: snapshotCloudIdentitySession()
+
+            suspend fun studentNoStillExpected(): Boolean {
+                val expected = expectedStudentNo?.trim() ?: return true
+                val live = (buildDelegatedCredentialBundle().first
+                    ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                return live == expected
+            }
+
+            // 复验①（刷新发起前/快路径前）：旧身份提交一律不再碰令牌体系
+            if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
+                return@withLock ""
+            }
+            if (!studentNoStillExpected()) {
+                return@withLock ""
+            }
             if (!forceRefresh && cachedCloudAccessToken.isNotBlank() && isJwtNotExpired(cachedCloudAccessToken, nowMs)) {
                 return@withLock cachedCloudAccessToken
             }
@@ -4224,24 +5444,52 @@ class CampusRepository internal constructor(
                 return@withLock storedAt
             }
             if (storedRt.isNotBlank()) {
+                // 刷新发起前再做一次即时复验（持锁期间身份仍可能被世代推进失效）
+                if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
+                    return@withLock ""
+                }
+                if (!studentNoStillExpected()) {
+                    return@withLock ""
+                }
+                // 网络地址沿已验证 base：快照里的 apiBaseUrl 才是本次会话校验过的云端地址
+                val verifiedBase = identitySnapshot?.apiBaseUrl?.takeIf { it.isNotBlank() }
+                    ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
-                    val pair = CampusCloudOidcHelper.refreshCloudSession(storedRt)
+                    val pair = CampusCloudOidcHelper.refreshCloudSession(
+                        storedRt,
+                        cloudBaseUrl = verifiedBase,
+                        httpTransport = cloudHttpTransportForTest
+                    )
                     if (pair != null) {
-                        cachedCloudAccessToken = pair.first
-                        cachedCloudRefreshToken = pair.second
-                        lastCloudTokenRefreshAtMs = System.currentTimeMillis()
-                        val sealedAt = runCatching { cloudTokenVault.seal(pair.first) }.getOrNull()
-                        val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
-                        if (sealedAt != null && sealedRt != null) {
-                            preferences.edit {
-                                it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
-                                it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                        // 复验②（凭据写回前）：刷新往返期间切号/换址/换学号的，
+                        // 旧会话 refresh 结果绝不写回当前凭据、绝不串 cache
+                        val writeBackAllowed =
+                            (identitySnapshot == null || isCloudIdentitySnapshotCurrent(identitySnapshot)) &&
+                                studentNoStillExpected()
+                        if (writeBackAllowed) {
+                            cachedCloudAccessToken = pair.first
+                            cachedCloudRefreshToken = pair.second
+                            lastCloudTokenRefreshAtMs = System.currentTimeMillis()
+                            val sealedAt = runCatching { cloudTokenVault.seal(pair.first) }.getOrNull()
+                            val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
+                            if (sealedAt != null && sealedRt != null) {
+                                preferences.edit {
+                                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
+                                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                                }
                             }
                         }
                     }
                     pair
                 }
                 if (refreshed != null) {
+                    // 复验③（返回后/重提前）：身份已变则令牌绝不交给旧会话调用方
+                    if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
+                        return@withLock ""
+                    }
+                    if (!studentNoStillExpected()) {
+                        return@withLock ""
+                    }
                     return@withLock refreshed.first
                 }
             }
@@ -4339,7 +5587,8 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.logoutAllCloudSessions(
                     accessToken = tokenBeforeSwitch,
                     unlinkXpeach = false,
-                    cloudBaseUrl = cloudBaseUrlForSwitch
+                    cloudBaseUrl = cloudBaseUrlForSwitch,
+                    httpTransport = cloudHttpTransportForTest
                 )
             }
         } else false
@@ -4463,7 +5712,16 @@ class CampusRepository internal constructor(
             linkedAtEpochMillis = profile.linkedAtEpochMillis,
             updatedAtEpochMillis = now
         )
-        cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 已进临界区的同步写入整体先于本次登录生效，之后的同步在复核处必然失败
+        bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                // 登录、切换云账号、同账号重新登录一律推进世代：
+                // 任何在途网络响应（含旧会话余额/计划写回）自此一律失效
+                bumpCloudIdentityGenerationLocked(profile.cloudUserId, markUnlinkTombstone = false)
+                cloudAndParcelDao.upsertCloudIdentityBinding(entity)
+            }
+        }
         repoScope.launch {
             runCatching { syncWithCampusCloud() }
         }
@@ -4475,10 +5733,8 @@ class CampusRepository internal constructor(
         if (syncRes != null) {
             return@withContext syncRes.peachBalance
         }
-        val current = cloudAndParcelDao.getCloudIdentityBindingSnapshot() ?: return@withContext null
-        val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-            preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-        )
+        val identitySession = snapshotCloudIdentitySession() ?: return@withContext null
+        val cloudBaseUrl = identitySession.apiBaseUrl
         var token = resolveValidCloudAccessToken(forceRefresh = false)
         if (token.isBlank()) return@withContext null
         var livePeach = CampusCloudOidcHelper.fetchLivePeachBalance(
@@ -4497,11 +5753,12 @@ class CampusRepository internal constructor(
             }
         }
         if (livePeach == null) return@withContext null
-        val updated = current.copy(
-            peachBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong(),
-            updatedAtEpochMillis = System.currentTimeMillis()
+        // 世代守卫写回：请求期间解绑/换号/同号重登/换 base-url 一律丢弃响应，
+        // 绝不 upsert 旧 binding.copy 行（那会覆盖新账号绑定或复活已解绑账号）
+        writeBackCloudBindingIfCurrent(
+            snapshot = identitySession,
+            newPeachBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong()
         )
-        cloudAndParcelDao.upsertCloudIdentityBinding(updated)
         livePeach
     }
 
@@ -4546,13 +5803,13 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.configurePersistentAuthStorageDir(
                     java.io.File(appContext.filesDir, "cloud_auth_provenance")
                 )
-                val currentBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+                val identitySession = snapshotCloudIdentitySession()
                     ?: throw IllegalStateException("尚未连接 XPeach 通行证")
-                val expectedCloudUserId = currentBinding.cloudUserId.trim()
+                val expectedCloudUserId = identitySession.cloudUserId.trim()
                 if (expectedCloudUserId.isEmpty()) {
                     throw IllegalStateException("当前 XPeach 通行证标识异常，请重新登录")
                 }
-                var token = resolveValidCloudAccessToken(forceRefresh = false)
+                var token = resolveValidCloudAccessToken(forceRefresh = false, expectedIdentity = identitySession)
                 if (token.isBlank()) {
                     throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
                 }
@@ -4582,9 +5839,7 @@ class CampusRepository internal constructor(
                         it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
                 }
                 val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
-                val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    prefsBeforeSync.networkProxyConfig.customCloudApiBaseUrl
-                )
+                val cloudBaseUrl = identitySession.apiBaseUrl
 
                 val localPlanUpserts = activeCloudPlans.map { plan ->
                     val seats = plan.preferredSeatLabel
@@ -4640,7 +5895,9 @@ class CampusRepository internal constructor(
                     httpTransport = cloudHttpTransportForTest
                 )
                 if (snapshot == null) {
-                    token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                    token = resolveValidCloudAccessToken(
+                        forceRefresh = true, failedAccessToken = token, expectedIdentity = identitySession
+                    )
                     if (token.isNotBlank()) {
                         snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
                             accessToken = token,
@@ -4659,8 +5916,8 @@ class CampusRepository internal constructor(
                 if (verifiedSnapshot.cloudUserId.trim() != expectedCloudUserId) {
                     throw IllegalStateException("云端同步返回账号与当前绑定账号不一致，已拒绝落库")
                 }
-                val activeBindingAfterSync = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
-                if (activeBindingAfterSync == null || activeBindingAfterSync.cloudUserId.trim() != expectedCloudUserId) {
+                // 世代复核：同步期间解绑/换号/同号重登/换 base-url 一律丢弃整份旧会话响应
+                if (!isCloudIdentitySnapshotCurrent(identitySession)) {
                     throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
                 }
                 val liveStuAfterSync = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
@@ -4669,84 +5926,94 @@ class CampusRepository internal constructor(
                 }
                 val now = System.currentTimeMillis()
 
-            // 1) 更新本地 XPeach 通行证与 🍑 余额
-            cloudAndParcelDao.upsertCloudIdentityBinding(
-                currentBinding.copy(
-                    displayName = verifiedSnapshot.displayName.ifBlank { currentBinding.displayName },
-                    peachBalanceMicropeach = kotlin.math.round(verifiedSnapshot.peachBalance * 10_000.0).toLong(),
-                    updatedAtEpochMillis = now
-                )
+            // 1) 更新本地 XPeach 通行证与 🍑 余额：身份锁内世代守卫条件 UPDATE（rows=0 即丢弃），
+            //    绝不 upsert 旧快照整行覆盖新账号绑定或复活已解绑行
+            val bindingWritten = writeBackCloudBindingIfCurrent(
+                snapshot = identitySession,
+                newPeachBalanceMicropeach = kotlin.math.round(verifiedSnapshot.peachBalance * 10_000.0).toLong(),
+                newDisplayName = verifiedSnapshot.displayName
             )
-
-            // 2) 合并云端快递包裹到本地 Room
-            var parcelChanged = false
-            for (rp in verifiedSnapshot.parcels) {
-                val cleanTracking = rp.trackingNumber.cleanNullLiteral()
-                if (cleanTracking.isBlank()) continue
-                val existing = cloudAndParcelDao.getParcelByTrackingNumber(cleanTracking)
-                val cleanRemotePickup = rp.pickupCode.cleanNullableLiteral()
-                val cleanExistingPickup = existing?.pickupCode.cleanNullableLiteral()
-                val mergedPickup = cleanRemotePickup ?: cleanExistingPickup
-                val mergedStation = rp.stationName.cleanNullableLiteral()
-                    ?: existing?.stationName.cleanNullableLiteral()
-                    ?: "莲花街北苑菜鸟驿站"
-                val mergedTitle = rp.itemTitle.cleanNullableLiteral()
-                    ?: existing?.itemTitle.cleanNullableLiteral()
-                val mergedCarrier = rp.carrierName.cleanNullLiteral(
-                    existing?.carrierName.cleanNullLiteral("校园快递")
-                )
-                val mergedStatus = when {
-                    existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName || rp.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
-                        ParcelLifecycleStatus.PICKED_UP.wireName
-                    !mergedPickup.isNullOrBlank() ->
-                        ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
-                    rp.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && mergedPickup == null ->
-                        ParcelLifecycleStatus.IN_TRANSIT.wireName
-                    else -> rp.status.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName)
-                }
-                if (existing == null ||
-                    existing.status != mergedStatus ||
-                    existing.pickupCode != mergedPickup ||
-                    existing.stationName != mergedStation ||
-                    existing.itemTitle != mergedTitle
-                ) {
-                    parcelChanged = true
-                    cloudAndParcelDao.upsertParcelItem(
-                        ParcelItemEntity(
-                            id = existing?.id ?: rp.id.cleanNullLiteral("prc_${UUID.randomUUID().toString().replace("-", "").take(12)}"),
-                            trackingNumber = cleanTracking,
-                            carrierCode = rp.carrierCode.cleanNullLiteral(existing?.carrierCode.cleanNullLiteral("CAINIAO")),
-                            carrierName = mergedCarrier,
-                            status = mergedStatus,
-                            pickupCode = mergedPickup,
-                            stationName = mergedStation,
-                            itemTitle = mergedTitle,
-                            estimatedDeliveryText = when (mergedStatus) {
-                                ParcelLifecycleStatus.PICKED_UP.wireName -> "本人已取件签收"
-                                ParcelLifecycleStatus.READY_FOR_PICKUP.wireName -> "已到达驿站/快递柜，请凭取件码取件"
-                                else -> existing?.estimatedDeliveryText.cleanNullableLiteral() ?: "运输中，预计 1-2 日送达校园驿站"
-                            },
-                            sourcesJson = existing?.sourcesJson ?: """[{"provider_id":"parcel.cloud-sync","priority":90}]""",
-                            fieldProvenanceJson = existing?.fieldProvenanceJson ?: """{"provider_id":"parcel.cloud-sync","updated_at":$now}""",
-                            checkpointsJson = existing?.checkpointsJson ?: "[]",
-                            createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
-                            updatedAtEpochMillis = now
-                        )
-                    )
-                }
+            if (!bindingWritten) {
+                throw IllegalStateException("云端账号已切换或解绑，已忽略旧会话同步结果")
             }
 
             // 3) 合并云端图书馆预约任务到本地 Room（严格隔离 ownerCloudUserId + 学号，严禁混并空 owner 旧记录或跨云账号记录）
+            var parcelChanged = false
             bookingPlanStateMutex.withLock {
                 val liveBindingLocked = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
                 val liveStuLocked = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
                 if (liveBindingLocked == null || liveBindingLocked.cloudUserId.trim() != expectedCloudUserId) {
                     throw IllegalStateException("同步落库前云端账号已切换或解绑，已放弃写入旧会话同步结果")
                 }
+                // 世代复核（ABA 防护）：cloudUserId 相同也可能已经历"解绑→重绑"，世代不一致即放弃落库
+                if (!isCloudIdentitySnapshotCurrent(identitySession)) {
+                    throw IllegalStateException("同步落库前云端身份世代已变更，已放弃写入旧会话同步结果")
+                }
                 if (expectedStudentNo.isNotEmpty() && liveStuLocked.isNotEmpty() && liveStuLocked != expectedStudentNo) {
                     throw IllegalStateException("同步落库前学号已切换，已放弃写入旧学号会话同步结果")
                 }
-                val syncedCloudUserId = expectedCloudUserId
+                // 测试闩锁（生产为 null）：确定性覆盖"复核→首写"窗口的身份变更交错
+                syncCommitBarrierHookForTest?.invoke()
+                    // 2) 合并云端快递包裹到本地 Room — moved INSIDE the identity-checked lock:
+                    // a stale-session merge must never commit account-A parcels after
+                    // an account switch that the final recheck would reject.
+                for (rp in verifiedSnapshot.parcels) {
+                    val cleanTracking = rp.trackingNumber.cleanNullLiteral()
+                    if (cleanTracking.isBlank()) continue
+                    val existing = cloudAndParcelDao.getParcelByTrackingNumber(cleanTracking)
+                    val cleanRemotePickup = rp.pickupCode.cleanNullableLiteral()
+                    val cleanExistingPickup = existing?.pickupCode.cleanNullableLiteral()
+                    val mergedPickup = cleanRemotePickup ?: cleanExistingPickup
+                    val mergedStation = rp.stationName.cleanNullableLiteral()
+                        ?: existing?.stationName.cleanNullableLiteral()
+                        ?: "莲花街北苑菜鸟驿站"
+                    val mergedTitle = rp.itemTitle.cleanNullableLiteral()
+                        ?: existing?.itemTitle.cleanNullableLiteral()
+                    val mergedCarrier = rp.carrierName.cleanNullLiteral(
+                        existing?.carrierName.cleanNullLiteral("校园快递")
+                    )
+                    val mergedStatus = when {
+                        existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName || rp.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
+                            ParcelLifecycleStatus.PICKED_UP.wireName
+                        !mergedPickup.isNullOrBlank() ->
+                            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
+                        rp.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName && mergedPickup == null ->
+                            ParcelLifecycleStatus.IN_TRANSIT.wireName
+                        else -> rp.status.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName)
+                    }
+                    if (existing == null ||
+                        existing.status != mergedStatus ||
+                        existing.pickupCode != mergedPickup ||
+                        existing.stationName != mergedStation ||
+                        existing.itemTitle != mergedTitle
+                    ) {
+                        parcelChanged = true
+                        cloudAndParcelDao.upsertParcelItem(
+                            ParcelItemEntity(
+                                id = existing?.id ?: rp.id.cleanNullLiteral("prc_${UUID.randomUUID().toString().replace("-", "").take(12)}"),
+                                trackingNumber = cleanTracking,
+                                carrierCode = rp.carrierCode.cleanNullLiteral(existing?.carrierCode.cleanNullLiteral("CAINIAO")),
+                                carrierName = mergedCarrier,
+                                status = mergedStatus,
+                                pickupCode = mergedPickup,
+                                stationName = mergedStation,
+                                itemTitle = mergedTitle,
+                                estimatedDeliveryText = when (mergedStatus) {
+                                    ParcelLifecycleStatus.PICKED_UP.wireName -> "本人已取件签收"
+                                    ParcelLifecycleStatus.READY_FOR_PICKUP.wireName -> "已到达驿站/快递柜，请凭取件码取件"
+                                    else -> existing?.estimatedDeliveryText.cleanNullableLiteral() ?: "运输中，预计 1-2 日送达校园驿站"
+                                },
+                                sourcesJson = existing?.sourcesJson ?: """[{"provider_id":"parcel.cloud-sync","priority":90}]""",
+                                fieldProvenanceJson = existing?.fieldProvenanceJson ?: """{"provider_id":"parcel.cloud-sync","updated_at":$now}""",
+                                checkpointsJson = existing?.checkpointsJson ?: "[]",
+                                createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
+                                updatedAtEpochMillis = now
+                            )
+                        )
+                    }
+                }
+    
+                    val syncedCloudUserId = expectedCloudUserId
                 val activeStuNo = expectedStudentNo.ifEmpty { liveStuLocked }.takeIf { it.isNotEmpty() }
                 val allExistingInLock = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 val mutableExistingById = allExistingInLock.associateBy { it.id }.toMutableMap()
@@ -4998,7 +6265,11 @@ class CampusRepository internal constructor(
                             else -> null
                         },
                         evidenceSha256 = if (isConfirmedOnSchool) rj.evidenceSha256.cleanNullableLiteral() else null,
-                        priceMicropeach = 10_000L,
+                        // 对账合并一律沿用本地记录的原成交价（用户创建时确认价）；
+                        // 无本地行时回退服务端订单实价，绝不按今日全局价覆盖历史记录
+                        priceMicropeach = matchingLocal?.priceMicropeach
+                            ?: matchingOrder?.pricePeach?.let { kotlin.math.round(it * 10_000.0).toLong() }
+                            ?: 10_000L,
                         paymentState = when {
                             effectiveStatus in setOf("DELEGATION_STOPPED_SCHOOL_CONFIRMED", "RESULT_UNKNOWN", "DELEGATION_STOPPED_RESULT_UNKNOWN") ->
                                 "HELD_PENDING_REVIEW"
@@ -5022,6 +6293,7 @@ class CampusRepository internal constructor(
                     val belongsToCurrentStudentForAlarm =
                         activeStuNo == null || (!resolvedJobStudentId.isNullOrBlank() && resolvedJobStudentId == activeStuNo)
                     if (belongsToCurrentStudentForAlarm &&
+                        mergedPlan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
                         mergedPlan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
                     ) {
                         LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, mergedPlan)
@@ -5185,7 +6457,8 @@ class CampusRepository internal constructor(
                 CampusCloudOidcHelper.logoutAllCloudSessions(
                     accessToken = tokenBeforeUnlink,
                     unlinkXpeach = true,
-                    cloudBaseUrl = cloudBaseUrl
+                    cloudBaseUrl = cloudBaseUrl,
+                    httpTransport = cloudHttpTransportForTest
                 )
             }
         } else {
@@ -5214,8 +6487,14 @@ class CampusRepository internal constructor(
                 }
             }
         }
-        cloudAndParcelDao.clearCloudIdentityBinding()
+        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
+        // 世代推进/绑定清除与计划隔离同属一个提交临界区，同步写入要么整体先于解绑、要么在复核处失败
         bookingPlanStateMutex.withLock {
+            cloudIdentityMutex.withLock {
+                // 解绑推进世代并留存 tombstone：在途响应写回失效，A→解绑→重绑(ABA) 场景旧会话响应亦不复活
+                bumpCloudIdentityGenerationLocked(prevCloudUserId, markUnlinkTombstone = true)
+                cloudAndParcelDao.clearCloudIdentityBinding()
+            }
             database.withTransaction {
                 val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
                 for (plan in plans) {
@@ -5441,6 +6720,25 @@ class CampusRepository internal constructor(
     suspend fun getAllLibraryBookingPlansForAuditSnapshot(): List<LibraryBookingPlanEntity> =
         cloudAndParcelDao.getLibraryBookingPlansSnapshot()
 
+    /** UI 确认绑定的身份；仓库入口必须消费它，不能另取新身份执行旧确认。 */
+    data class BookingSubmissionIdentity(
+        val profileId: String,
+        val cloudUserId: String,
+        val generation: Long,
+        val apiBaseUrl: String,
+        val studentNo: String
+    )
+
+    suspend fun snapshotBookingSubmissionIdentity(): BookingSubmissionIdentity {
+        val session = snapshotCloudIdentitySession()
+        val prefs = preferencesFlow.first()
+        return BookingSubmissionIdentity(
+            profileId, session?.cloudUserId.orEmpty(), session?.generation ?: -1L,
+            session?.apiBaseUrl ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs.networkProxyConfig.customCloudApiBaseUrl),
+            (buildDelegatedCredentialBundle().first ?: prefs.savedStudentId.orEmpty()).trim()
+        )
+    }
+
     suspend fun createDualEngineBookingPlan(
         executionMode: BookingExecutionMode,
         targetDate: LocalDate,
@@ -5449,17 +6747,45 @@ class CampusRepository internal constructor(
         preferredSeatLabel: String,
         allowAlternativeSeat: Boolean = true,
         repeatDays: Int = 1,
-        nowEpochMillis: Long = System.currentTimeMillis()
+        /**
+         * 用户已重新确认的成交价（微桃）：云端调价 409 之后由 UI 诚实再确认路径传入。
+         * 一旦存在用户确认的报价，本次创建钉入并持久化该价，绝不再回落覆盖为
+         * executionMode 常量价；仅 CLOUD_HOSTED 模式消费该值（本机/提醒恒为 0），
+         * 防止上一轮云端报价跨引擎/跨身份残留进入新的本机计划。
+         */
+        acceptedPriceMicropeach: Long? = null,
+        nowEpochMillis: Long = System.currentTimeMillis(),
+        expectedIdentity: BookingSubmissionIdentity? = null
     ): Result<LibraryBookingPlanEntity> = runCatching {
         CampusCloudOidcHelper.configurePersistentAuthStorageDir(
             java.io.File(appContext.filesDir, "cloud_auth_provenance")
         )
         val normalizedRepeatDays = repeatDays.coerceIn(1, 30)
+        // 本次创建实际钉入/计费的单价：存在用户确认报价时一律用确认价，
+        // 否则回退为该执行模式向用户展示过的常量价（绝不静默按云端新价改签）。
+        val effectiveExpectedPriceMicropeach = if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
+            (acceptedPriceMicropeach ?: executionMode.priceMicropeach).coerceAtLeast(0L)
+        } else {
+            executionMode.priceMicropeach
+        }
         val targetDateStr = targetDate.toString()
         val prefsSnap = preferencesFlow.first()
         val activeBindingSnap = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+        // 统一身份快照（profileId + cloudUserId + generation + apiBase + ssoSubject）：
+        // 云端分支的余额写回与委托提交前复核均以此为准
+        val identitySessionAtStart = snapshotCloudIdentitySession()
         val (studentNoBundlePre, delegatedBundlePre) = buildDelegatedCredentialBundle()
         val currentStudentNo = (studentNoBundlePre ?: prefsSnap.savedStudentId.orEmpty()).trim()
+        if (expectedIdentity != null) {
+            requireActiveSession()
+            val actualIdentity = BookingSubmissionIdentity(
+                profileId, identitySessionAtStart?.cloudUserId.orEmpty(),
+                identitySessionAtStart?.generation ?: -1L,
+                identitySessionAtStart?.apiBaseUrl ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefsSnap.networkProxyConfig.customCloudApiBaseUrl),
+                currentStudentNo
+            )
+            check(actualIdentity == expectedIdentity) { "确认身份已变化，请刷新页面后重新确认创建" }
+        }
 
         // 0) 跨引擎切换与同日同人防重协调：统一按真实学校身份（学号）与明确 owner 归属判重（不同人隔离不误伤，同一学号跨账号仍严格防重！）
         val allPlansSnapshot = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
@@ -5645,15 +6971,23 @@ class CampusRepository internal constructor(
                     throw IllegalStateException("开启云端准点抢座需保存校园统一认证密码（避免凌晨登录态过期），请重新验证并保存学号与密码")
                 }
             }
-            var token = resolveValidCloudAccessToken(forceRefresh = false)
+            var token = resolveValidCloudAccessToken(
+                forceRefresh = false,
+                expectedIdentity = identitySessionAtStart,
+                expectedStudentNo = currentStudentNo
+            )
             if (token.isBlank()) {
-                token = resolveValidCloudAccessToken(forceRefresh = true)
+                token = resolveValidCloudAccessToken(
+                    forceRefresh = true,
+                    expectedIdentity = identitySessionAtStart,
+                    expectedStudentNo = currentStudentNo
+                )
             }
             if (token.isBlank()) {
                 throw IllegalStateException("云端会话已过期或当前离线，无法创建云端抢座计划；原有的本机排队计划已为您保留")
             }
             var effectiveBalanceMicropeach = binding.peachBalanceMicropeach
-            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
+            if (effectiveBalanceMicropeach < effectiveExpectedPriceMicropeach) {
                 val livePeach = withContext(Dispatchers.IO) {
                     CampusCloudOidcHelper.fetchLivePeachBalance(
                         accessToken = token,
@@ -5663,16 +6997,20 @@ class CampusRepository internal constructor(
                 }
                 if (livePeach != null) {
                     effectiveBalanceMicropeach = kotlin.math.round(livePeach * 10_000.0).toLong()
-                    cloudAndParcelDao.upsertCloudIdentityBinding(
-                        binding.copy(
-                            peachBalanceMicropeach = effectiveBalanceMicropeach,
-                            updatedAtEpochMillis = System.currentTimeMillis()
+                    // 世代守卫写回：等待云端响应期间解绑/换号/重登的，丢弃旧身份余额结果，
+                    // 绝不 upsert binding.copy 覆盖新账号或复活已解绑绑定行
+                    if (identitySessionAtStart != null) {
+                        writeBackCloudBindingIfCurrent(
+                            snapshot = identitySessionAtStart,
+                            newPeachBalanceMicropeach = effectiveBalanceMicropeach
                         )
-                    )
+                    }
                 }
             }
-            if (effectiveBalanceMicropeach < executionMode.priceMicropeach) {
-                throw IllegalStateException("当前 XPeach 账户余额不足（云端抢座成功需 1 🍑，未抢中不扣费），请先前往 XPeach 账户补充余额，或改用「本机抢座」")
+            if (effectiveBalanceMicropeach < effectiveExpectedPriceMicropeach) {
+                throw IllegalStateException(
+                    "当前 XPeach 账户余额不足（云端抢座成功需 ${formatMicropeachAsPeach(effectiveExpectedPriceMicropeach)} 🍑，未抢中不扣费），请先前往 XPeach 账户补充余额，或改用「本机抢座」"
+                )
             }
             planOwnerCloudUserId = binding.cloudUserId
 
@@ -5793,6 +7131,21 @@ class CampusRepository internal constructor(
             }
 
             // 2) 本机已 100% 原子停止后，向云端提交托管计划（带幂等键 planId）
+            //    提交前即时复核：身份/世代/base-url 与学号必须仍与开始快照一致，
+            //    切号期间的排队提交一律停止并恢复原有本机计划
+            if (identitySessionAtStart == null ||
+                !isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                (expectedIdentity != null && !isSessionActive)
+            ) {
+                restoreStoppedLocalPlansSafely()
+                throw IllegalStateException("云端账号在任务创建期间已切换或解绑，已停止向云端提交旧会话委托")
+            }
+            val liveStudentBeforeSubmit = (buildDelegatedCredentialBundle().first
+                ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+            if (liveStudentBeforeSubmit != currentStudentNo) {
+                restoreStoppedLocalPlansSafely()
+                throw IllegalStateException("校园学号在任务创建期间已切换，已停止向云端提交旧学号委托")
+            }
             val formattedTime = DualEngineReservationPlanner.formatLocalTimeHms(parsedTime)
             val cleanArea = preferredAreaName.trim().ifBlank { "五层中区" }
             val cleanSeat = preferredSeatLabel.trim().ifBlank { "01桌 B座" }
@@ -5808,12 +7161,52 @@ class CampusRepository internal constructor(
                     planIdempotencyKey = planId,
                     cloudBaseUrl = cloudBaseUrl,
                     repeatDays = normalizedRepeatDays,
+                    // 报价钉死：把创建时向用户展示/用户已重新确认的价格写入 expected_price_micropeach，
+                    // 云端调价即 409 走诚实再确认（下同），绝不静默按新价改签；
+                    // 存在用户确认报价时绝不再回落覆盖为 executionMode 常量价
+                    expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
+                    // 报价归属校验：服务端返回他人 quote 必须保守拒绝重新取价
+                    expectedCloudUserId = identitySessionAtStart?.cloudUserId,
                     httpTransport = cloudHttpTransportForTest
                 )
             }
             if (submitOutcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist && submitOutcome.isAuthExpired) {
-                token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                // R5-C 令牌刷新重提前的身份/学号复验（复验①·发起前）：
+                // 首交后被 401 拒绝只能证明 pre-persist，切号/换址/换学号期间的旧会话提交
+                // 绝不得携新令牌重试——refresh 发起、返回、凭据写回三点再验（resolver 内），
+                // 此处先做业务侧复核，身份不符即恢复本机计划并中止
+                val liveStudentBeforeRetry = (buildDelegatedCredentialBundle().first
+                    ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                    liveStudentBeforeRetry != currentStudentNo
+                ) {
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端账号或学号在任务提交期间已切换，已停止旧会话的令牌刷新与重提交")
+                }
+                // 测试闩锁（生产为 null）：确定性覆盖"401→refresh"窗口的切号/换址交错
+                cloudSubmitRetryBarrierHookForTest?.invoke()
+                token = resolveValidCloudAccessToken(
+                    forceRefresh = true,
+                    failedAccessToken = token,
+                    expectedIdentity = identitySessionAtStart,
+                    expectedStudentNo = currentStudentNo
+                )
+                if (token.isBlank() && !isCloudIdentitySnapshotCurrent(identitySessionAtStart)) {
+                    // resolver 以身份失效为由拒绝：旧提交绝不得携新 token 重试
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端账号、学号或网络地址在任务提交期间已切换，已停止旧会话重提交")
+                }
                 if (token.isNotBlank()) {
+                    // 复验③·重提前：拿回的令牌必须仍属于开始时的身份会话与学号——
+                    // 切号后旧提交不得携新 token 重试，网络地址也继续沿用已验证 base
+                    val liveStudentAfterRetry = (buildDelegatedCredentialBundle().first
+                        ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                    if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
+                        liveStudentAfterRetry != currentStudentNo
+                    ) {
+                        restoreStoppedLocalPlansSafely()
+                        throw IllegalStateException("令牌刷新期间云端账号或学号已切换，已停止携新令牌重提旧提交")
+                    }
                     submitOutcome = withContext(Dispatchers.IO) {
                         CampusCloudOidcHelper.submitCloudHostedReservationPlanDetailed(
                             accessToken = token,
@@ -5826,6 +7219,9 @@ class CampusRepository internal constructor(
                             planIdempotencyKey = planId,
                             cloudBaseUrl = cloudBaseUrl,
                             repeatDays = normalizedRepeatDays,
+                            // 令牌刷新重提交仍钉入同一成交价（用户确认价优先于常量价），绝不漂移
+                            expectedPriceMicropeach = effectiveExpectedPriceMicropeach,
+                            expectedCloudUserId = identitySessionAtStart.cloudUserId,
                             httpTransport = cloudHttpTransportForTest
                         )
                     }
@@ -5840,6 +7236,24 @@ class CampusRepository internal constructor(
                     // 云端在持久化计划前明确拒绝（4xx 或前置授权失败），云端无半途任务，安全补偿恢复原有本机排队计划
                     restoreStoppedLocalPlansSafely()
                     throw IllegalStateException("云端未能受理该抢座计划（${finalOutcome.reason}）；已为您恢复原有本机排队计划")
+                }
+                is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable -> {
+                    // 报价端点存在但返回坏数据/未知错误：提示重新获取报价，绝不静默降级
+                    // 到仅 expected_price 的 legacy 钉价路径；此时计划与绑定写均未发生
+                    restoreStoppedLocalPlansSafely()
+                    throw IllegalStateException("云端报价获取异常（${finalOutcome.reason}），请重新获取报价后再创建；已为您恢复原有本机排队计划")
+                }
+                is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.PriceDriftConflict -> {
+                    // 报价漂移 409：云端价格已变更——恢复本机计划后抛出专用异常，
+                    // UI 必须向用户如实展示新旧价格并要求"重新确认创建"，绝不自动按新价重试
+                    restoreStoppedLocalPlansSafely()
+                    throw CloudPlanPriceDriftException(
+                        expectedPriceMicropeach = finalOutcome.expectedPriceMicropeach
+                            ?: effectiveExpectedPriceMicropeach,
+                        currentPriceMicropeach = finalOutcome.currentPriceMicropeach,
+                        serverReason = finalOutcome.reason,
+                        proposedQuote = finalOutcome.quote
+                    )
                 }
                 is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous -> {
                     // 云端 POST /reservation-plans 已发出但响应丢失/超时：可能已在云端落库！
@@ -5882,7 +7296,8 @@ class CampusRepository internal constructor(
                         cloudJobId = null,
                         externalBookingId = reconcile.externalBookingId,
                         evidenceSha256 = reconcile.evidenceSha256,
-                        priceMicropeach = executionMode.priceMicropeach,
+                        // 响应中断待核对单也必须记录本次钉入价，后续核对按原成交价对账
+                        priceMicropeach = effectiveExpectedPriceMicropeach,
                         paymentState = "HELD_PENDING_REVIEW",
                         status = closedStatus,
                         stateVersion = 1,
@@ -5928,8 +7343,10 @@ class CampusRepository internal constructor(
             cloudJobId = remoteCloudJobId,
             externalBookingId = null,
             evidenceSha256 = null,
-            priceMicropeach = executionMode.priceMicropeach,
-            paymentState = if (executionMode.priceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
+            // 持久化本次钉入/用户确认的成交价：后续核对、续期与再分派一律以该原成交价为准，
+            // 绝不因云端后续调价而改写历史计划行
+            priceMicropeach = effectiveExpectedPriceMicropeach,
+            paymentState = if (effectiveExpectedPriceMicropeach == 0L) "NOT_REQUIRED" else "DEBIT_PENDING",
             status = initialStatus,
             stateVersion = 1,
             generation = 1,
@@ -5949,6 +7366,11 @@ class CampusRepository internal constructor(
             ownerStudentId = currentStudentNo.ifBlank { null }
         )
         bookingPlanStateMutex.withLock {
+            // 云端已受理时必须保留原归属回执；本机尚未创建则在实际落库前复核旧确认。
+            if (expectedIdentity != null && executionMode != BookingExecutionMode.CLOUD_HOSTED) {
+                requireActiveSession()
+                check(snapshotBookingSubmissionIdentity() == expectedIdentity) { "确认身份已变化，请刷新页面后重新确认创建" }
+            }
             cloudAndParcelDao.upsertLibraryBookingPlan(entity)
         }
         if (executionMode == BookingExecutionMode.CLOUD_HOSTED) {
@@ -6019,6 +7441,40 @@ class CampusRepository internal constructor(
         planId: String,
         stage: TripleScheduleStage,
         nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> =
+        advanceBookingPlanStageInternal(
+            planId = planId,
+            stage = stage,
+            allowCloudExecuteNow = false,
+            nowEpochMillis = nowEpochMillis
+        )
+
+    /**
+     * 用户显式"现在执行"入口（与定时 stage API 分离）：仅接受 CLOUD_HOSTED 计划，
+     * 由服务端窗口裁决是否可提前执行；客户端绝不替代云端定时引擎。
+     */
+    suspend fun executeCloudBookingPlanNow(
+        planId: String,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Result<LibraryBookingPlanEntity> {
+        val plan = cloudAndParcelDao.getLibraryBookingPlanById(planId)
+            ?: return Result.failure(IllegalArgumentException("未找到预约计划 $planId"))
+        if (plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName) {
+            return Result.failure(IllegalStateException("立即执行入口仅适用于云端托管抢座计划"))
+        }
+        return advanceBookingPlanStageInternal(
+            planId = planId,
+            stage = TripleScheduleStage.FIRE,
+            allowCloudExecuteNow = true,
+            nowEpochMillis = nowEpochMillis
+        )
+    }
+
+    private suspend fun advanceBookingPlanStageInternal(
+        planId: String,
+        stage: TripleScheduleStage,
+        allowCloudExecuteNow: Boolean,
+        nowEpochMillis: Long = System.currentTimeMillis()
     ): Result<LibraryBookingPlanEntity> = runCatching {
         val current = cloudAndParcelDao.getLibraryBookingPlanById(planId)
             ?: throw IllegalArgumentException("未找到预约计划 $planId")
@@ -6042,6 +7498,28 @@ class CampusRepository internal constructor(
             current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName
         ) {
             runCatching { syncWithCampusCloud() }
+            return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
+        }
+        // 定时入口（含旧版本排定的 pending intent、开机/时区/升级/账号切换恢复）命中云端托管
+        // 计划的 FIRE：校验 owner 与当前身份归属后仅做 GET 同步合并服务端权威状态——
+        // 严禁 execute-now、严禁本地续期、严禁改写服务端权威执行状态。
+        if (stage == TripleScheduleStage.FIRE &&
+            current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName &&
+            !allowCloudExecuteNow
+        ) {
+            val activeCloudId = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim()
+            val liveStuForFire = (buildDelegatedCredentialBundle().first
+                ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+            val belongsToActiveIdentity = isBookingPlanVisibleToIdentity(
+                plan = current,
+                activeCloudUserId = activeCloudId,
+                activeStudentId = liveStuForFire
+            )
+            if (belongsToActiveIdentity &&
+                current.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK", "EXECUTING")
+            ) {
+                runCatching { syncWithCampusCloud() }
+            }
             return@runCatching cloudAndParcelDao.getLibraryBookingPlanById(planId) ?: current
         }
         if (stage != TripleScheduleStage.FIRE &&
@@ -6169,7 +7647,8 @@ class CampusRepository internal constructor(
                                 withContext(Dispatchers.IO) {
                                     CampusCloudOidcHelper.executeCloudHostedReservationJobNow(
                                         accessToken = cloudToken,
-                                        jobId = validCloudJobId
+                                        jobId = validCloudJobId,
+                                        httpTransport = cloudHttpTransportForTest
                                     )
                                 }
                             } else {
@@ -6823,7 +8302,12 @@ class CampusRepository internal constructor(
                     activeCloudUserId = activeBinding?.cloudUserId,
                     activeStudentId = activeStudentId
                 )
-                if (belongsToActiveAccount && plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")) {
+                // 恢复入口与定时入口同规则：CLOUD_HOSTED 绝不本地重排闹钟（schedulePlanAlarms 入口
+                // 亦自带拦截），仅撤销旧 pending intent；本机三阶段闹钟仅限非云端计划
+                if (belongsToActiveAccount &&
+                    plan.executionMode != BookingExecutionMode.CLOUD_HOSTED.wireName &&
+                    plan.status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK")
+                ) {
                     LibrarySeatAlarmSubsystem.schedulePlanAlarms(appContext, plan)
                 } else {
                     LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
@@ -7281,6 +8765,11 @@ class CampusRepository internal constructor(
     }
 
     companion object {
+        private const val LOG_TAG = "CampusRepository"
+
+        /** 考试学期修复规则版本：审计行按 (ruleVersion, examRowId) 幂等。 */
+        internal const val EXAM_TERM_REPAIR_RULE_V2 = "exam_term_repair_v2"
+
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(

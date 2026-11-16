@@ -49,6 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +57,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,16 +103,22 @@ import cn.edu.haut.campus.core.model.CompetitionSeasonWindow
 import cn.edu.haut.campus.core.model.CompetitionSkillPreference
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PresetQqChannelItem
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmptyClassroomScreen(
     repository: CampusRepository,
     onNavigateToMapWithRoom: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    nowProvider: () -> ZonedDateTime = { ZonedDateTime.now(HAUT_ZONE_ID) }
 ) {
     val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
     val courses by repository.coursesFlow.collectAsState(initial = emptyList())
@@ -119,8 +127,12 @@ fun EmptyClassroomScreen(
     val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
     val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
     val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    // 时钟×槽位控制器：时钟 tick 永远推进（today + 自动槽位解析保持最新）；
+    // 手动选槽仅保护 selectedSlotIndex，绝不暂停时钟（修复手动模式冻结时钟/跨午夜不翻页缺陷）
+    val slotController = remember(nowProvider) { EmptyClassroomSlotController(nowProvider) }
+    val today = slotController.today
     val weekMonday = remember(today) {
         today.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     }
@@ -138,11 +150,19 @@ fun EmptyClassroomScreen(
     }
     val campusDisplayName = if (selectedCampusKey == "songshanlu") "嵩山路校区" else "莲花街校区"
 
-    var selectedWeekOffset by remember { mutableIntStateOf(0) }
-    var selectedDayOfWeek by remember { mutableStateOf(today.dayOfWeek) }
-    val selectedDateInCurrentWeek = remember(weekMonday, selectedDayOfWeek, selectedWeekOffset) {
-        weekMonday.plusWeeks(selectedWeekOffset.toLong()).plusDays((selectedDayOfWeek.value - 1).toLong())
+    // 日期选择全部经 slotController 的「绝对日期」模型：
+    // 自动模式 selectedDate 恒等于最新 today——跨午夜后自动跟到新今日，
+    // 绝不把陈旧星期几投影进新一周（旧实现周日翻周一后跳到下周日的缺陷）；
+    // 手动点选固化为绝对日期，过期由 manualDateExpired 诚实标记。
+    val selectedDate = slotController.selectedDate
+    val selectedDayOfWeek = selectedDate.dayOfWeek
+    val selectedWeekOffset = remember(weekMonday, selectedDate) {
+        ChronoUnit.WEEKS.between(
+            weekMonday,
+            selectedDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        ).toInt()
     }
+    val selectedDateInCurrentWeek = selectedDate
     val selectedTeachingWeek = remember(selectedDateInCurrentWeek, currentTerm, calendarOverrides, currentTeachingWeek, selectedWeekOffset) {
         currentTerm?.let { TeachingWeekCalculator.resolveDate(selectedDateInCurrentWeek, it, calendarOverrides).teachingWeek }
             ?: (currentTeachingWeek + selectedWeekOffset)
@@ -150,8 +170,48 @@ fun EmptyClassroomScreen(
     val selectedDateShortLabel = remember(selectedDateInCurrentWeek) {
         String.format("%02d-%02d", selectedDateInCurrentWeek.monthValue, selectedDateInCurrentWeek.dayOfMonth)
     }
-    var selectedSlotIndex by remember {
-        mutableIntStateOf(CampusStudyRoomCatalog.resolveActiveSlotIndex(ZonedDateTime.now(HAUT_ZONE_ID).toLocalTime()))
+    val autoSlotResolution = slotController.autoSlotResolution
+    // "个人无冲突"统计是否具备本学期课表依据：与展开器共用严格"可展开输入"校验
+    // （孤儿停课覆盖/跨学期残留 rules/缺作息表且未自带合法时间均不构成依据）；
+    // 判定结果带原因态——依据不完整与尚无依据是两种不同的诚实文案
+    val scheduleBasisEvaluation = remember(currentTerm, courses, rules, periodTimes, occurrenceOverrides) {
+        CampusStudyRoomCatalog.evaluateCurrentTermScheduleBasis(
+            term = currentTerm,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            occurrenceOverrides = occurrenceOverrides
+        )
+    }
+    val hasScheduleBasis = scheduleBasisEvaluation.hasBasis
+    val basisReasonLabel = scheduleBasisEvaluation.reasonLabel ?: "尚无课表依据"
+    val selectedSlotIndex = slotController.selectedSlotIndex
+    val slotManuallyPicked = slotController.slotManuallyPicked
+
+    // 时钟与作息数据的最新值（tick/ON_RESUME 协程内读取，避免闭包捕获过期值）
+    val latestPeriodTimes by rememberUpdatedState(periodTimes)
+    val latestTimeTableId by rememberUpdatedState(currentTerm?.timeTableId)
+
+    // 作息表/学期数据到达或变化时立即重解析（替代原 remember(nowMinuteTick) 依赖）
+    LaunchedEffect(periodTimes, currentTerm?.timeTableId) {
+        slotController.refreshNow(periodTimes, currentTerm?.timeTableId)
+    }
+    // 60s 时钟 tick：无条件推进——手动选槽期间也照常刷新 today 与自动解析（跨午夜翻页不冻结）
+    LaunchedEffect(slotController) {
+        while (true) {
+            delay(60_000L)
+            slotController.refreshNow(latestPeriodTimes, latestTimeTableId)
+        }
+    }
+    // 回前台立即重解析（ON_RESUME 不等下一个 tick）
+    DisposableEffect(lifecycleOwner, slotController) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                slotController.refreshNow(latestPeriodTimes, latestTimeTableId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val campusRoomsMap = remember(selectedCampusKey) {
         CampusStudyRoomCatalog.studyRoomsMapForCampus(selectedCampusKey)
@@ -193,7 +253,11 @@ fun EmptyClassroomScreen(
     ) {
         XPeachTopBar(
             title = "自习教室与无课参考",
-            subtitle = "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考",
+            subtitle = if (hasScheduleBasis) {
+                "$campusDisplayName · 名录 $freeCampusRoomCount/$totalCampusCandidateCount 间个人无冲突参考"
+            } else {
+                "$campusDisplayName · 名录 $totalCampusCandidateCount 间自习教室 · $basisReasonLabel"
+            },
             navigationIcon = {
                 XPeachIconButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
@@ -215,7 +279,11 @@ fun EmptyClassroomScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。",
+                    text = if (hasScheduleBasis) {
+                        "数据来源说明：当前展示为校区公共教学楼自习教室名录 + 个人课表无冲突参考（已自动排除您本人在所选节次有课的教室），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
+                    } else {
+                        "$basisReasonLabel：以下为校区公共教学楼自习教室完整名录（未做个人无冲突过滤），非全校教务实时排课占用数据，现场请以教室实际使用情况为准。"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -258,12 +326,22 @@ fun EmptyClassroomScreen(
                     XPeachFilterPill(
                         label = "本周",
                         selected = selectedWeekOffset == 0,
-                        onClick = { selectedWeekOffset = 0 }
+                        onClick = {
+                            // 保持当前星期几，把选择固化为本周对应的绝对日期
+                            slotController.pickDate(
+                                weekMonday.plusDays((selectedDayOfWeek.value - 1).toLong())
+                            )
+                        }
                     )
                     XPeachFilterPill(
                         label = "下周",
                         selected = selectedWeekOffset == 1,
-                        onClick = { selectedWeekOffset = 1 }
+                        onClick = {
+                            slotController.pickDate(
+                                weekMonday.plusWeeks(1)
+                                    .plusDays((selectedDayOfWeek.value - 1).toLong())
+                            )
+                        }
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -278,7 +356,14 @@ fun EmptyClassroomScreen(
                         XPeachFilterPill(
                             label = if (isExactToday) "${day.ChineseLabel}(今)" else day.ChineseLabel,
                             selected = selectedDayOfWeek == day,
-                            onClick = { selectedDayOfWeek = day }
+                            onClick = {
+                                // 在当前展示周内点选星期几 → 固化为对应绝对日期，
+                                // 跨午夜后绝不随周一对齐漂移成别周同一天
+                                slotController.pickDate(
+                                    weekMonday.plusWeeks(selectedWeekOffset.toLong())
+                                        .plusDays((day.value - 1).toLong())
+                                )
+                            }
                         )
                     }
                 }
@@ -293,8 +378,53 @@ fun EmptyClassroomScreen(
                         XPeachFilterPill(
                             label = slot.label,
                             selected = selectedSlotIndex == idx,
-                            onClick = { selectedSlotIndex = idx }
+                            onClick = {
+                                slotController.pickSlot(idx)
+                            }
                         )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = CampusStudyRoomCatalog.studySlotStatusLabel(
+                            manuallyPickedSlotLabel = if (slotManuallyPicked) {
+                                CampusStudyRoomCatalog.STUDY_PERIOD_SLOTS[selectedSlotIndex].label
+                            } else {
+                                null
+                            },
+                            resolution = autoSlotResolution
+                        ) + if (slotController.manualDateExpired) {
+                            // 手动所选日期已早于今日：诚实标注过期，绝不静默改指下周
+                            " · 所选日期已过期"
+                        } else {
+                            ""
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (slotManuallyPicked) {
+                        TextButton(
+                            onClick = {
+                                // 立即按注入时钟重解析并选中当前槽位，绝不复用旧解析结果
+                                slotController.restoreAuto(latestPeriodTimes, latestTimeTableId)
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("恢复自动定位", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (slotController.manualSelectedDate != null) {
+                        TextButton(
+                            onClick = {
+                                // 退出手动日期选择：选中日期立即重新跟随最新今日
+                                slotController.restoreAutoDate()
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("回到今天", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -327,8 +457,13 @@ fun EmptyClassroomScreen(
 
             for (buildingName in buildingsToShow) {
                 val candidateRooms = campusRoomsMap[buildingName].orEmpty()
-                val freeRooms = candidateRooms.filter { code ->
-                    CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
+                val freeRooms = if (hasScheduleBasis) {
+                    candidateRooms.filter { code ->
+                        CampusStudyRoomCatalog.isRoomFree(code, busyRoomsInSlot)
+                    }
+                } else {
+                    // 无本学期课表依据：展示完整名录，绝不以跨学期/空输入冒充"全部空闲"
+                    candidateRooms
                 }
                 XPeachCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -342,7 +477,11 @@ fun EmptyClassroomScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         XPeachStatusDotText(
-                            text = "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间",
+                            text = if (hasScheduleBasis) {
+                                "个人无冲突 ${freeRooms.size}/${candidateRooms.size} 间"
+                            } else {
+                                basisReasonLabel
+                            },
                             dotColor = XPeachTheme.readablePrimary
                         )
                     }

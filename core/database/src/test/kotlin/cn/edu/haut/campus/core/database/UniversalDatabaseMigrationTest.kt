@@ -36,7 +36,7 @@ class UniversalDatabaseMigrationTest {
         val before = createVersionFourDatabase()
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(8, sqlite.version)
+            assertEquals(10, sqlite.version)
             assertEquals(before, snapshot(sqlite))
             for (tableName in listOf(
                 "unscheduled_academic_courses",
@@ -82,7 +82,7 @@ class UniversalDatabaseMigrationTest {
         }
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(8, sqlite.version)
+            assertEquals(10, sqlite.version)
             val cols = mutableSetOf<String>()
             sqlite.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
                 val idx = cursor.getColumnIndex("name")
@@ -164,7 +164,7 @@ class UniversalDatabaseMigrationTest {
 
         assertEquals(4, source.oldVersion)
         assertEquals(4, evidence.oldVersion)
-        assertEquals(8, evidence.newVersion)
+        assertEquals(10, evidence.newVersion)
         assertEquals(before.keys, source.tableCounts.keys)
         assertEquals(source.serializedTableCounts, evidence.serializedTableCounts)
         factory.open(profile).databaseForAdoption().close()
@@ -173,7 +173,7 @@ class UniversalDatabaseMigrationTest {
             null,
             SQLiteDatabase.OPEN_READONLY
         ).use { database ->
-            assertEquals(8, database.version)
+            assertEquals(10, database.version)
             assertEquals(before, snapshot(database))
         }
     }
@@ -185,7 +185,7 @@ class UniversalDatabaseMigrationTest {
 
     private fun openRoom(): HautDatabase =
         Room.databaseBuilder(context, HautDatabase::class.java, databaseName)
-            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
             .allowMainThreadQueries()
             .build()
 
@@ -251,8 +251,9 @@ class UniversalDatabaseMigrationTest {
             val queries = schema.getJSONArray("setupQueries")
             for (index in 0 until queries.length()) database.execSQL(queries.getString(index))
             database.version = 4
-            return snapshotTables { table ->
-                database.rawQuery("SELECT * FROM `$table`", null)
+            return snapshotTables { table, columns ->
+                val cols = columns.joinToString(", ") { "`$it`" }
+                database.rawQuery("SELECT $cols FROM `$table`", null)
             }
         }
     }
@@ -286,7 +287,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedProvable = Room.databaseBuilder(context, HautDatabase::class.java, dbProvable)
-                .addMigrations(MIGRATION_7_8)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -313,7 +314,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedUnprovable = Room.databaseBuilder(context, HautDatabase::class.java, dbUnprovable)
-                .addMigrations(MIGRATION_7_8)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -336,6 +337,238 @@ class UniversalDatabaseMigrationTest {
         } finally {
             context.deleteDatabase(dbProvable)
             context.deleteDatabase(dbUnprovable)
+        }
+    }
+
+    @Test
+    fun `migration8To9AddsMoveColumnsAndExamAuditPreservingLegacyRows`() {
+        val dbName = "migration_v8_move_exam.db"
+        try {
+            createVersionEightDatabase(dbName) { db ->
+                // v8 旧调课行：无 moveId/moveRole 列，验证迁移后保持 NULL 不被猜测回填
+                db.execSQL(
+                    """
+                    INSERT INTO `occurrence_overrides`
+                    (`id`, `termId`, `courseRuleId`, `courseId`, `dateIso`, `startPeriod`, `endPeriod`, `startAtIso`, `endAtIso`, `room`, `buildingId`, `canceled`, `reason`)
+                    VALUES
+                    ('ov_v8_src', '2026-2027-1', 'r_1', 'c_1', '2026-10-12', NULL, NULL, NULL, NULL, NULL, NULL, 1, '已调至 2026-10-14'),
+                    ('ov_v8_tgt', '2026-2027-1', NULL, 'c_1', '2026-10-14', 1, 2, NULL, NULL, '旧教室', NULL, 0, '由 2026-10-12 调入'),
+                    ('ov_v8_plain', '2026-2027-1', 'r_2', 'c_1', '2026-10-13', NULL, NULL, NULL, NULL, NULL, NULL, 1, '临时停课')
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `exam_schedules`
+                    (`id`, `termId`, `courseCode`, `courseName`, `examBatchName`, `examStageLabel`, `examFormat`, `rawTimeText`, `examDateIso`, `startTimeIso`, `endTimeIso`, `rawRoom`, `seatNumber`, `campusName`, `isRetake`, `syncedAtEpochMilli`)
+                    VALUES ('ex_v8', '2026-2027-1', 'K1', '合成考试', '期末考试', '期末集中考', '闭卷', '时间待定', NULL, NULL, NULL, '待定考场', NULL, '莲花街校区', 0, 1000)
+                    """.trimIndent()
+                )
+            }
+            val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = migrated.openHelper.writableDatabase
+                assertEquals(10, sqlite.version)
+                // 新列存在且旧行保持 NULL
+                val cols = mutableSetOf<String>()
+                sqlite.query("PRAGMA table_info(`occurrence_overrides`)").use { cursor ->
+                    val idx = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) cols += cursor.getString(idx)
+                }
+                assertTrue(cols.containsAll(listOf("moveId", "moveRole")))
+                sqlite.query("SELECT id, moveId, moveRole FROM `occurrence_overrides` ORDER BY id").use { cursor ->
+                    var count = 0
+                    while (cursor.moveToNext()) {
+                        count++
+                        assertTrue(cursor.isNull(1))
+                        assertTrue(cursor.isNull(2))
+                    }
+                    assertEquals(3, count)
+                }
+                // 索引已创建
+                sqlite.query("SELECT name FROM sqlite_master WHERE type='index' AND name='index_occurrence_overrides_termId_moveId_moveRole'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                }
+                // exam_schedules 增加 originTermId 且旧行为 NULL
+                sqlite.query("SELECT originTermId FROM `exam_schedules` WHERE id='ex_v8'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertTrue(cursor.isNull(0))
+                }
+                // 审计表已创建且为空
+                sqlite.query("SELECT COUNT(*) FROM `exam_term_repair_audits`").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /**
+     * v9 -> v10 真实旧库升级（MigrationTestHelper 等价契约）：建 v9 schema 实体库 →
+     * 写入全类别覆盖行 → 经 Room 真实迁移链打开并校验结构 + 数据 + 令牌分配。
+     * 覆盖矩阵：普通取消 / 调课多源一目标 / 暂停的调入目标 / 同 ID 历史风格行 / 旧版模糊目标。
+     */
+    @Test
+    fun migration9To10AssignsUniqueMutationTokensAndPreservesEveryOverrideRow() {
+        val dbName = "migration_v9_token.db"
+        val uuidShape = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        try {
+            createVersionNineDatabase(dbName) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO occurrence_overrides
+                    (id, termId, courseRuleId, courseId, dateIso, startPeriod, endPeriod, startAtIso, endAtIso, room, buildingId, canceled, reason, moveId, moveRole)
+                    VALUES
+                    ('ov_cancel_2026-10-12_r_1', '2026-2027-1', 'r_1', 'c_1', '2026-10-12', NULL, NULL, NULL, NULL, NULL, NULL, 1, '临时停课', NULL, NULL),
+                    ('ov_src_a', '2026-2027-1', 'r_1', 'c_1', '2026-10-19', NULL, NULL, NULL, NULL, NULL, NULL, 1, '已调至 2026-10-21', 'mv_1', 'SOURCE'),
+                    ('ov_src_b', '2026-2027-1', 'r_2', 'c_1', '2026-10-19', NULL, NULL, NULL, NULL, NULL, NULL, 1, '已调至 2026-10-21', 'mv_1', 'SOURCE'),
+                    ('ov_tgt_mv1', '2026-2027-1', NULL, 'c_1', '2026-10-21', 1, 4, NULL, NULL, '合成大教室', NULL, 0, '由 2026-10-19 调入', 'mv_1', 'TARGET'),
+                    ('ov_src_mv2', '2026-2027-1', 'r_3', 'c_2', '2026-10-20', NULL, NULL, NULL, NULL, NULL, NULL, 1, '已调至 2026-10-22', 'mv_2', 'SOURCE'),
+                    ('ov_tgt_mv2_paused', '2026-2027-1', NULL, 'c_2', '2026-10-22', 5, 6, NULL, NULL, '合成教室', NULL, 1, '由 2026-10-20 调入', 'mv_2', 'TARGET'),
+                    ('ov_legacy_tgt', '2026-2027-1', NULL, 'c_1', '2026-10-15', 1, 2, NULL, NULL, '旧教室', NULL, 0, '由 2026-10-12 调入', NULL, NULL),
+                    ('ov_xterm', '2026-2027-2', 'r_9', 'c_9', '2026-10-13', NULL, NULL, NULL, NULL, NULL, NULL, 1, '已调至 2026-10-14', 'mv_x', 'SOURCE')
+                    """.trimIndent()
+                )
+            }
+            // 迁移前快照全部语义字段，迁移后逐行对比一字不差
+            val expectedSemantics = mutableMapOf<String, List<String?>>()
+            SQLiteDatabase.openDatabase(
+                context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READONLY
+            ).use { pre ->
+                pre.rawQuery(
+                    "SELECT id, termId, courseRuleId, courseId, dateIso, startPeriod, endPeriod, startAtIso, endAtIso, room, buildingId, canceled, reason, moveId, moveRole FROM occurrence_overrides ORDER BY id",
+                    null
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        expectedSemantics[cursor.getString(0)] = (1 until cursor.columnCount).map {
+                            if (cursor.isNull(it)) null else cursor.getString(it)
+                        }
+                    }
+                }
+            }
+
+            val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_9_10)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = migrated.openHelper.writableDatabase
+                assertEquals(10, sqlite.version)
+                // 结构校验：mutationToken 非空列已建立
+                val cols = mutableSetOf<String>()
+                sqlite.query("PRAGMA table_info(occurrence_overrides)").use { cursor ->
+                    val idx = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) cols += cursor.getString(idx)
+                }
+                assertTrue(cols.contains("mutationToken"))
+
+                // 每行令牌：非空、UUID 形态、全局唯一不重复
+                val tokens = mutableMapOf<String, String>()
+                sqlite.query("SELECT id, mutationToken FROM occurrence_overrides").use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val token = cursor.getString(1)
+                        assertTrue("旧行令牌必须已分配", token.isNotBlank())
+                        assertTrue("令牌必须是 UUID 形态: " + token, uuidShape.matches(token))
+                        tokens[cursor.getString(0)] = token
+                    }
+                }
+                assertEquals(expectedSemantics.size, tokens.size)
+                assertEquals("令牌必须全局唯一", tokens.size, tokens.values.toSet().size)
+
+                // 语义字段逐行保留：普通取消/调课多源/暂停目标/同 ID 历史/旧模糊目标/他学期行原样
+                sqlite.query(
+                    "SELECT id, termId, courseRuleId, courseId, dateIso, startPeriod, endPeriod, startAtIso, endAtIso, room, buildingId, canceled, reason, moveId, moveRole FROM occurrence_overrides ORDER BY id"
+                ).use { cursor ->
+                    var count = 0
+                    while (cursor.moveToNext()) {
+                        count++
+                        val actual = (1 until cursor.columnCount).map {
+                            if (cursor.isNull(it)) null else cursor.getString(it)
+                        }
+                        assertEquals(
+                            "行 " + cursor.getString(0) + " 语义字段必须原样保留",
+                            expectedSemantics[cursor.getString(0)], actual
+                        )
+                    }
+                    assertEquals(expectedSemantics.size, count)
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    private fun createVersionNineDatabase(
+        name: String,
+        seed: (SQLiteDatabase) -> Unit
+    ) = createVersionedDatabase(name, 9, seed)
+
+    private fun createVersionEightDatabase(
+        name: String,
+        seed: (SQLiteDatabase) -> Unit
+    ) {
+        context.deleteDatabase(name)
+        val path = "cn.edu.haut.campus.core.database.HautDatabase/8.json"
+        val content = checkNotNull(javaClass.classLoader?.getResourceAsStream(path)) {
+            "缺少已提交的 Room v8 schema"
+        }.bufferedReader().use { it.readText() }
+        val schema = JSONObject(content).getJSONObject("database")
+        context.openOrCreateDatabase(name, 0, null).use { database ->
+            val entities = schema.getJSONArray("entities")
+            for (index in 0 until entities.length()) {
+                val entity = entities.getJSONObject(index)
+                val table = entity.getString("tableName")
+                database.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.getJSONArray("indices")
+                for (item in 0 until indices.length()) {
+                    database.execSQL(indices.getJSONObject(item).getString("createSql").replace("\${TABLE_NAME}", table))
+                }
+            }
+            val queries = schema.getJSONArray("setupQueries")
+            for (index in 0 until queries.length()) database.execSQL(queries.getString(index))
+            seed(database)
+            database.version = 8
+        }
+    }
+
+    /**
+     * 与 MigrationTestHelper 契约等价的最小实现：按导出的旧版 schema 建真实 SQLite 库并置版本号，
+     * 再经 Room.databaseBuilder + addMigrations 走真实迁移链打开校验（离线环境无 room-testing 依赖）。
+     */
+    private fun createVersionedDatabase(
+        name: String,
+        version: Int,
+        seed: (SQLiteDatabase) -> Unit
+    ) {
+        context.deleteDatabase(name)
+        val path = "cn.edu.haut.campus.core.database.HautDatabase/" + version + ".json"
+        val content = checkNotNull(javaClass.classLoader?.getResourceAsStream(path)) {
+            "缺少已提交的 Room v" + version + " schema"
+        }.bufferedReader().use { it.readText() }
+        val schema = JSONObject(content).getJSONObject("database")
+        context.openOrCreateDatabase(name, 0, null).use { database ->
+            val entities = schema.getJSONArray("entities")
+            for (index in 0 until entities.length()) {
+                val entity = entities.getJSONObject(index)
+                val table = entity.getString("tableName")
+                database.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.getJSONArray("indices")
+                for (item in 0 until indices.length()) {
+                    database.execSQL(indices.getJSONObject(item).getString("createSql").replace("\${TABLE_NAME}", table))
+                }
+            }
+            val queries = schema.getJSONArray("setupQueries")
+            for (index in 0 until queries.length()) database.execSQL(queries.getString(index))
+            seed(database)
+            database.version = version
         }
     }
 
@@ -368,16 +601,25 @@ class UniversalDatabaseMigrationTest {
     }
 
     private fun snapshot(database: SupportSQLiteDatabase): Map<String, String> =
-        snapshotTables { table -> database.query("SELECT * FROM `$table`") }
+        snapshotTables { table, columns ->
+            val cols = columns.joinToString(", ") { "`$it`" }
+            database.query("SELECT $cols FROM `$table`")
+        }
 
     private fun snapshot(database: SQLiteDatabase): Map<String, String> =
-        snapshotTables { table -> database.rawQuery("SELECT * FROM `$table`", null) }
+        snapshotTables { table, columns ->
+            val cols = columns.joinToString(", ") { "`$it`" }
+            database.rawQuery("SELECT $cols FROM `$table`", null)
+        }
 
-    private fun snapshotTables(query: (String) -> android.database.Cursor): Map<String, String> {
+    private fun snapshotTables(queryForTable: (String, List<String>) -> android.database.Cursor): Map<String, String> {
         val entities = oldSchema().getJSONArray("entities")
         return (0 until entities.length()).associate { index ->
-            val table = entities.getJSONObject(index).getString("tableName")
-            val content = query(table).use { cursor ->
+            val entity = entities.getJSONObject(index)
+            val table = entity.getString("tableName")
+            val fields = entity.getJSONArray("fields")
+            val columns = (0 until fields.length()).map { fields.getJSONObject(it).getString("columnName") }
+            val content = queryForTable(table, columns).use { cursor ->
                 buildString {
                     append(cursor.columnNames.joinToString("|"))
                     append('\n')

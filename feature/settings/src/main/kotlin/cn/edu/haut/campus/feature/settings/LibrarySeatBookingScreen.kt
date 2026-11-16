@@ -21,6 +21,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.edu.haut.campus.core.database.LibrarySeatAlarmSubsystem
@@ -77,6 +78,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -129,6 +131,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -140,6 +143,13 @@ private data class PendingSeatActionRequest(
     val action: LibrarySeatActionType,
     val booking: LibrarySeatBookingRecord?
 )
+
+/** 微桃 → 🍑 整数/小数自适应显示（1.0 显示为 "1"，0.5 显示为 "0.5"） */
+private fun formatMicropeachPriceLabel(micropeach: Long): String {
+    val whole = micropeach / 10_000L
+    val rem = micropeach % 10_000L
+    return if (rem == 0L) whole.toString() else (micropeach / 10_000.0).toString()
+}
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1714,11 +1724,20 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     var selectedMode by remember(hasBoundCloudAccount) {
         mutableStateOf(BookingExecutionMode.CLOUD_HOSTED)
     }
-    var useTomorrow by rememberSaveable {
-        mutableStateOf(
-            !java.time.LocalTime.now(ZoneId.of("Asia/Shanghai")).isBefore(java.time.LocalTime.of(7, 0))
+    val submitMachine = remember { LibraryBookingSubmitStateMachine() }
+    // 保存日期选择而非相对天数计算结果；恢复前台后立即依据时钟核验。
+    var savedDateSelection by rememberSaveable { mutableStateOf<String?>(null) }
+    val dateState = remember(repository) {
+        LibraryBookingDateState(
+            initialSelection = savedDateSelection ?: if (java.time.LocalTime.now(ZoneId.of("Asia/Shanghai")).hour >= 7) "TOMORROW" else "TODAY",
+            onDateChanged = { submitMachine.cancelPendingReconfirmation() }
         )
     }
+    fun chooseDate(selection: String) {
+        savedDateSelection = selection
+        dateState.choose(selection)
+    }
+    val useTomorrow = dateState.selection == "TOMORROW"
     var selectedHour by rememberSaveable { mutableIntStateOf(7) }
     var selectedMinute by rememberSaveable { mutableIntStateOf(0) }
     var showMoreTimeSlots by rememberSaveable { mutableStateOf(false) }
@@ -1727,29 +1746,74 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val targetTimeText = remember(selectedHour, selectedMinute) {
         "%02d:%02d".format(selectedHour, selectedMinute)
     }
-    val todayDate = remember { LocalDate.now(ZoneId.of("Asia/Shanghai")) }
-    val tomorrowDate = remember(todayDate) { todayDate.plusDays(1) }
-    val targetDate = if (useTomorrow) tomorrowDate else todayDate
-
-    // 自动读取自习区域列表与下属座位号列表（全程点选，零手输）
-    var regions by remember { mutableStateOf<List<LibraryStudyRegionItem>>(emptyList()) }
-    var isLoadingRegions by remember { mutableStateOf(false) }
-    var regionsLoadError by remember { mutableStateOf<String?>(null) }
+    val todayDate = dateState.today
+    val tomorrowDate = todayDate.plusDays(1)
+    val targetDate = dateState.targetDate
+    val layoutDate = dateState.layoutDate
+    val isReferenceLayout = dateState.isReferenceLayout
+    val latestSeatOverview by rememberUpdatedState(seatOverview)
+    val regions = dateState.regions
+    val isLoadingRegions = dateState.isLoadingRegions
+    val regionsLoadError = dateState.regionsLoadError
     var selectedFloorFilter by remember { mutableStateOf("全部楼层") }
-    var selectedRegion by remember { mutableStateOf<LibraryStudyRegionItem?>(null) }
-
-    var seatSnapshot by remember { mutableStateOf<LibraryRegionSeatsSnapshot?>(null) }
-    var isLoadingSeats by remember { mutableStateOf(false) }
-    var seatsLoadError by remember { mutableStateOf<String?>(null) }
+    val selectedRegion = dateState.selectedRegion
+    val seatSnapshot = dateState.seatSnapshot
+    val isLoadingSeats = dateState.isLoadingSeats
+    val seatsLoadError = dateState.seatsLoadError
     var onlyAvailableSeats by remember { mutableStateOf(false) }
     var selectedSeatPage by remember { mutableIntStateOf(0) }
-    var selectedSeatNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    val selectedSeatNames = dateState.selectedSeatNames
     var isRunningImmediateBooking by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionSnapshot by remember { mutableStateOf(LibrarySeatAlarmSubsystem.inspectPermissions(context)) }
     var showPermissionActivationDialog by remember { mutableStateOf(false) }
+    // R5-D3 预约提交草稿状态机（EDITING→SUBMITTING→PRICE_CHANGED→USER_CONFIRMED→SUBMITTING→ACCEPTED）：
+    // 待确认记录绑定不可变 BookingDraftSnapshot（身份/学号/世代/base/参数），
+    // 任何上下文变化 → revision++ 并清空 pending；取消绝不重发；确认绑定同一不可变 draft。
+    // 提交接线层：identityProvider 每次复核取最新身份会话（含世代/base/学号），
+    // paramsProvider 每次取最新草稿参数；submitPlan 只消费不可变快照
+    val submitter = remember(repository) {
+        LibraryBookingPlanSubmitter(
+            machine = submitMachine,
+            identityProvider = {
+                val session = repository.snapshotBookingSubmissionIdentity()
+                BookingIdentityContext(
+                    profileId = session.profileId,
+                    cloudUserId = session.cloudUserId,
+                    identityGeneration = session.generation,
+                    normalizedBase = session.apiBaseUrl,
+                    studentNo = session.studentNo
+                )
+            },
+            paramsProvider = {
+                val liveRecentRecord = latestSeatOverview?.currentBooking
+                    ?: latestSeatOverview?.recentHistory?.firstOrNull()
+                dateState.draftParams(
+                    engine = selectedMode,
+                    time = "%02d:%02d".format(selectedHour, selectedMinute),
+                    area = dateState.selectedRegion?.regionName ?: liveRecentRecord?.regionName.orEmpty(),
+                    repeatDays = selectedRepeatDays
+                )
+            },
+            prepareSubmission = { dateState.prepareSubmission() },
+            submitPlan = { snap ->
+                repository.createDualEngineBookingPlan(
+                    executionMode = snap.engine,
+                    targetDate = LocalDate.parse(snap.targetDate),
+                    targetTimeText = snap.targetTime,
+                    preferredAreaName = snap.areaName,
+                    preferredSeatLabel = snap.seatLabel,
+                    repeatDays = snap.repeatDays,
+                    acceptedPriceMicropeach = snap.acceptedPriceMicropeach,
+                    expectedIdentity = CampusRepository.BookingSubmissionIdentity(
+                        snap.profileId, snap.cloudUserId, snap.identityGeneration, snap.normalizedBase, snap.studentNo
+                    )
+                ).map { }
+            }
+        )
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1762,6 +1826,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             if (event == Lifecycle.Event.ON_RESUME) {
                 permissionSnapshot = LibrarySeatAlarmSubsystem.inspectPermissions(context)
                 scope.launch {
+                    // 回到前台即复核身份会话：跨页切号/换址/换学号后，
+                    // 状态机修订号推进并即时作废旧待确认快照
+                    dateState.refreshClock()
+                    runCatching { submitter.refreshContext() }
                     runCatching { repository.rescheduleActiveLocalBookingPlans() }
                 }
             }
@@ -1800,69 +1868,34 @@ private fun AutomatedLibrarySeatBookingWorkbench(
 
     fun reloadStudyRegions() {
         scope.launch {
-            isLoadingRegions = true
-            regionsLoadError = null
-            repository.fetchLibraryStudyRegions(targetDate.toString())
-                .onSuccess { list ->
-                    regions = list
-                    if (list.isNotEmpty()) {
-                        val currentId = selectedRegion?.id
-                        val matchedByCurrent = list.firstOrNull { it.id == currentId }
-                        val matchedByRecentId = recentRecord?.buildingLayerRegionId?.let { rid ->
-                            list.firstOrNull { it.id == rid }
-                        }
-                        val matchedByRecentName = recentRecord?.regionName?.takeIf { it.isNotBlank() }?.let { rName ->
-                            list.firstOrNull { it.regionName.contains(rName) || rName.contains(it.regionName) }
-                        }
-                        val nextRegion = matchedByCurrent ?: matchedByRecentId ?: matchedByRecentName ?: list.first()
-                        if (selectedRegion?.id != nextRegion.id) {
-                            selectedRegion = nextRegion
-                        }
-                    }
-                }
-                .onFailure { err ->
-                    regionsLoadError = err.message ?: "暂时没能读到自习室列表，请先登录学号后重试"
-                }
-            isLoadingRegions = false
+            dateState.loadRegions(recentRecord) { repository.fetchLibraryStudyRegions(it) }
         }
     }
 
     fun reloadSeatsForRegion(region: LibraryStudyRegionItem) {
         scope.launch {
-            isLoadingSeats = true
-            seatsLoadError = null
-            repository.fetchLibraryRegionSeats(region.id, targetDate.toString())
-                .onSuccess { snap ->
-                    seatSnapshot = snap
-                    selectedSeatPage = 0
-                    val validNames = snap.seats.map { it.seatName }.toSet()
-                    val retained = selectedSeatNames.filter { it in validNames }
-                    if (retained.isNotEmpty()) {
-                        selectedSeatNames = retained
-                    } else {
-                        val recentSeat = recentRecord?.seatName?.takeIf {
-                            recentRecord.regionName.contains(region.regionName) && it in validNames
-                        }
-                        val defaultPicks = if (recentSeat != null) {
-                            listOf(recentSeat)
-                        } else {
-                            snap.seats.filter { it.isAvailable }.take(2).map { it.seatName }
-                        }
-                        selectedSeatNames = defaultPicks
-                    }
-                }
-                .onFailure { err ->
-                    seatsLoadError = err.message ?: "读取该自习室座位失败，请点击重试"
-                }
-            isLoadingSeats = false
+            dateState.loadSeats(region, recentRecord) { regionId, date ->
+                repository.fetchLibraryRegionSeats(regionId, date)
+            }
+            selectedSeatPage = 0
         }
     }
 
-    LaunchedEffect(repository, targetDate, sessionState is LibrarySeatSessionState.Authenticated) {
+    // 前台日期可观察；后台暂停轮询，ON_RESUME 和每次查询/提交仍复核时钟。
+    LaunchedEffect(dateState, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                if (dateState.refreshClock()) submitter.refreshContext()
+                delay(1_000)
+            }
+        }
+    }
+
+    LaunchedEffect(repository, targetDate, layoutDate, sessionState is LibrarySeatSessionState.Authenticated) {
         reloadStudyRegions()
     }
 
-    LaunchedEffect(selectedRegion?.id, targetDate) {
+    LaunchedEffect(selectedRegion?.id, targetDate, layoutDate) {
         val region = selectedRegion ?: return@LaunchedEffect
         reloadSeatsForRegion(region)
     }
@@ -1879,8 +1912,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     }
 
     val allSeats = seatSnapshot?.seats.orEmpty()
-    val filteredSeats = remember(allSeats, onlyAvailableSeats) {
-        if (onlyAvailableSeats) allSeats.filter { it.isAvailable } else allSeats
+    val filteredSeats = remember(allSeats, onlyAvailableSeats, isReferenceLayout) {
+        if (onlyAvailableSeats && !isReferenceLayout) allSeats.filter { it.isAvailable } else allSeats
     }
     val seatChunks = remember(filteredSeats) {
         filteredSeats.chunked(60)
@@ -1899,6 +1932,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
 
     val roomLabel = selectedRegion?.regionName ?: recentRecord?.regionName.orEmpty()
     val preferredSeatsText = selectedSeatNames.joinToString(", ")
+
+    // 上下文同步：身份（含世代/base 变更重写绑定行）与全部草稿参数任一变化
+    // → 状态机修订号 +1 并清空 pending（旧确认快照即刻作废）
+    LaunchedEffect(
+        selectedMode, targetDate, targetTimeText, roomLabel, preferredSeatsText,
+        selectedRepeatDays, cloudBinding?.cloudUserId, cloudBinding?.profileId,
+        cloudBinding?.updatedAtEpochMillis
+    ) {
+        submitter.refreshContext()
+    }
 
     Column(
         modifier = modifier
@@ -2095,13 +2138,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 XPeachFilterPill(
                     label = "明天 ($tomorrowDate)",
                     selected = useTomorrow,
-                    onClick = { useTomorrow = true }
+                    onClick = { chooseDate("TOMORROW") }
                 )
                 XPeachFilterPill(
                     label = "今天 ($todayDate)",
-                    selected = !useTomorrow,
+                    selected = dateState.selection == "TODAY",
                     onClick = {
-                        useTomorrow = false
+                        chooseDate("TODAY")
                         val nowSh = java.time.LocalTime.now(ZoneId.of("Asia/Shanghai"))
                         val picked = java.time.LocalTime.of(selectedHour, selectedMinute)
                         if (picked.isBefore(nowSh) && nowSh.hour in 7..20) {
@@ -2117,6 +2160,15 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     }
                 )
             }
+
+            TextButton(onClick = {
+                android.app.DatePickerDialog(context, { _, year, month, day ->
+                    chooseDate(LocalDate.of(year, month + 1, day).toString())
+                }, targetDate.year, targetDate.monthValue - 1, targetDate.dayOfMonth).show()
+            }) {
+                Text(if (dateState.selection !in setOf("TODAY", "TOMORROW")) "指定日期：$targetDate" else "选择指定日期")
+            }
+            Text("今天、明天会随日期更新并重新查询；指定日期保持固定。跨日后请核实座位并重新确认。", style = MaterialTheme.typography.labelSmall)
 
             Text(
                 text = "抢座时间（已选 $targetTimeText）",
@@ -2166,7 +2218,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "选择小时（07:00 - 21:30）：",
+                        text = "选择小时（07:00 起，21:30 前）：",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2182,8 +2234,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 selected = selectedHour == h,
                                 onClick = {
                                     selectedHour = h
-                                    if (h == 21 && selectedMinute > 30) {
-                                        selectedMinute = 30
+                                    if (h == 21 && selectedMinute >= 30) {
+                                        selectedMinute = 25
                                     }
                                 }
                             )
@@ -2201,7 +2253,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         val minuteOptions = if (selectedHour == 21) {
-                            listOf(0, 5, 10, 15, 20, 25, 30)
+                            listOf(0, 5, 10, 15, 20, 25)
                         } else {
                             listOf(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 59)
                         }
@@ -2276,6 +2328,26 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             }
 
+            if (isReferenceLayout) {
+                Text(
+                    "布局来源：$layoutDate，仅用于选择偏好。$targetDate 的座位是否空闲尚未确认。",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                TextButton(onClick = { dateState.useTargetDateLayout() }) {
+                    Text("重新查询目标日期")
+                }
+            } else if (targetDate > todayDate) {
+                Text(
+                    "如果目标日期尚未开放查询，可先参考今天的布局选择座位，到点自动查询并尝试预约。",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                TextButton(onClick = { dateState.useTodayLayout() }) {
+                    Text("用今天布局提前选座")
+                }
+            }
+
             if (recentRecord != null && recentRecord.regionName.isNotBlank()) {
                 FilledTonalButton(
                     onClick = {
@@ -2285,10 +2357,10 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 recentRecord.regionName.contains(it.regionName)
                         }
                         if (match != null) {
-                            selectedRegion = match
+                            dateState.selectedRegion = match
                         }
                         if (recentRecord.seatName.isNotBlank()) {
-                            selectedSeatNames = listOf(recentRecord.seatName)
+                            dateState.selectedSeatNames = listOf(recentRecord.seatName)
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
@@ -2395,8 +2467,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 )
                                 .clickable {
                                     if (selectedRegion?.id != region.id) {
-                                        selectedSeatNames = emptyList()
-                                        selectedRegion = region
+                                        dateState.selectedSeatNames = emptyList()
+                                        dateState.selectedRegion = region
                                     }
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -2415,12 +2487,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                     color = if (isSelected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "$cleanLayerName · 开放时间 $cleanOpenTime-$cleanCloseTime",
+                                    text = "$cleanLayerName · ${if (isReferenceLayout) "参考开放时间" else "开放时间"} $cleanOpenTime-$cleanCloseTime",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (isSelected) {
+                            if (isReferenceLayout) {
+                                Text("可用性未知", style = MaterialTheme.typography.labelSmall)
+                            } else if (isSelected) {
                                 XPeachStatusBadge(
                                     text = "空余 ${region.availableSeats}/${region.totalSeats}",
                                     containerColor = if (region.availableSeats > 0) {
@@ -2505,7 +2579,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         fontWeight = FontWeight.SemiBold
                     )
                     TextButton(
-                        onClick = { selectedSeatNames = emptyList() },
+                        onClick = { dateState.selectedSeatNames = emptyList() },
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                         modifier = Modifier.height(24.dp)
                     ) {
@@ -2529,7 +2603,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             selected = true,
                             compact = true,
                             onClick = {
-                                selectedSeatNames = selectedSeatNames.filterNot { it == seatNo }
+                                dateState.selectedSeatNames = selectedSeatNames.filterNot { it == seatNo }
                             }
                         )
                     }
@@ -2614,27 +2688,29 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    XPeachFilterPill(
-                        label = "仅看空座",
-                        selected = onlyAvailableSeats,
-                        onClick = {
-                            onlyAvailableSeats = !onlyAvailableSeats
-                            selectedSeatPage = 0
-                        }
-                    )
+                    if (!isReferenceLayout) {
+                        XPeachFilterPill(
+                            label = "仅看空座",
+                            selected = onlyAvailableSeats,
+                            onClick = {
+                                onlyAvailableSeats = !onlyAvailableSeats
+                                selectedSeatPage = 0
+                            }
+                        )
+                    }
                     XPeachFilterPill(
                         label = "随机选 3 个",
                         selected = false,
                         onClick = {
                             val randomThree = allSeats
-                                .filter { it.isAvailable }
+                                .filter { isReferenceLayout || it.isAvailable }
                                 .shuffled()
                                 .take(3)
                                 .map { it.seatName }
                             if (randomThree.isNotEmpty()) {
-                                selectedSeatNames = randomThree
+                                dateState.selectedSeatNames = randomThree
                             } else {
-                                selectedSeatNames = allSeats.shuffled().take(3).map { it.seatName }
+                                dateState.selectedSeatNames = allSeats.shuffled().take(3).map { it.seatName }
                             }
                         }
                     )
@@ -2661,7 +2737,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             }
                             if (!useTomorrow) {
                                 OutlinedButton(
-                                    onClick = { useTomorrow = true },
+                                    onClick = { chooseDate("TOMORROW") },
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text("切换为明天")
@@ -2704,6 +2780,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         val seatLabel = when {
                             isPicked && pickIndex == 0 -> "★${seat.seatName}"
                             isPicked -> "✓${seat.seatName}"
+                            isReferenceLayout -> seat.seatName
                             seat.isAvailable -> "${seat.seatName} 空"
                             else -> "${seat.seatName} 占"
                         }
@@ -2711,7 +2788,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             label = seatLabel,
                             selected = isPicked,
                             onClick = {
-                                selectedSeatNames = if (isPicked) {
+                                dateState.selectedSeatNames = if (isPicked) {
                                     selectedSeatNames.filterNot { it == seat.seatName }
                                 } else if (selectedSeatNames.size < 3) {
                                     selectedSeatNames + seat.seatName
@@ -2845,6 +2922,25 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
 
             XPeachInsetDivider(verticalPadding = 8.dp)
+            Text(
+                if (selectedMode == BookingExecutionMode.MANUAL_REMINDER) {
+                    "此模式到点仅提醒，需您手动选座，不会自动提交预约。"
+                } else {
+                    "到点自动按所选顺序尝试首选和备选；不换到未选择的座位。所有候选都不可用时，本次预约失败，不扣费。"
+                },
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (isReferenceLayout) {
+                Text(
+                    if (selectedMode == BookingExecutionMode.MANUAL_REMINDER) {
+                        "已选的是座位偏好，目标日可用性未知；到点请查询后手动预约。"
+                    } else {
+                        "已选的是座位偏好，目标日可用性未知。开启计划后无需再次打开 App 确认；本机模式需保持手机联网和后台运行。"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
             computedScheduleResult.fold(
                 onSuccess = { calc ->
                     val repeatSummary = if (selectedRepeatDays > 1) " · 连续 $selectedRepeatDays 天" else ""
@@ -2871,33 +2967,41 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             )
 
-            fun saveBookingPlanNow() {
-                scope.launch {
-                    val result = repository.createDualEngineBookingPlan(
-                        executionMode = selectedMode,
-                        targetDate = targetDate,
-                        targetTimeText = targetTimeText,
-                        preferredAreaName = roomLabel,
-                        preferredSeatLabel = preferredSeatsText,
-                        repeatDays = selectedRepeatDays
-                    )
-                    result.fold(
-                        onSuccess = { created ->
-                            val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
-                            val modePrefix = if (created.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-                                "已开启云端抢座"
-                            } else {
-                                "已开启本机定时抢座"
-                            }
-                            onFeedback(
-                                true,
-                                "$modePrefix：${created.targetLocalDate} ${created.targetLocalTime}$repeatTag · ${created.preferredAreaName}"
-                            )
-                        },
-                        onFailure = { err ->
-                            onFeedback(false, err.message ?: "设置失败，请重试")
+            // 提交事件统一落反馈：Accepted → 成功 toast；PriceReconfirmationRequired →
+            // 弹窗由状态机 pending 驱动；Stale* 一律诚实吸收，绝不污染新上下文
+            fun reportSubmitEvent(ev: BookingSubmitEvent) {
+                when (ev) {
+                    is BookingSubmitEvent.Accepted -> {
+                        val created = ev.snapshot
+                        val repeatTag = if (created.repeatDays > 1) "（连续 ${created.repeatDays} 天）" else ""
+                        val modePrefix = if (created.engine == BookingExecutionMode.CLOUD_HOSTED) {
+                            "已开启云端抢座"
+                        } else {
+                            "已开启本机定时抢座"
                         }
-                    )
+                        onFeedback(true, "$modePrefix：${created.targetDate} ${created.targetTime}$repeatTag · ${created.areaName}")
+                    }
+                    is BookingSubmitEvent.PriceReconfirmationRequired -> {
+                        val newPrice = ev.pending.effectiveProposedPriceMicropeach
+                        if (newPrice == null || newPrice == ev.pending.oldPriceMicropeach) {
+                            // 无有效新价可确认：不弹死框，直接反馈
+                            submitter.cancelPendingReconfirmation()
+                            onFeedback(false, "云端抢座价格已调整，请核实最新价格后重新创建计划")
+                        }
+                        // 有效新价：弹窗由 submitMachine.visiblePendingReconfirmation() 渲染
+                    }
+                    is BookingSubmitEvent.Failed -> onFeedback(false, ev.message)
+                    is BookingSubmitEvent.StaleConfirmationRefused ->
+                        onFeedback(false, "页面或账号状态已变化，该确认已失效，请核实最新价格后重新发起")
+                    BookingSubmitEvent.Busy, BookingSubmitEvent.StaleResultIgnored -> Unit
+                }
+            }
+
+            fun saveBookingPlanNow() {
+                // 双击/旋转重入守卫：状态机至多一个在途业务尝试，重入被吸收
+                if (submitMachine.phase == BookingSubmitPhase.SUBMITTING) return
+                scope.launch {
+                    reportSubmitEvent(submitter.submitNewAttempt())
                 }
             }
 
@@ -2959,6 +3063,78 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 )
             }
 
+            // 云端调价再确认弹窗（PRICE_CHANGED）：渲染复核（状态机仅当 pending 仍属
+            // 当前草稿才可见）。如实展示账户 + 计划摘要 + 旧价 vs 新价 + 按次计费规则。
+            // 「取消」仅关闭弹窗——前次 409 已被云端证明 pre-persist，本机排队计划已被恢复，绝不自动重发；
+            // 「接受新价」经确认按钮复核（同一不可变 draft）后才以新价发起全新业务键的重新创建。
+            submitMachine.visiblePendingReconfirmation()?.let { pending ->
+                val newPrice = pending.effectiveProposedPriceMicropeach
+                val oldPrice = pending.oldPriceMicropeach
+                    ?: pending.snapshot.acceptedPriceMicropeach
+                    ?: 0L
+                val accountLabel = cloudBinding?.displayName?.takeIf { it.isNotBlank() }
+                    ?: pending.snapshot.cloudUserId.takeIf { it.isNotBlank() }
+                    ?: "当前账号"
+                val planSummary = buildString {
+                    append(pending.snapshot.targetDate)
+                    append(" ")
+                    append(pending.snapshot.targetTime)
+                    append(" · ")
+                    append(pending.snapshot.areaName.ifBlank { "未选自习室" })
+                    append(" · ")
+                    append(pending.snapshot.seatLabel.ifBlank { "未选座位" })
+                    if (pending.snapshot.repeatDays > 1) {
+                        append(" · 连续 ")
+                        append(pending.snapshot.repeatDays)
+                        append(" 天")
+                    }
+                }
+                XPeachAlertDialog(
+                    onDismissRequest = { submitter.cancelPendingReconfirmation() },
+                    title = { Text("云端抢座价格已调整") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "账户：$accountLabel",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "计划：$planSummary",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "您创建时看到的价格为 ${formatMicropeachPriceLabel(oldPrice)} 🍑，云端最新价格为 ${formatMicropeachPriceLabel(newPrice ?: oldPrice)} 🍑（每次抢座成功扣减一次，未抢中不扣费）。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "接受新价将以最新价格重新创建云端抢座计划；取消则保留原有排队安排，不会自动提交。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            enabled = newPrice != null && submitMachine.phase != BookingSubmitPhase.SUBMITTING,
+                            onClick = {
+                                scope.launch {
+                                    // 确认按钮复核：状态机验证 pending 仍属当前不可变 draft，
+                                    // 绑定该 draft 携带确认价 + 新 attemptId 发起新尝试
+                                    reportSubmitEvent(submitter.confirmPendingReconfirmation())
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("以 ${formatMicropeachPriceLabel(newPrice ?: 0L)} 🍑 重新创建")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { submitter.cancelPendingReconfirmation() }) {
+                            Text("取消")
+                        }
+                    }
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2974,7 +3150,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             return@Button
                         }
                         if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasSavedSchoolCredentials) {
-                            onFeedback(false, "开启云端准点抢座需保存校园学号与统一认证密码，以便凌晨 07:00 自动续签登录")
+                            onFeedback(false, "开启云端准点抢座需保存校园学号与统一认证密码，以便到点自动续签登录")
                             onRequireLogin()
                             return@Button
                         }
@@ -2998,8 +3174,13 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
 
                 FilledTonalButton(
-                    enabled = !isRunningImmediateBooking && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
+                    enabled = !isRunningImmediateBooking && !isReferenceLayout && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
+                        if (!dateState.prepareImmediateBooking()) {
+                            onFeedback(false, "日期或座位结果已变化，请重新查询并确认")
+                            return@FilledTonalButton
+                        }
+                        val immediateDraft = dateState.draftParams(selectedMode, targetTimeText, roomLabel, selectedRepeatDays)
                         val sameDayBlockingPlan = bookingPlans.firstOrNull {
                             it.targetLocalDate == targetDate.toString() &&
                                 it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED", "REMINDER_SENT")
@@ -3020,12 +3201,17 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 onRequireLogin()
                                 return@launch
                             }
+                            if (!dateState.prepareImmediateBooking() || immediateDraft != dateState.draftParams(selectedMode, "%02d:%02d".format(selectedHour, selectedMinute), dateState.selectedRegion?.regionName.orEmpty(), selectedRepeatDays)) {
+                                isRunningImmediateBooking = false
+                                onFeedback(false, "预约上下文已变化，请核实日期和座位后重新确认")
+                                return@launch
+                            }
                             val bookRes = withContext(Dispatchers.IO) {
                                 HautLibrarySeatAuthClient.executeAutomatedSeatBooking(
                                     rawToken = sessionRes.snapshot.rawToken,
-                                    targetDate = targetDate.toString(),
-                                    preferredAreaName = roomLabel,
-                                    preferredSeatLabel = preferredSeatsText
+                                    targetDate = immediateDraft.targetDate,
+                                    preferredAreaName = immediateDraft.areaName,
+                                    preferredSeatLabel = immediateDraft.seatLabel
                                 )
                             }
                             isRunningImmediateBooking = false
@@ -3273,10 +3459,16 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                     FilledTonalButton(
                                         onClick = {
                                             scope.launch {
-                                                val updated = repository.advanceBookingPlanStage(
-                                                    plan.id,
-                                                    TripleScheduleStage.FIRE
-                                                ).getOrNull()
+                                                // 云端托管计划走显式"现在执行"入口（服务端裁决窗口），
+                                                // 本机/提醒计划仍走定时 stage 推进
+                                                val updated = if (plan.executionMode.equals(BookingExecutionMode.CLOUD_HOSTED.wireName, ignoreCase = true)) {
+                                                    repository.executeCloudBookingPlanNow(plan.id).getOrNull()
+                                                } else {
+                                                    repository.advanceBookingPlanStage(
+                                                        plan.id,
+                                                        TripleScheduleStage.FIRE
+                                                    ).getOrNull()
+                                                }
                                                 if (updated != null) {
                                                     onFeedback(
                                                         updated.status in setOf("CONFIRMED", "REMINDER_SENT"),

@@ -83,3 +83,28 @@ jobs:
           name: day-in-school-v${{ steps.version.outputs.VERSION_NAME }}-test-apks
           path: dist/*
           retention-days: 30
+
+  cloud-quote-contract:
+    name: 核对 Cloud 实际 handler 报价与错误契约
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: 检出 Day 源码
+        uses: actions/checkout@v7
+      - name: 配置 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 读取固定的 Cloud 契约源提交
+        id: cloud-source
+        run: node -e 'const s=require("./tools/contract-ci/cloud-fixture-source.json"); require("fs").appendFileSync(process.env.GITHUB_OUTPUT, "sha="+s.commit+"\n")'
+      - name: 检出固定 Cloud 源码
+        uses: actions/checkout@v7
+        with:
+          repository: yellowpeachxgp/cloud-in-school
+          ref: ${{ steps.cloud-source.outputs.sha }}
+          path: .contract-cloud
+      - name: 验证 Day 及跨端实际响应契约
+        run: |
+          node tools/contract-ci/validate-contracts.mjs
+          node tools/contract-ci/check-cloud-fixtures.mjs .contract-cloud

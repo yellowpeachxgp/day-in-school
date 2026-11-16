@@ -118,13 +118,68 @@ data class OccurrenceOverride(
     val room: String? = null,
     val buildingId: String? = null,
     val canceled: Boolean = false,
-    val reason: String? = null
-)
+    val reason: String? = null,
+    val moveId: String? = null,
+    val moveRole: String? = null,
+    /**
+     * 不可复用行版本令牌：统一写入层在每次真实写入时盖印新的随机 UUID。
+     * 恢复/撤销命令以点击时捕获的令牌断言「行未被任何写路径改动」——同 ID 删除重建、
+     * 改挂调课、暂停-恢复等一切改写都会产生新令牌，旧命令立即判 CONFLICT 而非误删新行。
+     * 空串仅用于尚未持久化的临时对象；落库行永远持有非空令牌。
+     */
+    val mutationToken: String = ""
+) {
+    companion object {
+        /** 跨日调课关联角色（受控值）：源停课行 = [MOVE_ROLE_SOURCE]，调入目标行 = [MOVE_ROLE_TARGET]。 */
+        const val MOVE_ROLE_SOURCE = "SOURCE"
+        const val MOVE_ROLE_TARGET = "TARGET"
+    }
+}
 
 enum class ClassStatus {
     UPCOMING,
     IN_PROGRESS,
     FINISHED
+}
+
+/**
+ * 节次时间窗的独立「时间证据等级」：与展开器共用同一解析输出——
+ * [hasResolvedTime] 布尔仅作列表展示/提醒的兼容口径，「个人无冲突」统计等
+ * 依据判定必须使用 [isBasisTrustworthy] 的严格证据，绝不把"自定义起点+推算终点"
+ * 或反向非法时间当成可信时间。
+ */
+enum class TimeEvidence {
+    /** 起止均由课程/覆盖显式提供且顺序合法（end>start）——独立于作息表的最强证据。 */
+    EXPLICIT_VALID,
+
+    /** 起止经学期作息表解析（含显式端与作息端混合），两端明确且顺序合法。 */
+    TIMETABLE_VALID,
+
+    /** 仅起点显式明确、终点按节次跨度推算补全——可展示为参考，但不足以充当时间依据。 */
+    ESTIMATED,
+
+    /** 起止无法解析（缺作息定义且未自带合法时间）——仅保留单调排序锚点。 */
+    UNRESOLVED,
+
+    /** 起止均明确但顺序非法（end<=start 反向/零时长）——事件保留并提示"时间待确认"，绝不删除用户课程。 */
+    INVALID;
+
+    /** 兼容原 hasResolvedTime 布尔口径：仅 UNRESOLVED/INVALID 视为"未解析"。 */
+    val hasResolvedTime: Boolean
+        get() = this != UNRESOLVED && this != INVALID
+
+    /** 「个人无冲突」统计的严格时间依据口径：仅两端明确且顺序合法的窗口可信。 */
+    val isBasisTrustworthy: Boolean
+        get() = this == EXPLICIT_VALID || this == TIMETABLE_VALID
+
+    companion object {
+        /**
+         * 合并两条证据取较差者（枚举按可信→不可信声明，ordinal 越大越差）：
+         * 连堂合并/停课合并时任何一端不可信都不允许整条冒充可信。
+         */
+        fun worstOf(first: TimeEvidence, second: TimeEvidence): TimeEvidence =
+            if (first.ordinal >= second.ordinal) first else second
+    }
 }
 
 /**
@@ -219,7 +274,13 @@ data class ClassOccurrence(
     val conflictColumnCount: Int = 1,
     val internalBreaks: List<InternalPeriodBreak> = emptyList(),
     val mergedRuleIds: List<String> = listOfNotNull(ruleId),
-    val hasResolvedTime: Boolean = true
+    val hasResolvedTime: Boolean = true,
+    /**
+     * 独立时间证据等级：[hasResolvedTime] 仅作展示/提醒布尔兼容，
+     * 依据判定/诚实文案须看证据等级（非法反向时间 → [TimeEvidence.INVALID] →"时间待确认"）。
+     */
+    val timeEvidence: TimeEvidence =
+        if (hasResolvedTime) TimeEvidence.EXPLICIT_VALID else TimeEvidence.UNRESOLVED
 ) {
     val periodRangeText: String
         get() = if (startPeriod == endPeriod) "第${startPeriod}节" else "${startPeriod}-${endPeriod}节"
@@ -227,6 +288,8 @@ data class ClassOccurrence(
     fun formatTimeOrPeriodRange(formatter: java.time.format.DateTimeFormatter): String =
         if (hasResolvedTime) {
             "${startTime.format(formatter)}–${endTime.format(formatter)}"
+        } else if (timeEvidence == TimeEvidence.INVALID) {
+            "$periodRangeText（时间待确认）"
         } else {
             "$periodRangeText（作息待设）"
         }

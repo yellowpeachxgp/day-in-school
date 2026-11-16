@@ -42,4 +42,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

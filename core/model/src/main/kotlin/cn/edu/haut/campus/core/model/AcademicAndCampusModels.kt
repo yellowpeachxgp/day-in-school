@@ -548,5 +548,7 @@ data class ExamScheduleItem(
     val seatNumber: String? = null,
     val campusName: String = "莲花街校区",
     val isRetake: Boolean = false,
-    val syncedAt: Instant = Instant.now()
+    val syncedAt: Instant = Instant.now(),
+    /** 可信同步管线落库时记录的原始学期；旧库行恒为 null，不参与学期自动判定之外的任何展示逻辑。 */
+    val originTermId: String? = null
 )

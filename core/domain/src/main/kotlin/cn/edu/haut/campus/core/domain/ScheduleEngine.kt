@@ -15,6 +15,7 @@ import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.ScheduleBreakInterval
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.TermDateStatus
+import cn.edu.haut.campus.core.model.TimeEvidence
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import java.time.Duration
 import java.time.LocalDate
@@ -22,6 +23,101 @@ import java.time.LocalTime
 import java.time.ZonedDateTime
 
 object ScheduleEngine {
+
+    /**
+     * 排课输入「可展开」统一校验（课表展开器与「课表依据」判定共用同一函数，绝不两套口径）：
+     * 规则须属于该学期、有课周次与学期有效周范围(1..[termWeekCount])相交、节次区间有效且
+     * 课程可解析——跨学期残留、零周次空壳、周次全部越出学期范围、倒序节次或缺课孤儿规则
+     * 均不可展开，不得充当任何"课表依据"。
+     * [termWeekCount] 默认不限周范围（仅要求周次非空）；展开器与依据判定均传学期 weekCount。
+     */
+    fun isExpandableScheduleRule(
+        rule: CourseScheduleRule,
+        termId: String,
+        courseIds: Set<String>,
+        termWeekCount: Int = Int.MAX_VALUE
+    ): Boolean = rule.termId == termId &&
+        rule.weeks.any { it in 1..termWeekCount } &&
+        rule.startPeriod >= 1 &&
+        rule.startPeriod <= rule.endPeriod &&
+        rule.courseId in courseIds
+
+    /**
+     * 覆盖行关联规则的本学期解析：courseRuleId 必须指向**同一学期**的现存规则——
+     * 跨学期关联无效，一律按无关联处理（绝不允许借用别学期规则的课程/节次/时间字段）。
+     * 课程解析与时段回退共享此入口，与「课表依据」判定同一口径。
+     */
+    fun sameTermBaseRule(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>
+    ): CourseScheduleRule? = override.courseRuleId
+        ?.let { rulesById[it] }
+        ?.takeIf { it.termId == termId }
+
+    /**
+     * 单日覆盖「可展开」统一校验：仅非停课覆盖（补课/改时间/改教室）才可能展开为课程事件，
+     * 且必须可解析出真实课程（自带 courseId，或经 courseRuleId 关联到**本学期**现存规则
+     * 再解析课程；跨学期关联无效）。停课覆盖只会屏蔽既有事件、自身绝不产生事件；
+     * 指向已删除规则的孤儿停课行不构成任何依据。
+     */
+    fun isExpandableOccurrenceOverride(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>,
+        courseIds: Set<String>
+    ): Boolean {
+        if (override.termId != termId || override.canceled) return false
+        val baseRule = sameTermBaseRule(override, termId, rulesById)
+        val targetCourseId = override.courseId ?: baseRule?.courseId ?: return false
+        return targetCourseId in courseIds
+    }
+
+    /**
+     * 单日覆盖的「可展开时间窗」共享校验：与展开器完全同一取值顺序与同一解析路径——
+     * 不可展开返回 null；返回窗口的 [TimeEvidence] 独立证据等级区分
+     * 可信（EXPLICIT_VALID/TIMETABLE_VALID）、推算锚点（ESTIMATED）、
+     * 无法解析（UNRESOLVED）与非法时间（INVALID）——展开器据此标注
+     * "节次时间待设置"/"时间待确认"展示，「课表依据」判定则只采信
+     * [TimeEvidence.isBasisTrustworthy] 的窗口作为"个人无冲突"统计依据。
+     */
+    fun expandableOverrideTimeWindow(
+        override: OccurrenceOverride,
+        termId: String,
+        rulesById: Map<String, CourseScheduleRule>,
+        courseIds: Set<String>,
+        periodMap: Map<Int, PeriodTime>
+    ): ResolvedPeriodWindow? {
+        if (!isExpandableOccurrenceOverride(override, termId, rulesById, courseIds)) return null
+        val baseRule = sameTermBaseRule(override, termId, rulesById)
+        val startPeriod = override.startPeriod ?: baseRule?.startPeriod ?: 1
+        val endPeriod = override.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
+        return resolvePeriodWindow(
+            startPeriod = startPeriod,
+            endPeriod = endPeriod,
+            customStart = override.startAt ?: baseRule?.customStartTime,
+            customEnd = override.endAt ?: baseRule?.customEndTime,
+            periodMap = periodMap
+        )
+    }
+
+    /**
+     * 排课规则自身时间输入的可解析窗口（与展开器同一解析路径，绝不另起口径）：
+     * 自带合法 customStart/customEnd（EXPLICIT_VALID）或经学期作息表/混合解析出
+     * 两端明确合法时间（TIMETABLE_VALID）的窗口才构成「课表依据」的可信时间——
+     * 推算补全（ESTIMATED）、无法解析（UNRESOLVED）与非法反向时间（INVALID）
+     * 一律不采信；缺作息表但自带完整合法自定义时间的课程同样计为有效依据。
+     */
+    fun ruleSchedulePeriodWindow(
+        rule: CourseScheduleRule,
+        periodMap: Map<Int, PeriodTime>
+    ): ResolvedPeriodWindow = resolvePeriodWindow(
+        startPeriod = rule.startPeriod,
+        endPeriod = rule.endPeriod,
+        customStart = rule.customStartTime,
+        customEnd = rule.customEndTime,
+        periodMap = periodMap
+    )
 
     /**
      * 解析指定日期的实际课程列表（包含学期日历调休、单日停课/改教室/改时间、临时补课、连续同课合并与冲突分栏计算）。
@@ -37,6 +133,7 @@ object ScheduleEngine {
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val courseMap = courses.associateBy { it.id }
+        val rulesById = rules.associateBy { it.id }
         val periodMap = periodTimes
             .filter { it.timeTableId == term.timeTableId }
             .associateBy { it.periodNo }
@@ -61,7 +158,7 @@ object ScheduleEngine {
             val activeWeek = effectiveDate.teachingWeek
             val targetWeekday = effectiveDate.weekdayUsed
             val matchingRules = rules.filter { rule ->
-                rule.termId == term.id &&
+                isExpandableScheduleRule(rule, term.id, courseMap.keys, term.weekCount) &&
                     rule.weekday == targetWeekday &&
                     activeWeek in rule.weeks
             }
@@ -115,7 +212,8 @@ object ScheduleEngine {
                         isMakeupOrOverridden = isOverridden,
                         overrideReason = reason,
                         userModified = course.userModified || rule.userModified || ruleOverride != null,
-                        hasResolvedTime = resolvedWindow.hasResolvedTime
+                        hasResolvedTime = resolvedWindow.hasResolvedTime,
+                        timeEvidence = resolvedWindow.evidence
                     )
                 )
             }
@@ -124,20 +222,22 @@ object ScheduleEngine {
         // 2. 单日临时补课或跨天调入课程（courseRuleId 不在今日常规触发集，或纯手工补课）
         val handledOverrideIds = rawOccurrences.mapNotNull { it.overrideId }.toSet()
         for (extraOverride in dayOverrides) {
-            if (extraOverride.id in handledOverrideIds || extraOverride.canceled) continue
-            val baseRule = extraOverride.courseRuleId?.let { ruleId -> rules.firstOrNull { it.id == ruleId } }
+            if (extraOverride.id in handledOverrideIds) continue
+            // 与「课表依据」判定共用同一校验与同一时间窗解析：
+            // 跨学期关联视为无关联，时间输入取值顺序完全一致。
+            val resolvedWindow = expandableOverrideTimeWindow(
+                override = extraOverride,
+                termId = term.id,
+                rulesById = rulesById,
+                courseIds = courseMap.keys,
+                periodMap = periodMap
+            ) ?: continue
+            val baseRule = sameTermBaseRule(extraOverride, term.id, rulesById)
             val targetCourseId = extraOverride.courseId ?: baseRule?.courseId ?: continue
             val course = courseMap[targetCourseId] ?: continue
 
             val startPeriod = extraOverride.startPeriod ?: baseRule?.startPeriod ?: 1
             val endPeriod = extraOverride.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
-            val resolvedWindow = resolvePeriodWindow(
-                startPeriod = startPeriod,
-                endPeriod = endPeriod,
-                customStart = extraOverride.startAt ?: baseRule?.customStartTime,
-                customEnd = extraOverride.endAt ?: baseRule?.customEndTime,
-                periodMap = periodMap
-            )
             val finalRoom = extraOverride.room ?: baseRule?.rawRoom ?: "待定教室"
             val finalBuildingId = extraOverride.buildingId ?: baseRule?.buildingId
 
@@ -168,7 +268,8 @@ object ScheduleEngine {
                     isMakeupOrOverridden = true,
                     overrideReason = extraOverride.reason ?: "临时调课/补课",
                     userModified = true,
-                    hasResolvedTime = resolvedWindow.hasResolvedTime
+                    hasResolvedTime = resolvedWindow.hasResolvedTime,
+                    timeEvidence = resolvedWindow.evidence
                 )
             )
         }
@@ -281,7 +382,8 @@ object ScheduleEngine {
                 isMakeupOrOverridden = true,
                 overrideReason = cleanReason,
                 userModified = true,
-                hasResolvedTime = resolvedWindow.hasResolvedTime
+                hasResolvedTime = resolvedWindow.hasResolvedTime,
+                timeEvidence = resolvedWindow.evidence
             )
         }.sortedBy { it.startPeriod }
 
@@ -298,7 +400,8 @@ object ScheduleEngine {
                     endPeriod = item.endPeriod,
                     endTime = item.endTime,
                     mergedRuleIds = (last.mergedRuleIds + item.mergedRuleIds).distinct(),
-                    hasResolvedTime = last.hasResolvedTime && item.hasResolvedTime
+                    hasResolvedTime = last.hasResolvedTime && item.hasResolvedTime,
+                    timeEvidence = TimeEvidence.worstOf(last.timeEvidence, item.timeEvidence)
                 )
             } else {
                 mergedRuleCanceled.add(item)
@@ -337,23 +440,41 @@ object ScheduleEngine {
                 isMakeupOrOverridden = true,
                 overrideReason = ov.reason ?: "单次停课",
                 userModified = true,
-                hasResolvedTime = resolvedWindow.hasResolvedTime
+                hasResolvedTime = resolvedWindow.hasResolvedTime,
+                timeEvidence = resolvedWindow.evidence
             )
         }
         return (mergedRuleCanceled + standaloneCanceled).sortedBy { it.startPeriod }
     }
 
-    private data class ResolvedPeriodWindow(
+    /**
+     * 节次时间窗解析结果（展开器与「课表依据」判定共用同一返回类型）：
+     * [evidence] 为独立时间证据等级（[TimeEvidence]）——[hasResolvedTime] 布尔
+     * 仅是 [evidence] 的展示/提醒兼容投影；「个人无冲突」统计等依据判定
+     * 必须使用 [TimeEvidence.isBasisTrustworthy] 严格口径。
+     * [TimeEvidence.UNRESOLVED]/[TimeEvidence.INVALID] 时起止时刻仅是
+     * 按已知节次推导的单调排序锚点或如实保留的非法输入，绝非可信时刻。
+     */
+    data class ResolvedPeriodWindow(
         val startTime: LocalTime,
         val endTime: LocalTime,
-        val hasResolvedTime: Boolean
-    )
+        val evidence: TimeEvidence
+    ) {
+        /** 展示/提醒兼容布尔：等价于 [TimeEvidence.hasResolvedTime]。 */
+        val hasResolvedTime: Boolean get() = evidence.hasResolvedTime
+    }
 
     /**
-     * 解析课程节次对应的起止时刻：
-     * - 当显式提供 `customStart` 或 `periodMap` 同时包含起始/结束节次时，`hasResolvedTime = true`；
-     * - 当作息表缺少该节次（例如旧版升级尚未补齐 11-12 节或自定义超出作息表）时，严禁回退伪造为晨间 `08:00`！
-     *   此时标记 `hasResolvedTime = false`，并仅基于已知最晚节次向后生成不与早课重叠的顺序排序锚点，供列表排序使用。
+     * 解析课程节次对应的起止时刻并给出独立「时间证据等级」（[TimeEvidence]）：
+     * - 起止均显式提供且 end>start → [TimeEvidence.EXPLICIT_VALID]（缺作息表但自带
+     *   完整合法 customStart/customEnd 同样成立，绝不回退"必须有 PeriodTime"旧误判）；
+     * - 作息表解析或显式端×作息端混合且两端明确、顺序合法 → [TimeEvidence.TIMETABLE_VALID]；
+     * - 仅自带 customStart、终点按节次跨度推算补全 → [TimeEvidence.ESTIMATED]
+     *   （保留为排序锚点供展示/提醒兼容，但绝不足以充当时间依据）；
+     * - 两端均明确但 end<=start（反向/零时长非法时间）→ [TimeEvidence.INVALID]，
+     *   如实保留非法起止，事件不删除、展示"时间待确认"；
+     * - 起止均无法解析（作息表缺节次且未自带起点）→ [TimeEvidence.UNRESOLVED]，
+     *   严禁回退伪造为晨间 `08:00`！仅按已知相邻节次向后生成单调排序锚点。
      */
     private fun resolvePeriodWindow(
         startPeriod: Int,
@@ -363,32 +484,35 @@ object ScheduleEngine {
         periodMap: Map<Int, PeriodTime>
     ): ResolvedPeriodWindow {
         val span = (endPeriod - startPeriod + 1).coerceAtLeast(1)
-        if (customStart != null) {
-            val resolvedEnd = customEnd
-                ?: periodMap[endPeriod]?.endLocalTime
-                ?: addMinutesClampedBeforeMidnight(customStart, 45L * span + 5L * (span - 1))
-            return ResolvedPeriodWindow(customStart, resolvedEnd, hasResolvedTime = true)
-        }
         val startPt = periodMap[startPeriod]
         val endPt = periodMap[endPeriod]
-        if (startPt != null && customEnd != null) {
-            val endSafe = if (customEnd.isAfter(startPt.startLocalTime)) {
-                customEnd
-            } else {
-                addMinutesClampedBeforeMidnight(startPt.startLocalTime, 45L * span)
+        // 端点来源取值顺序与展开器完全一致：自带 custom 字段优先，其次学期作息表节次
+        val resolvedStart = customStart ?: startPt?.startLocalTime
+        val resolvedEnd = customEnd ?: endPt?.endLocalTime
+
+        if (resolvedStart != null && resolvedEnd != null) {
+            val evidence = when {
+                // 两端明确但顺序非法（反向/零时长）→ 非法时间证据，绝不冒充已解析
+                !resolvedEnd.isAfter(resolvedStart) -> TimeEvidence.INVALID
+                // 起止均显式提供且合法 → 最强证据（与作息表是否缺失无关）
+                customStart != null && customEnd != null -> TimeEvidence.EXPLICIT_VALID
+                // 纯作息表或显式端×作息端混合且两端明确合法 → 可信
+                else -> TimeEvidence.TIMETABLE_VALID
             }
-            return ResolvedPeriodWindow(startPt.startLocalTime, endSafe, hasResolvedTime = true)
-        }
-        if (startPt != null && endPt != null) {
-            val endSafe = if (endPt.endLocalTime.isAfter(startPt.startLocalTime)) {
-                endPt.endLocalTime
-            } else {
-                addMinutesClampedBeforeMidnight(startPt.startLocalTime, 45L * span)
-            }
-            return ResolvedPeriodWindow(startPt.startLocalTime, endSafe, hasResolvedTime = true)
+            return ResolvedPeriodWindow(resolvedStart, resolvedEnd, evidence)
         }
 
-        // 缺少作息定义：绝不伪造晨间 08:00！按已知相邻节次计算单调排序锚点并标记 hasResolvedTime = false
+        if (customStart != null) {
+            // 仅自带起点、无任何可用终点：按节次跨度推算补全为排序锚点——ESTIMATED，
+            // 展示/提醒维持原布尔兼容，但依据判定不得采信。
+            val estimatedEnd = addMinutesClampedBeforeMidnight(
+                customStart, 45L * span + 5L * (span - 1)
+            )
+            return ResolvedPeriodWindow(customStart, estimatedEnd, TimeEvidence.ESTIMATED)
+        }
+
+        // 起点无法解析（缺作息定义且未自带起点）：绝不伪造晨间 08:00！
+        // 按已知相邻节次计算单调排序锚点并标记 UNRESOLVED
         val precedingKnown = periodMap.entries
             .filter { it.key < startPeriod }
             .maxByOrNull { it.key }
@@ -403,9 +527,9 @@ object ScheduleEngine {
             }
             else -> LocalTime.of(22, 0)
         }
-        val anchorEnd = endPt?.endLocalTime?.takeIf { it.isAfter(anchorStart) }
+        val anchorEnd = resolvedEnd?.takeIf { it.isAfter(anchorStart) }
             ?: addMinutesClampedBeforeMidnight(anchorStart, 45L * span)
-        return ResolvedPeriodWindow(anchorStart, anchorEnd, hasResolvedTime = false)
+        return ResolvedPeriodWindow(anchorStart, anchorEnd, TimeEvidence.UNRESOLVED)
     }
 
     private fun addMinutesClampedBeforeMidnight(base: LocalTime, minutesToAdd: Long): LocalTime {
@@ -687,7 +811,12 @@ object ScheduleEngine {
             } else null
 
             val statusText = if (!occ.hasResolvedTime) {
-                "节次时间待设置 (${occ.periodRangeText})"
+                // 非法/反向时间的事件保留在课表上提示"时间待确认"，绝不删除用户课程
+                if (occ.timeEvidence == TimeEvidence.INVALID) {
+                    "时间待确认 (${occ.periodRangeText})"
+                } else {
+                    "节次时间待设置 (${occ.periodRangeText})"
+                }
             } else when (status) {
                 ClassStatus.UPCOMING -> {
                     if (minutesUntilStart != null) {
@@ -859,7 +988,8 @@ object ScheduleEngine {
                     endPeriod = next.endPeriod,
                     endTime = next.endTime,
                     mergedRuleIds = (current.mergedRuleIds + next.mergedRuleIds).distinct(),
-                    hasResolvedTime = current.hasResolvedTime && next.hasResolvedTime
+                    hasResolvedTime = current.hasResolvedTime && next.hasResolvedTime,
+                    timeEvidence = TimeEvidence.worstOf(current.timeEvidence, next.timeEvidence)
                 )
             } else {
                 merged.add(current)
