@@ -430,4 +430,22 @@ class LibraryBookingDateStateTest {
         assertEquals(listOf("05桌 A座", "02桌 B座"),
             parseLibrarySeatPreferences("05桌 A座, 02桌 B座，05桌 A座"))
     }
+    @Test fun `刷新在途时用户清空座位不能被晚到的历史偏好重新填回`() = runBlocking {
+        val clock = TestClock()
+        val state = LibraryBookingDateState(clock, "TOMORROW")
+        query(state)
+        val recent = LibrarySeatBookingRecord(1, 2, "测试座位", region.regionName, region.id,
+            "2026-11-15 07:00:00", "2026-11-15 22:00:00", LibrarySeatBookingStatus.SIGNED_OUT)
+        val gate = CompletableDeferred<Unit>()
+        val pending = async(start = CoroutineStart.UNDISPATCHED) {
+            state.loadSeats(region, recent) { _, date -> gate.await(); Result.success(seats(date)) }
+        }
+        state.selectedSeatNames = emptyList()
+        gate.complete(Unit); pending.await()
+        assertTrue(state.selectedSeatNames.isEmpty())
+        var writes = 0
+        val sender = submitter(state, clock, BookingExecutionMode.CLOUD_HOSTED) { writes++; Result.success(Unit) }
+        assertEquals(BookingSubmitEvent.StaleConfirmationRefused, sender.submitNewAttempt())
+        assertEquals(0, writes)
+    }
 }
