@@ -20,6 +20,7 @@ class LibraryBookingDateStateTest {
     private suspend fun query(state: LibraryBookingDateState) {
         state.loadRegions(null) { Result.success(listOf(region)) }
         state.loadSeats(region, null) { _, date -> Result.success(seats(date)) }
+        state.selectedSeatNames = listOf("测试座位")
     }
     private fun seats(date: String) = LibraryRegionSeatsSnapshot(1, region.regionName, date, "07:00", "22:00", false, listOf(LibrarySeatItem(2, "测试座位", 2)))
     private fun submitter(state: LibraryBookingDateState, clock: TestClock, mode: BookingExecutionMode,
@@ -30,7 +31,7 @@ class LibraryBookingDateStateTest {
         { state.draftParams(mode, time(), state.selectedRegion?.regionName.orEmpty(), 1) }, submit,
         prepareSubmission = state::prepareSubmission, nowEpochMillis = clock::millis)
 
-    @Test fun `前台轮询和恢复前台对今天明天更新摘要查询并清空旧座位`() = runBlocking {
+    @Test fun `前台轮询和恢复前台更新日期清除旧实时结果并保留偏好`() = runBlocking {
         for (selection in listOf("TODAY", "TOMORROW")) {
             val clock = TestClock()
             val machine = LibraryBookingSubmitStateMachine()
@@ -41,10 +42,10 @@ class LibraryBookingDateStateTest {
             assertTrue(state.refreshClock()) // 与生产前台轮询、ON_RESUME 使用相同入口
             assertEquals(oldDate.plusDays(1), state.targetDate)
             assertNull(state.seatSnapshot)
-            assertTrue(state.selectedSeatNames.isEmpty())
-            assertFalse(state.prepareSubmission())
+            assertEquals(listOf("测试座位"), state.selectedSeatNames)
+            assertTrue(state.prepareSubmission())
             query(state)
-            assertEquals(state.targetDate.toString(), state.seatSnapshot!!.bookingDate)
+            assertEquals(state.today.toString(), state.seatSnapshot!!.bookingDate)
         }
     }
 
@@ -67,7 +68,7 @@ class LibraryBookingDateStateTest {
                     assertTrue(writes.isEmpty())
                     query(state)
                     assertTrue(submitter.submitNewAttempt() is BookingSubmitEvent.Accepted)
-                    assertEquals(state.seatSnapshot!!.bookingDate, writes.single().targetDate)
+                    assertEquals(state.targetDate.toString(), writes.single().targetDate)
                 }
             }
         }
@@ -92,7 +93,7 @@ class LibraryBookingDateStateTest {
             state.choose("2026-11-20")
             seatGate.complete(Unit); seats.await()
             assertNull(state.seatSnapshot)
-            assertTrue(state.selectedSeatNames.isEmpty())
+            assertEquals(listOf("测试座位"), state.selectedSeatNames)
         }
     }
 
@@ -171,9 +172,10 @@ class LibraryBookingDateStateTest {
         gate.complete(Unit); pending.await()
         assertEquals("2026-11-17", state.targetDate.toString())
         assertNull(state.seatSnapshot)
-        assertFalse(state.prepareSubmission())
+        assertEquals(listOf("测试座位"), state.selectedSeatNames)
+        assertTrue(state.prepareSubmission())
         query(state)
-        assertEquals("2026-11-17", state.seatSnapshot!!.bookingDate)
+        assertEquals("2026-11-16", state.seatSnapshot!!.bookingDate)
     }
 
     @Test fun `指定日期过期保持绝对值并拒绝提交而不自动改到下一天`() = runBlocking {
@@ -208,7 +210,7 @@ class LibraryBookingDateStateTest {
         assertEquals(1, calls)
     }
 
-    @Test fun `真实学校适配器查询到实际双引擎提交贯通同一绝对日期`() = runBlocking {
+    @Test fun `真实学校适配器读取目录而实际双引擎提交保持未来绝对日期`() = runBlocking {
         for (mode in listOf(BookingExecutionMode.LOCAL_DEVICE, BookingExecutionMode.CLOUD_HOSTED)) {
             val clock = TestClock()
             val state = LibraryBookingDateState(clock, "TOMORROW")
@@ -225,6 +227,7 @@ class LibraryBookingDateStateTest {
             suspend fun load() {
                 state.loadRegions(null) { date -> HautLibrarySeatAuthClient.fetchLibraryStudyRegions("test-query-token-0000", date, get) }
                 state.loadSeats(state.selectedRegion!!, null) { id, date -> HautLibrarySeatAuthClient.fetchLibraryRegionSeats("test-query-token-0000", id, date, get) }
+                state.selectedSeatNames = listOf("测试区域01")
             }
             load(); clock.midnight()
             assertFalse(state.prepareSubmission())
@@ -232,8 +235,8 @@ class LibraryBookingDateStateTest {
             val writes = mutableListOf<BookingDraftSnapshot>()
             assertTrue(submitter(state, clock, mode) { writes += it; Result.success(Unit) }.submitNewAttempt() is BookingSubmitEvent.Accepted)
             assertEquals("2026-11-17", writes.single().targetDate)
-            assertEquals(writes.single().targetDate, state.seatSnapshot!!.bookingDate)
-            assertTrue(urls.last().contains("starttime=2026-11-17 "))
+            assertEquals("2026-11-16", state.seatSnapshot!!.bookingDate)
+            assertTrue(urls.last().contains("starttime=2026-11-16 "))
         }
     }
 
@@ -266,7 +269,7 @@ class LibraryBookingDateStateTest {
         }
     }
 
-    @Test fun `未来日期未开放可显式用今天布局选偏好并按未来日期提交两引擎`() = runBlocking {
+    @Test fun `未来日期未开放默认读取今日目录并允许选择当前被占的偏好`() = runBlocking {
         for (mode in listOf(BookingExecutionMode.LOCAL_DEVICE, BookingExecutionMode.CLOUD_HOSTED)) {
             val clock = TestClock()
             val state = LibraryBookingDateState(clock, "TOMORROW")
@@ -275,9 +278,8 @@ class LibraryBookingDateStateTest {
                 queries += date
                 Result.failure(IllegalStateException("目标日期尚未开放"))
             }
-            assertEquals(listOf("2026-11-16"), queries)
+            assertEquals(listOf("2026-11-15"), queries)
             assertFalse(state.prepareSubmission())
-            state.useTodayLayout()
             state.loadRegions(null) { date -> queries += date; Result.success(listOf(region)) }
             state.loadSeats(region, null) { _, date ->
                 queries += date
@@ -286,7 +288,7 @@ class LibraryBookingDateStateTest {
             assertTrue(state.isReferenceLayout)
             assertEquals("2026-11-15", state.layoutDate.toString())
             assertEquals("2026-11-16", state.targetDate.toString())
-            assertEquals(listOf("2026-11-16", "2026-11-15", "2026-11-15"), queries)
+            assertEquals(listOf("2026-11-15", "2026-11-15", "2026-11-15"), queries)
             assertFalse(state.seatSnapshot!!.seats.single().isAvailable)
             assertTrue(state.selectedSeatNames.isEmpty())
             state.selectedSeatNames = listOf("测试座位")
@@ -300,7 +302,7 @@ class LibraryBookingDateStateTest {
         }
     }
 
-    @Test fun `切换布局来源使在途查询和旧报价确认失效`() = runBlocking {
+    @Test fun `修改座位偏好使旧报价失效且晚到目录不能覆盖新选择`() = runBlocking {
         val clock = TestClock()
         val machine = LibraryBookingSubmitStateMachine()
         val state = LibraryBookingDateState(clock, "TOMORROW", machine::cancelPendingReconfirmation)
@@ -315,16 +317,15 @@ class LibraryBookingDateStateTest {
         val pending = async(start = CoroutineStart.UNDISPATCHED) {
             state.loadSeats(region, null) { _, date -> gate.await(); Result.success(seats(date)) }
         }
-        state.useTodayLayout()
+        state.selectedSeatNames = listOf("新备选")
         gate.complete(Unit); pending.await()
-        assertNull(state.seatSnapshot)
+        assertEquals(listOf("新备选"), state.selectedSeatNames)
         assertNull(machine.visiblePendingReconfirmation())
         assertEquals(BookingSubmitEvent.StaleConfirmationRefused, sender.confirmPendingReconfirmation())
         assertEquals(1, writes)
         query(state)
         state.selectedSeatNames = listOf("测试座位")
-        state.useTargetDateLayout()
-        assertFalse(state.isReferenceLayout)
+        state.selectedRegion = LibraryStudyRegionItem(0, "其他自习室")
         assertTrue(state.selectedSeatNames.isEmpty())
         assertNull(state.seatSnapshot)
         assertFalse(state.prepareSubmission())
@@ -334,21 +335,99 @@ class LibraryBookingDateStateTest {
         for (selection in listOf("TOMORROW", "2026-11-18")) {
             val clock = TestClock()
             val state = LibraryBookingDateState(clock, selection)
-            state.useTodayLayout(); query(state)
+            query(state)
             state.selectedSeatNames = listOf("测试座位")
             clock.midnight()
             if (selection == "TOMORROW") {
                 assertFalse(state.prepareSubmission())
                 assertEquals("2026-11-17", state.targetDate.toString())
-                assertFalse(state.isReferenceLayout)
+                assertTrue(state.isReferenceLayout)
                 assertNull(state.seatSnapshot)
             } else {
                 assertTrue(state.prepareSubmission())
                 assertEquals("2026-11-18", state.targetDate.toString())
-                assertEquals("2026-11-15", state.layoutDate.toString())
+                assertEquals("2026-11-16", state.layoutDate.toString())
                 assertFalse(state.prepareImmediateBooking())
             }
         }
     }
 
+    @Test fun `选择明天默认读取今日座位目录而不请求尚未开放的明天`() = runBlocking {
+        val clock = TestClock()
+        val state = LibraryBookingDateState(clock, "TOMORROW")
+        val dates = mutableListOf<String>()
+        state.loadRegions(null) { date ->
+            dates += date
+            if (date == "2026-11-15") Result.success(listOf(region)) else Result.failure(IllegalStateException("未开放座位查询"))
+        }
+        state.loadSeats(region, null) { _, date -> dates += date; Result.success(seats(date)) }
+        assertEquals(listOf("2026-11-15", "2026-11-15"), dates)
+        state.selectedSeatNames = listOf("测试座位")
+        assertTrue(state.prepareSubmission())
+        assertEquals("2026-11-16", state.draftParams(BookingExecutionMode.CLOUD_HOSTED, "07:00", region.regionName, 1).targetDate)
+    }
+
+    @Test fun `使用已知座位创建两种自动计划完全不要求查询成功`() = runBlocking {
+        for (mode in listOf(BookingExecutionMode.LOCAL_DEVICE, BookingExecutionMode.CLOUD_HOSTED)) {
+            val clock = TestClock()
+            val state = LibraryBookingDateState(clock, "TOMORROW")
+            state.loadRegions(null) { Result.failure(IllegalStateException("未开放座位查询")) }
+            state.selectedRegion = LibraryStudyRegionItem(0, "已知自习室")
+            state.selectedSeatNames = listOf("首选座位", "备选座位")
+            val writes = mutableListOf<BookingDraftSnapshot>()
+            val sender = submitter(state, clock, mode) { writes += it; Result.success(Unit) }
+            assertTrue(sender.submitNewAttempt() is BookingSubmitEvent.Accepted)
+            assertEquals("2026-11-16", writes.single().targetDate)
+            assertEquals("已知自习室", writes.single().areaName)
+            assertEquals("首选座位, 备选座位", writes.single().seatLabel)
+            assertFalse(state.prepareImmediateBooking())
+        }
+    }
+
+    @Test fun `刷新遇到未开放也不清空用户已选偏好或阻止开启计划`() = runBlocking {
+        val clock = TestClock()
+        val state = LibraryBookingDateState(clock, "TOMORROW")
+        query(state)
+        state.selectedSeatNames = listOf("测试座位")
+        state.loadSeats(region, null) { _, _ -> Result.failure(IllegalStateException("未开放座位查询")) }
+        assertEquals(listOf("测试座位"), state.selectedSeatNames)
+        assertTrue(state.prepareSubmission())
+        val sender = submitter(state, clock, BookingExecutionMode.CLOUD_HOSTED) { Result.success(Unit) }
+        assertTrue(sender.submitNewAttempt() is BookingSubmitEvent.Accepted)
+    }
+
+    @Test fun `缓存与手工偏好可建计划但不能直接即时预约`() = runBlocking {
+        val state = LibraryBookingDateState(TestClock(), "TODAY")
+        state.loadRegions(null) { Result.success(listOf(region)) }
+        state.loadSeats(region, null) { _, date -> Result.success(seats(date).copy(isCachedLayout = true)) }
+        state.selectedSeatNames = listOf("测试座位")
+        assertTrue(state.prepareSubmission())
+        assertFalse(state.prepareImmediateBooking())
+        state.loadSeats(region, null) { _, date -> Result.success(seats(date)) }
+        assertTrue(state.prepareImmediateBooking())
+        state.loadSeats(region, null) { _, _ -> Result.failure(IllegalStateException("未开放")) }
+        assertTrue(state.prepareSubmission())
+        assertFalse(state.prepareImmediateBooking())
+    }
+
+    @Test fun `手工区域同为零编号也不能在更名后确认旧报价`() = runBlocking {
+        val clock = TestClock()
+        val machine = LibraryBookingSubmitStateMachine()
+        val state = LibraryBookingDateState(clock, "TOMORROW", machine::cancelPendingReconfirmation)
+        state.selectedRegion = LibraryStudyRegionItem(0, "区域甲")
+        state.selectedSeatNames = listOf("001")
+        var calls = 0
+        val sender = submitter(state, clock, BookingExecutionMode.CLOUD_HOSTED, machine) {
+            calls++; Result.failure(CloudPlanPriceDriftException(10000, 20000, "测试报价"))
+        }
+        assertTrue(sender.submitNewAttempt() is BookingSubmitEvent.PriceReconfirmationRequired)
+        state.selectedRegion = LibraryStudyRegionItem(0, "区域乙")
+        state.selectedSeatNames = listOf("001")
+        assertEquals(BookingSubmitEvent.StaleConfirmationRefused, sender.confirmPendingReconfirmation())
+        assertEquals(1, calls)
+    }
+    @Test fun `指定座位和复用计划保留座位名称内部空格及候选顺序`() {
+        assertEquals(listOf("05桌 A座", "02桌 B座"),
+            parseLibrarySeatPreferences("05桌 A座, 02桌 B座，05桌 A座"))
+    }
 }

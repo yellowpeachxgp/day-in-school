@@ -12,7 +12,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 
-/** 计划共用绝对目标日期；显式参考布局另记来源日期，仅用于选偏好。今天/明天跟随上海日期，指定日期固定。 */
+/** 目标日期是计划事实；座位目录只用于选择偏好，学校当天的空闲状态不限制提前建计划。 */
 class LibraryBookingDateState(
     private val clock: Clock = Clock.system(ZoneId.of("Asia/Shanghai")),
     initialSelection: String = if (LocalTime.now(clock).hour >= 7) "TOMORROW" else "TODAY",
@@ -24,44 +24,34 @@ class LibraryBookingDateState(
         private set
     var targetDate by mutableStateOf(resolveDate())
         private set
-    /** 参考布局仅提供座位名称，不作为目标日期的空闲证明。 */
-    var layoutDate by mutableStateOf(targetDate)
+    var layoutDate by mutableStateOf(today)
         private set
-    val isReferenceLayout: Boolean get() = layoutDate != targetDate
-
-    fun useTodayLayout() {
-        refreshClock()
-        if (targetDate <= today || layoutDate == today) return
-        layoutDate = today
-        invalidateLayout()
-    }
-
-    fun useTargetDateLayout() {
-        refreshClock()
-        if (layoutDate == targetDate) return
-        layoutDate = targetDate
-        invalidateLayout()
-    }
-
-    fun prepareImmediateBooking(): Boolean = prepareSubmission() && !isReferenceLayout
+    val isReferenceLayout: Boolean get() = layoutDate != targetDate || seatSnapshot?.isCachedLayout == true
     var regions by mutableStateOf<List<LibraryStudyRegionItem>>(emptyList())
         private set
     private var regionValue by mutableStateOf<LibraryStudyRegionItem?>(null)
     var selectedRegion: LibraryStudyRegionItem?
         get() = regionValue
         set(value) {
-            if (value?.id != regionValue?.id) {
+            if (value?.regionName != regionValue?.regionName || value?.id != regionValue?.id) {
                 seatRequest++
                 seatSnapshot = null
-                selectedSeatNames = emptyList()
                 isLoadingSeats = false
-                onDateChanged()
+            }
+            if (value?.regionName != regionValue?.regionName) {
+                selectedSeatNames = emptyList()
+                contextChanged()
             }
             regionValue = value
         }
     var seatSnapshot by mutableStateOf<LibraryRegionSeatsSnapshot?>(null)
         private set
-    var selectedSeatNames by mutableStateOf<List<String>>(emptyList())
+    private var seatNamesValue by mutableStateOf<List<String>>(emptyList())
+    var selectedSeatNames: List<String>
+        get() = seatNamesValue
+        set(value) {
+            if (value != seatNamesValue) { seatNamesValue = value.toList(); contextChanged() }
+        }
     var isLoadingRegions by mutableStateOf(false)
         private set
     var isLoadingSeats by mutableStateOf(false)
@@ -74,52 +64,49 @@ class LibraryBookingDateState(
     private var regionRequest = 0L
     private var seatRequest = 0L
 
+    val canCreatePlan: Boolean get() = selectedRegion?.regionName?.isNotBlank() == true &&
+        selectedSeatNames.size in 1..3 && selectedSeatNames.all { it.isNotBlank() } &&
+        selectedSeatNames.distinct().size == selectedSeatNames.size
+
+    private fun contextChanged() { revision++; onDateChanged() }
     private fun resolveDate(): LocalDate = when (selection) {
         "TODAY" -> today
         "TOMORROW" -> today.plusDays(1)
         else -> LocalDate.parse(selection)
     }
 
-    fun choose(value: String) {
-        selection = value
-        refreshClock()
-        updateDate()
-    }
+    fun choose(value: String) { selection = value; refreshClock() }
 
     fun refreshClock(): Boolean {
+        val previousToday = today
         today = LocalDate.now(clock)
-        return updateDate()
-    }
-
-    private fun updateDate(): Boolean {
         val next = resolveDate()
-        if (next == targetDate) return false
-        targetDate = next
-        layoutDate = next
-        invalidateLayout()
-        return true
+        val changed = next != targetDate
+        if (changed) { targetDate = next; contextChanged() }
+        if (changed || previousToday != today) {
+            layoutDate = today
+            invalidateQueries()
+        }
+        return changed
     }
 
-    private fun invalidateLayout() {
-        revision++
-        regionRequest++
-        seatRequest++
-        regions = emptyList()
-        selectedRegion = null
+    private fun invalidateQueries() {
+        regionRequest++; seatRequest++
         seatSnapshot = null
-        selectedSeatNames = emptyList()
-        isLoadingRegions = false
-        isLoadingSeats = false
-        regionsLoadError = null
-        seatsLoadError = null
-        onDateChanged()
+        isLoadingRegions = false; isLoadingSeats = false
+        regionsLoadError = null; seatsLoadError = null
     }
 
-    /** 点击时发现跨日先更新页面并拒绝本次操作，待新结果呈现后再点击。 */
-    fun prepareSubmission(): Boolean = !refreshClock() && targetDate >= today &&
-        seatSnapshot?.bookingDate == layoutDate.toString() &&
-        seatSnapshot?.regionId == selectedRegion?.id && selectedSeatNames.isNotEmpty() &&
-        selectedSeatNames.all { name -> seatSnapshot?.seats?.any { it.seatName == name } == true }
+    /** 点击时才发现相对日期已跨日，先更新页面并拒绝本次操作；已选偏好仍保留供再次确认。 */
+    fun prepareSubmission(): Boolean = !refreshClock() && targetDate >= today && canCreatePlan
+
+    /** 即时预约仍要求本次实时结果；缓存或手工偏好只能用于计划。 */
+    fun prepareImmediateBooking(): Boolean = prepareSubmission() && !isLoadingSeats &&
+        seatSnapshot?.let { snap ->
+            !snap.isCachedLayout && snap.bookingDate == targetDate.toString() &&
+                snap.regionId == selectedRegion?.id && snap.regionName == selectedRegion?.regionName &&
+                selectedSeatNames.all { name -> snap.seats.any { it.seatName == name } }
+        } == true
 
     fun draftParams(engine: BookingExecutionMode, time: String, area: String, repeatDays: Int): BookingDraftParams {
         refreshClock()
@@ -130,59 +117,59 @@ class LibraryBookingDateState(
         )
     }
 
-    suspend fun loadRegions(
-        recent: LibrarySeatBookingRecord?,
-        fetch: suspend (String) -> Result<List<LibraryStudyRegionItem>>
-    ) {
+    suspend fun loadRegions(recent: LibrarySeatBookingRecord?, fetch: suspend (String) -> Result<List<LibraryStudyRegionItem>>) {
         refreshClock()
-        val date = layoutDate
-        val epoch = revision
         val request = ++regionRequest
+        val epoch = revision
         isLoadingRegions = true
         regionsLoadError = null
-        val result = fetch(date.toString())
+        val result = fetch(layoutDate.toString())
         refreshClock()
-        if (epoch != revision || request != regionRequest) return
+        if (request != regionRequest) return
         result.onSuccess { list ->
             regions = list
-            selectedRegion = list.firstOrNull { it.id == selectedRegion?.id }
-                ?: list.firstOrNull { it.id == recent?.buildingLayerRegionId }
-                ?: list.firstOrNull { recent?.regionName?.contains(it.regionName) == true }
-                ?: list.firstOrNull()
-            if (selectedRegion == null) { seatSnapshot = null; selectedSeatNames = emptyList() }
-        }.onFailure { regionsLoadError = it.message ?: "读取自习室列表失败，请重试" }
+            // 网络结果只能补全同名区域的信息，不能把用户刚改过的选择换成列表第一项。
+            if (epoch == revision) {
+                val chosen = selectedRegion
+                selectedRegion = if (chosen != null) {
+                    list.firstOrNull { it.regionName == chosen.regionName } ?: chosen.copy(id = 0)
+                } else {
+                    list.firstOrNull { it.regionName == recent?.regionName }
+                        ?: list.firstOrNull()
+                }
+            }
+        }.onFailure { regionsLoadError = it.message ?: "暂时无法更新座位目录" }
         isLoadingRegions = false
     }
 
-    suspend fun loadSeats(
-        region: LibraryStudyRegionItem,
-        recent: LibrarySeatBookingRecord?,
+    suspend fun loadSeats(region: LibraryStudyRegionItem, recent: LibrarySeatBookingRecord?,
         fetch: suspend (Long, String) -> Result<LibraryRegionSeatsSnapshot>
     ) {
         refreshClock()
-        if (selectedRegion?.id != region.id) return
+        if (region.id <= 0 || selectedRegion?.id != region.id || selectedRegion?.regionName != region.regionName) return
         val date = layoutDate
-        val epoch = revision
         val request = ++seatRequest
         seatSnapshot = null
-        selectedSeatNames = emptyList()
         isLoadingSeats = true
         seatsLoadError = null
         val result = fetch(region.id, date.toString())
         refreshClock()
-        if (epoch != revision || request != seatRequest || selectedRegion?.id != region.id) return
+        if (request != seatRequest || selectedRegion?.id != region.id || selectedRegion?.regionName != region.regionName) return
         result.onSuccess { snap ->
-            if (snap.bookingDate != date.toString() || snap.regionId != region.id) {
-                seatsLoadError = "座位结果日期或区域已变化，请重新查询"
+            if ((!snap.isCachedLayout && snap.bookingDate != date.toString()) || snap.regionId != region.id) {
+                seatsLoadError = "座位目录的日期或区域已变化，请更新目录"
                 return@onSuccess
             }
-            seatSnapshot = snap
-            val recentSeat = recent?.seatName?.takeIf { name ->
-                recent.regionName.contains(region.regionName) && snap.seats.any { it.seatName == name }
+            seatSnapshot = snap.copy(regionName = region.regionName)
+            if (selectedSeatNames.isEmpty() && recent?.regionName == region.regionName && recent.seatName.isNotBlank()) {
+                selectedSeatNames = listOf(recent.seatName)
             }
-            selectedSeatNames = recentSeat?.let { listOf(it) }
-                ?: if (isReferenceLayout) emptyList() else snap.seats.filter { it.isAvailable }.take(2).map { it.seatName }
-        }.onFailure { seatsLoadError = it.message ?: "读取座位失败，请重试" }
+        }.onFailure { seatsLoadError = it.message ?: "暂时无法更新座位目录" }
         isLoadingSeats = false
     }
 }
+
+/** 保留名称内部空格，例如「05桌 A座」；分隔规则与执行器一致。 */
+internal fun parseLibrarySeatPreferences(text: String): List<String> =
+    text.split(",", "，", "、", "/", "|", ";", "；", "\n")
+        .map { it.trim() }.filter { it.isNotEmpty() }.distinct()

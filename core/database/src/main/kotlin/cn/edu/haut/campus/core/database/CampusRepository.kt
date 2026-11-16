@@ -7400,6 +7400,16 @@ class CampusRepository internal constructor(
         entity
     }
 
+    private val librarySeatPlanningCatalog by lazy {
+        LibrarySeatPlanningCatalog(preferences, ::fetchLibraryStudyRegions, ::fetchLibraryRegionSeats)
+    }
+
+    suspend fun loadLibraryPlanningRegions(date: String, refresh: Boolean = false): Result<List<LibraryStudyRegionItem>> =
+        librarySeatPlanningCatalog.loadRegions(date, refresh)
+
+    suspend fun loadLibraryPlanningSeats(region: LibraryStudyRegionItem, date: String, refresh: Boolean = false): Result<LibraryRegionSeatsSnapshot> =
+        librarySeatPlanningCatalog.loadSeats(region, date, refresh)
+
     suspend fun fetchLibraryStudyRegions(
         bookingDate: String
     ): Result<List<LibraryStudyRegionItem>> {
