@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.database
 
 import androidx.room.Room
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -3644,6 +3645,13 @@ class BookingDispatchExclusiveClaimDaoTest {
     fun cloudPlanRefreshResultDroppedAndCacheUntouchedAfterBaseAba() = runBlocking {
         java.io.File(RuntimeEnvironment.getApplication().filesDir, "cloud_auth_provenance").deleteRecursively()
         val repo = buildInMemoryTestRepo("r5c_base_aba")
+        // 本例只交错计划提交的 refresh；登录自动同步另有实际入口回归覆盖。
+        // 先排空仓库自己的后台任务，避免它抢占本例用于计划提交的网络闩锁。
+        val backgroundScope = CampusRepository::class.java.getDeclaredField("repoScope").let {
+            it.isAccessible = true
+            it.get(repo) as kotlinx.coroutines.CoroutineScope
+        }
+        backgroundScope.coroutineContext[kotlinx.coroutines.Job]!!.cancelAndJoin()
         saveTestCloudAccount(
             repo,
             "cloud_user_A",
@@ -3718,6 +3726,66 @@ class BookingDispatchExclusiveClaimDaoTest {
             refreshTokenBodies[1]
         )
         repo.cloudHttpTransportForTest = null
+    }
+
+    @Test
+    fun `自动同步刷新登录必须使用已配置的云地址`() = runBlocking {
+        val repo = buildInMemoryTestRepo("sync_refresh_configured_base")
+        val expectedBase = "https://isolated-cloud.example.com"
+        repo.updateNetworkProxyConfig(
+            cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = expectedBase)
+        )
+        val refreshUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                method == "POST" && url.endsWith("/api/v1/auth/refresh") -> {
+                    refreshUrls += url
+                    """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A2"}}"""
+                }
+                url.endsWith("/api/v1/sync/snapshot") ->
+                    """{"ok":true,"data":{"auth_version":1,"user":{"cloud_user_id":"cloud_user_A"},"wallet":{"peach_balance":5.0},"school_bindings":[],"consents":[],"reservation_plans":[],"reservation_jobs":[],"orders":[],"parcels":[]}}"""
+                else -> """{"ok":true,"data":{}}"""
+            }
+        }
+        saveTestCloudAccount(repo, "cloud_user_A", accessToken = expiredTestCloudJwt("cloud_user_A"))
+        val result = repo.syncWithCampusCloud()
+        org.junit.Assert.assertTrue("隔离同步应成功：${result.exceptionOrNull()}", result.isSuccess)
+        org.junit.Assert.assertTrue("必须实际触发登录刷新", refreshUrls.isNotEmpty())
+        org.junit.Assert.assertTrue("不能把刷新凭据发往默认云地址：$refreshUrls",
+            refreshUrls.all { it == "$expectedBase/api/v1/auth/refresh" })
+    }
+
+    @Test
+    fun `同步请求期间换云地址后不得刷新并重发旧请求`() = runBlocking {
+        val repo = buildInMemoryTestRepo("sync_retry_changed_base")
+        val backgroundScope = CampusRepository::class.java.getDeclaredField("repoScope").let {
+            it.isAccessible = true
+            it.get(repo) as kotlinx.coroutines.CoroutineScope
+        }
+        backgroundScope.coroutineContext[kotlinx.coroutines.Job]!!.cancelAndJoin()
+        val originalBase = "https://cloud-original.example.com"
+        repo.updateNetworkProxyConfig(cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = originalBase))
+        saveTestCloudAccount(repo, "cloud_user_A")
+        var syncPosts = 0
+        var refreshCalls = 0
+        repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
+            when {
+                url.endsWith("/api/v1/auth/refresh") -> {
+                    refreshCalls++
+                    """{"ok":true,"data":{"access_token":"${testCloudJwt("cloud_user_A")}","refresh_token":"ctseal1:ref_A2"}}"""
+                }
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    syncPosts++
+                    runBlocking { repo.updateNetworkProxyConfig(
+                        cn.edu.haut.campus.core.model.NetworkProxyConfig(customCloudApiBaseUrl = "https://cloud-next.example.com")) }
+                    """{"ok":false,"error":{"code":"UNAUTHORIZED","message":"隔离测试会话过期"}}"""
+                }
+                else -> """{"ok":true,"data":{"auth_version":1,"user":{"cloud_user_id":"cloud_user_A"},"school_bindings":[],"consents":[]}}"""
+            }
+        }
+        org.junit.Assert.assertTrue(repo.syncWithCampusCloud().isFailure)
+        assertEquals("换址后旧同步不得进入新会话的刷新", 0, refreshCalls)
+        assertEquals("不能携新会话令牌重发旧地址请求", 1, syncPosts)
     }
 
     @Test

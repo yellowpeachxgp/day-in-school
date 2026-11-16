@@ -5398,6 +5398,8 @@ class CampusRepository internal constructor(
     ): String =
         cloudTokenMutex.withLock {
             val nowMs = System.currentTimeMillis()
+            // 自动同步、余额等旧调用同样使用当前身份和已配置地址，不能回到默认云端刷新。
+            val identitySnapshot = expectedIdentity ?: snapshotCloudIdentitySession()
 
             suspend fun studentNoStillExpected(): Boolean {
                 val expected = expectedStudentNo?.trim() ?: return true
@@ -5407,7 +5409,7 @@ class CampusRepository internal constructor(
             }
 
             // 复验①（刷新发起前/快路径前）：旧身份提交一律不再碰令牌体系
-            if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+            if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
                 return@withLock ""
             }
             if (!studentNoStillExpected()) {
@@ -5443,15 +5445,15 @@ class CampusRepository internal constructor(
             }
             if (storedRt.isNotBlank()) {
                 // 刷新发起前再做一次即时复验（持锁期间身份仍可能被世代推进失效）
-                if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+                if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
                     return@withLock ""
                 }
                 if (!studentNoStillExpected()) {
                     return@withLock ""
                 }
                 // 网络地址沿已验证 base：快照里的 apiBaseUrl 才是本次会话校验过的云端地址
-                val verifiedBase = expectedIdentity?.apiBaseUrl?.takeIf { it.isNotBlank() }
-                    ?: CampusCloudOidcHelper.DEFAULT_CLOUD_BASE_URL
+                val verifiedBase = identitySnapshot?.apiBaseUrl?.takeIf { it.isNotBlank() }
+                    ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
                     val pair = CampusCloudOidcHelper.refreshCloudSession(
                         storedRt,
@@ -5462,7 +5464,7 @@ class CampusRepository internal constructor(
                         // 复验②（凭据写回前）：刷新往返期间切号/换址/换学号的，
                         // 旧会话 refresh 结果绝不写回当前凭据、绝不串 cache
                         val writeBackAllowed =
-                            (expectedIdentity == null || isCloudIdentitySnapshotCurrent(expectedIdentity)) &&
+                            (identitySnapshot == null || isCloudIdentitySnapshotCurrent(identitySnapshot)) &&
                                 studentNoStillExpected()
                         if (writeBackAllowed) {
                             cachedCloudAccessToken = pair.first
@@ -5482,7 +5484,7 @@ class CampusRepository internal constructor(
                 }
                 if (refreshed != null) {
                     // 复验③（返回后/重提前）：身份已变则令牌绝不交给旧会话调用方
-                    if (expectedIdentity != null && !isCloudIdentitySnapshotCurrent(expectedIdentity)) {
+                    if (identitySnapshot != null && !isCloudIdentitySnapshotCurrent(identitySnapshot)) {
                         return@withLock ""
                     }
                     if (!studentNoStillExpected()) {
@@ -5807,7 +5809,7 @@ class CampusRepository internal constructor(
                 if (expectedCloudUserId.isEmpty()) {
                     throw IllegalStateException("当前 XPeach 通行证标识异常，请重新登录")
                 }
-                var token = resolveValidCloudAccessToken(forceRefresh = false)
+                var token = resolveValidCloudAccessToken(forceRefresh = false, expectedIdentity = identitySession)
                 if (token.isBlank()) {
                     throw IllegalStateException("云端会话已过期，请重新登录 XPeach 通行证")
                 }
@@ -5837,9 +5839,7 @@ class CampusRepository internal constructor(
                         it.status !in setOf("CANCELLED", "FAILED", "EXPIRED", "SCHOOL_CANCELLED")
                 }
                 val effectiveDelegatedSecret = if (hasActiveCloudBookingPlan) localDelegatedSecret else null
-                val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    prefsBeforeSync.networkProxyConfig.customCloudApiBaseUrl
-                )
+                val cloudBaseUrl = identitySession.apiBaseUrl
 
                 val localPlanUpserts = activeCloudPlans.map { plan ->
                     val seats = plan.preferredSeatLabel
@@ -5895,7 +5895,9 @@ class CampusRepository internal constructor(
                     httpTransport = cloudHttpTransportForTest
                 )
                 if (snapshot == null) {
-                    token = resolveValidCloudAccessToken(forceRefresh = true, failedAccessToken = token)
+                    token = resolveValidCloudAccessToken(
+                        forceRefresh = true, failedAccessToken = token, expectedIdentity = identitySession
+                    )
                     if (token.isNotBlank()) {
                         snapshot = CampusCloudOidcHelper.syncCloudSnapshot(
                             accessToken = token,
