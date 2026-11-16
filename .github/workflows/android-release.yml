@@ -59,6 +59,19 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '发行标签必须是 v主版本.次版本.修订号'; exit 1; }
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          ./gradlew --no-daemon -q printVersion > version-output.txt
+          VERSION_NAME=$(sed -n 's/^VERSION_NAME=//p' version-output.txt)
+          test "$RELEASE_TAG" = "v$VERSION_NAME" || { echo '发行标签与 version.properties 不一致'; exit 1; }
+          echo "TAG_NAME=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          cat version-output.txt >> "$GITHUB_OUTPUT"
+
+      - name: 执行完整质量门禁并构建发行包
+        env:
+          SIGNING_STORE_FILE: ${{ github.workspace }}/keystore/haut-release.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
           ./gradlew --no-daemon :core:model:test :core:domain:test :core:academic-protocols:test :core:school-packages:test :core:academic-plan:test :core:selection:test testDebugUnitTest --stacktrace
           ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease --stacktrace
           ./gradlew --no-daemon lintDebug lintRelease --stacktrace
