@@ -148,6 +148,7 @@ class LibraryBookingDateState(
         refreshClock()
         if (region.id <= 0 || selectedRegion?.id != region.id || selectedRegion?.regionName != region.regionName) return
         val date = layoutDate
+        val epoch = revision
         val request = ++seatRequest
         seatSnapshot = null
         isLoadingSeats = true
@@ -161,7 +162,7 @@ class LibraryBookingDateState(
                 return@onSuccess
             }
             seatSnapshot = snap.copy(regionName = region.regionName)
-            if (selectedSeatNames.isEmpty() && recent?.regionName == region.regionName && recent.seatName.isNotBlank()) {
+            if (epoch == revision && selectedSeatNames.isEmpty() && recent?.regionName == region.regionName && recent.seatName.isNotBlank()) {
                 selectedSeatNames = listOf(recent.seatName)
             }
         }.onFailure { seatsLoadError = it.message ?: "暂时无法更新座位目录" }
