@@ -5433,7 +5433,41 @@ class CampusRepository internal constructor(
             ) {
                 return@withLock cachedCloudAccessToken
             }
-            val prefs = preferences.data.first()
+            var prefs = preferences.data.first()
+            val legacyAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
+            val legacyRt = prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty()
+            // v0.20.2 前所有档案都可能保存原文令牌。仅在原账号归属一致时一次性密封，
+            // 不能把另一账号的旧凭据带入当前会话，也不能在加密失败时发送原文。
+            if (identitySnapshot != null &&
+                legacyAt.isNotBlank() && legacyRt.isNotBlank() &&
+                !legacyAt.startsWith(CloudTokenSecureVault.SEALED_PREFIX) &&
+                !legacyRt.startsWith(CloudTokenSecureVault.SEALED_PREFIX)
+            ) {
+                val legacyOwner = runCatching {
+                    val payload = java.util.Base64.getUrlDecoder().decode(legacyAt.split(".")[1])
+                    org.json.JSONObject(String(payload, Charsets.UTF_8)).optString("sub")
+                }.getOrNull()
+                if (legacyOwner == identitySnapshot.cloudUserId) {
+                    val sealedPair = runCatching {
+                        cloudTokenVault.seal(legacyAt) to cloudTokenVault.seal(legacyRt)
+                    }.getOrNull()
+                    if (sealedPair != null) {
+                        cloudIdentityMutex.withLock {
+                            if (isCloudIdentitySnapshotCurrentLocked(identitySnapshot)) {
+                                preferences.edit {
+                                    if (it[PrefKeys.CLOUD_ACCESS_TOKEN] == legacyAt &&
+                                        it[PrefKeys.CLOUD_REFRESH_TOKEN] == legacyRt
+                                    ) {
+                                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedPair.first
+                                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedPair.second
+                                    }
+                                }
+                            }
+                        }
+                        prefs = preferences.data.first()
+                    }
+                }
+            }
             val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
             val storedRt = cachedCloudRefreshToken.ifBlank {
                 prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
