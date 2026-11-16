@@ -266,4 +266,89 @@ class LibraryBookingDateStateTest {
         }
     }
 
+    @Test fun `未来日期未开放可显式用今天布局选偏好并按未来日期提交两引擎`() = runBlocking {
+        for (mode in listOf(BookingExecutionMode.LOCAL_DEVICE, BookingExecutionMode.CLOUD_HOSTED)) {
+            val clock = TestClock()
+            val state = LibraryBookingDateState(clock, "TOMORROW")
+            val queries = mutableListOf<String>()
+            state.loadRegions(null) { date ->
+                queries += date
+                Result.failure(IllegalStateException("目标日期尚未开放"))
+            }
+            assertEquals(listOf("2026-11-16"), queries)
+            assertFalse(state.prepareSubmission())
+            state.useTodayLayout()
+            state.loadRegions(null) { date -> queries += date; Result.success(listOf(region)) }
+            state.loadSeats(region, null) { _, date ->
+                queries += date
+                Result.success(seats(date).copy(seats = listOf(LibrarySeatItem(2, "测试座位", 1))))
+            }
+            assertTrue(state.isReferenceLayout)
+            assertEquals("2026-11-15", state.layoutDate.toString())
+            assertEquals("2026-11-16", state.targetDate.toString())
+            assertEquals(listOf("2026-11-16", "2026-11-15", "2026-11-15"), queries)
+            assertFalse(state.seatSnapshot!!.seats.single().isAvailable)
+            assertTrue(state.selectedSeatNames.isEmpty())
+            state.selectedSeatNames = listOf("测试座位")
+            assertTrue(state.prepareSubmission())
+            assertFalse(state.prepareImmediateBooking())
+            val writes = mutableListOf<BookingDraftSnapshot>()
+            val sender = submitter(state, clock, mode) { writes += it; Result.success(Unit) }
+            assertTrue(sender.submitNewAttempt() is BookingSubmitEvent.Accepted)
+            assertEquals("2026-11-16", writes.single().targetDate)
+            assertEquals("测试座位", writes.single().seatLabel)
+        }
+    }
+
+    @Test fun `切换布局来源使在途查询和旧报价确认失效`() = runBlocking {
+        val clock = TestClock()
+        val machine = LibraryBookingSubmitStateMachine()
+        val state = LibraryBookingDateState(clock, "TOMORROW", machine::cancelPendingReconfirmation)
+        query(state)
+        var writes = 0
+        val sender = submitter(state, clock, BookingExecutionMode.CLOUD_HOSTED, machine) {
+            writes++
+            Result.failure(CloudPlanPriceDriftException(10000, 20000, "测试报价"))
+        }
+        assertTrue(sender.submitNewAttempt() is BookingSubmitEvent.PriceReconfirmationRequired)
+        val gate = CompletableDeferred<Unit>()
+        val pending = async(start = CoroutineStart.UNDISPATCHED) {
+            state.loadSeats(region, null) { _, date -> gate.await(); Result.success(seats(date)) }
+        }
+        state.useTodayLayout()
+        gate.complete(Unit); pending.await()
+        assertNull(state.seatSnapshot)
+        assertNull(machine.visiblePendingReconfirmation())
+        assertEquals(BookingSubmitEvent.StaleConfirmationRefused, sender.confirmPendingReconfirmation())
+        assertEquals(1, writes)
+        query(state)
+        state.selectedSeatNames = listOf("测试座位")
+        state.useTargetDateLayout()
+        assertFalse(state.isReferenceLayout)
+        assertTrue(state.selectedSeatNames.isEmpty())
+        assertNull(state.seatSnapshot)
+        assertFalse(state.prepareSubmission())
+    }
+
+    @Test fun `偏好布局跨午夜遵守明确日期固定与明天跟随的原规则`() = runBlocking {
+        for (selection in listOf("TOMORROW", "2026-11-18")) {
+            val clock = TestClock()
+            val state = LibraryBookingDateState(clock, selection)
+            state.useTodayLayout(); query(state)
+            state.selectedSeatNames = listOf("测试座位")
+            clock.midnight()
+            if (selection == "TOMORROW") {
+                assertFalse(state.prepareSubmission())
+                assertEquals("2026-11-17", state.targetDate.toString())
+                assertFalse(state.isReferenceLayout)
+                assertNull(state.seatSnapshot)
+            } else {
+                assertTrue(state.prepareSubmission())
+                assertEquals("2026-11-18", state.targetDate.toString())
+                assertEquals("2026-11-15", state.layoutDate.toString())
+                assertFalse(state.prepareImmediateBooking())
+            }
+        }
+    }
+
 }

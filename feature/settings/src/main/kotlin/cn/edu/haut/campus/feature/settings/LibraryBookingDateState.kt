@@ -12,7 +12,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 
-/** 页面、查询和提交共用的绝对日期。仅今天/明天跟随上海日期，指定日期始终固定。 */
+/** 计划共用绝对目标日期；显式参考布局另记来源日期，仅用于选偏好。今天/明天跟随上海日期，指定日期固定。 */
 class LibraryBookingDateState(
     private val clock: Clock = Clock.system(ZoneId.of("Asia/Shanghai")),
     initialSelection: String = if (LocalTime.now(clock).hour >= 7) "TOMORROW" else "TODAY",
@@ -24,6 +24,26 @@ class LibraryBookingDateState(
         private set
     var targetDate by mutableStateOf(resolveDate())
         private set
+    /** 参考布局仅提供座位名称，不作为目标日期的空闲证明。 */
+    var layoutDate by mutableStateOf(targetDate)
+        private set
+    val isReferenceLayout: Boolean get() = layoutDate != targetDate
+
+    fun useTodayLayout() {
+        refreshClock()
+        if (targetDate <= today || layoutDate == today) return
+        layoutDate = today
+        invalidateLayout()
+    }
+
+    fun useTargetDateLayout() {
+        refreshClock()
+        if (layoutDate == targetDate) return
+        layoutDate = targetDate
+        invalidateLayout()
+    }
+
+    fun prepareImmediateBooking(): Boolean = prepareSubmission() && !isReferenceLayout
     var regions by mutableStateOf<List<LibraryStudyRegionItem>>(emptyList())
         private set
     private var regionValue by mutableStateOf<LibraryStudyRegionItem?>(null)
@@ -75,6 +95,12 @@ class LibraryBookingDateState(
         val next = resolveDate()
         if (next == targetDate) return false
         targetDate = next
+        layoutDate = next
+        invalidateLayout()
+        return true
+    }
+
+    private fun invalidateLayout() {
         revision++
         regionRequest++
         seatRequest++
@@ -87,12 +113,11 @@ class LibraryBookingDateState(
         regionsLoadError = null
         seatsLoadError = null
         onDateChanged()
-        return true
     }
 
     /** 点击时发现跨日先更新页面并拒绝本次操作，待新结果呈现后再点击。 */
     fun prepareSubmission(): Boolean = !refreshClock() && targetDate >= today &&
-        seatSnapshot?.bookingDate == targetDate.toString() &&
+        seatSnapshot?.bookingDate == layoutDate.toString() &&
         seatSnapshot?.regionId == selectedRegion?.id && selectedSeatNames.isNotEmpty() &&
         selectedSeatNames.all { name -> seatSnapshot?.seats?.any { it.seatName == name } == true }
 
@@ -110,7 +135,7 @@ class LibraryBookingDateState(
         fetch: suspend (String) -> Result<List<LibraryStudyRegionItem>>
     ) {
         refreshClock()
-        val date = targetDate
+        val date = layoutDate
         val epoch = revision
         val request = ++regionRequest
         isLoadingRegions = true
@@ -136,7 +161,7 @@ class LibraryBookingDateState(
     ) {
         refreshClock()
         if (selectedRegion?.id != region.id) return
-        val date = targetDate
+        val date = layoutDate
         val epoch = revision
         val request = ++seatRequest
         seatSnapshot = null
@@ -156,7 +181,7 @@ class LibraryBookingDateState(
                 recent.regionName.contains(region.regionName) && snap.seats.any { it.seatName == name }
             }
             selectedSeatNames = recentSeat?.let { listOf(it) }
-                ?: snap.seats.filter { it.isAvailable }.take(2).map { it.seatName }
+                ?: if (isReferenceLayout) emptyList() else snap.seats.filter { it.isAvailable }.take(2).map { it.seatName }
         }.onFailure { seatsLoadError = it.message ?: "读取座位失败，请重试" }
         isLoadingSeats = false
     }

@@ -1749,6 +1749,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     val todayDate = dateState.today
     val tomorrowDate = todayDate.plusDays(1)
     val targetDate = dateState.targetDate
+    val layoutDate = dateState.layoutDate
+    val isReferenceLayout = dateState.isReferenceLayout
     val latestSeatOverview by rememberUpdatedState(seatOverview)
     val regions = dateState.regions
     val isLoadingRegions = dateState.isLoadingRegions
@@ -1889,11 +1891,11 @@ private fun AutomatedLibrarySeatBookingWorkbench(
         }
     }
 
-    LaunchedEffect(repository, targetDate, sessionState is LibrarySeatSessionState.Authenticated) {
+    LaunchedEffect(repository, targetDate, layoutDate, sessionState is LibrarySeatSessionState.Authenticated) {
         reloadStudyRegions()
     }
 
-    LaunchedEffect(selectedRegion?.id, targetDate) {
+    LaunchedEffect(selectedRegion?.id, targetDate, layoutDate) {
         val region = selectedRegion ?: return@LaunchedEffect
         reloadSeatsForRegion(region)
     }
@@ -1910,8 +1912,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
     }
 
     val allSeats = seatSnapshot?.seats.orEmpty()
-    val filteredSeats = remember(allSeats, onlyAvailableSeats) {
-        if (onlyAvailableSeats) allSeats.filter { it.isAvailable } else allSeats
+    val filteredSeats = remember(allSeats, onlyAvailableSeats, isReferenceLayout) {
+        if (onlyAvailableSeats && !isReferenceLayout) allSeats.filter { it.isAvailable } else allSeats
     }
     val seatChunks = remember(filteredSeats) {
         filteredSeats.chunked(60)
@@ -2326,6 +2328,26 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
             }
 
+            if (isReferenceLayout) {
+                Text(
+                    "布局来源：$layoutDate，仅用于选择偏好。$targetDate 的座位是否空闲尚未确认。",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                TextButton(onClick = { dateState.useTargetDateLayout() }) {
+                    Text("重新查询目标日期")
+                }
+            } else if (targetDate > todayDate) {
+                Text(
+                    "如果目标日期尚未开放查询，可先参考今天的布局选择座位，到点自动查询并尝试预约。",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                TextButton(onClick = { dateState.useTodayLayout() }) {
+                    Text("用今天布局提前选座")
+                }
+            }
+
             if (recentRecord != null && recentRecord.regionName.isNotBlank()) {
                 FilledTonalButton(
                     onClick = {
@@ -2465,12 +2487,14 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                     color = if (isSelected) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = "$cleanLayerName · 开放时间 $cleanOpenTime-$cleanCloseTime",
+                                    text = "$cleanLayerName · ${if (isReferenceLayout) "参考开放时间" else "开放时间"} $cleanOpenTime-$cleanCloseTime",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (isSelected) {
+                            if (isReferenceLayout) {
+                                Text("可用性未知", style = MaterialTheme.typography.labelSmall)
+                            } else if (isSelected) {
                                 XPeachStatusBadge(
                                     text = "空余 ${region.availableSeats}/${region.totalSeats}",
                                     containerColor = if (region.availableSeats > 0) {
@@ -2664,20 +2688,22 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    XPeachFilterPill(
-                        label = "仅看空座",
-                        selected = onlyAvailableSeats,
-                        onClick = {
-                            onlyAvailableSeats = !onlyAvailableSeats
-                            selectedSeatPage = 0
-                        }
-                    )
+                    if (!isReferenceLayout) {
+                        XPeachFilterPill(
+                            label = "仅看空座",
+                            selected = onlyAvailableSeats,
+                            onClick = {
+                                onlyAvailableSeats = !onlyAvailableSeats
+                                selectedSeatPage = 0
+                            }
+                        )
+                    }
                     XPeachFilterPill(
                         label = "随机选 3 个",
                         selected = false,
                         onClick = {
                             val randomThree = allSeats
-                                .filter { it.isAvailable }
+                                .filter { isReferenceLayout || it.isAvailable }
                                 .shuffled()
                                 .take(3)
                                 .map { it.seatName }
@@ -2754,6 +2780,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         val seatLabel = when {
                             isPicked && pickIndex == 0 -> "★${seat.seatName}"
                             isPicked -> "✓${seat.seatName}"
+                            isReferenceLayout -> seat.seatName
                             seat.isAvailable -> "${seat.seatName} 空"
                             else -> "${seat.seatName} 占"
                         }
@@ -2895,6 +2922,25 @@ private fun AutomatedLibrarySeatBookingWorkbench(
             }
 
             XPeachInsetDivider(verticalPadding = 8.dp)
+            Text(
+                if (selectedMode == BookingExecutionMode.MANUAL_REMINDER) {
+                    "此模式到点仅提醒，需您手动选座，不会自动提交预约。"
+                } else {
+                    "到点自动按所选顺序尝试首选和备选；不换到未选择的座位。所有候选都不可用时，本次预约失败，不扣费。"
+                },
+                style = MaterialTheme.typography.labelSmall
+            )
+            if (isReferenceLayout) {
+                Text(
+                    if (selectedMode == BookingExecutionMode.MANUAL_REMINDER) {
+                        "已选的是座位偏好，目标日可用性未知；到点请查询后手动预约。"
+                    } else {
+                        "已选的是座位偏好，目标日可用性未知。开启计划后无需再次打开 App 确认；本机模式需保持手机联网和后台运行。"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
             computedScheduleResult.fold(
                 onSuccess = { calc ->
                     val repeatSummary = if (selectedRepeatDays > 1) " · 连续 $selectedRepeatDays 天" else ""
@@ -3104,7 +3150,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                             return@Button
                         }
                         if (selectedMode == BookingExecutionMode.CLOUD_HOSTED && !hasSavedSchoolCredentials) {
-                            onFeedback(false, "开启云端准点抢座需保存校园学号与统一认证密码，以便凌晨 07:00 自动续签登录")
+                            onFeedback(false, "开启云端准点抢座需保存校园学号与统一认证密码，以便到点自动续签登录")
                             onRequireLogin()
                             return@Button
                         }
@@ -3128,9 +3174,9 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                 }
 
                 FilledTonalButton(
-                    enabled = !isRunningImmediateBooking && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
+                    enabled = !isRunningImmediateBooking && !isReferenceLayout && roomLabel.isNotBlank() && selectedSeatNames.isNotEmpty(),
                     onClick = {
-                        if (!dateState.prepareSubmission()) {
+                        if (!dateState.prepareImmediateBooking()) {
                             onFeedback(false, "日期或座位结果已变化，请重新查询并确认")
                             return@FilledTonalButton
                         }
@@ -3155,7 +3201,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 onRequireLogin()
                                 return@launch
                             }
-                            if (!dateState.prepareSubmission() || immediateDraft != dateState.draftParams(selectedMode, "%02d:%02d".format(selectedHour, selectedMinute), dateState.selectedRegion?.regionName.orEmpty(), selectedRepeatDays)) {
+                            if (!dateState.prepareImmediateBooking() || immediateDraft != dateState.draftParams(selectedMode, "%02d:%02d".format(selectedHour, selectedMinute), dateState.selectedRegion?.regionName.orEmpty(), selectedRepeatDays)) {
                                 isRunningImmediateBooking = false
                                 onFeedback(false, "预约上下文已变化，请核实日期和座位后重新确认")
                                 return@launch
