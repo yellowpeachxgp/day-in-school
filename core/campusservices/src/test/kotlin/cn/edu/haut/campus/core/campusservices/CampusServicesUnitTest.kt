@@ -2700,7 +2700,7 @@ class CampusServicesUnitTest {
             val item = cases.getJSONObject(index)
             val body = item.getJSONObject("body").toString()
             val stub = CreatePlanStub()
-            val creating = item.getString("name") == "create_unknown"
+            val creating = item.getString("name") in setOf("create_unknown", "create_uncommitted")
             stub.quoteResponse = { if (creating) quoteBody.toString() else body }
             if (creating) stub.planPostResponse = { body }
             val outcome = submitPlanWithTransport(
@@ -2710,7 +2710,11 @@ class CampusServicesUnitTest {
                 transport = stub.transport()
             )
             if (creating) {
-                assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous)
+                if (item.getString("name") == "create_uncommitted") {
+                    assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.RejectedPrePersist)
+                } else {
+                    assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.ResponseAmbiguous)
+                }
                 assertEquals(1, stub.planBodies.size)
             } else {
                 assertTrue(outcome is CampusCloudOidcHelper.CloudPlanSubmissionOutcome.QuoteUnusable)

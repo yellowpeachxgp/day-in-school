@@ -1666,7 +1666,9 @@ object CampusCloudOidcHelper {
                     "UNPROCESSABLE_ENTITY",
                     "CAMPUS_BINDING_REQUIRED",
                     "CONSENT_REQUIRED",
-                    "BOOKING_WINDOW_CLOSED"
+                    "BOOKING_WINDOW_CLOSED",
+                    // Cloud 在发布快照前失败，已回滚新计划；不能撤回同日原计划。
+                    "STORAGE_PERSISTENCE_FAILED"
                 )
                 return if (errCode in explicitClientRejectCodes) {
                     CloudPlanSubmissionOutcome.RejectedPrePersist(

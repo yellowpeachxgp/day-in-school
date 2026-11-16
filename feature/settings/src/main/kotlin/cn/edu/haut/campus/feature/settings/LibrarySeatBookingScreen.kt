@@ -2216,7 +2216,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "选择小时（07:00 - 21:30）：",
+                        text = "选择小时（07:00 起，21:30 前）：",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2232,8 +2232,8 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                                 selected = selectedHour == h,
                                 onClick = {
                                     selectedHour = h
-                                    if (h == 21 && selectedMinute > 30) {
-                                        selectedMinute = 30
+                                    if (h == 21 && selectedMinute >= 30) {
+                                        selectedMinute = 25
                                     }
                                 }
                             )
@@ -2251,7 +2251,7 @@ private fun AutomatedLibrarySeatBookingWorkbench(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         val minuteOptions = if (selectedHour == 21) {
-                            listOf(0, 5, 10, 15, 20, 25, 30)
+                            listOf(0, 5, 10, 15, 20, 25)
                         } else {
                             listOf(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 59)
                         }

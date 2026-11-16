@@ -3178,6 +3178,36 @@ class BookingDispatchExclusiveClaimDaoTest {
         get() = java.time.ZonedDateTime.of(2026, 11, 25, 22, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai"))
             .toInstant().toEpochMilli()
 
+    @Test
+    fun `云端确定未提交时恢复原本机计划且不进入撤回原云计划的流程`() = runBlocking {
+        val repo = buildInMemoryTestRepo("uncommitted_create")
+        saveTestCloudAccount(repo, "cloud_user_A")
+        val local = repo.createDualEngineBookingPlan(
+            executionMode = cn.edu.haut.campus.core.campusservices.BookingExecutionMode.LOCAL_DEVICE,
+            targetDate = java.time.LocalDate.of(2026, 11, 26), targetTimeText = "07:00:00",
+            preferredAreaName = "五层中区", preferredSeatLabel = "05桌 A座", nowEpochMillis = testNowMs
+        ).getOrThrow()
+        val bodies = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val keys = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val transport = baseCloudCreateTransport(bodies, keys) {
+            """{"ok":false,"error":{"code":"STORAGE_PERSISTENCE_FAILED","message":"计划未提交"}}"""
+        }
+        var reconciliationCalls = 0
+        repo.cloudHttpTransportForTest = { method, url, body, token, headers ->
+            // 提交前正常读取授权快照；这里只计提交失败后的补偿查询与撤回。
+            if (bodies.isNotEmpty() && (url.contains("/sync/") || url.contains("stop-delegation"))) reconciliationCalls++
+            transport(method, url, body, token, headers)
+        }
+        val result = createCloudPlan(repo, atMs = testNowMs + 1000L)
+        org.junit.Assert.assertTrue(result.isFailure)
+        val plans = repo.getAllLibraryBookingPlansForAuditSnapshot()
+        assertEquals(1, plans.size)
+        org.junit.Assert.assertTrue(plans.single().status in setOf("ARMED", "PRECHECK_OK", "FINAL_CHECK_OK"))
+        assertEquals(local.id, plans.single().id)
+        assertEquals(0, reconciliationCalls)
+        assertEquals(1, bodies.size)
+    }
+
     private suspend fun createCloudPlan(
         repo: CampusRepository,
         acceptedPriceMicropeach: Long? = null,
