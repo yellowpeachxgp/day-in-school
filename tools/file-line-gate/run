@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# tools/file-line-gate/run — 文件行数门禁（W0-07a，能力 C25）
+#
+# 规则（AGENT_TASK_CARDS W0-07）：
+#   1. 未登记基线的文本源文件超过 1500 行 → WARNING，超过 2500 行 → FAILED
+#   2. 既有大文件登记在 baseline.txt，行数只许降不许升：超过基线 → FAILED
+#   3. 行数低于基线时提示可以收紧基线（INFO，不阻断）
+#   4. 基线中已不存在的文件产生 WARNING，提醒清理条目（逐步清零）
+#
+# 防篡改（棘轮保护，同 PR 抬基线无效）：
+#   5. baseline.txt 重复条目、畸形条目 → FAILED
+#   6. 相对 merge-base 参照版本：新增白名单条目 → FAILED；条目数值上升 → FAILED；
+#      只允许收紧（数值下降）或移除条目
+#   7. 无 git 环境或无 main 参照分支时 fail-closed（退出 64），不静默放行
+#
+# 覆盖范围：git 跟踪的 kt/kts/java/xml/mjs/cjs/js/ts/sql/sh/py/yaml/yml 文件。
+# 不覆盖：.md 文档（长文属正常形态）、.json（多为生成物或数据）、二进制。
+# 退出码：0 通过（可含 WARNING/INFO）；1 存在 FAILED 项；64 环境错误（含无法验证棘轮）。
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+cd "$ROOT_DIR"
+
+BASELINE=tools/file-line-gate/baseline.txt
+WARN_THRESHOLD=1500
+FAIL_THRESHOLD=2500
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf 'file-line-gate: ERROR: 不在 git 工作树内，无法验证基线棘轮（fail-closed）\n' >&2
+  exit 64
+fi
+
+if [ ! -f "$BASELINE" ]; then
+  printf 'file-line-gate: ERROR: 缺少基线文件 %s\n' "$BASELINE" >&2
+  exit 64
+fi
+
+failures=0
+warnings=0
+infos=0
+checked=0
+
+report_failure() {
+  failures=$((failures + 1))
+  printf 'file-line-gate: FAILED: %s\n' "$1"
+}
+report_warning() {
+  warnings=$((warnings + 1))
+  printf 'file-line-gate: WARNING: %s\n' "$1"
+}
+report_info() {
+  infos=$((infos + 1))
+  printf 'file-line-gate: INFO: %s\n' "$1"
+}
+
+baseline_lines_for() {
+  awk -F '\t' -v p="$1" '$1 == p { print $2; exit }' "$BASELINE" 2>/dev/null || true
+}
+
+# --- 0. baseline.txt 自身格式校验：畸形与重复条目 -----------------------------
+tmp_entries=$(mktemp /tmp/cis-flg-entries.XXXXXX)
+tmp_ref=$(mktemp /tmp/cis-flg-ref.XXXXXX)
+trap 'rm -f "$tmp_entries" "$tmp_ref"' EXIT
+: > "$tmp_entries"
+
+malformed=$(grep -vE '^[[:space:]]*(#|$)' "$BASELINE" | awk -F '\t' 'NF != 2 || $1 == "" || $2 !~ /^[0-9]+$/' || true)
+if [ -n "$malformed" ]; then
+  while IFS= read -r bad; do
+    [ -z "$bad" ] && continue
+    report_failure "baseline.txt 畸形条目（应为 <路径><TAB><行数>）：$bad"
+  done < <(printf '%s\n' "$malformed")
+fi
+
+grep -vE '^[[:space:]]*(#|$)' "$BASELINE" | awk -F '\t' 'NF == 2 && $1 != "" && $2 ~ /^[0-9]+$/ { print }' > "$tmp_entries" || true
+
+dupes=$(cut -f1 "$tmp_entries" | LC_ALL=C sort | uniq -d)
+if [ -n "$dupes" ]; then
+  while IFS= read -r dupe; do
+    [ -z "$dupe" ] && continue
+    report_failure "baseline.txt 存在重复条目：$dupe"
+  done < <(printf '%s\n' "$dupes")
+fi
+
+# --- 1. 棘轮参照：merge-base 版本的 baseline ----------------------------------
+resolve_base_ref() {
+  base_ref_override="${FILE_LINE_GATE_BASE_REF:-}"
+  if [ -n "$base_ref_override" ]; then
+    if git rev-parse --verify --quiet "$base_ref_override^{commit}" >/dev/null 2>&1; then
+      printf '%s' "$base_ref_override"
+      return 0
+    fi
+    printf 'file-line-gate: ERROR: FILE_LINE_GATE_BASE_REF=%s 不是有效提交\n' "$base_ref_override" >&2
+    return 1
+  fi
+  for cand in refs/remotes/origin/main origin/main refs/heads/main main; do
+    if git rev-parse --verify --quiet "$cand^{commit}" >/dev/null 2>&1; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+base_ref=""
+if base_ref=$(resolve_base_ref); then
+  :
+else
+  printf 'file-line-gate: ERROR: 找不到 main 参照分支，无法验证基线棘轮（fail-closed）。\n' >&2
+  printf 'file-line-gate: ERROR: 浅克隆请加深 fetch（CI 用 fetch-depth: 0），或设 FILE_LINE_GATE_BASE_REF。\n' >&2
+  exit 64
+fi
+
+merge_base=$(git merge-base "$base_ref" HEAD 2>/dev/null || true)
+if [ -z "$merge_base" ]; then
+  printf 'file-line-gate: ERROR: 无法计算 %s 与 HEAD 的 merge-base（浅克隆？），棘轮无法验证（fail-closed）\n' "$base_ref" >&2
+  exit 64
+fi
+
+ref_baseline=""
+ref_source=""
+if git cat-file -e "$merge_base:$BASELINE" 2>/dev/null; then
+  ref_baseline=$(git show "$merge_base:$BASELINE")
+  ref_source="merge-base($merge_base)"
+elif git cat-file -e "$base_ref:$BASELINE" 2>/dev/null; then
+  ref_baseline=$(git show "$base_ref:$BASELINE")
+  ref_source="$base_ref"
+fi
+
+if [ -z "$ref_baseline" ]; then
+  report_info "参照版本中无 baseline.txt（首次引入阶段），棘轮校验跳过，依赖审阅把关"
+else
+  printf 'file-line-gate: 棘轮参照版本：%s\n' "$ref_source"
+  printf '%s\n' "$ref_baseline" | grep -vE '^[[:space:]]*(#|$)' | awk -F '\t' 'NF == 2 && $1 != "" && $2 ~ /^[0-9]+$/ { print }' > "$tmp_ref" || true
+  # 当前条目相对参照：新增 → FAILED；数值上升 → FAILED
+  # 注意：不能用 NR==FNR 区分两个输入文件——首文件为空时第二个文件的
+  # 全部记录会被误判为首文件（NR 与 FNR 同步递增），必须按 FILENAME 区分。
+  ratchet_hits=$(awk -F '\t' -v reffile="$tmp_ref" '
+    FILENAME == reffile { ref[$1] = $2; next }
+    {
+      if ($1 in ref) {
+        if (($2 + 0) > (ref[$1] + 0)) printf("UP\t%s\t%s\t%s\n", $1, $2, ref[$1])
+      } else {
+        printf("NEW\t%s\t%s\t\n", $1, $2)
+      }
+    }
+  ' "$tmp_ref" "$tmp_entries")
+  if [ -n "$ratchet_hits" ]; then
+    while IFS='	' read -r kind path cur ref; do
+      [ -z "$kind" ] && continue
+      if [ "$kind" = UP ]; then
+        report_failure "baseline.txt 棘轮违规：$path 数值从参照 $ref 上升到 $cur（只许降不许升）"
+      else
+        report_failure "baseline.txt 棘轮违规：$path 是未经授权的新增白名单条目（行数 $cur）"
+      fi
+    done < <(printf '%s\n' "$ratchet_hits")
+  fi
+
+  # 反向棘轮：参照中存在但当前被删除的条目。删除白名单不能让大文件逃逸——
+  # 仅当文件已消失、已降至 ≤1500 行、或 baseline 内有 '# allow-remove: <path>' 显式例外时允许。
+  removed=$(awk -F '\t' -v curfile="$tmp_entries" '
+    FILENAME == curfile { cur[$1] = 1; next }
+    !($1 in cur) { printf("%s\t%s\n", $1, $2) }
+  ' "$tmp_entries" "$tmp_ref")
+  if [ -n "$removed" ]; then
+    allow_removed=$(grep -E '^# allow-remove: ' "$BASELINE" | sed 's/^# allow-remove: //' | awk '{print $1}' || true)
+    while IFS='	' read -r path ref_lines; do
+      [ -z "$path" ] && continue
+      if [ ! -f "$path" ]; then
+        report_info "基线条目 $path 随文件消失而移除（参照 $ref_lines 行，清零方向）"
+        continue
+      fi
+      cur_lines=$(wc -l < "$path" | tr -d ' ')
+      if [ "$cur_lines" -le "$WARN_THRESHOLD" ]; then
+        report_info "基线条目 $path 移除：文件已降至 $cur_lines 行（≤$WARN_THRESHOLD，清零方向）"
+        continue
+      fi
+      if [ -n "$allow_removed" ] && printf '%s\n' "$allow_removed" | grep -qxF "$path"; then
+        report_warning "基线条目 $path 经 '# allow-remove' 显式例外移除（文件仍有 $cur_lines 行，审阅须确认）"
+        continue
+      fi
+      report_failure "baseline.txt 棘轮违规：$path 的条目被删除，但文件仍存在且有 $cur_lines 行（>$WARN_THRESHOLD）——删除白名单不能绕过只许降不许升"
+    done < <(printf '%s\n' "$removed")
+  fi
+fi
+
+# --- 2. 扫描 git 跟踪的文本源文件 ---------------------------------------------
+files=$(git ls-files | grep -E '\.(kt|kts|java|xml|mjs|cjs|js|ts|sql|sh|py|yaml|yml)$' | LC_ALL=C sort || true)
+
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  [ -f "$file" ] || continue
+  checked=$((checked + 1))
+  lines=$(wc -l < "$file" | tr -d ' ')
+  base=$(baseline_lines_for "$file")
+  if [ -n "$base" ]; then
+    if [ "$lines" -gt "$base" ]; then
+      report_failure "$file：$lines 行，超过基线 $base 行（既有大文件只许降不许升）"
+    elif [ "$lines" -lt "$base" ]; then
+      report_info "$file：$lines 行，已低于基线 $base 行，可收紧 baseline.txt"
+    fi
+  else
+    if [ "$lines" -gt "$FAIL_THRESHOLD" ]; then
+      report_failure "$file：$lines 行，超过 $FAIL_THRESHOLD 行上限（未登记基线的文件）"
+    elif [ "$lines" -gt "$WARN_THRESHOLD" ]; then
+      report_warning "$file：$lines 行，超过 $WARN_THRESHOLD 行警告线"
+    fi
+  fi
+done < <(printf '%s\n' "$files")
+
+# --- 3. 基线中已删除或改名的文件 ----------------------------------------------
+while IFS="$(printf '\t')" read -r path _count; do
+  [ -z "$path" ] && continue
+  case "$path" in \#*) continue ;; esac
+  if [ ! -f "$path" ]; then
+    report_warning "基线条目 $path 已不存在，请从 baseline.txt 移除（逐步清零）"
+  fi
+done < "$tmp_entries"
+
+printf 'file-line-gate: 检查文件 %s 个，FAILED %s，WARNING %s，INFO %s\n' "$checked" "$failures" "$warnings" "$infos"
+if [ "$failures" -gt 0 ]; then
+  printf 'file-line-gate: FAILED（存在超限或棘轮违规，详情见上）\n' >&2
+  exit 1
+fi
+printf 'file-line-gate: PASSED\n'
