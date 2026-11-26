@@ -36,6 +36,7 @@
 | AUTO-007 | 2026-11-26 | 本机 Mac worktree 路径（/Volumes/...）不是开发机地址/账号，也不是 D16 秘密；roadmap 和 AGENTS 可保留，scanner 不应把它当违规；自主决策，待用户复核 | 主代理澄清裁决：避免过度去标识化破坏计划可执行性 | 待用户复核 |
 | AUTO-008 | 2026-11-26 | 因首个 clean 分支历史仍含拼接编码的 devbox account，INF-01 需二次干净重建；隐私补救例外，待用户复核 | 主代理隐私裁决：首个 feat/cis-inf-01-governance-clean 提交不得进入 main 历史；最终从最新 origin/main 建 feat/cis-inf-01-governance-clean2，这不是 force push，也不改写 main | 待用户复核 |
 | AUTO-009 | 2026-11-26 | acceptance 工具第一/第二版因含拼接编码的 devbox 敏感字面量，PR#48/#56 均不合并；最终以 acc/cis-stage-0-skeleton-clean2 二次干净重建，隐私补救例外，待用户复核 | 主代理隐私裁决：acceptance 骨架与 INF-01 同样不得把拼接编码的敏感字面量带入 main 历史 | 待用户复核 |
+| AUTO-010 | 2026-11-27 | INF-00 属 secrets scanner 自举前置且两仓契约漂移已由 INF-02 专卡处理；train/cis-001 的 secrets exit3 与 contracts exit1 不视为 INF-00 内容失败。INF-00 可基于人工/审阅脱敏证据、android-full/cloud 全绿、两独立审阅与阶段验收先合入；INF-01/INF-02 合入后必须在 main 重跑 secrets/contracts。自主决策，待用户复核 | 主代理自举与依赖裁决：secrets/contracts 工具链尚未合入 main 时不能把固有 bootstrap 缺口记为 INF-00 内容失败；后续 main 重跑作为强制补偿门禁 | 待用户复核 |
 
 ## 追加规则
 
