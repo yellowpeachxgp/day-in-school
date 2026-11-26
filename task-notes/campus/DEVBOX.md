@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 主机：`<devbox>`（仅通过本机环境变量 `$CIS_DEVBOX` 访问）。
-- 2026-11-26 检查：`cis-gate` 尚未安装/可执行，INF-00 仍在 bootstrap；本文件的现场门禁结果均为「待补」。
+- 2026-11-26 复核：`cis-gate` 已安装且可执行；两仓裸库已存在；INF-00 的 main 基线门禁结果见 `BASELINE.md`。
 - 开发机不存放 GitHub 凭据；两个公开仓库只读拉取。
 
 ## 目录约定
@@ -28,20 +28,22 @@
 |---|---|---|
 | OS | Debian GNU/Linux 13 (trixie)，Linux 6.12.116+deb13-amd64 | 只读记录 |
 | git | 2.47.3 | 只读记录 |
-| Node | v24.22.3 | 满足 cloud `>=22`，但 INF-00 需确认项目目标 Node 22 的可用性 |
+| Node | v24.22.3 | 满足 cloud `>=22` 且 cloud 门禁已通过；项目目标 Node 22 的严格一致性仍待 INF-00/主代理确认 |
 | Java | OpenJDK 21.0.13.1 | 只读记录 |
 | Docker | 29.10.0 | 校园容器只用 `cis-` 前缀 |
-| Android SDK | 待补 | INF-00 安装后记录 platform/build-tools 精确版本和校验值 |
+| Android cmdline-tools | 22.0 | `cmdline-tools/latest/source.properties` |
+| Android platform | android-36 | 已安装 |
+| Android build-tools | 35.0.0、36.0.0 | 已安装 |
 
 ## 脚本状态
 
 | 脚本 | 状态 | 备注 |
 |---|---|---|
-| `cis-gate` | 待补 | INF-00 安装；门禁日志写入校园 logs 目录 |
-| `cis-gradle` | 待补 | 4 个 flock 构建槽、内存守护、PAUSE 检查 |
-| `cis-containers` | 待补 | 只起停 `cis-*` 容器，绑定 loopback 随机端口 |
-| `cis-clean` | 待补 | 只清理校园目录 |
-| `cis-worktree` | 待补 | 本机侧脚本；地址只从 `$CIS_DEVBOX` 读取 |
+| `cis-gate` | 已安装 | 门禁日志写入校园 logs 目录；只回传退出码、SHA、耗时、日志路径和末尾摘要 |
+| `cis-gradle` | 已安装 | 4 个 flock 构建槽、内存守护、PAUSE 检查；并发验收仍属 INF-00 剩余项 |
+| `cis-containers` | 已安装 | 只起停 `cis-*` 容器，绑定 loopback 随机端口 |
+| `cis-clean` | 已安装 | 只清理校园目录 |
+| `cis-worktree` | 已安装 | 本机侧脚本；地址只从 `$CIS_DEVBOX` 读取 |
 
 ## 资源预算
 
@@ -54,8 +56,8 @@
 
 ## 基线门禁
 
-| 仓库 | 门禁 | 结果 | 日志 |
+| 仓库/分支 | 门禁 | 结果 | 日志 |
 |---|---|---|---|
-| day-in-school | `android` | 待补（INF-00 未完成） | 待补 |
-| cloud-in-school | `cloud` | 待补（INF-00 未完成） | 待补 |
-| 两仓 | `secrets` | 待补（INF-01 自举后需现场重跑） | 待补 |
+| day-in-school `main` | `android` | 通过：退出码 0，321 秒，MinMemAvailableKB 73076276，host-wide peak used 58792440 KB | `/srv/xpeach-dev/campus/logs/day-in-school/main/05eeff879bad40bf22dcee1d4bc4073151a5f8ad-android.log` |
+| cloud-in-school `main` | `cloud` | 通过：退出码 0，14 秒，MinMemAvailableKB 85227192，host-wide peak used 46641524 KB | `/srv/xpeach-dev/campus/logs/cloud-in-school/main/ee8687da02b36cf703c37a4891c3190dd43233cc-cloud.log` |
+| 构建槽并发与 PAUSE | INF-00 专项验收 | 待 INF-00 交回 | 待补 |

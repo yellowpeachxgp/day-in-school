@@ -15,15 +15,24 @@
 - 结果：两仓远端当前未广告 `refs/codex/turn-diffs/*`；种子克隆 connectivity fsck 退出码 0，未发现损坏引用。
 - 规则：若后续发现损坏的 `refs/codex/turn-diffs/...`，只列出供主代理处理，**不得删除**。
 
-## INF-00 基线门禁
+## INF-00 main 基线门禁（已核验日志摘要）
+
+| 仓库 | SHA | 门禁 | 结果 | 耗时 | 内存摘要 | 日志路径 |
+|---|---|---|---|---|---|---|
+| day-in-school | `05eeff879bad40bf22dcee1d4bc4073151a5f8ad` | `android` | 退出码 0 | 321 秒 | MinMemAvailableKB 73076276；host-wide peak used 58792440 KB | `/srv/xpeach-dev/campus/logs/day-in-school/main/05eeff879bad40bf22dcee1d4bc4073151a5f8ad-android.log` |
+| cloud-in-school | `ee8687da02b36cf703c37a4891c3190dd43233cc` | `cloud` | 退出码 0 | 14 秒 | MinMemAvailableKB 85227192；host-wide peak used 46641524 KB | `/srv/xpeach-dev/campus/logs/cloud-in-school/main/ee8687da02b36cf703c37a4891c3190dd43233cc-cloud.log` |
+
+内存说明：`host-wide peak used` 是门禁采样期间全机 `MemTotal - min(MemAvailable)`，不是单个构建进程 RSS。
+
+## INF-00 剩余验收项
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| `cis-gate` 可用性 | 待补 | 2026-11-26 检查时 `<devbox>` 上尚未安装/可执行 |
-| day-in-school `android` 基线 | 待补 | INF-00 完成后记录耗时、峰值内存、日志路径 |
-| cloud-in-school `cloud` 基线 | 待补 | INF-00 完成后记录耗时、峰值内存、日志路径 |
-| 构建槽并发与 PAUSE 验证 | 待补 | INF-00 验收项 |
+| `cis-gate` 可用性 | 已核验 | 2026-11-26 复核时已安装且可执行 |
+| 构建槽并发（6 请求只跑 4 个） | 待 INF-00 交回 | INF-01 不空等；由 INF-00 验收 |
+| `PAUSE` 文件等待/恢复 | 待 INF-00 交回 | INF-01 不空等；由 INF-00 验收 |
+| 校园容器前缀与企业容器隔离 | 待 INF-00 交回 | INF-01 不空等；由 INF-00 验收 |
 
 ## bootstrap 限制
 
-INF-01 的静态自检不能替代开发机现场门禁。AUTO-001 已记录：bootstrap 期间 INF-00/INF-01 与文档卡无法等待 cis-gate，可用静态自检先开 PR，后续仍须补现场门禁；自主决策，待用户复核。
+AUTO-001 已记录：bootstrap 期间 INF-00/INF-01 与文档卡无法等待 cis-gate，可用静态自检先开 PR，后续仍须补现场门禁；自主决策，待用户复核。INF-01 已在 cis-gate 可用后补跑现场门禁，结果写入对应 PR；本文件只记录 main 基线，不用后续 INF-01 分支 SHA 循环更新。
