@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.textextract
 
+import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.textextract.ocr.PaddleOcrConfig
 import cn.edu.haut.campus.core.textextract.ocr.PaddleOcrOnnxEngine
@@ -50,6 +51,29 @@ class PaddleOcrOnnxEngineTest {
             assertEquals(PaddleOcrConfig.REC_SHA256, result.metadata.engine.modelArtifactsSha256["rec"])
         } finally {
             engine.close()
+        }
+    }
+
+    @Test
+    fun blankImageReturnsEmptyAndClosedEngineRejectsExtraction() = runBlocking {
+        val engine = PaddleOcrOnnxEngine.fromModelBytes(
+            detModelBytes = FixtureLoader.detModelBytes(),
+            recModelBytes = FixtureLoader.recModelBytes(),
+            recConfigYaml = FixtureLoader.recConfigYaml(),
+            config = PaddleOcrConfig(numThreads = 1)
+        )
+        val blank = ArgbImage(64, 64, IntArray(64 * 64) { 0xFFFFFFFF.toInt() })
+        val blankResult = engine.extractImage(ImageExtractionRequest(blank, TextExtractionContext.synthetic()))
+        assertTrue(blankResult.lines.isEmpty())
+        assertEquals(SnapshotCompleteness.EMPTY_CONFIRMED, blankResult.provenance.completeness)
+        assertTrue(blankResult.metadata.warnings.any { it.contains("未检测到可读文本行") })
+
+        engine.close()
+        try {
+            engine.extractImage(ImageExtractionRequest(blank, TextExtractionContext.synthetic()))
+            org.junit.Assert.fail("关闭后的 OCR 引擎不应继续抽取")
+        } catch (error: TextExtractionException) {
+            assertEquals(TextExtractErrorKind.ENGINE_CLOSED, error.kind)
         }
     }
 
