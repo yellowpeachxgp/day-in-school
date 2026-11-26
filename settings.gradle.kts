@@ -40,5 +40,6 @@ include(
     ":widget:nextclass",
     ":widget:today",
     ":widget:timeline",
-    ":widget:week"
+    ":widget:week",
+    ":core:timeline"
 )
