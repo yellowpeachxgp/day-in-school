@@ -1,3 +1,10 @@
+/*
+ * OCR pipeline semantics adapted from PaddleOCR deploy/ppocr-android.
+ * Copyright (c) 2026 PaddlePaddle Authors. All Rights Reserved.
+ * Licensed under the Apache License, Version 2.0; see core/textextract/licenses/Apache-2.0.txt.
+ * This implementation replaces OpenCV/Mat operations with auditable pure Kotlin code.
+ */
+
 package cn.edu.haut.campus.core.textextract.ocr
 
 import cn.edu.haut.campus.core.textextract.TextExtractErrorKind
