@@ -43,3 +43,5 @@ include(
     ":widget:week",
     ":core:timeline"
 )
+
+include(":core:ledger")

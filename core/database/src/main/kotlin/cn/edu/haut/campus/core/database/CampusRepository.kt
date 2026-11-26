@@ -349,6 +349,7 @@ class CampusRepository internal constructor(
         val EXAM_HOUR_BEFORE_ENABLED = booleanPreferencesKey("exam_hour_before_enabled")
         val EXAM_SNOOZE_MAX_COUNT = intPreferencesKey("exam_snooze_max_count")
         val PRECISE_REMINDER_PREFERRED = booleanPreferencesKey("precise_reminder_preferred")
+        val LIVE_PROGRESS_REFRESH_MINUTES = intPreferencesKey("live_progress_refresh_minutes_v1")
         val REMINDER_LOCKSCREEN_PRIVATE = booleanPreferencesKey("reminder_lockscreen_private")
         val REMINDER_QUIET_MODE = stringPreferencesKey("reminder_quiet_mode")
         val REMINDER_POLICY_REVISION = stringPreferencesKey("reminder_policy_revision")
@@ -689,6 +690,7 @@ class CampusRepository internal constructor(
             examHourBeforeEnabled = prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
             examSnoozeMaxCount = (prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
             preciseReminderPreferred = prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
+            liveProgressRefreshMinutes = (prefs[PrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] ?: 5).takeIf { it in setOf(1, 5, 10) } ?: 5,
             lockscreenPrivate = prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
             quietMode = quietMode
         )
@@ -4621,6 +4623,7 @@ class CampusRepository internal constructor(
             prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
             prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
             prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
+            prefs[PrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] = updated.liveProgressRefreshMinutes.takeIf { it in setOf(1, 5, 10) } ?: 5
             prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
             prefs[PrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
             prefs[PrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(

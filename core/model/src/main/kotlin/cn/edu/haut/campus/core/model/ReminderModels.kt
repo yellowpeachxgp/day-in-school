@@ -175,6 +175,7 @@ data class ReminderGlobalConfig(
     val examSnoozeMaxCount: Int = 2,
     val examSnoozeCutoffMinutes: Int = 10,
     val preciseReminderPreferred: Boolean = true,
+    val liveProgressRefreshMinutes: Int = 5,
     val lockscreenPrivate: Boolean = true,
     val quietMode: String = "FOLLOW_SYSTEM",
     val policyRevision: Long = 1L
