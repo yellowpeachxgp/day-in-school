@@ -28,7 +28,11 @@ class LiveProgressModelTest {
         assertEquals(0L, snapshot?.elapsedInPhaseMs)
         assertEquals(leadWindow.toMillis(), snapshot?.totalInPhaseMs)
         assertEquals(0, snapshot?.progressUnits)
+        assertEquals(0, snapshot?.progressCurrent)
         assertEquals(startAt.toEpochMilli(), snapshot?.countdownTargetEpochMs)
+        assertEquals(startAt, snapshot?.countdownTargetAt)
+        assertEquals(startAt.minus(leadWindow), snapshot?.windowStartAt)
+        assertEquals(startAt, snapshot?.nextBoundaryAt)
     }
 
     @Test
@@ -51,6 +55,8 @@ class LiveProgressModelTest {
         assertEquals(0L, snapshot?.elapsedInPhaseMs)
         assertEquals(0, snapshot?.progressUnits)
         assertEquals(endAt.toEpochMilli(), snapshot?.countdownTargetEpochMs)
+        assertEquals(startAt, snapshot?.windowStartAt)
+        assertEquals(endAt, snapshot?.nextBoundaryAt)
     }
 
     @Test

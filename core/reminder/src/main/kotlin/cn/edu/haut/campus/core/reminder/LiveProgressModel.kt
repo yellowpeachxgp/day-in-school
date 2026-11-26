@@ -27,8 +27,23 @@ object LiveProgressModel {
         val remainingMs: Long,
         val progressUnits: Int,
         val progressMax: Int = PROGRESS_SCALE,
-        val countdownTargetEpochMs: Long
-    )
+        val countdownTargetEpochMs: Long,
+        val windowStartAtEpochMs: Long,
+        val nextBoundaryAtEpochMs: Long
+    ) {
+        /** task-102 预研命名别名：保留 progressUnits 以兼容本卡内已有调用。 */
+        val progressCurrent: Int
+            get() = progressUnits
+
+        val countdownTargetAt: Instant
+            get() = Instant.ofEpochMilli(countdownTargetEpochMs)
+
+        val windowStartAt: Instant
+            get() = Instant.ofEpochMilli(windowStartAtEpochMs)
+
+        val nextBoundaryAt: Instant
+            get() = Instant.ofEpochMilli(nextBoundaryAtEpochMs)
+    }
 
     fun compute(
         now: Instant,
@@ -55,7 +70,9 @@ object LiveProgressModel {
                     totalInPhaseMs = leadMs,
                     remainingMs = Duration.between(now, startAt).toMillis(),
                     progressUnits = scaledProgress(elapsedMs, leadMs),
-                    countdownTargetEpochMs = startAt.toEpochMilli()
+                    countdownTargetEpochMs = startAt.toEpochMilli(),
+                    windowStartAtEpochMs = windowStart.toEpochMilli(),
+                    nextBoundaryAtEpochMs = startAt.toEpochMilli()
                 )
             }
         } else {
@@ -66,7 +83,9 @@ object LiveProgressModel {
                 totalInPhaseMs = classDurationMs,
                 remainingMs = Duration.between(now, endAt).toMillis(),
                 progressUnits = scaledProgress(elapsedMs, classDurationMs),
-                countdownTargetEpochMs = endAt.toEpochMilli()
+                countdownTargetEpochMs = endAt.toEpochMilli(),
+                windowStartAtEpochMs = startAt.toEpochMilli(),
+                nextBoundaryAtEpochMs = endAt.toEpochMilli()
             )
         }
     }

@@ -362,6 +362,7 @@ object ReminderNotificationFactory {
     ): Boolean {
         if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
         ensureChannels(context)
+        if (!hasEnabledNotificationChannel(context, CHANNEL_LIVE_COURSE)) return false
 
         val endInstant = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
         if (!now.isBefore(endInstant)) {
@@ -603,6 +604,14 @@ object ReminderNotificationFactory {
         runCatching {
             NotificationManagerCompat.from(context).cancelAll()
         }
+    }
+
+    private fun hasEnabledNotificationChannel(context: Context, channelId: String): Boolean {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return false
+        val channel = runCatching { manager.getNotificationChannel(channelId) }.getOrNull()
+            ?: return false
+        return channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     private fun hasPostNotificationPermission(context: Context): Boolean {

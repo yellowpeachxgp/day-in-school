@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.reminder
 
 import android.app.AlarmManager
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
@@ -68,6 +69,59 @@ class LiveCourseCoordinatorRobolectricTest {
         val posted = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
         assertEquals(LiveProgressModel.PROGRESS_SCALE, posted.extras.getInt("android.progressMax"))
         assertTrue(posted.extras.getInt("android.progress") > 0)
+        assertTrue((posted.flags and Notification.FLAG_ONLY_ALERT_ONCE) != 0)
+    }
+
+    @Test
+    fun `pre class live window start schedules tick and start boundary`() = runBlocking {
+        val fixture = createFixture(
+            startLocal = LocalTime.of(10, 0),
+            endLocal = LocalTime.of(11, 30),
+            nowLocal = LocalTime.of(9, 15)
+        )
+
+        fixture.coordinator.reconcileNow(
+            reason = "TEST_LIVE_WINDOW_START",
+            forceRescheduleAlarms = true,
+            now = fixture.now
+        )
+
+        val tick = requireLiveAlarm(ShadowLiveTask.TICK)
+        assertEquals(fixture.now.plus(Duration.ofMinutes(5)).toEpochMilli(), tick.triggerAtTime)
+        val boundary = requireLiveAlarm(ShadowLiveTask.BOUNDARY)
+        assertEquals(fixture.startAt.toEpochMilli(), boundary.triggerAtTime)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val posted = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
+        assertEquals(0, posted.extras.getInt("android.progress"))
+    }
+
+    @Test
+    fun `tick scheduling failure keeps chronometer notification without progress`() = runBlocking {
+        val fixture = createFixture(
+            startLocal = LocalTime.of(10, 0),
+            endLocal = LocalTime.of(11, 30),
+            nowLocal = LocalTime.of(10, 20)
+        )
+        val scope = AccountBackgroundScope.from(fixture.session)
+        val delegate = AndroidAlarmScheduler(context, scope) { fixture.repository.isSessionActive }
+        val coordinator = createCoordinator(
+            session = fixture.session,
+            repository = fixture.repository,
+            alarmScheduler = FailingTickAlarmScheduler(delegate)
+        )
+
+        coordinator.reconcileNow(
+            reason = "TEST_TICK_SCHEDULE_FAILURE",
+            forceRescheduleAlarms = true,
+            now = fixture.now
+        )
+
+        assertNull(findLiveAlarm(ShadowLiveTask.TICK))
+        assertNotNull(findLiveAlarm(ShadowLiveTask.BOUNDARY))
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val posted = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
+        assertTrue(posted.extras.getBoolean("android.showChronometer"))
+        assertTrue(!posted.extras.containsKey("android.progressMax"))
     }
 
     @Test
@@ -289,11 +343,28 @@ class LiveCourseCoordinatorRobolectricTest {
 
     private fun createCoordinator(
         session: ActiveSession,
-        repository: CampusRepository
+        repository: CampusRepository,
+        alarmScheduler: AlarmScheduler? = null
     ): ReminderCoordinator {
         val scope = AccountBackgroundScope.from(session)
-        val scheduler = AndroidAlarmScheduler(context, scope) { repository.isSessionActive }
+        val scheduler = alarmScheduler ?: AndroidAlarmScheduler(context, scope) { repository.isSessionActive }
         return ReminderCoordinator(context, repository, scheduler, scope)
+    }
+
+    private class FailingTickAlarmScheduler(
+        private val delegate: AlarmScheduler
+    ) : AlarmScheduler {
+        override fun schedule(task: cn.edu.haut.campus.core.model.ReminderTaskDomain, preferExact: Boolean): ScheduleOutcome =
+            delegate.schedule(task, preferExact)
+
+        override fun scheduleInexactWindow(
+            task: cn.edu.haut.campus.core.model.ReminderTaskDomain,
+            windowLengthMs: Long
+        ): ScheduleOutcome = ScheduleOutcome.Failed("TEST_TICK_SCHEDULE_UNAVAILABLE")
+
+        override fun cancel(taskId: String, generation: Int) {
+            delegate.cancel(taskId, generation)
+        }
     }
 
     private fun zonedInstant(time: LocalTime): Instant =
