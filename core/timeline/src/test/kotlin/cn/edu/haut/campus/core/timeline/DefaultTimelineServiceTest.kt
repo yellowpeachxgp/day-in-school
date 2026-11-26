@@ -191,6 +191,60 @@ class DefaultTimelineServiceTest {
         )
     }
 
+    @Test
+    fun `过滤前先解决 revision 最新取消不会让旧日程复活`() = runTest {
+        val older = event("course:cancelled-latest", revision = 1)
+        val newerCancelled = older.copy(status = EventStatus.CANCELLED_TODAY, revision = 2)
+        val service = DefaultTimelineService(
+            FakeSource("course", setOf(TimelineKind.COURSE), listOf(listOf(older, newerCancelled)))
+        )
+
+        val scheduledOnly = service.observe(
+            scope,
+            window,
+            TimelineFilter(statuses = setOf(EventStatus.SCHEDULED))
+        ).first()
+
+        assertEquals(emptyList<TimelineEvent>(), scheduledOnly)
+    }
+
+    @Test
+    fun `过滤前先解决 revision 移出窗口的新版本会淘汰窗内旧版本`() = runTest {
+        val older = event("course:moved-outside", revision = 1)
+        val newerOutside = older.copy(
+            start = Instant.parse("2026-03-02T13:00:00Z"),
+            end = Instant.parse("2026-03-02T14:00:00Z"),
+            revision = 2
+        )
+        val service = DefaultTimelineService(
+            FakeSource("course", setOf(TimelineKind.COURSE), listOf(listOf(older, newerOutside)))
+        )
+
+        val result = service.observe(scope, window, TimelineFilter.ALL).first()
+
+        assertEquals(emptyList<TimelineEvent>(), result)
+    }
+
+    @Test
+    fun `同 revision 冲突检查与最高版本出现顺序无关`() {
+        val low = event("course:ordered-conflict", revision = 1)
+        val conflictingLow = low.copy(title = "另一门课", revision = 1)
+        val high = low.copy(title = "高等数学（新）", revision = 2)
+        val highFirst = DefaultTimelineService(
+            FakeSource("course", setOf(TimelineKind.COURSE), listOf(listOf(high, low, conflictingLow)))
+        )
+        val highLast = DefaultTimelineService(
+            FakeSource("course", setOf(TimelineKind.COURSE), listOf(listOf(low, conflictingLow, high)))
+        )
+
+        assertFailsWith<TimelineConsistencyException> {
+            runTest { highFirst.observe(scope, window, TimelineFilter.ALL).first() }
+        }
+        assertFailsWith<TimelineConsistencyException> {
+            runTest { highLast.observe(scope, window, TimelineFilter.ALL).first() }
+        }
+    }
+
     private fun TimelineEvent.copyIdPrefix(source: String): TimelineEvent =
         copy(id = TimelineEventId(source + ":" + id.stableKey))
 

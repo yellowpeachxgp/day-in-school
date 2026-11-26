@@ -76,7 +76,10 @@ class DefaultTimelineService(
         filter: TimelineFilter,
         snapshots: List<SourceSnapshot>
     ): List<TimelineEvent> {
-        val byId = LinkedHashMap<TimelineEventId, TimelineEvent>()
+        // 先按 (id, revision) 做全量一致性检查，再选择最高 revision，最后才应用窗口和
+        // 调用方过滤。这样新 revision 取消或移出窗口时不会让旧 revision 复活；同
+        // revision 冲突也不会因高 revision 先出现而被顺序依赖地吞掉。
+        val revisionsById = LinkedHashMap<TimelineEventId, MutableMap<Long, TimelineEvent>>()
         for (snapshot in snapshots) {
             for (event in snapshot.events) {
                 if (event.id.sourceId != snapshot.sourceId) {
@@ -87,23 +90,24 @@ class DefaultTimelineService(
                 if (event.scope != scope) {
                     throw TimelineConsistencyException("事件 ${event.id.value} 跨学校账号 scope，已拒绝合并")
                 }
-                if (!event.overlaps(window) || !filter.matches(event)) continue
 
-                val existing = byId[event.id]
-                when {
-                    existing == null -> byId[event.id] = event
-                    existing == event -> Unit
-                    event.revision > existing.revision -> byId[event.id] = event
-                    event.revision < existing.revision -> Unit
-                    else -> throw TimelineConsistencyException("事件 ${event.id.value} 同 revision 内容冲突")
+                val byRevision = revisionsById.getOrPut(event.id) { sortedMapOf() }
+                val sameRevision = byRevision[event.revision]
+                if (sameRevision == null) {
+                    byRevision[event.revision] = event
+                } else if (sameRevision != event) {
+                    throw TimelineConsistencyException("事件 ${event.id.value} 同 revision 内容冲突")
                 }
             }
         }
-        return byId.values.sortedWith(
-            compareBy<TimelineEvent> { it.start }
-                .thenBy { it.end ?: it.start }
-                .thenBy { it.id.value }
-        )
+        return revisionsById.values
+            .mapNotNull { byRevision -> byRevision.maxByOrNull { it.key }?.value }
+            .filter { event -> event.overlaps(window) && filter.matches(event) }
+            .sortedWith(
+                compareBy<TimelineEvent> { it.start }
+                    .thenBy { it.end ?: it.start }
+                    .thenBy { it.id.value }
+            )
     }
 
     private fun busyIntervals(events: List<TimelineEvent>): List<BusyBlock> =
