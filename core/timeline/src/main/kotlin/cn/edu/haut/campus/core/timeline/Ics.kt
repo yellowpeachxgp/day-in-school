@@ -4,6 +4,7 @@ import java.time.DateTimeException
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 
@@ -71,7 +72,6 @@ object StandardIcsExporter : IcsExporter {
             "VERSION:2.0",
             "PRODID:-//day-in-school//core-timeline//EN",
             "CALSCALE:GREGORIAN",
-            "METHOD:PUBLISH",
             "X-WR-CALNAME:" + escapeText(calendarName)
         )
         deduped.forEach { event ->
@@ -79,9 +79,11 @@ object StandardIcsExporter : IcsExporter {
             lines += "BEGIN:VEVENT"
             lines += "UID:" + escapeText(event.id.value)
             lines += "DTSTAMP:19700101T000000Z"
-            lines += "DTSTART;TZID=" + quoteParam(event.zone.id) + ":" + formatLocal(event.start, event.zone)
+            // 使用 UTC 标准时间，避免发出缺 VTIMEZONE 的 TZID 引用；校区时区作为
+            // dis 私有快照元数据保留，供本应用往返而不影响普通日历客户端解析时刻。
+            lines += "DTSTART:" + formatUtc(event.start)
             event.end?.let { end ->
-                lines += "DTEND;TZID=" + quoteParam(event.zone.id) + ":" + formatLocal(end, event.zone)
+                lines += "DTEND:" + formatUtc(end)
             }
             lines += "SUMMARY:" + escapeText(event.title)
             event.place?.let { place -> lines += "LOCATION:" + escapeText(place.id) }
@@ -96,6 +98,7 @@ object StandardIcsExporter : IcsExporter {
             if (event.revision <= MAX_ICS_SEQUENCE) {
                 lines += "SEQUENCE:" + event.revision.toString()
             }
+            lines += "X-DIS-ZONE:" + escapeText(event.zone.id)
             lines += "X-DIS-KIND:" + event.kind.name
             lines += "X-DIS-EVENT-STATUS:" + event.status.name
             lines += "X-DIS-BUSY-LEVEL:" + event.busy.name
@@ -114,27 +117,23 @@ object StandardIcsExporter : IcsExporter {
     }
 
     private fun dedupeTimelineEvents(events: List<TimelineEvent>): List<TimelineEvent> {
-        val byId = LinkedHashMap<TimelineEventId, TimelineEvent>()
+        val revisionsById = LinkedHashMap<TimelineEventId, MutableMap<Long, TimelineEvent>>()
         events.forEach { event ->
-            val existing = byId[event.id]
-            when {
-                existing == null -> byId[event.id] = event
-                existing == event -> Unit
-                event.revision > existing.revision -> byId[event.id] = event
-                event.revision < existing.revision -> Unit
-                else -> throw IllegalArgumentException("ICS 导出事件 ${event.id.value} 同 revision 内容冲突")
+            val byRevision = revisionsById.getOrPut(event.id) { mutableMapOf() }
+            val sameRevision = byRevision[event.revision]
+            if (sameRevision == null) {
+                byRevision[event.revision] = event
+            } else if (sameRevision != event) {
+                throw IllegalArgumentException("ICS 导出事件 ${event.id.value} 同 revision 内容冲突")
             }
         }
-        return byId.values.toList()
+        return revisionsById.values.mapNotNull { byRevision ->
+            byRevision.maxByOrNull { it.key }?.value
+        }
     }
 
-    private fun formatLocal(instant: Instant, zone: ZoneId): String =
-        LocalDateTime.ofInstant(instant, zone).format(localDateTimeFormat)
-
-    private fun quoteParam(value: String): String {
-        require(value.none { it == '"' || it.isISOControl() }) { "ICS 参数值含引号或控制字符" }
-        return "\"" + value + "\""
-    }
+    private fun formatUtc(instant: Instant): String =
+        LocalDateTime.ofInstant(instant, ZoneOffset.UTC).format(localDateTimeFormat) + "Z"
 
     internal fun escapeText(value: String): String = buildString {
         value.forEach { ch ->
@@ -217,6 +216,7 @@ object IcsParser {
         var start: Pair<Instant, ZoneId>? = null
         var end: Pair<Instant, ZoneId>? = null
         var location: String? = null
+        var disZone: ZoneId? = null
         var disKind: TimelineKind? = null
         var disStatus: EventStatus? = null
         var standardStatus: EventStatus? = null
@@ -236,6 +236,7 @@ object IcsParser {
                 "STATUS" -> standardStatus = parseStandardStatus(property.value)
                 "TRANSP" -> standardBusy = parseStandardTransparency(property.value)
                 "SEQUENCE" -> sequence = parseNonNegativeLong(property.value, property.name)
+                "X-DIS-ZONE" -> disZone = parseZone(unescapeText(property.value))
                 "X-DIS-KIND" -> disKind = parseEnum<TimelineKind>(property.value, property.name)
                 "X-DIS-EVENT-STATUS" -> disStatus = parseEnum<EventStatus>(property.value, property.name)
                 "X-DIS-BUSY-LEVEL" -> disBusy = parseEnum<BusyLevel>(property.value, property.name)
@@ -265,7 +266,7 @@ object IcsParser {
             title = title?.takeIf { it.isNotBlank() } ?: throw IcsParseException("VEVENT 缺少 SUMMARY"),
             start = parsedStart.first,
             end = endInstant,
-            zone = parsedStart.second,
+            zone = disZone ?: parsedStart.second,
             location = location,
             kind = disKind,
             status = disStatus ?: standardStatus,
@@ -322,18 +323,22 @@ object IcsParser {
     }
 
     private fun dedupeSnapshots(snapshots: List<IcsEventSnapshot>): List<IcsEventSnapshot> {
-        val byUid = LinkedHashMap<String, IcsEventSnapshot>()
+        val revisionsByUid = LinkedHashMap<String, MutableMap<Long?, IcsEventSnapshot>>()
         snapshots.forEach { snapshot ->
-            val existing = byUid[snapshot.uid]
-            when {
-                existing == null -> byUid[snapshot.uid] = snapshot
-                existing == snapshot -> Unit
-                (snapshot.revision ?: Long.MIN_VALUE) > (existing.revision ?: Long.MIN_VALUE) -> byUid[snapshot.uid] = snapshot
-                (snapshot.revision ?: Long.MIN_VALUE) < (existing.revision ?: Long.MIN_VALUE) -> Unit
-                else -> throw IcsParseException("ICS UID ${snapshot.uid} 重复且内容冲突")
+            val byRevision = revisionsByUid.getOrPut(snapshot.uid) { mutableMapOf() }
+            val sameRevision = byRevision[snapshot.revision]
+            if (sameRevision == null) {
+                byRevision[snapshot.revision] = snapshot
+            } else if (sameRevision != snapshot) {
+                throw IcsParseException("ICS UID ${snapshot.uid} 重复且内容冲突")
             }
         }
-        return byUid.values.toList()
+        return revisionsByUid.values.mapNotNull { byRevision ->
+            // 有 revision 的版本总是比缺失 revision 的版本新；缺失 revision 只在没有
+            // 任何显式版本时才作为快照候选。相同 (uid, revision) 已在上面做全量一致检查。
+            val highestPresentRevision = byRevision.keys.filterNotNull().maxOrNull()
+            if (highestPresentRevision != null) byRevision[highestPresentRevision] else byRevision[null]
+        }
     }
 
     private inline fun <reified T : Enum<T>> parseEnum(value: String, property: String): T =

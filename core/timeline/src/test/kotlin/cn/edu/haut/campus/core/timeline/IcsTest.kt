@@ -38,6 +38,7 @@ class IcsTest {
         val ics = StandardIcsExporter.export(listOf(event(title = longTitle)), "课程日历")
 
         assertTrue(ics.endsWith("\r\n"))
+        assertFalse(ics.contains("METHOD:"))
         val withoutStructuralBreaks = ics.replace("\r\n", "")
         assertFalse(withoutStructuralBreaks.contains('\r'))
         assertFalse(withoutStructuralBreaks.contains('\n'))
@@ -96,7 +97,7 @@ class IcsTest {
     }
 
     @Test
-    fun `跨日事件按校区时区写本地墙钟并完整往返`() {
+    fun `跨日事件按 UTC 标准时间导出并保留校区时区往返`() {
         val overnight = event(
             start = "2026-03-02T14:00:00Z",
             end = "2026-03-02T22:00:00Z"
@@ -105,8 +106,10 @@ class IcsTest {
         val ics = StandardIcsExporter.export(listOf(overnight), "课程日历")
         val snapshot = IcsParser.parseEvents(ics).single()
 
-        assertTrue(ics.contains("DTSTART;TZID=\"Asia/Shanghai\":20260302T220000\r\n"))
-        assertTrue(ics.contains("DTEND;TZID=\"Asia/Shanghai\":20260303T060000\r\n"))
+        assertTrue(ics.contains("DTSTART:20260302T140000Z\r\n"))
+        assertTrue(ics.contains("DTEND:20260302T220000Z\r\n"))
+        assertTrue(ics.contains("X-DIS-ZONE:Asia/Shanghai\r\n"))
+        assertFalse(ics.contains("TZID="))
         assertEquals(IcsEventSnapshot.from(overnight), snapshot)
         assertEquals(zone, snapshot.zone)
     }
@@ -188,6 +191,52 @@ class IcsTest {
     }
 
     @Test
+    fun `导出同 revision 冲突检查与最高版本顺序无关`() {
+        val low = event(title = "高等数学", revision = 1)
+        val conflictingLow = low.copy(title = "另一门课", revision = 1)
+        val high = low.copy(title = "高等数学（新）", revision = 2)
+
+        listOf(
+            listOf(high, low, conflictingLow),
+            listOf(low, conflictingLow, high)
+        ).forEach { events ->
+            try {
+                StandardIcsExporter.export(events, "课程日历")
+                fail("预期导出同 revision 冲突被拒绝")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(expected.message.orEmpty().contains("同 revision 内容冲突"))
+            }
+        }
+    }
+
+    @Test
+    fun `导入同 revision 冲突检查与最高版本顺序无关`() {
+        val low = event(title = "高等数学", revision = 1)
+        val conflictingLow = low.copy(title = "另一门课", revision = 1)
+        val high = low.copy(title = "高等数学（新）", revision = 2)
+        val lowIcs = StandardIcsExporter.export(listOf(low), "课程日历")
+        val conflictingIcs = StandardIcsExporter.export(listOf(conflictingLow), "课程日历")
+        val highIcs = StandardIcsExporter.export(listOf(high), "课程日历")
+        val highFirst = insertEventBlocks(
+            highIcs,
+            listOf(eventBlock(lowIcs), eventBlock(conflictingIcs))
+        )
+        val highLast = insertEventBlocks(
+            lowIcs,
+            listOf(eventBlock(conflictingIcs), eventBlock(highIcs))
+        )
+
+        listOf(highFirst, highLast).forEach { text ->
+            try {
+                IcsParser.parseEvents(text)
+                fail("预期导入同 revision 冲突被拒绝")
+            } catch (expected: IcsParseException) {
+                assertTrue(expected.message.orEmpty().contains("重复且内容冲突"))
+            }
+        }
+    }
+
+    @Test
     fun `标准 ICS 状态透明度与 SEQUENCE 可作为外部导入回退`() {
         val external = "BEGIN:VCALENDAR\r\n" +
             "VERSION:2.0\r\n" +
@@ -222,6 +271,11 @@ class IcsTest {
     }
 
     private fun physicalLines(ics: String): List<String> = ics.removeSuffix("\r\n").split("\r\n")
+
+    private fun insertEventBlocks(baseIcs: String, blocks: List<String>): String = baseIcs.replace(
+        "END:VCALENDAR",
+        blocks.joinToString("\r\n") + "\r\nEND:VCALENDAR"
+    )
 
     private fun eventBlock(ics: String): String {
         val begin = ics.indexOf("BEGIN:VEVENT")
