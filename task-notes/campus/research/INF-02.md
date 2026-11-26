@@ -13,6 +13,16 @@
 5. 静态抽取 W0-08 进行中分支的 route(...) 表后，也是 97 个 core 路由与同一云端契约 100% 双向一致；因此本次收敛不与 W0-08 路由拆分方向冲突。
 6. 12 个 /api/v1/moments/** extension 路由在 main 与 W0-08 中都实际存在，但不在 OpenAPI/endpoint inventory；这是 AUTO-012 已记录的显式缺口。本卡按要求只记录缺口和建立机制，未把 moments 契约化、未改业务。
 
+## 1.1 对独立盘点结论的逐项确认与纠偏
+
+主代理转交的独立盘点要求交叉校验。复核结果如下：
+
+1. 文件一致性数量需要纠偏：按两个 base SHA 用 git show 重新计算 SHA-256，12 个文件中 10 个逐字节一致、2 个不同；不是 9 个一致。10 个一致文件见 §3 表。
+2. 确认漂移文件只有 endpoint-inventory.yaml 与 openapi/cloud-v1.yaml；确认云端多 30 个操作、Android 0 个独有，且两文件的新增集合相同。
+3. 确认共享操作中具有实质语义漂移的是 refundAdminOrder（单人直接退款 → 双人审批退款请求）和 oidc/callback（303 重复回调恢复与 401 内容协商）；reservation-quote 的 200/summary 主要是措辞详略差异，采用云版。
+4. 独立盘点未逐项列出的附带差异也已确认：reservation-quote 在 inventory 中缺 owner，云端补为 reservations；ReservationPlan 相关 schema 的 repeat_days、remaining_days、end_local_date 字段只存在于云版。它们同样采用云版。
+5. 确认 moments 在两仓契约中均 0 命中；12 个 extension 只存在于运行时，属 AUTO-012 预存缺口，不在本卡契约化。
+
 ## 2. 方法与证据边界
 
 - 用 SHA-256 对两仓 contracts/ 全树逐文件比对；用 YAML 解析比较 OpenAPI paths、operationId、endpoint inventory；用正则静态提取 app.mjs 的 register/registerExtension 以及 W0-08 routes/*.mjs 的 route(...) 表。
