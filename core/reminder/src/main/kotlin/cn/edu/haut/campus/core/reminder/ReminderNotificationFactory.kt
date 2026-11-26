@@ -357,10 +357,12 @@ object ReminderNotificationFactory {
         event: ReminderEvent,
         nextEventTitleAndRoom: String? = null,
         lockscreenPrivate: Boolean = false,
-        now: Instant = Instant.now()
+        now: Instant = Instant.now(),
+        progressSnapshot: LiveProgressModel.ProgressSnapshot? = null
     ): Boolean {
         if (!accountScope.isActive(context) || !hasPostNotificationPermission(context)) return false
         ensureChannels(context)
+        if (!hasEnabledNotificationChannel(context, CHANNEL_LIVE_COURSE)) return false
 
         val endInstant = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
         if (!now.isBefore(endInstant)) {
@@ -379,8 +381,6 @@ object ReminderNotificationFactory {
         val endLocalTime = endInstant.atZone(HAUT_ZONE_ID).toLocalTime().format(TIME_FORMATTER)
         val roomPart = event.locationText?.takeIf { it.isNotBlank() } ?: "教室待定"
 
-        val totalMinutes = Duration.between(event.startAt, endInstant).toMinutes().toInt().coerceAtLeast(1)
-        val elapsedMinutes = Duration.between(event.startAt, now).toMinutes().toInt().coerceIn(0, totalMinutes)
         val remainingMinutes = if (isInClass) {
             Duration.between(now, endInstant).toMinutes().coerceAtLeast(1L)
         } else {
@@ -456,12 +456,10 @@ object ReminderNotificationFactory {
         builder.extras.putBoolean("android.requestPromotedOngoing", true)
         builder.extras.putString("android.shortCriticalText", shortChipText)
 
-        if (isInClass) {
-            builder.setProgress(totalMinutes, elapsedMinutes, false)
-        } else {
-            val leadWindow = 45
-            val waitProgress = (leadWindow - remainingMinutes.toInt()).coerceIn(0, leadWindow)
-            builder.setProgress(leadWindow, waitProgress, false)
+        // 只有节拍调度成功后调用方才传入 snapshot；否则这里刻意不调用 setProgress，
+        // 让通知退化为系统 Chronometer 倒计时，避免展示一个永远静止的进度条。
+        if (progressSnapshot != null) {
+            builder.setProgress(progressSnapshot.progressMax, progressSnapshot.progressUnits, false)
         }
 
         if (contentIntent != null) {
@@ -489,9 +487,42 @@ object ReminderNotificationFactory {
         }
 
         return runCatching {
-            NotificationManagerCompat.from(context).notify(LIVE_COURSE_NOTIFICATION_ID, builder.build())
+            val notification = withApi36ProgressStyleIfAvailable(
+                context = context,
+                notification = builder.build(),
+                progressSnapshot = progressSnapshot
+            )
+            NotificationManagerCompat.from(context).notify(LIVE_COURSE_NOTIFICATION_ID, notification)
             true
         }.getOrDefault(false)
+    }
+
+    private fun withApi36ProgressStyleIfAvailable(
+        context: Context,
+        notification: Notification,
+        progressSnapshot: LiveProgressModel.ProgressSnapshot?
+    ): Notification {
+        if (progressSnapshot == null || Build.VERSION.SDK_INT < 36) return notification
+        return runCatching {
+            buildApi36ProgressStyleNotification(context, notification, progressSnapshot)
+        }.getOrDefault(notification)
+    }
+
+    @SuppressLint("NewApi")
+    private fun buildApi36ProgressStyleNotification(
+        context: Context,
+        notification: Notification,
+        progressSnapshot: LiveProgressModel.ProgressSnapshot
+    ): Notification {
+        val progressStyle = Notification.ProgressStyle()
+            .setProgressSegments(
+                listOf(Notification.ProgressStyle.Segment(progressSnapshot.progressMax))
+            )
+            .setProgress(progressSnapshot.progressUnits)
+            .setStyledByProgress(false)
+        return Notification.Builder.recoverBuilder(context, notification)
+            .setStyle(progressStyle)
+            .build()
     }
 
     fun cancelLiveCourseNotification(context: Context) {
@@ -573,6 +604,14 @@ object ReminderNotificationFactory {
         runCatching {
             NotificationManagerCompat.from(context).cancelAll()
         }
+    }
+
+    private fun hasEnabledNotificationChannel(context: Context, channelId: String): Boolean {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return false
+        val channel = runCatching { manager.getNotificationChannel(channelId) }.getOrNull()
+            ?: return false
+        return channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     private fun hasPostNotificationPermission(context: Context): Boolean {
