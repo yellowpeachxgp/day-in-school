@@ -54,7 +54,7 @@ class LibraryBookingTripleSchedulePolicyTest {
     }
 
     @Test
-    fun derivedStageWindowsAreHalfOpenAndFireExpiresAfterThirtyMinutes() {
+    fun derivedStageWindowsHandOffAndFireExpiryIsInclusive() {
         val targetDate = LocalDate.of(2026, 11, 3)
         val targetTime = LocalTime.of(8, 0)
         val fireAt = epochMs(targetDate, targetTime, shanghai)
@@ -125,13 +125,17 @@ class LibraryBookingTripleSchedulePolicyTest {
             facts, TripleScheduleStage.FIRE, expiresAt - 1
         )
         assertDecision(
-            LibraryBookingStageGateDecision.FIRE_WINDOW_CLOSED,
+            LibraryBookingStageGateDecision.DUE,
             facts, TripleScheduleStage.FIRE, expiresAt
+        )
+        assertDecision(
+            LibraryBookingStageGateDecision.FIRE_WINDOW_CLOSED,
+            facts, TripleScheduleStage.FIRE, expiresAt + 1
         )
     }
 
     @Test
-    fun expiryIsClampedAtSchoolWindowEndExclusive() {
+    fun expiryIsClampedAtSchoolWindowEndAndCutoffIsInclusive() {
         val targetDate = LocalDate.of(2026, 11, 3)
         val targetTime = LocalTime.of(21, 29, 59)
         val fireAt = epochMs(targetDate, targetTime, shanghai)
@@ -152,8 +156,12 @@ class LibraryBookingTripleSchedulePolicyTest {
             facts, TripleScheduleStage.FIRE, schoolEndAt - 1
         )
         assertDecision(
-            LibraryBookingStageGateDecision.FIRE_WINDOW_CLOSED,
+            LibraryBookingStageGateDecision.DUE,
             facts, TripleScheduleStage.FIRE, schoolEndAt
+        )
+        assertDecision(
+            LibraryBookingStageGateDecision.FIRE_WINDOW_CLOSED,
+            facts, TripleScheduleStage.FIRE, schoolEndAt + 1
         )
     }
 

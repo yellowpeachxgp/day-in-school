@@ -8,8 +8,8 @@ import java.time.ZonedDateTime
 /**
  * T−30/T−5/T 三阶段预约窗口的纯 JVM 语义模型。
  *
- * 所有窗口都是半开区间 [opensAt, closesAt)：到达 closesAt 的同一毫秒即视为窗口关闭。
- * FIRE 的 closesAt 就是 expiresAt；这样 21:30:00 这个校方窗口 exclusive end 不会被误执行。
+ * PRECHECK 与 FINAL_CHECK 使用半开区间 [opensAt, closesAt)，保证相邻阶段在边界毫秒唯一归属。
+ * FIRE 沿用 planner 现有语义使用闭区间 [fireAt, expiresAt]：expiresAt 是最后可执行毫秒，之后第一毫秒才过期。
  * 本模型只决定“本地执行门禁”；CLOUD_HOSTED 的权威执行在云端，永不因本地闹钟触发写操作。
  */
 data class LibraryBookingTripleScheduleFacts(
@@ -23,10 +23,17 @@ data class LibraryBookingTripleScheduleFacts(
 data class LibraryBookingStageWindow(
     val stage: TripleScheduleStage,
     val opensAtEpochMillis: Long,
-    val closesAtEpochMillis: Long
+    val closesAtEpochMillis: Long,
+    val closeInclusive: Boolean
 ) {
-    fun contains(atEpochMillis: Long): Boolean =
-        atEpochMillis >= opensAtEpochMillis && atEpochMillis < closesAtEpochMillis
+    fun contains(atEpochMillis: Long): Boolean {
+        if (atEpochMillis < opensAtEpochMillis) return false
+        return if (closeInclusive) {
+            atEpochMillis <= closesAtEpochMillis
+        } else {
+            atEpochMillis < closesAtEpochMillis
+        }
+    }
 }
 
 data class LibraryBookingTripleScheduleWindows(
@@ -102,17 +109,20 @@ object LibraryBookingTripleSchedulePolicy {
             precheck = LibraryBookingStageWindow(
                 stage = TripleScheduleStage.PRECHECK,
                 opensAtEpochMillis = precheckAt,
-                closesAtEpochMillis = finalCheckAt
+                closesAtEpochMillis = finalCheckAt,
+                closeInclusive = false
             ),
             finalCheck = LibraryBookingStageWindow(
                 stage = TripleScheduleStage.FINAL_CHECK,
                 opensAtEpochMillis = finalCheckAt,
-                closesAtEpochMillis = fireAt
+                closesAtEpochMillis = fireAt,
+                closeInclusive = false
             ),
             fire = LibraryBookingStageWindow(
                 stage = TripleScheduleStage.FIRE,
                 opensAtEpochMillis = fireAt,
-                closesAtEpochMillis = expiresAt
+                closesAtEpochMillis = expiresAt,
+                closeInclusive = true
             ),
             expiresAtEpochMillis = expiresAt
         )
@@ -132,7 +142,7 @@ object LibraryBookingTripleSchedulePolicy {
                 LibraryBookingStageGateDecision.CLOUD_HOSTED_NOT_LOCAL
             atEpochMillis < window.opensAtEpochMillis ->
                 LibraryBookingStageGateDecision.NOT_DUE
-            atEpochMillis >= window.closesAtEpochMillis ->
+            !window.contains(atEpochMillis) ->
                 if (stage == TripleScheduleStage.FIRE) {
                     LibraryBookingStageGateDecision.FIRE_WINDOW_CLOSED
                 } else {
