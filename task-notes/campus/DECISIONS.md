@@ -38,6 +38,7 @@
 | AUTO-009 | 2026-11-26 | acceptance 工具第一/第二版因含拼接编码的 devbox 敏感字面量，PR#48/#56 均不合并；最终以 acc/cis-stage-0-skeleton-clean2 二次干净重建，隐私补救例外，待用户复核 | 主代理隐私裁决：acceptance 骨架与 INF-01 同样不得把拼接编码的敏感字面量带入 main 历史 | 待用户复核 |
 | AUTO-010 | 2026-11-27 | INF-00 属 secrets scanner 自举前置且两仓契约漂移已由 INF-02 专卡处理；train/cis-001 的 secrets exit3 与 contracts exit1 不视为 INF-00 内容失败。INF-00 可基于人工/审阅脱敏证据、android-full/cloud 全绿、两独立审阅与阶段验收先合入；INF-01/INF-02 合入后必须在 main 重跑 secrets/contracts。自主决策，待用户复核 | 主代理自举与依赖裁决：secrets/contracts 工具链尚未合入 main 时不能把固有 bootstrap 缺口记为 INF-00 内容失败；后续 main 重跑作为强制补偿门禁 | 待用户复核 |
 | AUTO-011 | 2026-11-27 | W0-07 独占既有 build.gradle.kts/gradle/**；W1/W4 新纯 JVM 模块在并行期只允许新增本模块 build.gradle.kts 并在 settings.gradle.kts 末尾追加注册，不得修改 root 或既有构建文件。此为例行解释而非放松热点规则，冲突由列车处理；自主决策，待用户复核 | 主代理热点文件解释：限制并行期 Gradle 冲突面，同时不改变 W0-07 对既有构建文件的独占；列车负责相邻追加行冲突合并 | 待用户复核 |
+| AUTO-012 | 2026-11-27 | W0-08 不改 contracts/；97 个 core endpoint 做 OpenAPI/inventory/runtime 三方 100% 双向，12 个预存 moments extension 只做显式 extension inventory 与 exact 自检，契约化缺口由 INF-02/契约线关闭；自主决策，待用户复核 | 主代理契约边界裁决：W0-08 专注路由拆分与既有 core endpoint 对齐，不越权修改契约权威；extension 缺口必须由契约线关闭 | 待用户复核 |
 
 ## 追加规则
 
