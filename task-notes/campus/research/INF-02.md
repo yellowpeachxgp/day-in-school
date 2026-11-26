@@ -110,12 +110,25 @@
 ## 9. 本次建立的机制
 
 1. 新增 tools/contract-ci/sync-contracts.mjs：
-   - sync：默认读取云端 git origin/main，把 contracts/ 单向镜像到 Android，含多余文件删除；只有显式 --use-cloud-worktree 才读取云端工作区。
+   - sync：默认先执行 git fetch origin main 刷新 remote-tracking ref，再读取云端 git origin/main，把 contracts/ 单向镜像到 Android，含多余文件删除；显式 --cloud-ref 或 --use-cloud-worktree 时由调用者管理来源。
+   - sync 写入采用事务化替换：先校验 cloud-root 为 cloud-in-school 仓库 checkout 或完整导出，完整 staging 云端树并备份受影响文件；每个文件用临时文件加 rename 替换，异常时按逆序回滚，避免半同步状态。
    - check：递归比较两棵 contracts/ 树的文件清单与每个文件 SHA-256；缺失、多余、哈希不同均失败。
    - fingerprint：输出确定性文件哈希清单与 CONTRACTS_TREE_SHA256。
 2. Android CI 检出 cloud-in-school main 到独立目录，执行 sync-contracts.mjs check；因此 Android 副本相对云端 main 漂移时托管 CI 变红。
 3. 云端 CI 在 contract:check 后输出权威 contracts/ 哈希清单。跨仓强制检查采用云端权威到 Android 副本的方向，避免权威侧等待副本侧而造成成对 PR 合并顺序死锁。
 4. 本卡用该工具完成同步：12 个文件，新增 0、更新 2、删除 0、未变 10，最终逐字节一致。
+
+## 9.1 一审后事务化修正
+
+独立审阅指出逐文件直接 write/unlink 可能在中途失败时留下半同步状态。修正后实现为：云端来源先完整 staging 并比对 staging 指纹；受影响既有文件先复制到事务 backup；正式替换逐文件使用临时文件加 rename；任一异常按已执行操作逆序回滚新增、覆盖和删除。rollback 清理空目录时保留同步前已存在目录，避免把用于注入失败的预存目录误删。
+
+本地人为失败负例结果：
+
+1. 写入负例：第一文件已更新后，第二文件目标路径被预存目录阻塞；sync 退出码 1，第一文件恢复旧内容，阻塞目录保留，未同步多余文件未提前删除，事务目录已清理。
+2. 删除负例：第一多余文件已删除后，第二多余文件因目录权限注入失败；sync 退出码 1，已更新文件恢复旧内容，两个多余文件均恢复/保留，事务目录已清理。
+3. 防护负例：cloud-root 与 android-root 经 symlink 指向同一目录时 realpath 防护拒绝；package.json name 非 cloud-in-school 时身份校验拒绝且 Android 目标内容不变。
+
+动态 contracts/cloud/android/secrets 门禁结果仍以最终 PR 正文和 <campus-root>/logs/ 为准。
 
 ## 10. 残留风险与待决
 
