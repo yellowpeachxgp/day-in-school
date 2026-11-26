@@ -1,0 +1,35 @@
+# 决策记录（DECISIONS）
+
+> 每条记录包含编号、结论、日期和依据。D1–D16 是 MASTER_PLAN §0.5 的初始用户决策，日期均为 2026-11-26，权威表述以 `docs/roadmap/MASTER_PLAN.md` §0.5 为准。
+
+## D1–D16 初始用户决策
+
+| 编号 | 决策 | 落地要求 |
+|---|---|---|
+| D1 | **不与学校合作** | 学校数据只来自公开资料和用户本人账号的只读访问。#38 #41 的数据包由维护者从公开页面整理，每条带 `sources` 和 `verifiedAt`，代理产出的数据一律标 `UNVERIFIED`，等人工核对。选课提交、自动写入等需要校方授权的能力继续默认关闭，**不追求官方授权**。§11 第 1 条作废 |
+| D2 | **论坛（#45）和私信（#9）只留接口，不做** | 云端：`boards / posts / replies / reports / moderation / media` 端点全部写进 OpenAPI，标注 `x-dis-status: reserved`，实现统一返回 `501` 和错误码 `FEATURE_NOT_ENABLED`；**不建表、不写业务逻辑**。Android：`:core:community` 中定义 `CommunityForumPort`，只提供 `DisabledForumPort` 实现，开关 `community.forum` 默认关闭，没有任何 UI 入口。插件槽 `community.boards` 只登记为保留。G6 保留为将来开启的前置条件 |
+| D3 | **AI 功能用户自带 Key（BYOK）** | 新增 `AiProviderPort`（OpenAI 兼容的 chat 与 vision 接口，见 §6.8），用户填写 baseUrl、model、key。Key 用 Keystore AES-GCM 加密，按 Profile 隔离，不进备份、日志和诊断信息；云端不代理、不存储。默认关闭；每次发送前可预览发送内容；只允许 HTTPS。现有 Parcel AI Key 的存储方式能复用就复用 |
+| D4 | **两阶段执行：先 swe-2.1，再 neon** | 阶段 S：swe-2.1 完成全部 `[S]` 卡和可用的骨架 UI（M3 默认组件，状态矩阵完整，不做视觉打磨），并通过阶段 S 终验（§14）。阶段 N：之后才由 neon 执行全部 `[N]` 卡（§15）。两个阶段不重叠 |
+| D5 | **全程在开发机上构建和测试** | 编译、测试、Lint、截图、模拟器、容器全部在开发机上进行。本机 Mac（16GB）只保留代理会话、只含源码的 worktree，以及 `ssh / git / gh` 这类轻量命令（§12.2） |
+| D6 | **与企业项目共用开发机，互不干扰** | 校园项目的资源统一用 `cis-` 前缀，目录集中在 `/srv/xpeach-dev/campus/`。不得触碰 `xpeach-stg-*`、`ent-*`、`swe2-*` 容器，企业项目的 runner、`/srv/xpeach-dev/repos/xpeach-*`、`/srv/xpeach-dev/worktrees/` 和 `/srv/xpeach-ci`。严禁任何全局 `docker ... prune` |
+| D7 | **全程 10 个子代理并发** | 槽 1–8 通用，槽 9 集成列车，槽 10 阶段联调验收（§12.4） |
+| D8 | **合并方式** | `main` 是唯一集成分支。只用 merge commit；禁止 squash、rebase、force push、改写历史；按合并列车合入（§12.5） |
+| D9 | **交叉审阅** | 每个 PR 至少 1 个没参与它的审阅者；Room 迁移、擦除链路、凭据与 Key 存储、契约、自动化动作风险等级、备份格式类 PR 需要 2 个独立审阅者 |
+| D10 | **推理强度分级** | 简单任务用 `high`，其余一律 `xhigh`；封闭清单见 §12.7 |
+| D11 | **CI 继续用 GitHub 托管 runner** | 两个仓库都是**公开仓库**，托管 runner 免费。**禁止给公开仓库注册开发机自托管 runner**：任何人提交的 fork PR 都可能在开发机上执行代码。开发机现场门禁是第一道关，托管 CI 作为合并记录 |
+| D12 | **发布边界** | 不推 `v*` 标签（会触发 `android-release.yml` 正式发版）、不建 GitHub Release、不部署云端生产机、不碰正式签名密钥 |
+| D13 | **公开的 GitHub 操作要用户确认** | issue 的回复、关闭、加标签，先把草稿写进 `task-notes/campus/issue-replies.md`，用户确认后再由主代理执行。PR 正常创建，不在此列 |
+| D14 | **编号统一分配** | Room 版本号（从 v11 起）、云端 SQL 迁移编号（从 `0005` 起）由主代理分配（初始分配见 §13），带迁移的 PR 严格按编号顺序合入 |
+| D15 | **契约的唯一权威是 `cloud-in-school/contracts/`** | Android 仓库的 `contracts/` 是同步副本。目前两份已经漂移（`openapi/cloud-v1.yaml`、`endpoints/endpoint-inventory.yaml` 不同），由 INF-02 收敛，并在两仓 CI 中加一致性检查。契约同一时间只由契约线（CT 系列）修改 |
+| D16 | **开发机地址和账号不进公开仓库** | 仓库里的 `DEVBOX.md` 和脚本一律用 `<devbox>` 或环境变量 `CIS_DEVBOX`；真实地址只出现在本机启动提示词里。任何密码、Token、Key 都不写进仓库、PR、Issue、任务板、日志和子代理汇总 |
+
+## 自主决策
+
+| 编号 | 日期 | 结论 | 依据 | 状态 |
+|---|---|---|---|---|
+| AUTO-001 | 2026-11-26 | bootstrap 期间 INF-00/INF-01 与文档卡无法等待 cis-gate，可用静态自检先开 PR，后续仍须补现场门禁；自主决策，待用户复核 | INF-00 尚未使 cis-gate 可用；INF-01 属于治理与文档基线，若不先行入库会阻塞全部任务卡引用 | 待用户复核 |
+
+## 追加规则
+
+- 主代理自主决策按「计划推荐默认 → 与已决事项一致 → 对隐私和数据更保守」顺序选择，并标注「自主决策，待用户复核」。
+- 用户复核推翻某条自主决策时，追加新决策，不改写原记录。
