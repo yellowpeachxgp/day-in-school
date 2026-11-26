@@ -602,7 +602,7 @@ class CampusRepository internal constructor(
     }
 
     val studentProfileFlow: Flow<StudentProfile?> =
-        dao.observeStudentProfile().map { it?.toDomain() }
+        gradesRepository.studentProfileFlow
 
     val termsFlow: Flow<List<Term>> =
         dao.observeTerms().map { list -> list.map { it.toDomain() } }
@@ -626,7 +626,7 @@ class CampusRepository internal constructor(
         dao.observeOccurrenceOverrides().map { list -> list.map { it.toDomain() } }
 
     val gradeAttemptsFlow: Flow<List<GradeAttempt>> =
-        dao.observeGradeAttempts().map { list -> list.map { it.toDomain() } }
+        gradesRepository.gradeAttemptsFlow
 
     val buildingsFlow: Flow<List<Building>> =
         combine(dao.observeBuildings(), preferences.data) { list, prefs ->
@@ -2840,29 +2840,15 @@ class CampusRepository internal constructor(
         officialGpa: BigDecimal? = null,
         officialNote: String? = null,
         replaceExisting: Boolean = false
-    ) {
-        database.withTransaction {
-            if (replaceExisting) {
-                dao.clearGradeAttempts()
-            }
-            dao.upsertGradeAttempts(attempts.map { it.toEntity() })
-        }
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
-            prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
-            if (officialGpa != null) {
-                prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA] = officialGpa.toPlainString()
-                prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE] = officialNote ?: "正方教务系统返回平均学分绩点"
-            } else {
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
-            }
-        }
-    }
+    ) = gradesRepository.saveImportedGrades(
+        attempts = attempts,
+        officialGpa = officialGpa,
+        officialNote = officialNote,
+        replaceExisting = replaceExisting
+    )
 
-    suspend fun saveStudentProfile(profile: StudentProfile) {
-        dao.upsertStudentProfile(profile.toEntity())
-    }
+    suspend fun saveStudentProfile(profile: StudentProfile) =
+        gradesRepository.saveStudentProfile(profile)
 
     suspend fun saveImportedExams(
         exams: List<ExamScheduleItem>,
@@ -3475,9 +3461,8 @@ class CampusRepository internal constructor(
         )
     }
 
-    suspend fun setGpaPrivacyShield(enabled: Boolean) {
-        preferences.edit { it[CampusRepositoryPrefKeys.GPA_PRIVACY] = enabled }
-    }
+    suspend fun setGpaPrivacyShield(enabled: Boolean) =
+        gradesRepository.setGpaPrivacyShield(enabled)
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
         preferences.edit { it[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = enabled }
