@@ -73,6 +73,36 @@ class LiveCourseCoordinatorRobolectricTest {
     }
 
     @Test
+    fun `tick fire republishes notification with advanced in class progress`() = runBlocking {
+        val fixture = createFixture(
+            startLocal = LocalTime.of(10, 0),
+            endLocal = LocalTime.of(11, 30),
+            nowLocal = LocalTime.of(10, 20)
+        )
+        fixture.coordinator.reconcileNow("TEST_PROGRESS_INITIAL", forceRescheduleAlarms = true, now = fixture.now)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val initial = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
+        val initialProgress = initial.extras.getInt("android.progress")
+        val initialTick = requireLiveAlarm(ShadowLiveTask.TICK)
+        val initialTickIntent = savedIntent(initialTick)
+
+        val tickNow = fixture.now.plus(Duration.ofMinutes(5))
+        fixture.coordinator.onAlarmFired(
+            taskId = LiveCourseTicker.TASK_ID,
+            expectedGeneration = LiveCourseTicker.GENERATION,
+            now = tickNow,
+            expectedEventKey = initialTickIntent.getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_KEY),
+            expectedEventRevision = initialTickIntent.getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_REVISION),
+            expectedPolicyRevision = initialTickIntent.getStringExtra(AndroidAlarmScheduler.EXTRA_POLICY_REVISION)
+        )
+
+        val updated = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
+        assertTrue(updated.extras.getInt("android.progress") > initialProgress)
+        val nextTick = requireLiveAlarm(ShadowLiveTask.TICK)
+        assertEquals(tickNow.plus(Duration.ofMinutes(5)).toEpochMilli(), nextTick.triggerAtTime)
+    }
+
+    @Test
     fun `pre class live window start schedules tick and start boundary`() = runBlocking {
         val fixture = createFixture(
             startLocal = LocalTime.of(10, 0),
