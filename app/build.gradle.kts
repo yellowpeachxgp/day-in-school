@@ -93,13 +93,12 @@ android {
 }
 
 roborazzi {
-    // 版本化基线放在源码树；separateOutputDirs 会再追加 debug/ 变体目录。
-    outputDir.set(file("src/test/roborazzi"))
+    // 版本化基线放在源码树。1.60 尚无内建 separateOutputDirs，因此显式按变体分目录。
+    outputDir.set(file("src/test/roborazzi/debug"))
     compare {
         // 比对实际图、diff 图和失败产物只留在 build/，不污染已提交基线。
-        outputDir.set(file("build/outputs/roborazzi-compare"))
+        outputDir.set(file("build/outputs/roborazzi-compare/debug"))
     }
-    separateOutputDirs.set(true)
 }
 
 dependencies {

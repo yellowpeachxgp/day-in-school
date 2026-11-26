@@ -14,7 +14,7 @@ work = "2.10.0"
 glance = "1.1.1"
 junit = "4.13.2"
 robolectric = "4.17"
-roborazzi = "1.79.0"
+roborazzi = "1.60.0"
 
 [libraries]
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
