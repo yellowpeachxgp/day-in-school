@@ -43,3 +43,5 @@ include(
     ":widget:week",
     ":core:events"
 )
+
+include(":core:ledger")
