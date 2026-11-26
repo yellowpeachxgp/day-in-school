@@ -121,7 +121,9 @@ class LiveCourseCoordinatorRobolectricTest {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val posted = requireNotNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
         assertTrue(posted.extras.getBoolean("android.showChronometer"))
-        assertTrue(!posted.extras.containsKey("android.progressMax"))
+        // Android framework extras 可能始终携带默认 0 值；关键是未写入有效进度上限/进度。
+        assertEquals(0, posted.extras.getInt("android.progressMax"))
+        assertEquals(0, posted.extras.getInt("android.progress"))
     }
 
     @Test
