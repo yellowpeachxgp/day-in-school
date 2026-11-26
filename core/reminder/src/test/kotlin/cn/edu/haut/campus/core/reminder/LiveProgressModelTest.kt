@@ -55,7 +55,7 @@ class LiveProgressModelTest {
         assertEquals(0L, snapshot?.elapsedInPhaseMs)
         assertEquals(0, snapshot?.progressUnits)
         assertEquals(endAt.toEpochMilli(), snapshot?.countdownTargetEpochMs)
-        assertEquals(startAt, snapshot?.windowStartAt)
+        assertEquals(startAt.minus(leadWindow), snapshot?.windowStartAt)
         assertEquals(endAt, snapshot?.nextBoundaryAt)
     }
 

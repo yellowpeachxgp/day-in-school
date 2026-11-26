@@ -31,7 +31,7 @@ object LiveProgressModel {
         val windowStartAtEpochMs: Long,
         val nextBoundaryAtEpochMs: Long
     ) {
-        /** task-102 预研命名别名：保留 progressUnits 以兼容本卡内已有调用。 */
+        /** progressUnits 的领域读取别名；windowStartAt 表示整个实况窗口起点。 */
         val progressCurrent: Int
             get() = progressUnits
 
@@ -84,7 +84,7 @@ object LiveProgressModel {
                 remainingMs = Duration.between(now, endAt).toMillis(),
                 progressUnits = scaledProgress(elapsedMs, classDurationMs),
                 countdownTargetEpochMs = endAt.toEpochMilli(),
-                windowStartAtEpochMs = startAt.toEpochMilli(),
+                windowStartAtEpochMs = windowStart.toEpochMilli(),
                 nextBoundaryAtEpochMs = endAt.toEpochMilli()
             )
         }
