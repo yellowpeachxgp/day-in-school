@@ -28,7 +28,7 @@
 |---|---|---|
 | OS | Debian GNU/Linux 13 (trixie)，Linux 6.12.116+deb13-amd64 | 只读记录 |
 | git | 2.47.3 | 只读记录 |
-| Node | v24.22.3 | 满足 cloud `>=22` 且 cloud 门禁已通过；项目目标 Node 22 的严格一致性仍待 INF-00/主代理确认 |
+| Node | campus-local v22.23.5；system v24.22.3 | `cis-gate` 优先使用 campus-local Node 22，满足 cloud `>=22`；system Node 仅作环境事实记录 |
 | Java | OpenJDK 21.0.13.1 | 只读记录 |
 | Docker | 29.10.0 | 校园容器只用 `cis-` 前缀 |
 | Android cmdline-tools | 22.0 | `cmdline-tools/latest/source.properties` |
