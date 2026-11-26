@@ -232,7 +232,7 @@ class ReminderReconcileWorker(
             context: Context,
             accountScope: AccountBackgroundScope
         ) {
-            val workManager = WorkManager.getInstance(context)
+            val workManager = runCatching { WorkManager.getInstance(context) }.getOrNull() ?: return
             listOf(
                 periodicWorkName(accountScope),
                 immediateWorkName(accountScope),
