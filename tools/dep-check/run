@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# tools/dep-check/run — 依赖方向与 ui/ 包 import 门禁（W0-07，能力 C25）
+#
+# 规则（AGENT_TASK_CARDS W0-07 / MASTER_PLAN §12）：
+#   1. core   不得依赖 feature / widget / app
+#   2. feature 不得依赖 feature / app
+#   3. widget  不得依赖 feature / app
+#   4. core:model 禁止任何项目依赖
+#   5. feature 模块内路径含 /ui/ 的 .kt 文件不得 import Repository 或 ViewModel
+#   6. 未识别模块族（非 core/feature/widget/app 前缀）视为违规，必须显式登记
+#
+# 例外登记：tools/dep-check/exceptions.txt，每行一条（# 后为必填原因）：
+#   :from:module -> :to:module  # 原因
+# 退出码：0 通过；1 存在违规；64 用法或环境错误。
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+cd "$ROOT_DIR"
+
+SETTINGS=settings.gradle.kts
+EXCEPTIONS=tools/dep-check/exceptions.txt
+
+if [ ! -f "$SETTINGS" ]; then
+  printf 'dep-check: ERROR: 未找到 %s（请在仓库根目录运行）
+' "$SETTINGS" >&2
+  exit 64
+fi
+
+# --- 解析 settings.gradle.kts 中 include(...) 的模块列表 -------------------
+modules=$(grep -oE '":([A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*)"' "$SETTINGS" | tr -d '"' | sort -u)
+if [ -z "$modules" ]; then
+  printf 'dep-check: ERROR: 未能从 %s 解析出任何模块
+' "$SETTINGS" >&2
+  exit 64
+fi
+
+# --- 读取例外登记（去掉注释与空白，格式 :from->:to） -------------------------
+exceptions_file=$(mktemp /tmp/cis-dep-exceptions.XXXXXX)
+stale_exceptions_file=$(mktemp /tmp/cis-dep-stale.XXXXXX)
+trap 'rm -f "$exceptions_file" "$stale_exceptions_file"' EXIT
+: > "$exceptions_file"
+if [ -f "$EXCEPTIONS" ]; then
+  (grep -vE '^[[:space:]]*(#|$)' "$EXCEPTIONS" || true) | sed 's/#.*$//' | sed 's/[[:space:]]//g' | while IFS= read -r line; do
+    [ -n "$line" ] && printf '%s
+' "$line" >> "$exceptions_file"
+  done
+fi
+cp "$exceptions_file" "$stale_exceptions_file"
+
+violations=0
+warnings=0
+edges=0
+
+family_of() {
+  case "$1" in
+    :core:*) echo core ;;
+    :feature:*) echo feature ;;
+    :widget:*) echo widget ;;
+    :app) echo app ;;
+    *) echo unknown ;;
+  esac
+}
+
+report_violation() {
+  violations=$((violations + 1))
+  printf 'dep-check: VIOLATION: %s
+' "$1"
+}
+
+report_warning() {
+  warnings=$((warnings + 1))
+  printf 'dep-check: WARNING: %s
+' "$1"
+}
+
+# --- 逐模块提取 project("...") 依赖并套用方向规则 ----------------------------
+while IFS= read -r module; do
+  [ -z "$module" ] && continue
+  dir=$(printf '%s' "$module" | sed 's/^://; s/:/\//g')
+  build_file="$dir/build.gradle.kts"
+  if [ ! -f "$build_file" ]; then
+    report_violation "模块 $module 已注册但缺少 $build_file"
+    continue
+  fi
+  fam_from=$(family_of "$module")
+  if [ "$fam_from" = unknown ]; then
+    report_violation "模块 $module 不属于已知模块族（core/feature/widget/app），请先在 dep-check 登记分类"
+  fi
+
+  # 提取 project(":x:y") 与 project(path = ":x:y") 两种写法
+  deps=$((grep -oE 'project\((path[[:space:]]*=[[:space:]]*)?":[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*"\)' "$build_file" || true) \
+    | sed -E 's/^project\((path[[:space:]]*=[[:space:]]*)?"//; s/"\)$//' | sort -u)
+
+  while IFS= read -r dep; do
+    [ -z "$dep" ] && continue
+    edges=$((edges + 1))
+    key="$module->$dep"
+    if grep -qxF -- "$key" "$exceptions_file"; then
+      # 命中例外登记：豁免，并从「待清理过时例外」清单移除
+      grep -vxF -- "$key" "$stale_exceptions_file" > "$stale_exceptions_file.next" || true
+      mv "$stale_exceptions_file.next" "$stale_exceptions_file"
+      continue
+    fi
+
+    fam_to=$(family_of "$dep")
+    if [ "$fam_to" = unknown ]; then
+      report_violation "$module -> $dep：目标不属于已知模块族，请先登记分类"
+      continue
+    fi
+    if [ "$module" = ":core:model" ]; then
+      report_violation "$module -> $dep：core:model 禁止任何项目依赖"
+      continue
+    fi
+    case "$fam_from" in
+      core)
+        case "$fam_to" in feature|widget|app)
+          report_violation "$module -> $dep：core 不得依赖 $fam_to" ;;
+        esac ;;
+      feature)
+        case "$fam_to" in feature|app)
+          report_violation "$module -> $dep：feature 不得依赖 $fam_to" ;;
+        esac ;;
+      widget)
+        case "$fam_to" in feature|app)
+          report_violation "$module -> $dep：widget 不得依赖 $fam_to" ;;
+        esac ;;
+    esac
+  done < <(printf '%s
+' "$deps")
+done < <(printf '%s
+' "$modules")
+
+# --- ui/ 包 import 检查：feature 模块内路径含 /ui/ 的 .kt 文件 ---------------
+ui_files=$(git ls-files 'feature/*.kt' 'feature/**/*.kt' 2>/dev/null | grep '/ui/' || true)
+if [ -n "$ui_files" ]; then
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    hits=$(grep -nE '^import[[:space:]]+[A-Za-z0-9_.]*\.[A-Za-z0-9_]*(Repository|ViewModel)(\.[A-Za-z0-9_]+)?[[:space:]]*$' "$file" || true)
+    if [ -n "$hits" ]; then
+      while IFS= read -r hit; do
+        report_violation "$file: ui/ 包禁止引用 Repository/ViewModel：$hit"
+      done < <(printf '%s
+' "$hits")
+    fi
+  done < <(printf '%s
+' "$ui_files")
+fi
+
+# --- 过时例外提醒（登记了但依赖边已不存在） -----------------------------------
+if [ -s "$stale_exceptions_file" ]; then
+  while IFS= read -r stale; do
+    [ -z "$stale" ] && continue
+    report_warning "例外登记 $stale 已不匹配任何现存依赖，请清理 $EXCEPTIONS"
+  done < "$stale_exceptions_file"
+fi
+
+module_count=$(printf '%s
+' "$modules" | wc -l | tr -d ' ')
+printf 'dep-check: 检查模块 %s 个，依赖边 %s 条，违规 %s 条，警告 %s 条
+' "$module_count" "$edges" "$violations" "$warnings"
+
+if [ "$violations" -gt 0 ]; then
+  printf 'dep-check: FAILED（存在依赖方向违规，详情见上）
+' >&2
+  exit 1
+fi
+printf 'dep-check: PASSED
+'

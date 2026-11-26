@@ -1,0 +1,20 @@
+# 文件行数门禁基线（W0-07a）：既有大文件登记处，行数只许降不许升。
+# 格式：<路径><TAB><登记行数>。文件缩小后请收紧本表；文件拆分删除后请移除条目，逐步清零。
+# 未登记的文件超过 1500 行警告、超过 2500 行失败。
+app/src/main/kotlin/cn/edu/haut/campus/OnboardingFlowScreen.kt	1727
+contracts/openapi/cloud-v1.yaml	2646
+core/campusservices/src/main/kotlin/cn/edu/haut/campus/core/campusservices/CampusCloudClientAndAuth.kt	4417
+core/campusservices/src/main/kotlin/cn/edu/haut/campus/core/campusservices/HautLibrarySeatAuthClient.kt	2738
+core/campusservices/src/test/kotlin/cn/edu/haut/campus/core/campusservices/CampusServicesUnitTest.kt	2726
+core/database/src/main/kotlin/cn/edu/haut/campus/core/database/CampusRepository.kt	8919
+core/database/src/test/kotlin/cn/edu/haut/campus/core/database/BookingDispatchExclusiveClaimDaoTest.kt	3836
+core/database/src/test/kotlin/cn/edu/haut/campus/core/database/CourseMoveRecoveryTest.kt	1560
+core/designsystem/src/main/kotlin/cn/edu/haut/campus/core/designsystem/HautTheme.kt	2992
+feature/grades/src/main/kotlin/cn/edu/haut/campus/feature/grades/GradesScreen.kt	1663
+feature/map/src/main/kotlin/cn/edu/haut/campus/feature/map/CampusMapScreen.kt	3834
+feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/CampusHubScreens.kt	3065
+feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/CampusMomentsScreen.kt	2875
+feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/LibrarySeatBookingScreen.kt	3483
+feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/SettingsScreen.kt	4519
+feature/timetable/src/main/kotlin/cn/edu/haut/campus/feature/timetable/TimetableScreen.kt	2885
+feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayScreen.kt	3760

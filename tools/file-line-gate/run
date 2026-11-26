@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# tools/file-line-gate/run — 文件行数门禁（W0-07a，能力 C25）
+#
+# 规则（AGENT_TASK_CARDS W0-07）：
+#   1. 未登记基线的文本源文件超过 1500 行 → WARNING，超过 2500 行 → FAILED
+#   2. 既有大文件登记在 baseline.txt，行数只许降不许升：超过基线 → FAILED
+#   3. 行数低于基线时提示可以收紧基线（INFO，不阻断）
+#   4. 基线中已不存在的文件产生 WARNING，提醒清理条目（逐步清零）
+#
+# 覆盖范围：git 跟踪的 kt/kts/java/xml/mjs/cjs/js/ts/sql/sh/yaml/yml 文件。
+# 不覆盖：.md 文档（长文属正常形态）、.json（多为生成物或数据）、二进制。
+# 退出码：0 通过（可含 WARNING/INFO）；1 存在 FAILED 项；64 环境错误。
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+cd "$ROOT_DIR"
+
+BASELINE=tools/file-line-gate/baseline.txt
+WARN_THRESHOLD=1500
+FAIL_THRESHOLD=2500
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf 'file-line-gate: ERROR: 不在 git 工作树内
+' >&2
+  exit 64
+fi
+
+failures=0
+warnings=0
+infos=0
+checked=0
+
+report_failure() {
+  failures=$((failures + 1))
+  printf 'file-line-gate: FAILED: %s
+' "$1"
+}
+report_warning() {
+  warnings=$((warnings + 1))
+  printf 'file-line-gate: WARNING: %s
+' "$1"
+}
+report_info() {
+  infos=$((infos + 1))
+  printf 'file-line-gate: INFO: %s
+' "$1"
+}
+
+baseline_lines_for() {
+  # 精确匹配第一列路径，输出第二列行数；未登记时输出空
+  awk -F '\t' -v p="$1" '$1 == p { print $2; exit }' "$BASELINE" 2>/dev/null || true
+}
+
+if [ ! -f "$BASELINE" ]; then
+  printf 'file-line-gate: ERROR: 缺少基线文件 %s
+' "$BASELINE" >&2
+  exit 64
+fi
+
+# --- 扫描 git 跟踪的文本源文件 ----------------------------------------------
+files=$(git ls-files | grep -E '\.(kt|kts|java|xml|mjs|cjs|js|ts|sql|sh|yaml|yml)$' | LC_ALL=C sort)
+
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  [ -f "$file" ] || continue
+  checked=$((checked + 1))
+  lines=$(wc -l < "$file" | tr -d ' ')
+  base=$(baseline_lines_for "$file")
+  if [ -n "$base" ]; then
+    if [ "$lines" -gt "$base" ]; then
+      report_failure "$file：$lines 行，超过基线 $base 行（既有大文件只许降不许升）"
+    elif [ "$lines" -lt "$base" ]; then
+      report_info "$file：$lines 行，已低于基线 $base 行，可收紧 baseline.txt"
+    fi
+  else
+    if [ "$lines" -gt "$FAIL_THRESHOLD" ]; then
+      report_failure "$file：$lines 行，超过 $FAIL_THRESHOLD 行上限（未登记基线的文件）"
+    elif [ "$lines" -gt "$WARN_THRESHOLD" ]; then
+      report_warning "$file：$lines 行，超过 $WARN_THRESHOLD 行警告线"
+    fi
+  fi
+done < <(printf '%s
+' "$files")
+
+# --- 基线中已删除或改名的文件 ------------------------------------------------
+while IFS="$(printf '\t')" read -r path _count; do
+  [ -z "$path" ] && continue
+  case "$path" in \#*) continue ;; esac
+  if [ ! -f "$path" ]; then
+    report_warning "基线条目 $path 已不存在，请从 baseline.txt 移除（逐步清零）"
+  fi
+done < <(grep -vE '^[[:space:]]*(#|$)' "$BASELINE" || true)
+
+printf 'file-line-gate: 检查文件 %s 个，FAILED %s，WARNING %s，INFO %s
+' "$checked" "$failures" "$warnings" "$infos"
+if [ "$failures" -gt 0 ]; then
+  printf 'file-line-gate: FAILED（存在超限文件，详情见上）
+' >&2
+  exit 1
+fi
+printf 'file-line-gate: PASSED
+'
