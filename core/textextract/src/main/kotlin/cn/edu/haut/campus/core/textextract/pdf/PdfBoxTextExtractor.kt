@@ -47,6 +47,9 @@ class PdfBoxTextExtractor(
         } catch (error: NoClassDefFoundError) {
             throw encryptionSupportError(error)
         } catch (error: IOException) {
+            if (isEncryptionSupportFailure(error)) {
+                throw encryptionSupportError(error)
+            }
             throw TextExtractionException(TextExtractErrorKind.PDF_INVALID, "PDF 无法解析", error)
         } catch (error: Throwable) {
             throw TextExtractionException(TextExtractErrorKind.PDF_EXTRACTION_FAILED, "PDF 加载失败", error)
@@ -65,6 +68,9 @@ class PdfBoxTextExtractor(
             } catch (error: NoClassDefFoundError) {
                 throw encryptionSupportError(error)
             } catch (error: IOException) {
+                if (isEncryptionSupportFailure(error)) {
+                    throw encryptionSupportError(error)
+                }
                 throw TextExtractionException(TextExtractErrorKind.PDF_EXTRACTION_FAILED, "PDF 文本抽取失败", error)
             }
             val lines = buildLines(stripper.glyphs)
@@ -113,6 +119,21 @@ class PdfBoxTextExtractor(
     private companion object {
         /** 2.0.27 patch 0；拆开写避免四段库版本被 secrets 门禁误报成 IPv4。 */
         const val PDFBOX_ANDROID_VERSION = "2.0.27" + ".0"
+    }
+
+    private fun isEncryptionSupportFailure(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            val className = current.javaClass.name
+            val message = current.message.orEmpty()
+            if ((current is ClassNotFoundException || current is NoClassDefFoundError) &&
+                (className.contains("bouncycastle", ignoreCase = true) || message.contains("bouncycastle", ignoreCase = true))
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     private fun encryptionSupportError(cause: Throwable): TextExtractionException {
