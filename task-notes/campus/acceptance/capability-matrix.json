@@ -1179,9 +1179,11 @@
       "migration": {
         "involved": true,
         "types": [
+          "room",
+          "cloud-sql",
           "plugin-package-format"
         ],
-        "notes": "插件包格式、签名、版本升级与回滚必须验证；宿主 Git tree 和构建校验 SHA 不变。云端 SQL 0011 分配给 W6-01a 插件持久化；Room v19 预留为 W6-01a Android 插件 schema 演进，若最终不需要则按 D14 顺延。"
+        "notes": "插件包格式、签名、版本升级与回滚必须验证；宿主 Git tree 和构建校验 SHA 不变。云端 SQL 0011 分配给 W6-01a 插件持久化，属于必须验收的 cloud-sql 迁移；Room v19 预留为 W6-01a Android 插件 schema 演进的条件性 room 迁移，若最终不需要则按 D14 顺延并在验收记录中说明。"
       },
       "deviceTested": {
         "pendingUser": false,
