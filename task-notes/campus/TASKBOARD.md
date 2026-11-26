@@ -23,7 +23,7 @@
 | 卡 | 内容 | 仓库 | 依赖 | 编号分配 | 能力 | 状态 | 子代理 | 分支 | PR | 结果 SHA | 合并 SHA | 阻断项 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | INF-00 | 开发机就绪：Android SDK、`cis-gate` / `cis-gradle` 脚本、裸库、缓存、内存守护、构建槽 | 两仓 `tools/devbox/` | — | — | C25 | 已合并 | s1b-inf00fix | feat/cis-inf-00-devbox-clean | Android PR#53；cloud PR#6 | Android 4dccda9；cloud 8493b2f | Android f18915f；cloud d4fb93c | 已合并；stage-1 联调验收进行中 |
-| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | PR 已创建 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | Android PR#57；cloud PR#7 | — | — | AUTO-008 二次干净重建完成；等待交叉审阅、独立验证与托管 CI |
+| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | PR 已创建 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | Android PR#57；cloud PR#7 | Android d8e455a；cloud d38c59e | — | AUTO-008 二次干净重建完成；审阅阻断已修复，等待复审、独立验证与托管 CI |
 | INF-02 | 契约收敛：分析两份 `contracts/` 的差异并统一、同步脚本、两仓 CI 一致性检查（D15） | 两仓 | INF-01 | — | C28 | 未开始 | — | — | — | — | — | — |
 | R01 | FTS4 ICU 中文分词在 API 31–36 的可用性；不可用时的二元切分方案 | — | INF-00 | — | — | 开工中 | s8d-w008prep | docs/cis-r01-fts-research | — | — | — | INF-00 已合并；只读调研进行中 |
 | R02 | 端侧 OCR 选型：不依赖 GMS、许可证、包体、中文准确率 | — | — | — | — | 审验中 | s6-r02 | docs/cis-r02-ocr-research | PR#54 | — | — | 交叉审阅进行中 |
