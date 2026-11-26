@@ -42,9 +42,17 @@ class PaddleOcrOnnxEngine(
     detModelSha256: String = PaddleOcrConfig.DET_SHA256,
     recModelSha256: String = PaddleOcrConfig.REC_SHA256
 ) : OcrEnginePort {
+    private val actualDetModelSha256 = TextExtractHashes.sha256Hex(detModelBytes)
+    private val actualRecModelSha256 = TextExtractHashes.sha256Hex(recModelBytes)
+
+    init {
+        verifyModelHash("det", actualDetModelSha256, detModelSha256)
+        verifyModelHash("rec", actualRecModelSha256, recModelSha256)
+    }
+
     private val backend = OnnxRuntimeBackend(detModelBytes, recModelBytes, config.numThreads)
     private val characterList = characterList.toList()
-    private val modelArtifactsSha256 = mapOf("det" to detModelSha256, "rec" to recModelSha256)
+    private val modelArtifactsSha256 = mapOf("det" to actualDetModelSha256, "rec" to actualRecModelSha256)
 
     @Volatile
     private var closed = false
@@ -136,6 +144,15 @@ class PaddleOcrOnnxEngine(
                 requiresUserConfirmation = true
             )
         )
+    }
+
+    private fun verifyModelHash(component: String, actual: String, expected: String) {
+        if (!actual.equals(expected, ignoreCase = true)) {
+            throw TextExtractionException(
+                TextExtractErrorKind.MODEL_INTEGRITY_MISMATCH,
+                "OCR 模型 SHA-256 不匹配: " + component
+            )
+        }
     }
 
     private fun cropForRecognition(image: ArgbImage, box: List<FPoint>): ArgbImage {

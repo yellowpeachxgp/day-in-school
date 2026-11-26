@@ -26,12 +26,6 @@ class PaddleOcrOnnxEngineTest {
                 )
             )
 
-            println("OCR_LINES_BEGIN")
-            result.lines.forEach { line ->
-                println(line.lineIndex.toString() + "|" + line.confidence + "|" + line.text + "|" + line.box.minX + "," + line.box.minY + "," + line.box.maxX + "," + line.box.maxY)
-            }
-            println("OCR_LINES_END")
-
             val compactText = result.plainText.replace(" ", "")
             assertTrue("合成截图至少应抽出 4 行，实际: " + result.plainText, result.lines.size >= 4)
             assertTrue(compactText.contains("课程调整"))
@@ -56,6 +50,37 @@ class PaddleOcrOnnxEngineTest {
             assertEquals(PaddleOcrConfig.REC_SHA256, result.metadata.engine.modelArtifactsSha256["rec"])
         } finally {
             engine.close()
+        }
+    }
+
+    @Test
+    fun corruptedModelBytesFailIntegrityBeforeInference() {
+        val corruptedDet = FixtureLoader.detModelBytes()
+        corruptedDet[0] = (corruptedDet[0].toInt() xor 0x01).toByte()
+        try {
+            PaddleOcrOnnxEngine.fromModelBytes(
+                detModelBytes = corruptedDet,
+                recModelBytes = FixtureLoader.recModelBytes(),
+                recConfigYaml = FixtureLoader.recConfigYaml(),
+                config = PaddleOcrConfig(numThreads = 1)
+            )
+            org.junit.Assert.fail("被篡改的检测模型不应加载")
+        } catch (error: TextExtractionException) {
+            assertEquals(TextExtractErrorKind.MODEL_INTEGRITY_MISMATCH, error.kind)
+        }
+
+        val corruptedRec = FixtureLoader.recModelBytes()
+        corruptedRec[0] = (corruptedRec[0].toInt() xor 0x01).toByte()
+        try {
+            PaddleOcrOnnxEngine.fromModelBytes(
+                detModelBytes = FixtureLoader.detModelBytes(),
+                recModelBytes = corruptedRec,
+                recConfigYaml = FixtureLoader.recConfigYaml(),
+                config = PaddleOcrConfig(numThreads = 1)
+            )
+            org.junit.Assert.fail("被篡改的识别模型不应加载")
+        } catch (error: TextExtractionException) {
+            assertEquals(TextExtractErrorKind.MODEL_INTEGRITY_MISMATCH, error.kind)
         }
     }
 }
