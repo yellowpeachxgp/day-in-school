@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yellowpeachxgp/day-in-school/schemas/cis-acceptance-evidence-v1.schema.json",
+  "title": "CIS Acceptance Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "recordId",
+    "recordedAt",
+    "itemId",
+    "matrixVersion",
+    "evidenceType",
+    "verificationLevel",
+    "acceptanceOutcome",
+    "command",
+    "exitCode",
+    "sha",
+    "execution",
+    "deviceTestedPendingUser",
+    "notes"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "cis-acceptance-evidence/v1"
+    },
+    "recordId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "itemId": {
+      "type": "string",
+      "pattern": "^(R0-[1-7]|C(0[1-9]|1[0-9]|2[0-8]))$"
+    },
+    "matrixVersion": {
+      "const": "cis-acceptance-matrix/v1"
+    },
+    "evidenceType": {
+      "enum": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "android-lint-report",
+        "android-apk-artifact",
+        "roborazzi-report",
+        "architecture-guard-report",
+        "room-migration-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report",
+        "github-ci-run",
+        "secrets-scan-report",
+        "backup-restore-report",
+        "privacy-erasure-report",
+        "plugin-installation-report",
+        "screenshot-or-recording",
+        "manual-device-note",
+        "source-audit-note",
+        "static-analysis-report"
+      ]
+    },
+    "verificationLevel": {
+      "enum": [
+        "SOURCE_CONFIRMED",
+        "MOCK_TESTED",
+        "DEVICE_TESTED",
+        "SCHOOL_VERIFIED",
+        "DISTRIBUTION_READY"
+      ]
+    },
+    "acceptanceOutcome": {
+      "enum": [
+        "pass",
+        "fail",
+        "not-run",
+        "blocked",
+        "device-pending-user"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exitCode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "sha": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "android",
+        "cloud"
+      ],
+      "properties": {
+        "android": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cloud": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "android"
+          ],
+          "properties": {
+            "android": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "required": [
+            "cloud"
+          ],
+          "properties": {
+            "cloud": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executedOn",
+        "executor",
+        "startedAt",
+        "finishedAt",
+        "durationMs",
+        "logPath",
+        "testName",
+        "artifactPaths"
+      ],
+      "properties": {
+        "executedOn": {
+          "enum": [
+            "devbox",
+            "github-ci",
+            "user-device",
+            "school-account",
+            "local-static"
+          ]
+        },
+        "executor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finishedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logPath": {
+          "type": "string",
+          "pattern": "^(<campus-root>/logs/|campus://logs/).+",
+          "description": "公开脱敏日志路径；禁止真实开发机账号、地址或本机绝对路径。"
+        },
+        "testName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifactPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "deviceTestedPendingUser": {
+      "type": "boolean"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}
