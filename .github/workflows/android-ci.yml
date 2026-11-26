@@ -89,8 +89,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: 检出源码
+      # 文件行数门禁的基线棘轮需要与 main 计算 merge-base，必须全量拉取历史；
+      # 浅克隆下门禁按 fail-closed 设计直接失败，不会静默放行。
+      - name: 检出源码（全量历史）
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: 依赖方向与 ui/ 包 import 检查
         run: tools/dep-check/run

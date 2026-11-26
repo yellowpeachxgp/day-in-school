@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/dep-check/run — 依赖方向与 ui/ 包 import 门禁（W0-07，能力 C25）
+# tools/dep-check/run — 依赖方向与 ui/ 包 import 门禁（W0-07a，能力 C25）
 #
 # 规则（AGENT_TASK_CARDS W0-07 / MASTER_PLAN §12）：
 #   1. core   不得依赖 feature / widget / app
@@ -8,6 +8,10 @@
 #   4. core:model 禁止任何项目依赖
 #   5. feature 模块内路径含 /ui/ 的 .kt 文件不得 import Repository 或 ViewModel
 #   6. 未识别模块族（非 core/feature/widget/app 前缀）视为违规，必须显式登记
+#
+# 解析后端为 tools/dep-check/kotlin_scan.py（词法级扫描）：容忍 project( ":x" )
+# 空白写法、跨行 project(...)、import 的 as 别名与行尾注释；注释或字符串中的
+# project()/import 不会误报。
 #
 # 例外登记：tools/dep-check/exceptions.txt，每行一条（# 后为必填原因）：
 #   :from:module -> :to:module  # 原因
@@ -20,18 +24,25 @@ cd "$ROOT_DIR"
 
 SETTINGS=settings.gradle.kts
 EXCEPTIONS=tools/dep-check/exceptions.txt
+SCANNER="$SCRIPT_DIR/kotlin_scan.py"
 
 if [ ! -f "$SETTINGS" ]; then
-  printf 'dep-check: ERROR: 未找到 %s（请在仓库根目录运行）
-' "$SETTINGS" >&2
+  printf 'dep-check: ERROR: 未找到 %s（请在仓库根目录运行）\n' "$SETTINGS" >&2
+  exit 64
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'dep-check: ERROR: 需要 python3 作为词法扫描后端，当前环境缺失（fail-closed）\n' >&2
+  exit 64
+fi
+if [ ! -f "$SCANNER" ]; then
+  printf 'dep-check: ERROR: 缺少扫描器 %s\n' "$SCANNER" >&2
   exit 64
 fi
 
 # --- 解析 settings.gradle.kts 中 include(...) 的模块列表 -------------------
 modules=$(grep -oE '":([A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*)"' "$SETTINGS" | tr -d '"' | sort -u)
 if [ -z "$modules" ]; then
-  printf 'dep-check: ERROR: 未能从 %s 解析出任何模块
-' "$SETTINGS" >&2
+  printf 'dep-check: ERROR: 未能从 %s 解析出任何模块\n' "$SETTINGS" >&2
   exit 64
 fi
 
@@ -42,8 +53,7 @@ trap 'rm -f "$exceptions_file" "$stale_exceptions_file"' EXIT
 : > "$exceptions_file"
 if [ -f "$EXCEPTIONS" ]; then
   (grep -vE '^[[:space:]]*(#|$)' "$EXCEPTIONS" || true) | sed 's/#.*$//' | sed 's/[[:space:]]//g' | while IFS= read -r line; do
-    [ -n "$line" ] && printf '%s
-' "$line" >> "$exceptions_file"
+    [ -n "$line" ] && printf '%s\n' "$line" >> "$exceptions_file"
   done
 fi
 cp "$exceptions_file" "$stale_exceptions_file"
@@ -64,14 +74,12 @@ family_of() {
 
 report_violation() {
   violations=$((violations + 1))
-  printf 'dep-check: VIOLATION: %s
-' "$1"
+  printf 'dep-check: VIOLATION: %s\n' "$1"
 }
 
 report_warning() {
   warnings=$((warnings + 1))
-  printf 'dep-check: WARNING: %s
-' "$1"
+  printf 'dep-check: WARNING: %s\n' "$1"
 }
 
 # --- 逐模块提取 project("...") 依赖并套用方向规则 ----------------------------
@@ -88,9 +96,8 @@ while IFS= read -r module; do
     report_violation "模块 $module 不属于已知模块族（core/feature/widget/app），请先在 dep-check 登记分类"
   fi
 
-  # 提取 project(":x:y") 与 project(path = ":x:y") 两种写法
-  deps=$((grep -oE 'project\((path[[:space:]]*=[[:space:]]*)?":[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*"\)' "$build_file" || true) \
-    | sed -E 's/^project\((path[[:space:]]*=[[:space:]]*)?"//; s/"\)$//' | sort -u)
+  # 词法级扫描：容忍空白/跨行写法，排除注释与字符串内的伪匹配
+  deps=$(python3 "$SCANNER" deps "$build_file" | sort -u)
 
   while IFS= read -r dep; do
     [ -z "$dep" ] && continue
@@ -126,25 +133,24 @@ while IFS= read -r module; do
           report_violation "$module -> $dep：widget 不得依赖 $fam_to" ;;
         esac ;;
     esac
-  done < <(printf '%s
-' "$deps")
-done < <(printf '%s
-' "$modules")
+  done < <(printf '%s\n' "$deps")
+done < <(printf '%s\n' "$modules")
 
 # --- ui/ 包 import 检查：feature 模块内路径含 /ui/ 的 .kt 文件 ---------------
 ui_files=$(git ls-files 'feature/*.kt' 'feature/**/*.kt' 2>/dev/null | grep '/ui/' || true)
 if [ -n "$ui_files" ]; then
   while IFS= read -r file; do
     [ -z "$file" ] && continue
-    hits=$(grep -nE '^import[[:space:]]+[A-Za-z0-9_.]*\.[A-Za-z0-9_]*(Repository|ViewModel)(\.[A-Za-z0-9_]+)?[[:space:]]*$' "$file" || true)
+    hits=$(python3 "$SCANNER" ui-imports "$file")
     if [ -n "$hits" ]; then
       while IFS= read -r hit; do
-        report_violation "$file: ui/ 包禁止引用 Repository/ViewModel：$hit"
-      done < <(printf '%s
-' "$hits")
+        [ -z "$hit" ] && continue
+        lineno=$(printf '%s' "$hit" | cut -d: -f1)
+        rest=$(printf '%s' "$hit" | cut -d: -f2-)
+        report_violation "$file:$lineno: ui/ 包禁止引用 Repository/ViewModel：$rest"
+      done < <(printf '%s\n' "$hits")
     fi
-  done < <(printf '%s
-' "$ui_files")
+  done < <(printf '%s\n' "$ui_files")
 fi
 
 # --- 过时例外提醒（登记了但依赖边已不存在） -----------------------------------
@@ -155,15 +161,11 @@ if [ -s "$stale_exceptions_file" ]; then
   done < "$stale_exceptions_file"
 fi
 
-module_count=$(printf '%s
-' "$modules" | wc -l | tr -d ' ')
-printf 'dep-check: 检查模块 %s 个，依赖边 %s 条，违规 %s 条，警告 %s 条
-' "$module_count" "$edges" "$violations" "$warnings"
+module_count=$(printf '%s\n' "$modules" | wc -l | tr -d ' ')
+printf 'dep-check: 检查模块 %s 个，依赖边 %s 条，违规 %s 条，警告 %s 条\n' "$module_count" "$edges" "$violations" "$warnings"
 
 if [ "$violations" -gt 0 ]; then
-  printf 'dep-check: FAILED（存在依赖方向违规，详情见上）
-' >&2
+  printf 'dep-check: FAILED（存在依赖方向违规，详情见上）\n' >&2
   exit 1
 fi
-printf 'dep-check: PASSED
-'
+printf 'dep-check: PASSED\n'
