@@ -12,6 +12,7 @@ import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -106,6 +107,49 @@ class LiveCourseCoordinatorRobolectricTest {
 
         assertNull(findLiveAlarm(ShadowLiveTask.TICK))
         assertNull(findLiveAlarm(ShadowLiveTask.BOUNDARY))
+    }
+
+    @Test
+    fun `user dismiss live notification cancels current tick boundary and card`() = runBlocking {
+        val fixture = createFixture(
+            startLocal = LocalTime.of(10, 0),
+            endLocal = LocalTime.of(11, 30),
+            nowLocal = LocalTime.of(10, 20)
+        )
+        fixture.coordinator.reconcileNow("TEST_BEFORE_DISMISS", forceRescheduleAlarms = true, now = fixture.now)
+        assertNotNull(findLiveAlarm(ShadowLiveTask.TICK))
+
+        fixture.coordinator.dismissLiveCourseNotification()
+
+        assertNull(findLiveAlarm(ShadowLiveTask.TICK))
+        assertNull(findLiveAlarm(ShadowLiveTask.BOUNDARY))
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        assertNull(shadowOf(notificationManager).getNotification(LIVE_NOTIFICATION_ID))
+    }
+
+    @Test
+    fun `event revision change replaces stale progress chain`() = runBlocking {
+        val fixture = createFixture(
+            startLocal = LocalTime.of(10, 0),
+            endLocal = LocalTime.of(11, 30),
+            nowLocal = LocalTime.of(10, 20)
+        )
+        fixture.coordinator.reconcileNow("TEST_REVISION_BEFORE", forceRescheduleAlarms = true, now = fixture.now)
+        val oldRevision = savedIntent(requireLiveAlarm(ShadowLiveTask.TICK))
+            .getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_REVISION)
+        assertEquals(fixture.eventRevision, oldRevision)
+
+        fixture.repository.saveUserCourseEdit(
+            fixture.course,
+            fixture.rule.copy(rawRoom = "测试楼202")
+        )
+        fixture.coordinator.reconcileNow("TEST_REVISION_AFTER", forceRescheduleAlarms = true, now = fixture.now)
+
+        val ticks = liveAlarms(ShadowLiveTask.TICK)
+        assertEquals(1, ticks.size)
+        val newRevision = savedIntent(ticks.single()).getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_REVISION)
+        assertNotNull(newRevision)
+        assertNotEquals(oldRevision, newRevision)
     }
 
     @Test
@@ -237,7 +281,9 @@ class LiveCourseCoordinatorRobolectricTest {
             startAt = startAt,
             endAt = endAt,
             eventKey = projected.eventKey,
-            eventRevision = projected.revision
+            eventRevision = projected.revision,
+            course = course,
+            rule = rule
         )
     }
 
@@ -266,7 +312,9 @@ class LiveCourseCoordinatorRobolectricTest {
         val startAt: Instant,
         val endAt: Instant,
         val eventKey: String,
-        val eventRevision: String
+        val eventRevision: String,
+        val course: Course,
+        val rule: CourseScheduleRule
     )
 
     private fun liveAlarms(kind: ShadowLiveTask): List<ShadowAlarmManager.ScheduledAlarm> {
