@@ -30,7 +30,8 @@ baseline.txt 自身是被保护对象，否则攻击者可以在同一个 PR 里
 | **删除条目**但文件仍存在且当前 >1500 行 | FAILED（删除白名单不能绕过只许降不许升） |
 | 删除条目且文件已消失 / 已降至 ≤1500 行 | 允许（INFO，清零方向） |
 | 删除条目且 baseline 内有 `# allow-remove: <path>` 显式例外 | WARNING（例外在 diff 中高度可见，审阅必须确认） |
-| 删除 `contracts/**` 条目 | 允许（INFO）；契约文档不纳入源代码行数棘轮 |
+| 删除 `contracts/**/*.yaml|yml` 条目 | 允许（INFO）；契约 YAML 文档不纳入源代码行数棘轮 |
+| 当前 baseline 登记任何 `contracts/**` 条目 | FAILED（契约 YAML 不登记；contracts 下其他文件按源码门禁处理，不用 baseline 豁免） |
 | 条目数值下降 | 允许（收紧方向） |
 
 参照解析顺序：`FILE_LINE_GATE_BASE_REF` 环境变量 → `refs/remotes/origin/main` → `refs/heads/main` 等同义写法。
@@ -44,7 +45,7 @@ merge-base 时门禁 fail-closed（退出 64）**——托管 CI 的 guardrails 
 ## 覆盖范围
 
 - 扫描 `git ls-files` 中扩展名为 `kt kts java xml mjs cjs js ts sql sh py yaml yml` 的文件。
-- 不扫描 `contracts/**`：`contracts/` 是跨端权威契约（含生成/同步文档），行数会随契约能力自然增长；其正确性由 contract-ci 与两仓一致性门禁保障，不能用源代码棘轮阻断契约演进。
+- 不扫描 `contracts/**/*.yaml|yml`：这些文件是跨端权威契约（含生成/同步文档），行数会随契约能力自然增长；其正确性由 contract-ci 与两仓一致性门禁保障，不能用源代码棘轮阻断契约演进。`contracts/` 下的 `.kt/.kts/.java/.mjs/.js/.ts/.sql/.sh/.py` 等源码仍按普通代码文件扫描，不能借目录名绕过门禁。
 - 不扫描 `.md`（文档长文属正常形态）、`.json`（多为 Room schema 等生成物或数据文件）、二进制资源。
 
 ## baseline.txt 格式
