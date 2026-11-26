@@ -38,7 +38,6 @@ class LiveCourseTickerRobolectricTest {
         val context = RuntimeEnvironment.getApplication()
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val shadowAlarmManager = shadowOf(alarmManager)
-        shadowAlarmManager.cancelAll()
         val accountScope = AccountBackgroundScope(profileId = "profile-live", epoch = 7L)
         val ticker = LiveCourseTicker(
             AndroidAlarmScheduler(context, accountScope) { true }
