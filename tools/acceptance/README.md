@@ -7,10 +7,11 @@
 | 文件 | 用途 |
 |---|---|
 | `validate-acceptance-matrix.mjs` | 静态校验能力矩阵的 ID 覆盖、枚举引用、Device-tested 规则和统一敏感形状。 |
-| `record-evidence.mjs` | 把命令型或非命令型验收证据追加为 JSONL，写入前统一脱敏。 |
-| `sensitive-utils.mjs` | 统一脱敏与敏感形状检测；只使用通用形状和运行时环境值，不写死真实主机、账号或路径。 |
+| `record-evidence.mjs` | 把命令型或非命令型验收证据追加为 JSONL；只接受已脱敏输入，不改写命令或真实路径。 |
+| `sensitive-utils.mjs` | 统一敏感形状与运行时环境值检测；不写死真实主机、账号或路径。 |
+| `selftest.mjs` + `selftest-cases.json` | schema/recorder 一致性自测与负向回归样例。 |
 | `capability-matrix.schema.json` | 能力矩阵 JSON Schema。 |
-| `evidence-record.schema.json` | 证据 JSON Schema；用统一 `publicString` 禁止 IP、user@host、私钥、常见 Token 和未脱敏绝对路径形状。 |
+| `evidence-record.schema.json` | 证据 JSON Schema；统一 `publicString`、`publicLogPath`、`publicArtifactPath` 脱敏约束。 |
 
 ## 静态校验矩阵
 
@@ -28,7 +29,7 @@ node tools/acceptance/validate-acceptance-matrix.mjs task-notes/campus/acceptanc
 ssh "$CIS_DEVBOX" <campus-root>/bin/cis-gate day-in-school main android-full
 ```
 
-再记录命令、退出码、SHA 和日志路径：
+再记录**已经脱敏**的命令模板、退出码、SHA 和日志路径：
 
 ```bash
 node tools/acceptance/record-evidence.mjs \
@@ -39,19 +40,21 @@ node tools/acceptance/record-evidence.mjs \
   --command 'ssh "$CIS_DEVBOX" <campus-root>/bin/cis-gate day-in-school main android-full' \
   --exit-code 0 \
   --android-sha <40位Android SHA> \
-  --log-path '<cis-gate输出的日志路径或<campus-root>/logs/...>' \
+  --log-path '<campus-root>/logs/day-in-school/main/<sha>-android-full.log' \
   --executor acc/cis-stage-<序号>
 ```
 
-`devbox-command-log` 必须有 `--command`、`--exit-code`、脱敏 `--log-path`，并且 `--executed-on devbox`。提供 `--command` 时必须同时提供 `--exit-code`；未显式给 `--outcome` 时按退出码推导 pass/fail。
+`devbox-command-log` 必须有 `--command`、`--exit-code`、`--log-path`，并且 `--executed-on devbox`。提供 `--command` 时必须同时提供 `--exit-code`；未显式给 `--outcome` 时按退出码推导 pass/fail。
+
+**重要保守约束**：脚本不做命令路径 normalization，不接收真实绝对路径后“帮忙脱敏”。调用方必须传入可重放的脱敏模板；否则拒绝写入。
 
 ## 记录非命令型证据
 
-非命令型证据不再强制 `command` / `exitCode` / `logPath`；必须显式提供 `--outcome`，并满足类型要求：
+非命令型证据不强制 `command` / `exitCode` / `logPath`；必须显式提供 `--outcome`，并满足类型要求：
 
 | evidenceType | executedOn | 最小证据要求 |
 |---|---|---|
-| `github-ci-run` | `github-ci` | artifact、testName、notes 至少一项；artifact 可是无查询参数的 github.com 证据 URL |
+| `github-ci-run` | `github-ci` | artifact、testName、notes 至少一项 |
 | `manual-device-note` | `user-device` | artifact、testName、notes 至少一项 |
 | `screenshot-or-recording` | `devbox/github-ci/user-device/local-static` | 至少一个 artifact |
 | `source-audit-note` | `devbox/local-static` | testName 或 notes |
@@ -75,15 +78,22 @@ node tools/acceptance/record-evidence.mjs \
 
 1. `evidenceType` 必须在矩阵该条目的 `requiredEvidenceTypes` 或 `deviceTested.pendingEvidenceTypes` 中登记；额外类型会被拒绝。
 2. `DEVICE_TESTED 待用户` 标记只能附加在该条目的自动 required 证据上；此时 outcome 自动为 `device-pending-user`，不得写成 pass。
-3. 只有 `--executed-on user-device` 的手工证据才能标 `DEVICE_TESTED`；只有 `--executed-on school-account` 的真实学校账号证据才能标 `SCHOOL_VERIFIED`；本骨架拒绝 `DISTRIBUTION_READY`。
-4. `--log-path` 可接收真实 campus 绝对路径、`<campus-root>/logs/...` 或 `campus://logs/...`，落盘统一为 `<campus-root>/logs/...`。可用 `--campus-root` 或 `CIS_CAMPUS_ROOT` 帮助识别，真实值不落盘。
-5. artifact 可以是仓库相对路径、脱敏 campus 路径或无查询参数的 github.com URL。签名 URL、查询 token、本机绝对路径和未脱敏开发机路径会被拒绝。
+3. 只有 `--executed-on user-device` 的手工证据才能标 `DEVICE_TESTED`。
+4. 阶段 S 证据索引 fail-closed：一律拒绝记录或宣称 `SCHOOL_VERIFIED`；`executedOn` 不提供 school-account。若未来开启真实学校验证，必须先由用户和主代理批准专项类型。
+5. `--log-path` 只接受 `<campus-root>/logs/...` 或 `campus://logs/...`，并按原样写入以保持可重放；真实绝对路径会被拒绝。
+6. `--artifact-path` 只接受 `campus://...` 或无凭据、无 query 的 HTTPS URL。签名 URL、查询 token、本机绝对路径、仓库相对路径和未脱敏开发机路径都会被拒绝。
 
 ## 脱敏与自检
 
-- 敏感检测只使用通用形状（IPv4、user@host、私钥头、常见 Token、未脱敏绝对路径形状）和运行时环境值（`CIS_DEVBOX`、`CIS_CAMPUS_ROOT`、`--campus-root`），仓库不写死任何真实主机、账号或路径。
+- 敏感检测只使用通用形状（IPv4、user@host、私钥头、常见 Token、Unix/macOS home/绝对路径形状）和运行时环境值（`CIS_DEVBOX`、`CIS_CAMPUS_ROOT`），仓库不写死任何真实主机、账号或路径。
 - 终端摘要只打印仓库相对 `--out`、recordId、itemId 和 outcome，不打印本机绝对路径。
-- 自检建议：命令型证据、GitHub CI、手工真机各追加一条临时 JSONL 并断言路径已脱敏；再验证类型不匹配和运行时敏感值会拒绝写入。具体示例见本 PR 验证记录。
+- 运行完整自测：
+
+```bash
+node tools/acceptance/selftest.mjs
+```
+
+自测覆盖 schema/recorder 枚举一致性、命令型/GitHub CI/手工真机/来源审计/截图正向样例，以及类型不匹配、home 路径、绝对命令、绝对日志路径、`SCHOOL_VERIFIED`、带 query artifact、运行时敏感值等负向回归样例。
 
 ## 本卡边界
 

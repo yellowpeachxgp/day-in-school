@@ -37,10 +37,11 @@
 ## 公开路径脱敏规则
 
 1. 仓库、报告、证据索引和日志摘录一律使用 `<campus-root>`、`campus://`、`<devbox>` 或 `$CIS_DEVBOX`。
-2. 禁止写入真实开发机账号、地址、IP、密码、Token、Key，也禁止写入本机绝对路径。
+2. 禁止写入真实开发机账号、地址、IP、密码、Token、Key；自由字符串还禁止任何 Unix/macOS home 或绝对路径形状。
 3. 公开证据路径推荐使用 `<campus-root>/logs/<仓库>/<分支>/<sha>-<门禁>.log`；也可以使用等价的 `campus://logs/...`。
-4. `record-evidence.mjs` 会把可识别的开发机 campus 绝对路径规范化成 `<campus-root>/...` 后再写入；真实路径只允许作为命令行输入或 `--campus-root` / `CIS_CAMPUS_ROOT` 的临时值，不会落盘。
-5. 命令型证据记录命令、退出码和日志路径；`github-ci-run`、`manual-device-note`、`screenshot-or-recording`、`source-audit-note` 等非命令型证据可改用 artifact、testName、notes 和显式 outcome。证据类型必须与矩阵中该条目的 required/pending 类型一致。
+4. `record-evidence.mjs` 不做命令路径 normalization，也不接受真实绝对路径后再改写；调用方必须传入已经脱敏、可重放的模板。`logPath` 只接受 `<campus-root>/logs/...` 或 `campus://logs/...`，artifact 只接受 `campus://` 或无凭据、无 query 的 HTTPS URL。
+5. 阶段 S 证据索引 fail-closed：不得记录或宣称 `SCHOOL_VERIFIED`；真实学校验证必须等用户和主代理开启专项流程。
+6. 命令型证据记录命令、退出码和日志路径；`github-ci-run`、`manual-device-note`、`screenshot-or-recording`、`source-audit-note` 等非命令型证据可改用 artifact、testName、notes 和显式 outcome。证据类型必须与矩阵中该条目的 required/pending 类型一致。
 
 ## 阶段联调验收流程（§12.8）
 

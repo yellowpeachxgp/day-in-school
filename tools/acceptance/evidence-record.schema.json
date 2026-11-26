@@ -53,6 +53,26 @@
           "not": {
             "pattern": "/Volumes/"
           }
+        },
+        {
+          "not": {
+            "pattern": "/home/"
+          }
+        },
+        {
+          "not": {
+            "pattern": "/Users/"
+          }
+        },
+        {
+          "not": {
+            "pattern": "file:///"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(^|[\\s\"'=\\(\\[\\{<])/"
+          }
         }
       ]
     },
@@ -64,6 +84,37 @@
         {
           "type": "string",
           "pattern": "^(<campus-root>/logs/|campus://logs/).+"
+        }
+      ]
+    },
+    "publicArtifactPath": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/publicString"
+            },
+            {
+              "type": "string",
+              "pattern": "^campus://\\S+$"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/publicString"
+            },
+            {
+              "type": "string",
+              "pattern": "^https://\\S+$"
+            },
+            {
+              "not": {
+                "pattern": "[?#]"
+              }
+            }
+          ]
         }
       ]
     }
@@ -118,7 +169,10 @@
         "DEVICE_TESTED",
         "SCHOOL_VERIFIED",
         "DISTRIBUTION_READY"
-      ]
+      ],
+      "not": {
+        "const": "SCHOOL_VERIFIED"
+      }
     },
     "acceptanceOutcome": {
       "enum": [
@@ -224,7 +278,6 @@
             "devbox",
             "github-ci",
             "user-device",
-            "school-account",
             "local-static"
           ]
         },
@@ -287,7 +340,7 @@
         "artifactPaths": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/publicString"
+            "$ref": "#/$defs/publicArtifactPath"
           },
           "uniqueItems": true
         }

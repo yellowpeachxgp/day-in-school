@@ -1,16 +1,7 @@
-// 统一的验收证据脱敏工具。只使用通用形状和运行时环境值，不写死任何真实主机、账号或路径。
+// 统一的验收证据脱敏工具。只做校验，不改写证据命令；调用方必须传入已脱敏模板。
+// 敏感检测只使用通用形状和运行时环境值，不写死任何真实主机、账号或路径。
 
-export function trimTrailingSlashes(value) {
-  let result = (value || '').trim();
-  while (result.length > 1 && result.endsWith('/')) result = result.slice(0, -1);
-  return result;
-}
-
-export function configuredCampusRoot(explicitRoot) {
-  return trimTrailingSlashes(explicitRoot || process.env.CIS_CAMPUS_ROOT || '');
-}
-
-export function validSuffix(value) {
+function validSuffix(value) {
   return typeof value === 'string' &&
     value.length > 0 &&
     !value.split('/').includes('..') &&
@@ -18,72 +9,58 @@ export function validSuffix(value) {
     !value.includes(String.fromCharCode(92));
 }
 
-function extractCampusSuffix(value) {
-  if (!value.startsWith('/')) return null;
-  const parts = value.split('/');
-  for (let index = 1; index < parts.length - 1; index += 1) {
-    if (parts[index] === 'campus') {
-      const suffix = parts.slice(index + 1).join('/');
-      return validSuffix(suffix) ? suffix : null;
-    }
+export function isPublicCampusLogPath(value) {
+  if (typeof value !== 'string') return false;
+  if (value.startsWith('<campus-root>/logs/')) {
+    return validSuffix(value.slice('<campus-root>/logs/'.length));
   }
-  return null;
+  if (value.startsWith('campus://logs/')) {
+    return validSuffix(value.slice('campus://logs/'.length));
+  }
+  return false;
 }
 
-export function normalizeCampusPath(input, explicitRoot) {
-  const value = (input || '').trim();
-  if (!value) return null;
-  if (value.startsWith('<campus-root>/')) {
-    const suffix = value.slice('<campus-root>/'.length);
-    return validSuffix(suffix) ? value : null;
-  }
+export function isPublicArtifactPath(value) {
+  if (typeof value !== 'string') return false;
   if (value.startsWith('campus://')) {
-    const suffix = value.slice('campus://'.length);
-    return validSuffix(suffix) ? '<campus-root>/' + suffix : null;
+    return validSuffix(value.slice('campus://'.length));
   }
-  const root = configuredCampusRoot(explicitRoot);
-  if (root && root !== '/' && value.startsWith(root + '/')) {
-    const suffix = value.slice(root.length + 1);
-    return validSuffix(suffix) ? '<campus-root>/' + suffix : null;
-  }
-  const suffix = extractCampusSuffix(value);
-  return suffix ? '<campus-root>/' + suffix : null;
-}
-
-export function normalizeCommand(input, explicitRoot) {
-  if (typeof input !== 'string') return input;
-  let output = input;
-  const root = configuredCampusRoot(explicitRoot);
-  if (root && root !== '/') output = output.split(root).join('<campus-root>');
-  output = output.replace(new RegExp('/(?:[^/]+/)*campus(?=/)', 'g'), '<campus-root>');
-  return output;
-}
-
-export function normalizeFreeText(input, explicitRoot) {
-  return normalizeCommand(input, explicitRoot);
-}
-
-function normalizeGithubUrl(value) {
+  if (!value.startsWith('https://')) return false;
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:') return null;
-    if (url.hostname !== 'github.com') return null;
-    if (url.username || url.password || url.search || url.hash) return null;
-    return value;
+    return url.protocol === 'https:' &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash;
   } catch {
-    return null;
+    return false;
   }
 }
 
-export function normalizeArtifactPath(input, explicitRoot) {
-  const value = (input || '').trim();
-  if (!value) return null;
-  const campusPath = normalizeCampusPath(value, explicitRoot);
-  if (campusPath) return campusPath;
-  const githubUrl = normalizeGithubUrl(value);
-  if (githubUrl) return githubUrl;
-  if (!value.startsWith('/') && validSuffix(value) && !value.includes(':')) return value;
-  return null;
+export function containsHomeOrAbsolutePath(value) {
+  if (typeof value !== 'string') return false;
+  const text = value;
+  const lower = text.toLowerCase();
+  if (lower.includes('/home/') || lower.includes('/users/') || lower.includes('/srv/') || lower.includes('/volumes/')) return true;
+  if (lower.includes('file:///')) return true;
+  const delimiters = [' ', '\t', '\r', '\n', '"', "'", '=', '(', '[', '{', '<'];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const previous = index === 0 ? '' : text[index - 1];
+    const atBoundary = index === 0 || delimiters.includes(previous);
+    if (char === '/' && atBoundary) {
+      const next = text[index + 1] || '';
+      if (/[A-Za-z0-9._~]/.test(next)) return true;
+    }
+    if (char === '~' && atBoundary) {
+      const next = text[index + 1] || '';
+      if (next === '/' || /[A-Za-z0-9_]/.test(next)) return true;
+    }
+    if (/[A-Za-z]/.test(char) && atBoundary && text[index + 1] === ':' && (text[index + 2] === '/' || text[index + 2] === String.fromCharCode(92))) return true;
+  }
+  return false;
 }
 
 export function runtimeSensitiveValues(explicitRoot) {
@@ -92,7 +69,7 @@ export function runtimeSensitiveValues(explicitRoot) {
     const clean = (value || '').trim();
     if (clean.length >= 3 && !clean.startsWith('<') && !clean.includes('CIS_DEVBOX')) result.push(clean);
   }
-  add(configuredCampusRoot(explicitRoot));
+  add(explicitRoot || process.env.CIS_CAMPUS_ROOT || '');
   const devbox = (process.env.CIS_DEVBOX || '').trim();
   if (devbox) {
     add(devbox);
@@ -119,15 +96,14 @@ export function forbiddenPatterns() {
     { name: '私钥头', pattern: new RegExp('PRIVATE KEY-----') },
     { name: 'GitHub Token 形状', pattern: new RegExp('(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})') },
     { name: 'OpenAI 风格 Key 形状', pattern: new RegExp('sk-[A-Za-z0-9_-]{20,}') },
-    { name: '云 AccessKey 形状', pattern: new RegExp('AKIA[0-9A-Z]{16}') },
-    { name: '未脱敏 srv 路径', pattern: new RegExp('/srv/') },
-    { name: '未脱敏 Volumes 路径', pattern: new RegExp('/Volumes/') }
+    { name: '云 AccessKey 形状', pattern: new RegExp('AKIA[0-9A-Z]{16}') }
   ];
 }
 
 export function findSensitiveHits(value, explicitRoot) {
   if (typeof value !== 'string') return [];
   const hits = [];
+  if (containsHomeOrAbsolutePath(value)) hits.push('Unix/macOS home 或绝对路径形状');
   for (const { name, pattern } of forbiddenPatterns()) {
     if (pattern.test(value)) hits.push(name);
   }

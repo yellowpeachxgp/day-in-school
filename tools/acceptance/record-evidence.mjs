@@ -8,10 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import {
   findSensitiveHits,
-  normalizeArtifactPath,
-  normalizeCampusPath,
-  normalizeCommand,
-  normalizeFreeText
+  isPublicArtifactPath,
+  isPublicCampusLogPath
 } from './sensitive-utils.mjs';
 
 const usage = [
@@ -28,7 +26,7 @@ const usage = [
   '  --executor acc/cis-stage-<序号>',
   '',
   '非命令型证据（如 github-ci-run、manual-device-note、screenshot-or-recording、source-audit-note）可不提供 command/exitCode/logPath，但必须显式提供 --outcome，并按类型提供 artifact/testName/notes。',
-  '至少提供一个 --android-sha 或 --cloud-sha。真实 campus 路径只会用于内存识别，落盘前统一写成 <campus-root>/...。'
+  '至少提供一个 --android-sha 或 --cloud-sha。命令和路径必须已经是脱敏模板；脚本不再改写真实绝对路径。'
 ].join(String.fromCharCode(10)) + String.fromCharCode(10);
 
 const { values } = parseArgs({
@@ -44,7 +42,6 @@ const { values } = parseArgs({
     'android-sha': { type: 'string' },
     'cloud-sha': { type: 'string' },
     'log-path': { type: 'string' },
-    'campus-root': { type: 'string' },
     executor: { type: 'string' },
     'executed-on': { type: 'string', default: 'devbox' },
     'started-at': { type: 'string' },
@@ -107,7 +104,7 @@ if (values['duration-ms'] !== undefined) {
 if (values['started-at'] && !validIsoInstant(values['started-at'])) fail('--started-at 必须是 ISO-8601 时间');
 if (values['finished-at'] && !validIsoInstant(values['finished-at'])) fail('--finished-at 必须是 ISO-8601 时间');
 
-const executedOnValues = ['devbox', 'github-ci', 'user-device', 'school-account', 'local-static'];
+const executedOnValues = ['devbox', 'github-ci', 'user-device', 'local-static'];
 if (!executedOnValues.includes(values['executed-on'])) {
   fail('--executed-on 必须是 ' + executedOnValues.join(' / '));
 }
@@ -137,8 +134,8 @@ if (!levels.includes(values['verification-level'])) {
 if (values['verification-level'] === 'DEVICE_TESTED' && values['executed-on'] !== 'user-device') {
   fail('只有 --executed-on user-device 的手工真机证据才能标 DEVICE_TESTED');
 }
-if (values['verification-level'] === 'SCHOOL_VERIFIED' && values['executed-on'] !== 'school-account') {
-  fail('只有 --executed-on school-account 的真实学校账号证据才能标 SCHOOL_VERIFIED');
+if (values['verification-level'] === 'SCHOOL_VERIFIED') {
+  fail('阶段 S 证据索引 fail-closed：不得记录或宣称 SCHOOL_VERIFIED；如需真实学校验证，先由用户和主代理开启专项流程');
 }
 if (values['verification-level'] === 'DISTRIBUTION_READY') {
   fail('阶段 S 骨架不接受 DISTRIBUTION_READY；发布边界见 D12');
@@ -147,14 +144,14 @@ if (values['device-tested-pending-user'] && values['verification-level'] === 'DE
   fail('DEVICE_TESTED 待用户表示尚未验证，不能同时标 DEVICE_TESTED');
 }
 
-const normalizedCommand = typeof values.command === 'string' ? normalizeCommand(values.command, values['campus-root']) : null;
-let normalizedLogPath = null;
+const commandText = typeof values.command === 'string' && values.command.trim() ? values.command.trim() : null;
+let publicLogPath = null;
 if (values['log-path'] !== undefined) {
-  normalizedLogPath = normalizeCampusPath(values['log-path'], values['campus-root']);
-  if (!normalizedLogPath) {
-    fail('--log-path 无法脱敏为 campus 公开路径；请使用 <campus-root>/logs/... 或 campus://logs/...，或用 --campus-root / CIS_CAMPUS_ROOT 提供临时识别值');
-  } else if (!normalizedLogPath.startsWith('<campus-root>/logs/')) {
-    fail('--log-path 规范化后必须位于 <campus-root>/logs/ 下；报告或截图请使用 --artifact-path');
+  const candidate = values['log-path'].trim();
+  if (!isPublicCampusLogPath(candidate)) {
+    fail('--log-path 必须已经是 <campus-root>/logs/... 或 campus://logs/...；脚本不再改写真实绝对路径');
+  } else {
+    publicLogPath = candidate;
   }
 }
 
@@ -162,15 +159,15 @@ const rawArtifactPaths = values['artifact-path'] ?? [];
 if (!Array.isArray(rawArtifactPaths)) fail('--artifact-path 解析异常');
 const artifactPaths = [];
 for (const artifact of rawArtifactPaths) {
-  const normalized = normalizeArtifactPath(artifact, values['campus-root']);
-  if (!normalized) {
-    fail('某个 --artifact-path 无法脱敏；允许仓库相对路径、无查询参数的 github.com 证据 URL、campus 公开路径或可识别的 campus 绝对路径');
+  const candidate = artifact.trim();
+  if (!isPublicArtifactPath(candidate)) {
+    fail('某个 --artifact-path 不被允许；只接受 campus:// 或无凭据、无 query 的 https URL');
   } else {
-    artifactPaths.push(normalized);
+    artifactPaths.push(candidate);
   }
 }
-const normalizedNotes = normalizeFreeText(values.notes, values['campus-root']);
-const normalizedTestName = normalizeFreeText(values['test-name'], values['campus-root']);
+const notesText = values.notes;
+const testNameText = values['test-name'];
 
 const evidenceType = values['evidence-type'];
 const requiredTypes = matrixItem?.requiredEvidenceTypes ?? [];
@@ -215,12 +212,12 @@ if (values['device-tested-pending-user'] && acceptanceOutcome === 'pass') {
   fail('DEVICE_TESTED 待用户不计入通过，acceptanceOutcome 不得为 pass');
 }
 
-const hasCommand = nonEmpty(normalizedCommand);
+const hasCommand = nonEmpty(commandText);
 const hasExitCode = exitCode !== null;
-const hasLogPath = nonEmpty(normalizedLogPath);
+const hasLogPath = nonEmpty(publicLogPath);
 const hasArtifacts = artifactPaths.length > 0;
-const hasTestName = nonEmpty(normalizedTestName);
-const hasNotes = nonEmpty(normalizedNotes);
+const hasTestName = nonEmpty(testNameText);
+const hasNotes = nonEmpty(notesText);
 if (hasCommand && !hasExitCode) fail('提供 --command 时必须同时提供 --exit-code');
 
 const specialRules = {
@@ -255,16 +252,16 @@ if (rule.anyOf) {
 }
 
 const secretScanValues = [
-  ['command', normalizedCommand],
-  ['log-path', normalizedLogPath],
+  ['command', commandText],
+  ['log-path', publicLogPath],
   ['executor', values.executor],
-  ['notes', normalizedNotes],
-  ['test-name', normalizedTestName],
+  ['notes', notesText],
+  ['test-name', testNameText],
   ...artifactPaths.map((artifact, index) => ['artifact-path[' + index + ']', artifact])
 ];
 for (const [field, value] of secretScanValues) {
-  for (const hit of findSensitiveHits(value, values['campus-root'])) {
-    fail(field + ' 含疑似敏感信息（' + hit + '）；请使用 $CIS_DEVBOX、<campus-root>、campus:// 或公开 GitHub URL');
+  for (const hit of findSensitiveHits(value)) {
+    fail(field + ' 含疑似敏感信息（' + hit + '）；请使用 $CIS_DEVBOX、<campus-root>、campus:// 或无凭据无 query 的 https URL');
   }
 }
 
@@ -294,7 +291,7 @@ const record = {
   evidenceType,
   verificationLevel: values['verification-level'],
   acceptanceOutcome,
-  command: normalizedCommand,
+  command: commandText,
   exitCode,
   sha: {
     android: values['android-sha'] ?? null,
@@ -306,12 +303,12 @@ const record = {
     startedAt: values['started-at'] ?? null,
     finishedAt: values['finished-at'] ?? null,
     durationMs,
-    logPath: normalizedLogPath,
-    testName: normalizedTestName ?? null,
+    logPath: publicLogPath,
+    testName: testNameText ?? null,
     artifactPaths
   },
   deviceTestedPendingUser: values['device-tested-pending-user'],
-  notes: normalizedNotes ?? null
+  notes: notesText ?? null
 };
 
 await mkdir(path.dirname(outPath), { recursive: true });
