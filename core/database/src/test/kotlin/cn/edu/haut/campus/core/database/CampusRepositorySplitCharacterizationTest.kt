@@ -52,8 +52,9 @@ class CampusRepositorySplitCharacterizationTest {
 
     @Test
     fun w005a_public_instance_api_name_snapshot() {
+        // 不能过滤 isSynthetic：若公开 Kotlin API 返回 inline/value class（如 Result），
+        // JVM 只能以 synthetic 实现方法承载该签名；它们仍是调用方可达到的兼容 API。
         val declaredNames = CampusRepository::class.java.declaredMethods
-            .filterNot { it.isSynthetic }
             .map { it.name }
             .toSet()
         val expectedPublicMethods = listOf(
