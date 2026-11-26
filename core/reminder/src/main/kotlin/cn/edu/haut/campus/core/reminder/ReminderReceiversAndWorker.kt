@@ -30,6 +30,9 @@ class ReminderFireReceiver : BroadcastReceiver() {
         val taskId = intent.getStringExtra(AndroidAlarmScheduler.EXTRA_TASK_ID) ?: return
         val generation = intent.getIntExtra(AndroidAlarmScheduler.EXTRA_GENERATION, -1)
         if (generation < 0) return
+        val eventKey = intent.getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_KEY)
+        val eventRevision = intent.getStringExtra(AndroidAlarmScheduler.EXTRA_EVENT_REVISION)
+        val policyRevision = intent.getStringExtra(AndroidAlarmScheduler.EXTRA_POLICY_REVISION)
 
         val pendingResult = goAsync()
         val appContext = context.applicationContext
@@ -41,7 +44,10 @@ class ReminderFireReceiver : BroadcastReceiver() {
                     sessions.withActiveSession(accountScope.profileId, accountScope.epoch) {
                         ReminderCoordinator.getInstance(appContext).onAlarmFired(
                             taskId = taskId,
-                            expectedGeneration = generation
+                            expectedGeneration = generation,
+                            expectedEventKey = eventKey,
+                            expectedEventRevision = eventRevision,
+                            expectedPolicyRevision = policyRevision
                         )
                         true
                     }
@@ -104,7 +110,7 @@ class SnoozeActionReceiver : BroadcastReceiver() {
                                 )
                             }
                             ACTION_DISMISS_LIVE_COURSE -> {
-                                ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
+                                coordinator.dismissLiveCourseNotification()
                             }
                         }
                     }
