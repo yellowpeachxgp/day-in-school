@@ -15,4 +15,19 @@ class ModelConfigParserTest {
         assertTrue(characters.contains("通"))
         assertEquals(" ", characters.last())
     }
+
+    @Test
+    fun parsesCompactFlowCharacterDictionary() {
+        val yaml = """
+            PostProcess:
+              name: CTCLabelDecode
+              character_dict: [
+                  "甲", "\"", "\\", "乙"
+              ]
+        """.trimIndent()
+
+        val characters = ModelConfigParser.parseCharacterList(yaml, "flow-fixture")
+
+        assertEquals(listOf("甲", "\"", "\\", "乙", " "), characters)
+    }
 }

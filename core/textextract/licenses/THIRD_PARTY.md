@@ -22,6 +22,10 @@
 
 R02 对公开构件的直接测量：ONNX Runtime Android 1.21.1 arm64-v8a native compressed 6,465,334 B；PP-OCRv6_tiny 两个 ONNX gzip-9 合计约 5,696,970 B（本模块重新核验 det 1,589,574 B + rec 4,107,396 B）。arm64 split 的理论 OCR 增量约 12.16 MiB；universal 四 ABI 约 33.4 MiB + Kotlin SDK。PdfBox-Android AAR 文件 3,254,019 B；`classes.jar` entry compressed 1,609,777 B。AAR/JAR 到 DEX/APK 的转换会改变实际体积，因此 PDF 部分只能作为静态估算，不能写成 APK 实测。
 
+## 模型配置重打包说明
+
+`ppocrv6_tiny_rec.yml` 保留上游 `inference.yml` 的预处理、CTCLabelDecode 与字符表语义；仅把同一字符表从每行一个元素的 block list 改为合法 YAML flow list，以满足仓库文件行数护栏。两个 ONNX 二进制未转换、未修改，SHA-256 与上表一致。
+
 ## 测试资源副本
 
 `src/test/resources/com/tom_roush/pdfbox/resources/` 是从 PdfBox-Android AAR assets 提取的资源副本（许可随上游 LICENSE/NOTICE，含 SIL OFL 字体），只用于 JVM local unit test 的 classpath fallback；不进入生产 AAR/APK。

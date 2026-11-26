@@ -20,24 +20,29 @@ internal object ModelConfigParser {
         val dictLine = findCharacterDictLine(lines, postProcessLine + 1, postProcessIndent)
         if (dictLine < 0) throw parseError("缺少 character_dict: " + assetPath)
         val dictIndent = leadingSpaces(lines[dictLine])
+        val dictValue = lines[dictLine].trim().substringAfter("character_dict:").trim()
         val characters = mutableListOf<String>()
-        var index = dictLine + 1
-        while (index < lines.size) {
-            val line = lines[index]
-            val indent = leadingSpaces(line)
-            val contentAfterIndent = line.substring(indent)
-            val trimmed = contentAfterIndent.trim()
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+        if (dictValue.startsWith("[")) {
+            characters.addAll(parseFlowCharacterList(lines, dictLine, assetPath))
+        } else {
+            var index = dictLine + 1
+            while (index < lines.size) {
+                val line = lines[index]
+                val indent = leadingSpaces(line)
+                val contentAfterIndent = line.substring(indent)
+                val trimmed = contentAfterIndent.trim()
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    index++
+                    continue
+                }
+                if (!contentAfterIndent.startsWith("-")) {
+                    if (indent <= dictIndent) break
+                    index++
+                    continue
+                }
+                characters.add(parseYamlListScalar(contentAfterIndent.substring(1)))
                 index++
-                continue
             }
-            if (!contentAfterIndent.startsWith("-")) {
-                if (indent <= dictIndent) break
-                index++
-                continue
-            }
-            characters.add(parseYamlListScalar(contentAfterIndent.substring(1)))
-            index++
         }
         if (characters.isEmpty()) throw parseError("character_dict 为空: " + assetPath)
         return characters.toMutableList().apply {
@@ -56,10 +61,83 @@ internal object ModelConfigParser {
             }
             val indent = leadingSpaces(line)
             if (indent <= postProcessIndent) break
-            if (trimmed == "character_dict:") return index
+            if (trimmed.startsWith("character_dict:")) return index
             index++
         }
         return -1
+    }
+
+    /** 解析合法 YAML flow list 的受限子集；字符串不在行内换行，标量以逗号分隔。 */
+    private fun parseFlowCharacterList(lines: List<String>, dictLine: Int, assetPath: String): List<String> {
+        val characters = mutableListOf<String>()
+        val token = StringBuilder()
+        var inDoubleQuoted = false
+        var inSingleQuoted = false
+        var escaping = false
+        var closed = false
+
+        fun finishToken() {
+            val raw = token.toString().trim()
+            if (raw.isNotEmpty()) characters.add(parseYamlListScalar(raw))
+            token.clear()
+        }
+
+        outer@ for (lineIndex in dictLine until lines.size) {
+            val line = if (lineIndex == dictLine) {
+                lines[lineIndex].trim().substringAfter("character_dict:").trim()
+            } else {
+                lines[lineIndex]
+            }
+            var position = 0
+            if (lineIndex == dictLine) {
+                if (!line.startsWith("[")) throw parseError("character_dict flow 缺少左括号: " + assetPath)
+                position = 1
+            }
+            while (position < line.length) {
+                val current = line[position]
+                if (inDoubleQuoted) {
+                    token.append(current)
+                    if (escaping) {
+                        escaping = false
+                    } else if (current == '\\') {
+                        escaping = true
+                    } else if (current == '"') {
+                        inDoubleQuoted = false
+                    }
+                } else if (inSingleQuoted) {
+                    token.append(current)
+                    if (current == '\'') {
+                        if (position + 1 < line.length && line[position + 1] == '\'') {
+                            token.append(line[position + 1])
+                            position++
+                        } else {
+                            inSingleQuoted = false
+                        }
+                    }
+                } else {
+                    when (current) {
+                        '"' -> {
+                            inDoubleQuoted = true
+                            token.append(current)
+                        }
+                        '\'' -> {
+                            inSingleQuoted = true
+                            token.append(current)
+                        }
+                        ',' -> finishToken()
+                        ']' -> {
+                            finishToken()
+                            closed = true
+                            break@outer
+                        }
+                        else -> if (!current.isWhitespace()) token.append(current)
+                    }
+                }
+                position++
+            }
+        }
+        if (!closed) throw parseError("character_dict flow 未闭合: " + assetPath)
+        return characters
     }
 
     private fun parseYamlListScalar(rawValue: String): String {
