@@ -26,7 +26,7 @@ class SettlementStateMachineTest {
         assertEquals(SettlementStatus.PENDING_BOTH_CONFIRMATIONS, settlement.status)
         assertEquals(emptySet<SettlementParty>(), settlement.confirmedParties)
         assertFalse(settlement.isTerminal)
-        assertNull(settlement.settledAt)
+        assertNull(settlement.confirmedAt)
     }
 
     @Test
@@ -37,13 +37,13 @@ class SettlementStateMachineTest {
         assertEquals(SettlementStatus.PENDING_CREDITOR_CONFIRMATION, afterDebtor.status)
         assertEquals(setOf(SettlementParty.DEBTOR), afterDebtor.confirmedParties)
         assertFalse(afterDebtor.isTerminal)
-        assertNull(afterDebtor.settledAt)
+        assertNull(afterDebtor.confirmedAt)
 
         val settled = applied(afterDebtor.confirm(creditor, t2))
-        assertEquals(SettlementStatus.SETTLED, settled.status)
+        assertEquals(SettlementStatus.CONFIRMED, settled.status)
         assertEquals(setOf(SettlementParty.DEBTOR, SettlementParty.CREDITOR), settled.confirmedParties)
         assertTrue(settled.isTerminal)
-        assertEquals(t2, settled.settledAt)
+        assertEquals(t2, settled.confirmedAt)
     }
 
     @Test
@@ -53,8 +53,8 @@ class SettlementStateMachineTest {
         assertEquals(SettlementStatus.PENDING_DEBTOR_CONFIRMATION, afterCreditor.status)
 
         val settled = applied(afterCreditor.confirm(debtor, t2))
-        assertEquals(SettlementStatus.SETTLED, settled.status)
-        assertEquals(t2, settled.settledAt)
+        assertEquals(SettlementStatus.CONFIRMED, settled.status)
+        assertEquals(t2, settled.confirmedAt)
     }
 
     @Test
@@ -99,7 +99,7 @@ class SettlementStateMachineTest {
     }
 
     @Test
-    fun settledRecordIsTerminalForBothConfirmationAndCancellation() {
+    fun confirmedRecordIsTerminalForBothConfirmationAndCancellation() {
         val settled = applied(applied(propose().confirm(debtor, t1)).confirm(creditor, t2))
 
         val confirmAgain = settled.confirm(debtor, t3)

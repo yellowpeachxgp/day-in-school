@@ -46,8 +46,8 @@
 - 初始：`PENDING_BOTH_CONFIRMATIONS`。
 - debtor 确认后：等待 creditor，即 `PENDING_CREDITOR_CONFIRMATION`。
 - creditor 确认后：等待 debtor，即 `PENDING_DEBTOR_CONFIRMATION`。
-- 两方都确认后：终态 `SETTLED`。
+- 两方都确认后：终态 `CONFIRMED`。
 - 完成前任一方可取消：终态 `CANCELLED`。
 - 同一方重复确认是幂等空操作； outsider 不能确认或取消；终态后不能继续变更。
 
-`SETTLED` 仅表示双方认可账本已结清，不是支付成功证明。真实资金是否流动不属于本模块语义；若未来接入支付，必须由独立模块/事件显式记录，不能改写本状态含义。
+`CONFIRMED` 仅表示双方认可账本已结清，不是支付成功证明。真实资金是否流动不属于本模块语义；若未来接入支付，必须由独立模块/事件显式记录，不能改写本状态含义。

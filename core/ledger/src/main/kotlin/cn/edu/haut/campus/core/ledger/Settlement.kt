@@ -11,14 +11,14 @@ enum class SettlementParty {
 /**
  * 结算记录状态。
  *
- * SETTLED 只表示债务人与债权人都在账本上确认了这笔结清记录；它不是支付成功、
+ * CONFIRMED 只表示债务人与债权人都在账本上确认了这笔结清记录；它不是支付成功、
  * 转账成功或钱包扣款成功的证明。本模块没有也不应有任何支付执行入口。
  */
 enum class SettlementStatus {
     PENDING_BOTH_CONFIRMATIONS,
     PENDING_DEBTOR_CONFIRMATION,
     PENDING_CREDITOR_CONFIRMATION,
-    SETTLED,
+    CONFIRMED,
     CANCELLED,
 }
 
@@ -36,7 +36,7 @@ sealed interface SettlementTransition {
  * 两方确认的记账型结算状态机。
  *
  * 合法流转：PENDING_BOTH_CONFIRMATIONS 任一方确认后进入等待另一方确认的状态；
- * 另一方也确认后进入终态 SETTLED。在完成前任一方可取消并进入终态 CANCELLED。
+ * 另一方也确认后进入终态 CONFIRMED。在完成前任一方可取消并进入终态 CANCELLED。
  * 重复确认同一方是幂等空操作； outsiders、终态后的确认/取消都会被拒绝。
  *
  * 金额必须严格为正。负向调整应另建冲正账记录，不允许用负结算金额改写方向。
@@ -49,21 +49,21 @@ class Settlement private constructor(
     val createdAt: Instant,
     val debtorConfirmedAt: Instant?,
     val creditorConfirmedAt: Instant?,
-    val settledAt: Instant?,
+    val confirmedAt: Instant?,
     val cancelledAt: Instant?,
     val cancelledBy: SettlementParty?,
 ) {
     val status: SettlementStatus
         get() = when {
             cancelledAt != null -> SettlementStatus.CANCELLED
-            debtorConfirmedAt != null && creditorConfirmedAt != null -> SettlementStatus.SETTLED
+            debtorConfirmedAt != null && creditorConfirmedAt != null -> SettlementStatus.CONFIRMED
             debtorConfirmedAt != null -> SettlementStatus.PENDING_CREDITOR_CONFIRMATION
             creditorConfirmedAt != null -> SettlementStatus.PENDING_DEBTOR_CONFIRMATION
             else -> SettlementStatus.PENDING_BOTH_CONFIRMATIONS
         }
 
     val isTerminal: Boolean
-        get() = status == SettlementStatus.SETTLED || status == SettlementStatus.CANCELLED
+        get() = status == SettlementStatus.CONFIRMED || status == SettlementStatus.CANCELLED
 
     val confirmedParties: Set<SettlementParty>
         get() {
@@ -90,9 +90,9 @@ class Settlement private constructor(
                 SettlementBlockReason.INVALID_STATE,
                 "a cancelled settlement cannot be confirmed",
             )
-            SettlementStatus.SETTLED -> return SettlementTransition.Blocked(
+            SettlementStatus.CONFIRMED -> return SettlementTransition.Blocked(
                 SettlementBlockReason.INVALID_STATE,
-                "a settled record cannot be confirmed again",
+                "a confirmed record cannot be confirmed again",
             )
             else -> Unit
         }
@@ -107,7 +107,7 @@ class Settlement private constructor(
 
         val nextDebtorConfirmedAt = if (party == SettlementParty.DEBTOR) at else debtorConfirmedAt
         val nextCreditorConfirmedAt = if (party == SettlementParty.CREDITOR) at else creditorConfirmedAt
-        val nowSettled = nextDebtorConfirmedAt != null && nextCreditorConfirmedAt != null
+        val nowConfirmed = nextDebtorConfirmedAt != null && nextCreditorConfirmedAt != null
         return SettlementTransition.Applied(
             Settlement(
                 id = id,
@@ -117,7 +117,7 @@ class Settlement private constructor(
                 createdAt = createdAt,
                 debtorConfirmedAt = nextDebtorConfirmedAt,
                 creditorConfirmedAt = nextCreditorConfirmedAt,
-                settledAt = if (nowSettled) at else null,
+                confirmedAt = if (nowConfirmed) at else null,
                 cancelledAt = cancelledAt,
                 cancelledBy = cancelledBy,
             ),
@@ -131,9 +131,9 @@ class Settlement private constructor(
             "only the debtor or creditor can cancel this settlement",
         )
         return when (status) {
-            SettlementStatus.SETTLED -> SettlementTransition.Blocked(
+            SettlementStatus.CONFIRMED -> SettlementTransition.Blocked(
                 SettlementBlockReason.INVALID_STATE,
-                "a settled record is terminal and cannot be cancelled",
+                "a confirmed record is terminal and cannot be cancelled",
             )
             SettlementStatus.CANCELLED -> SettlementTransition.Blocked(
                 SettlementBlockReason.INVALID_STATE,
@@ -148,7 +148,7 @@ class Settlement private constructor(
                     createdAt = createdAt,
                     debtorConfirmedAt = debtorConfirmedAt,
                     creditorConfirmedAt = creditorConfirmedAt,
-                    settledAt = null,
+                    confirmedAt = null,
                     cancelledAt = at,
                     cancelledBy = party,
                 ),
@@ -184,7 +184,7 @@ class Settlement private constructor(
                 createdAt = createdAt,
                 debtorConfirmedAt = null,
                 creditorConfirmedAt = null,
-                settledAt = null,
+                confirmedAt = null,
                 cancelledAt = null,
                 cancelledBy = null,
             )
