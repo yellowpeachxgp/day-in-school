@@ -32,6 +32,7 @@
 | AUTO-003 | 2026-11-26 | 公开仓库不保存真实开发机账号/路径；统一用 `<devbox-user>`/`<campus-root>`/`$CIS_CAMPUS_ROOT`；本公开 roadmap 副本按 D16 去标识化；自主决策，待用户复核 | 主代理高优先级隐私裁决：D16 与正文冲突时以 D16 为准，即使 roadmap 入库副本不能逐字包含真实账号/路径 | 待用户复核 |
 | AUTO-004 | 2026-11-26 | 为移除未合并公开分支中的开发机账号/路径字面量，已删除两仓旧 INF-01 远端分支；后续使用 feat/cis-inf-01-governance-clean 干净分支；自主决策，待用户复核 | 主代理隐私补救说明：旧远端分支和开发机裸库 ref 已删除，两个自动关闭 PR 不更新不重开 | 待用户复核 |
 | AUTO-005 | 2026-11-26 | INF-00/INF-01 两卡均因旧分支历史含开发机账号/路径字面量而采用干净分支重建；为免污染公开历史，干净分支压缩为最少逻辑提交，属于隐私补救例外，仍保留完整门禁证据；自主决策，待用户复核 | 主代理补充裁决：隐私更保守优先于细化提交原则 | 待用户复核 |
+| AUTO-006 | 2026-11-26 | cloud 当前无依赖且无 lockfile 时，cis-gate cloud 跳过安装步骤；一旦 package.json 出现 dependencies/devDependencies 而无 lockfile 则失败；自主决策，待用户复核 | cloud-in-school 当前 package.json 无 dependencies/devDependencies 且无 lockfile；npm ci EUSAGE 与项目无依赖现实冲突，需区分无依赖跳过安装与缺 lockfile 失败 | 待用户复核 |
 
 ## 追加规则
 
