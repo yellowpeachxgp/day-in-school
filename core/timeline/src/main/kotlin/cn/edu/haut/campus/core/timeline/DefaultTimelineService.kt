@@ -44,7 +44,7 @@ class DefaultTimelineService(
         if (selected.isEmpty()) return flowOf(emptyList())
 
         val flows = selected.map { source ->
-            source.observe(scope, window).map { events -> SourceSnapshot(source.id, events) }
+            source.observe(scope, window).map { events -> SourceSnapshot(source.id, source.kinds, events) }
         }
         return combine(flows) { snapshots: Array<SourceSnapshot> ->
             mergeSnapshots(scope, window, filter, snapshots.toList())
@@ -90,6 +90,11 @@ class DefaultTimelineService(
                 if (event.scope != scope) {
                     throw TimelineConsistencyException("事件 ${event.id.value} 跨学校账号 scope，已拒绝合并")
                 }
+                if (event.kind !in snapshot.kinds) {
+                    throw TimelineConsistencyException(
+                        "事件 ${event.id.value} kind ${event.kind} 不在 source ${snapshot.sourceId} 声明的 kinds 内"
+                    )
+                }
 
                 val byRevision = revisionsById.getOrPut(event.id) { sortedMapOf() }
                 val sameRevision = byRevision[event.revision]
@@ -127,6 +132,7 @@ class DefaultTimelineService(
 
     private data class SourceSnapshot(
         val sourceId: String,
+        val kinds: Set<TimelineKind>,
         val events: List<TimelineEvent>
     )
 }

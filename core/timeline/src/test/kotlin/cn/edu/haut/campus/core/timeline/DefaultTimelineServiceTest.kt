@@ -121,6 +121,17 @@ class DefaultTimelineServiceTest {
     }
 
     @Test
+    fun `source 投影未声明的 kind 会 fail closed`() {
+        val service = DefaultTimelineService(
+            FakeSource("course", setOf(TimelineKind.EXAM), listOf(listOf(event("course:wrong-kind"))))
+        )
+
+        assertFailsWith<TimelineConsistencyException> {
+            runTest { service.observe(scope, window, TimelineFilter.ALL).first() }
+        }
+    }
+
+    @Test
     fun `调休表示中今日停课不占忙而调入事件占忙`() = runTest {
         val cancelled = event(
             "course:monday-cancelled",
