@@ -153,6 +153,33 @@ else
       fi
     done < <(printf '%s\n' "$ratchet_hits")
   fi
+
+  # 反向棘轮：参照中存在但当前被删除的条目。删除白名单不能让大文件逃逸——
+  # 仅当文件已消失、已降至 ≤1500 行、或 baseline 内有 '# allow-remove: <path>' 显式例外时允许。
+  removed=$(awk -F '\t' '
+    NR==FNR { cur[$1] = 1; next }
+    !($1 in cur) { printf("%s\t%s\n", $1, $2) }
+  ' "$tmp_entries" "$tmp_ref")
+  if [ -n "$removed" ]; then
+    allow_removed=$(grep -E '^# allow-remove: ' "$BASELINE" | sed 's/^# allow-remove: //' | awk '{print $1}' || true)
+    while IFS='	' read -r path ref_lines; do
+      [ -z "$path" ] && continue
+      if [ ! -f "$path" ]; then
+        report_info "基线条目 $path 随文件消失而移除（参照 $ref_lines 行，清零方向）"
+        continue
+      fi
+      cur_lines=$(wc -l < "$path" | tr -d ' ')
+      if [ "$cur_lines" -le "$WARN_THRESHOLD" ]; then
+        report_info "基线条目 $path 移除：文件已降至 $cur_lines 行（≤$WARN_THRESHOLD，清零方向）"
+        continue
+      fi
+      if [ -n "$allow_removed" ] && printf '%s\n' "$allow_removed" | grep -qxF "$path"; then
+        report_warning "基线条目 $path 经 '# allow-remove' 显式例外移除（文件仍有 $cur_lines 行，审阅须确认）"
+        continue
+      fi
+      report_failure "baseline.txt 棘轮违规：$path 的条目被删除，但文件仍存在且有 $cur_lines 行（>$WARN_THRESHOLD）——删除白名单不能绕过只许降不许升"
+    done < <(printf '%s\n' "$removed")
+  fi
 fi
 
 # --- 2. 扫描 git 跟踪的文本源文件 ---------------------------------------------

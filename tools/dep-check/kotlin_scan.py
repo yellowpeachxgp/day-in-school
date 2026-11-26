@@ -95,7 +95,8 @@ def inside_intervals(pos, intervals):
 
 
 DEP_RE = re.compile(
-    r'project\s*\(\s*(?:path\s*=\s*)?\s*"((?::[A-Za-z0-9_-]+)+)"\s*\)'
+    # Kotlin 允许尾逗号：project(":x",) 与 project(":x") 等价
+    r'project\s*\(\s*(?:path\s*=\s*)?\s*"((?::[A-Za-z0-9_-]+)+)"\s*,?\s*\)'
 )
 IMPORT_RE = re.compile(
     r'^\s*import\s+([A-Za-z0-9_.]+?)(?:\s+as\s+[A-Za-z0-9_]+)?\s*$'

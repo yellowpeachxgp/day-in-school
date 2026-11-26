@@ -27,7 +27,10 @@ baseline.txt 自身是被保护对象，否则攻击者可以在同一个 PR 里
 | 重复条目、畸形条目（非 `<路径><TAB><行数>`） | FAILED |
 | 相对 merge-base 参照版本**新增白名单条目** | FAILED |
 | 相对 merge-base 参照版本**条目数值上升** | FAILED |
-| 条目数值下降、移除条目 | 允许（收紧与清零方向） |
+| **删除条目**但文件仍存在且当前 >1500 行 | FAILED（删除白名单不能绕过只许降不许升） |
+| 删除条目且文件已消失 / 已降至 ≤1500 行 | 允许（INFO，清零方向） |
+| 删除条目且 baseline 内有 `# allow-remove: <path>` 显式例外 | WARNING（例外在 diff 中高度可见，审阅必须确认） |
+| 条目数值下降 | 允许（收紧方向） |
 
 参照解析顺序：`FILE_LINE_GATE_BASE_REF` 环境变量 → `refs/remotes/origin/main` → `refs/heads/main` 等同义写法。
 参照版本取 `git merge-base <ref> HEAD` 处的 baseline.txt；merge-base 无该文件时回退到参照分支版本；两者都无
