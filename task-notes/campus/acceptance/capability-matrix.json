@@ -1,0 +1,1421 @@
+{
+  "schemaVersion": "cis-acceptance-matrix/v1",
+  "matrixId": "stage-s-capability-matrix",
+  "updatedAt": "2026-11-26",
+  "source": {
+    "masterPlanPathAfterInf01": "docs/roadmap/MASTER_PLAN.md",
+    "masterPlanVersion": "v1.1",
+    "sections": [
+      "§12.8",
+      "§14.1",
+      "§14.2",
+      "§14.3"
+    ],
+    "bootstrapNote": "INF-01 尚未合入时，本矩阵先按本机下载的 MASTER_PLAN v1.1 建立；INF-01 合入后以仓库内 docs/roadmap/MASTER_PLAN.md 为准。"
+  },
+  "reusedDomainTypes": {
+    "verificationLevel": "cn.edu.haut.campus.core.model.VerificationLevel",
+    "capabilityState": "cn.edu.haut.campus.core.model.CapabilityState",
+    "dataProvenance": "cn.edu.haut.campus.core.model.DataProvenance",
+    "schoolAccountScope": "cn.edu.haut.campus.core.model.SchoolAccountScope"
+  },
+  "verificationRules": {
+    "verificationLevels": [
+      "SOURCE_CONFIRMED",
+      "MOCK_TESTED",
+      "DEVICE_TESTED",
+      "SCHOOL_VERIFIED",
+      "DISTRIBUTION_READY"
+    ],
+    "automaticEvidenceMaximumLevel": "MOCK_TESTED",
+    "deviceTestedPendingUserLabel": "DEVICE_TESTED 待用户",
+    "rules": [
+      "acceptanceResult 是本次验收执行结论，不替代 VerificationLevel 或 CapabilityState。",
+      "开发机、模拟器、JVM、Robolectric、Roborazzi 或云端测试证据最高只能支撑 MOCK_TESTED。",
+      "未在真机验证的项不得标 DEVICE_TESTED；只能在设备上证明的子项单列 DEVICE_TESTED 待用户，不计入通过，也不冒充通过。",
+      "未在真实学校账号验证的项不得标 SCHOOL_VERIFIED；D1 下代理整理的学校数据在来源说明中默认标记为“UNVERIFIED”（不是新增 VerificationLevel 枚举）。",
+      "所有涉及用户数据的证据必须能回溯 DataProvenance 或等效来源字段；跨身份场景必须声明 SchoolAccountScope。"
+    ]
+  },
+  "evidenceTypes": [
+    "devbox-command-log",
+    "unit-test-report",
+    "integration-test-report",
+    "android-lint-report",
+    "android-apk-artifact",
+    "roborazzi-report",
+    "architecture-guard-report",
+    "room-migration-report",
+    "cloud-test-report",
+    "contract-parity-report",
+    "sql-migration-report",
+    "github-ci-run",
+    "secrets-scan-report",
+    "backup-restore-report",
+    "privacy-erasure-report",
+    "plugin-installation-report",
+    "screenshot-or-recording",
+    "manual-device-note",
+    "source-audit-note",
+    "static-analysis-report"
+  ],
+  "privacyFlags": [
+    "profile-scoped-data",
+    "user-content",
+    "credentials-or-tokens",
+    "ai-key",
+    "location-data",
+    "community-or-group-data",
+    "payment-adjacent-data",
+    "sensitive-files",
+    "cloud-transit",
+    "multi-profile-isolation"
+  ],
+  "migrationTypes": [
+    "room",
+    "cloud-sql",
+    "backup-format",
+    "datapack-format",
+    "plugin-package-format"
+  ],
+  "acceptanceOutcomes": [
+    "pass",
+    "fail",
+    "not-run",
+    "blocked",
+    "device-pending-user"
+  ],
+  "zeroToleranceRules": [
+    "终验结论只有全部通过或不通过；skipped、flaky、重试后才通过、超时一律按失败处理。",
+    "任何一项失败后，修复并合入新的成对 SHA，再从 R0 整轮重跑。",
+    "第二个独立终验子代理至少重跑 20% 项、全部隐私类项 C07/C10/C27、全部迁移类项 R0-2/R0-3。"
+  ],
+  "items": [
+    {
+      "id": "R0-1",
+      "kind": "full-regression",
+      "title": "Android android-full 全量回归",
+      "acceptanceSummary": "Android clean 后跑 android-full：全部单测、双 Lint、Debug 与 Release APK、Roborazzi 截图比对、依赖方向、文件行数门禁。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "android-lint-report",
+        "android-apk-artifact",
+        "roborazzi-report",
+        "architecture-guard-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "android-full 按 §12.3 包含全部 Room 迁移链测试；详细迁移链证据仍以 R0-2 为准。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-2",
+      "kind": "full-regression",
+      "title": "Room 迁移链保真回归",
+      "acceptanceSummary": "从 v4 起逐版本升级到最新版本，用保真合成的旧库比对全表摘要；覆盖中断回滚和重复打开。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "room-migration-report",
+        "integration-test-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "必须使用保真合成旧库；迁移编号按主代理分配顺序验证，不跳号。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-3",
+      "kind": "full-regression",
+      "title": "Cloud 全量测试与 SQL 迁移",
+      "acceptanceSummary": "云端 cloud 门禁：全部 node --test、contract:check、路由表与 OpenAPI 双向 100% 比对、0005 之后每个 SQL 迁移的 up / down / 重复执行。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "user-content",
+          "cloud-transit"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "cloud-sql"
+        ],
+        "notes": "云端 SQL 迁移从 0005 起逐号验证 up、down 和重复执行。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-4",
+      "kind": "full-regression",
+      "title": "两仓契约一致与保留端点 501",
+      "acceptanceSummary": "两仓 contracts/ 完全一致；论坛、私信等保留端点全部返回 501。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "contract-parity-report",
+        "cloud-test-report"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "契约同步本身不是数据迁移；若契约变更触发存储变化，必须在对应能力项另列迁移证据。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-5",
+      "kind": "full-regression",
+      "title": "最终 SHA 托管 CI 全绿",
+      "acceptanceSummary": "两仓最终 SHA 的 GitHub 托管 CI 全绿；开发机现场门禁仍作为第一道关。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "github-ci-run"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "无直接迁移内容；若最终 SHA 含迁移，必须同时具备 R0-2 或 R0-3 证据。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-6",
+      "kind": "full-regression",
+      "title": "两仓全历史 secrets 扫描",
+      "acceptanceSummary": "secrets 扫描覆盖两仓全部历史提交，不只扫描最新一次；不得记录开发机地址、账号、密码、Token 或 Key。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "secrets-scan-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "credentials-or-tokens",
+          "ai-key"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "无数据迁移；发现历史泄密时按安全流程轮换密钥，不改写已发布历史。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "R0-7",
+      "kind": "full-regression",
+      "title": "既有功能零回归",
+      "acceptanceSummary": "工大课表 / 成绩 / 考试、四款小组件快照、签名学校包、九协议合同测试、三阶段预约调度测试全部通过。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.1",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "roborazzi-report",
+        "contract-parity-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "既有 Room 数据与学校包恢复能力必须按当前迁移链回归。"
+      },
+      "deviceTested": {
+        "pendingUser": true,
+        "label": "DEVICE_TESTED 待用户",
+        "rule": "自动门禁必须覆盖课表、成绩、考试、小组件快照、签名学校包、九协议和三阶段调度；真实设备上的通知外观、小组件行为和厂商 ROM 后台限制另列 DEVICE_TESTED 待用户，不计入自动通过。",
+        "pendingEvidenceTypes": [
+          "manual-device-note",
+          "screenshot-or-recording"
+        ]
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C01",
+      "kind": "capability",
+      "title": "#24 实况进度",
+      "acceptanceSummary": "课中进度随时间前进；无法调度节拍时不显示进度条；切换身份时取消节拍。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "不新增表；若实现落在新表，必须重新登记迁移与擦除证据。"
+      },
+      "deviceTested": {
+        "pendingUser": true,
+        "label": "DEVICE_TESTED 待用户",
+        "rule": "进度计算、节拍调度、取消与诚实降级可由自动测试证明；真实通知外观和厂商 ROM 后台限制只能由用户真机确认，列 DEVICE_TESTED 待用户。",
+        "pendingEvidenceTypes": [
+          "manual-device-note",
+          "screenshot-or-recording"
+        ]
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C02",
+      "kind": "capability",
+      "title": "#12 学期上下文",
+      "acceptanceSummary": "自然学期自动推进；手动锁定时显示提示条；本学期无考试时不显示旧学期考试。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "行为变更不新增迁移；依赖既有学期与考试数据。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C03",
+      "kind": "capability",
+      "title": "#22 节次与实践课",
+      "acceptanceSummary": "自定义节次时间与作息方案；实践课多日多节排课；同步教务不覆盖用户修改；提醒按新时间重排。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "Room v11 由主代理分配；必须提供 v10→v11 真实旧库迁移测试。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C04",
+      "kind": "capability",
+      "title": "统一时间流",
+      "acceptanceSummary": "课程、考试、实践课、停课、调休全部正确投影；同步后 ID 稳定；ICS 重复导入不重复。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "Timeline 核心本身不分配 Room 版本；依赖 C03 的课表数据结构。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C05",
+      "kind": "capability",
+      "title": "变更历史",
+      "acceptanceSummary": "同步、用户、自动化、恢复四类写入都有记录；可查看前后差异并撤销。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "journal、outbox 与相关 Vault 表随 Room v12 验证；撤销不得跨 Profile。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C06",
+      "kind": "capability",
+      "title": "全局搜索",
+      "acceptanceSummary": "中文命中；按类型、学期、时间筛选；结果可跳转。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "FTS 与索引表随 Room v12 验证；中文分词方案以 R01 结论为准。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C07",
+      "kind": "capability",
+      "title": "备份、恢复与同步",
+      "acceptanceSummary": "备份 → 清空 → 恢复零差异；损坏、口令错误、版本过高、身份不匹配都明确报错且不部分写入；同步只传密文。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "backup-restore-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "credentials-or-tokens",
+          "ai-key",
+          "cloud-transit",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql",
+          "backup-format"
+        ],
+        "notes": "dis-backup/v1、Vault 表和 E2EE 同步块均需验证；凭据与 AI Key 不进备份。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C08",
+      "kind": "capability",
+      "title": "自动化引擎（#36）",
+      "acceptanceSummary": "课表、时间、水电阈值、本地提醒打通；4 个模板；可暂停、可删除；同一事件不重复执行；陈旧数据不触发确定性结论；有试运行和运行记录。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "location-data"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "自动化规则、运行记录或 outbox 消费状态随 Room v13 验证。"
+      },
+      "deviceTested": {
+        "pendingUser": true,
+        "label": "DEVICE_TESTED 待用户",
+        "rule": "规则求值、去重、试运行和调度状态可自动证明；真实后台执行、精确闹钟授权和厂商 ROM 限制列 DEVICE_TESTED 待用户。",
+        "pendingEvidenceTypes": [
+          "manual-device-note"
+        ]
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C09",
+      "kind": "capability",
+      "title": "通知收件箱（#31）",
+      "acceptanceSummary": "截图或文本导入、字段抽取、原文回溯、确认后创建日程；识别为更新时修改已有事项，不重复创建；缺少日期依据时要求补充。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "sensitive-files"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "收件箱、指纹去重和导入记录随 Room v14 验证。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C10",
+      "kind": "capability",
+      "title": "BYOK AI",
+      "acceptanceSummary": "Key 加密且按身份隔离；不进备份、日志、诊断；发送前预览；自动化不能调用；默认关闭。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "backup-restore-report",
+        "privacy-erasure-report",
+        "secrets-scan-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "ai-key",
+          "cloud-transit",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "复用既有加密存储与 backup-format 约束；如新增表必须补登记，不得借本矩阵豁免。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C11",
+      "kind": "capability",
+      "title": "毕业进度（#29）",
+      "acceptanceSummary": "导入培养方案和成绩后完成学分分类、缺口展示、人工修正和依据回溯；标明“个人规划参考”。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report",
+        "source-audit-note"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "培养方案、人工认定与依据追踪随 Room v15 验证。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C12",
+      "kind": "capability",
+      "title": "选课沙盘（#30）",
+      "acceptanceSummary": "冲突检测、多方案生成、无解原因说明；不自动提交。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "求解器与沙盘首期不新增迁移；不得启用任何自动提交路径。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C13",
+      "kind": "capability",
+      "title": "课程知识空间（#34）",
+      "acceptanceSummary": "资料归档、搜索、作业截止提醒、复习计划；问答附出处并区分“资料原文”与“模型补充”。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "room-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "sensitive-files",
+          "ai-key"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "知识资料、关联和搜索索引随 Room v16 验证；AI 问答必须沿用 BYOK 隔离规则。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C14",
+      "kind": "capability",
+      "title": "群组",
+      "acceptanceSummary": "创建、邀请码或二维码加入、过期与次数上限、退出、角色。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report",
+        "room-migration-report",
+        "privacy-erasure-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "community-or-group-data",
+          "cloud-transit",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql"
+        ],
+        "notes": "云端 SQL 0005 与 Android Room v17 的群组缓存均需验证；擦除链路必须覆盖本地缓存。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C15",
+      "kind": "capability",
+      "title": "共同空闲（#33）",
+      "acceptanceSummary": "只共享忙闲块；共同空闲计算、投票确认、撤回共享；成员调课时只提示，不静默改期。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "community-or-group-data",
+          "cloud-transit",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql"
+        ],
+        "notes": "云端 SQL 0006 与 Android 社区缓存共同验证；只传忙闲块，不传课程明细。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C16",
+      "kind": "capability",
+      "title": "宿舍协作（#37）",
+      "acceptanceSummary": "小组记账、分摊、结算确认、历史记录；修改可追溯并重新确认；金额精确到分；不涉及真实支付。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "community-or-group-data",
+          "payment-adjacent-data",
+          "cloud-transit"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql"
+        ],
+        "notes": "云端 SQL 0007 与 Android 本地缓存共同验证；只记账，不接入真实收付款。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C17",
+      "kind": "capability",
+      "title": "设施雷达（#39）",
+      "acceptanceSummary": "设施目录、地图筛选、故障上报、计时提醒；区分实时、上报与预测；无近期信息时显示未知；按类型过期。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report",
+        "roborazzi-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "community-or-group-data",
+          "location-data",
+          "cloud-transit"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql"
+        ],
+        "notes": "云端 SQL 0008 与 Android 社区缓存共同验证；状态上报必须保留来源与时效。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C18",
+      "kind": "capability",
+      "title": "社区接口预留（#45 #9）",
+      "acceptanceSummary": "所有保留端点返回 501 与 FEATURE_NOT_ENABLED；Android 无入口、开关默认关闭；没有建表。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "cloud-test-report",
+        "contract-parity-report",
+        "static-analysis-report"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "按 D2 明确不建表、不写业务逻辑；若出现表或实现逻辑即失败。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C19",
+      "kind": "capability",
+      "title": "数据包与内容目录",
+      "acceptanceSummary": "Schema 校验、签名、版本、下架；过期显示“待核验”；贡献流水线可走通。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "cloud-test-report",
+        "contract-parity-report",
+        "sql-migration-report",
+        "room-migration-report",
+        "source-audit-note"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "user-content",
+          "community-or-group-data",
+          "cloud-transit"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql",
+          "datapack-format"
+        ],
+        "notes": "dis-datapack/v1、Room v18 与云端 SQL 0009 需验证；代理整理数据默认 UNVERIFIED。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C20",
+      "kind": "capability",
+      "title": "办事导航（#38）",
+      "acceptanceSummary": "来源展示、个人清单、地图跳转、提醒；至少 1 个带条件分支的流程；来源失效时明确提示。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "source-audit-note"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "location-data"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "使用数据包与 Timeline 能力；若落地新增表，必须补迁移与擦除证据。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C21",
+      "kind": "capability",
+      "title": "机会中心（#41）",
+      "acceptanceSummary": "项目建档、条款来源、材料清单、进度追踪、提醒；信息缺失不视为符合；可手动修正资格判断。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "source-audit-note"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "使用数据包与既有学业数据；资格判断必须保守，信息缺失不得当作符合。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C22",
+      "kind": "capability",
+      "title": "插件 v2.1",
+      "acceptanceSummary": "新 types、slots、permissions 可用；开发者工具可用；非官方示例插件零修改宿主安装、停用、升级、回滚、卸载；单插件故障隔离。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "plugin-installation-report",
+        "static-analysis-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "credentials-or-tokens",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "plugin-package-format"
+        ],
+        "notes": "插件包格式、签名、版本升级与回滚必须验证；宿主 Git tree 和构建校验 SHA 不变。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C23",
+      "kind": "capability",
+      "title": "室内路网试点（#35）",
+      "acceptanceSummary": "1 栋楼的教室级路网、跨楼层路线、手动或扫码定位起点。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "roborazzi-report",
+        "source-audit-note"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "location-data"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "datapack-format"
+        ],
+        "notes": "室内路网作为数据包验证；不得硬编码为宿主专属逻辑。"
+      },
+      "deviceTested": {
+        "pendingUser": true,
+        "label": "DEVICE_TESTED 待用户",
+        "rule": "路网计算与路线投影可自动证明；扫码定位起点、相机行为和实际 indoor/outdoor 衔接体验列 DEVICE_TESTED 待用户。",
+        "pendingEvidenceTypes": [
+          "manual-device-note",
+          "screenshot-or-recording"
+        ]
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C24",
+      "kind": "capability",
+      "title": "一日回放（#44 轻量）",
+      "acceptanceSummary": "播放全天路线；两套课表的步行距离、跨楼次数、通勤时间对比。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "roborazzi-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "location-data"
+        ]
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "使用 Timeline、求解器和地图数据；首期不新增迁移。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C25",
+      "kind": "capability",
+      "title": "架构与工程",
+      "acceptanceSummary": "巨型文件拆分完成（行数门禁通过）；依赖方向检查通过；开发机脚本可复现。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "architecture-guard-report",
+        "static-analysis-report"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "架构拆分本身不变更数据语义；涉及拆表或搬迁时必须另附迁移证据。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C26",
+      "kind": "capability",
+      "title": "零回归",
+      "acceptanceSummary": "R0-7 全部通过；W0-10 的回归测试全部通过。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "roborazzi-report",
+        "contract-parity-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "multi-profile-isolation"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room"
+        ],
+        "notes": "既有数据与迁移链回归并入 R0-7；W0-10 覆盖已修复 issue 的自动化回归。"
+      },
+      "deviceTested": {
+        "pendingUser": true,
+        "label": "DEVICE_TESTED 待用户",
+        "rule": "自动回归必须全绿；真实设备上的通知、小组件、TalkBack、200% 字号和厂商 ROM 后台限制列 DEVICE_TESTED 待用户。",
+        "pendingEvidenceTypes": [
+          "manual-device-note",
+          "screenshot-or-recording"
+        ]
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C27",
+      "kind": "capability",
+      "title": "擦除与隐私",
+      "acceptanceSummary": "每张新表擦除后为 0；凭据、Cookie、AI Key 不进备份和日志；按身份隔离。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "unit-test-report",
+        "integration-test-report",
+        "privacy-erasure-report",
+        "backup-restore-report",
+        "secrets-scan-report"
+      ],
+      "privacy": {
+        "sensitive": true,
+        "flags": [
+          "profile-scoped-data",
+          "user-content",
+          "credentials-or-tokens",
+          "ai-key",
+          "multi-profile-isolation",
+          "cloud-transit"
+        ]
+      },
+      "migration": {
+        "involved": true,
+        "types": [
+          "room",
+          "cloud-sql",
+          "backup-format"
+        ],
+        "notes": "所有新表都必须注册擦除链路；备份格式和云端同步不得携带明文秘密。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    },
+    {
+      "id": "C28",
+      "kind": "capability",
+      "title": "契约一致",
+      "acceptanceSummary": "运行中的路由与 OpenAPI 100% 一致；两仓 contracts/ 一致；每个新端点都有错误码、幂等、授权、示例。",
+      "sourceRefs": [
+        "MASTER_PLAN.md §14.2",
+        "MASTER_PLAN.md §14.3"
+      ],
+      "requiredEvidenceTypes": [
+        "devbox-command-log",
+        "cloud-test-report",
+        "contract-parity-report",
+        "static-analysis-report"
+      ],
+      "privacy": {
+        "sensitive": false,
+        "flags": []
+      },
+      "migration": {
+        "involved": false,
+        "types": [],
+        "notes": "契约收敛不是数据迁移；端点实现的存储迁移在对应能力项单独验证。"
+      },
+      "deviceTested": {
+        "pendingUser": false,
+        "label": null,
+        "rule": "无只能由真机证明的首期验收项；开发机、模拟器或 JVM 证据不得标为 DEVICE_TESTED。",
+        "pendingEvidenceTypes": []
+      },
+      "maximumAutomaticVerificationLevel": "MOCK_TESTED"
+    }
+  ]
+}
