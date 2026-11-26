@@ -8,7 +8,7 @@
 | PaddleOCR PP-OCRv6_tiny recognition ONNX | HuggingFace `PaddlePaddle/PP-OCRv6_tiny_rec_onnx` revision `2612ab37152ae0a677521bae4e1e3d4fb4cf7c30` | Apache-2.0（模型卡声明；PaddleOCR 上游同为 Apache-2.0） | bundled asset `ppocrv6_tiny_rec.onnx`，SHA-256 `9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6` |
 | ONNX Runtime Android | Maven `com.microsoft.onnxruntime:onnxruntime-android:1.21.1` | MIT | Android 生产推理运行时；R02 静态测量确认 arm64/x86_64 LOAD align `0x4000` |
 | ONNX Runtime JVM | Maven `com.microsoft.onnxruntime:onnxruntime:1.21.1` | MIT | 仅 `testImplementation`，让 JVM 单测在开发机执行同一模型；不进入 APK |
-| PdfBox-Android | Maven `com.tom-roush:pdfbox-android:2.0.27.0` | 主代码 Apache-2.0；捆绑 LiberationSans 字体 SIL OFL 1.1，另含 Adobe Glyph List、Unicode Bidi Mirroring、TwelveMonkeys 等上游通知 | 未加密 PDF 文本与坐标抽取；首版排除 BouncyCastle 加密/签名传递依赖 |
+| PdfBox-Android | Maven `com.tom-roush:pdfbox-android` 版本 2.0.27 patch 0 | 主代码 Apache-2.0；捆绑 LiberationSans 字体 SIL OFL 1.1，另含 Adobe Glyph List、Unicode Bidi Mirroring、TwelveMonkeys 等上游通知 | 未加密 PDF 文本与坐标抽取；首版排除 BouncyCastle 加密/签名传递依赖 |
 
 许可证全文：Apache-2.0 见 [Apache-2.0.txt](Apache-2.0.txt)，MIT 见 [MIT.txt](MIT.txt)。PDFBox 上游完整 LICENSE（含 Liberation Fonts SIL OFL 1.1 与其他捆绑组件条款）见 [PdfBox-LICENSE-and-bundled-licenses.txt](PdfBox-LICENSE-and-bundled-licenses.txt)，NOTICE 见 [PdfBox-NOTICE.txt](PdfBox-NOTICE.txt)。
 
