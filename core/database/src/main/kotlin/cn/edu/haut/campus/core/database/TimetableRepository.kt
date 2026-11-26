@@ -38,6 +38,10 @@ class TimetableRepository internal constructor(
     private val preferences = environment.preferences
     private val supportsHautServices: Boolean get() = environment.supportsHautServices
 
+    internal val occurrenceWriteContext = TimetableOccurrenceWriteContext(environment)
+    private val occurrenceStore = TimetableOccurrenceStore(environment, occurrenceWriteContext)
+    private val restoreCommandService = TimetableRestoreCommandService(environment, occurrenceWriteContext)
+
     val coursesFlow: Flow<List<Course>> =
         dao.observeCourses().map { list -> list.map { it.toDomain() } }
 
@@ -692,4 +696,105 @@ class TimetableRepository internal constructor(
         )
     }
 
+    suspend fun saveOccurrenceOverride(override: OccurrenceOverride) =
+        occurrenceStore.saveOccurrenceOverride(override)
+
+    suspend fun saveSingleDayOccurrenceEdit(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        newStartPeriod: Int,
+        newEndPeriod: Int,
+        newRoom: String,
+        reason: String = "单次调课"
+    ) = occurrenceStore.saveSingleDayOccurrenceEdit(
+        occ = occ,
+        termId = termId,
+        newStartPeriod = newStartPeriod,
+        newEndPeriod = newEndPeriod,
+        newRoom = newRoom,
+        reason = reason
+    )
+
+    suspend fun resetSingleDayOccurrenceEdit(occ: cn.edu.haut.campus.core.model.ClassOccurrence) =
+        occurrenceStore.resetSingleDayOccurrenceEdit(occ)
+
+    suspend fun cancelClassOccurrenceOnDate(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        reason: String = "单次停课"
+    ) = occurrenceStore.cancelClassOccurrenceOnDate(
+        occ = occ,
+        termId = termId,
+        reason = reason
+    )
+
+    suspend fun rescheduleSingleOccurrenceCrossDate(
+        occ: cn.edu.haut.campus.core.model.ClassOccurrence,
+        termId: String,
+        targetDate: LocalDate,
+        newStartPeriod: Int,
+        newEndPeriod: Int,
+        newRoom: String,
+        reason: String? = null
+    ) = occurrenceStore.rescheduleSingleOccurrenceCrossDate(
+        occ = occ,
+        termId = termId,
+        targetDate = targetDate,
+        newStartPeriod = newStartPeriod,
+        newEndPeriod = newEndPeriod,
+        newRoom = newRoom,
+        reason = reason
+    )
+
+    suspend fun deleteOccurrenceOverride(overrideId: String) =
+        occurrenceStore.deleteOccurrenceOverride(overrideId)
+
+    suspend fun unpauseOccurrence(
+        termId: String,
+        overrideId: String,
+        expectedMoveId: String? = null
+    ): CampusRepository.OccurrenceCommandResult =
+        restoreCommandService.unpauseOccurrence(
+            termId = termId,
+            overrideId = overrideId,
+            expectedMoveId = expectedMoveId
+        )
+
+    suspend fun undoMove(
+        termId: String,
+        moveId: String
+    ): CampusRepository.OccurrenceCommandResult =
+        restoreCommandService.undoMove(termId, moveId)
+
+    suspend fun restoreRuleCancellation(
+        termId: String,
+        ruleIds: List<String>,
+        date: LocalDate,
+        expectedMoveId: String? = null
+    ): CampusRepository.OccurrenceCommandResult =
+        restoreCommandService.restoreRuleCancellation(
+            termId = termId,
+            ruleIds = ruleIds,
+            date = date,
+            expectedMoveId = expectedMoveId
+        )
+
+    suspend fun executeRestoreCommand(command: CampusRepository.RestoreCommand): CampusRepository.OccurrenceCommandResult =
+        restoreCommandService.executeRestoreCommand(command)
+
+    @Deprecated(
+        "模糊选择已于 R5 废止：改用 executeRestoreCommand(RestoreCommand) 提交点击时冻结的完整不可变命令"
+    )
+    suspend fun restoreCanceledOccurrence(
+        date: LocalDate,
+        ruleId: String?,
+        overrideId: String? = null,
+        mergedRuleIds: List<String> = emptyList()
+    ): CampusRepository.OccurrenceRestoreResult =
+        restoreCommandService.restoreCanceledOccurrence(
+            date = date,
+            ruleId = ruleId,
+            overrideId = overrideId,
+            mergedRuleIds = mergedRuleIds
+        )
 }
