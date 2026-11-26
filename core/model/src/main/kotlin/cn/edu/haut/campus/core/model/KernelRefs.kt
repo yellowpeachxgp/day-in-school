@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.model
 
+import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 
 /**
@@ -51,19 +52,25 @@ data class EntityRef(
 }
 
 /**
- * 指向 Campus Graph 中地点实体的引用。
+ * 指向 Campus Graph 中**学校/校区级图实体**的引用。
  *
- * 地点一定落在具体校区下，因此 [scope] 必须带 campusId。id 使用 Campus Graph 的稳定
- * 图 ID（规划形如 school/campus/type/slug），但这里不抢先绑定 W1-07 的段数细节，只
- * 校验它是不含空白与控制字符的稳定标识。
+ * 这不是账号内本地图行引用：地点身份只由 MASTER_PLAN §4.3 的稳定图 ID
+ * `<schoolId>/<campusId>/<type>/<slug>` 及拆出的 schoolId/campusId 组成，刻意不包含
+ * accountId/profileId。账号或 Profile 对地点的覆盖、收藏和审计应另建账号内实体引用，
+ * 不得污染跨账号共享的图实体身份。
  */
 data class PlaceRef(
     val id: String,
-    val scope: SchoolAccountScope
+    val schoolId: SchoolId,
+    val campusId: CampusId
 ) {
     init {
         requireStableReferenceId(id, "地点图稳定 ID")
-        require(scope.campusId != null) { "地点引用必须包含校区作用域" }
+        val segments = id.split('/')
+        require(segments.size == 4) { "地点图稳定 ID 必须是 <schoolId>/<campusId>/<type>/<slug>" }
+        require(segments[0] == schoolId.value) { "地点图稳定 ID 的 schoolId 与引用不一致" }
+        require(segments[1] == campusId.value) { "地点图稳定 ID 的 campusId 与引用不一致" }
+        require(segments[2].isNotEmpty() && segments[3].isNotEmpty()) { "地点图 type/slug 不能为空" }
     }
 }
 
@@ -81,8 +88,8 @@ data class SourceRef(
     init {
         require(provenance.schoolId == entity.scope.schoolId) { "来源证据的学校与实体作用域不一致" }
         require(provenance.accountId == entity.scope.accountId) { "来源证据的账号与实体作用域不一致" }
-        require(provenance.providerId.isNotBlank()) { "来源证据缺少 providerId" }
-        require(provenance.sourceSystem.isNotBlank()) { "来源证据缺少 sourceSystem" }
+        requireValidProvenancePart(provenance.providerId, "providerId", 128)
+        requireValidProvenancePart(provenance.sourceSystem, "sourceSystem", 256)
         provenance.sourceRecordId?.let { recordId ->
             require(recordId.isNotBlank() && recordId.length <= 512 && recordId.none { it.isISOControl() }) {
                 "来源记录 ID 为空、过长或含控制字符"
@@ -124,7 +131,7 @@ data class FieldChange(
             FieldChangeKind.MODIFIED -> {
                 require(before != null) { "修改字段必须有 before" }
                 require(after != null) { "修改字段必须有 after" }
-                require(before != after) { "修改字段的前后值不能相同" }
+                require(!sameCanonicalJson(before, after)) { "修改字段的前后值在 CanonicalJson 语义下相同" }
             }
         }
     }
@@ -173,8 +180,19 @@ private fun requireStableReferenceId(value: String, label: String) {
     require(value.all { it.isLetterOrDigit() || it in "_-./:" }) { "$label 包含非法字符" }
 }
 
+private fun requireValidProvenancePart(value: String, label: String, maxLength: Int) {
+    require(value.isNotBlank() && value.length <= maxLength) { "来源证据缺少有效的 $label" }
+    require(value.none { it.isISOControl() || it.isWhitespace() }) { "来源证据 $label 不能包含空白或控制字符" }
+}
+
+private fun sameCanonicalJson(first: JsonValue?, second: JsonValue?): Boolean {
+    if (first == null || second == null) return false
+    return Json.canonical(first) == Json.canonical(second)
+}
+
 private fun requireJsonPointer(path: String) {
-    require(path.length in 2..512 && path.startsWith('/')) { "字段路径必须是非根 JSON Pointer" }
+    // RFC 6901 中 "/" 是空对象键的合法引用；这里不做应用层子集裁剪。
+    require(path.length in 1..512 && path.startsWith('/')) { "字段路径必须是 JSON Pointer" }
     require(path.none { it.isISOControl() }) { "字段路径不能包含控制字符" }
     var index = 0
     while (index < path.length) {

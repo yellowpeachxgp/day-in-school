@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.model
 
+import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -37,23 +38,85 @@ class KernelRefsTest {
         EntityRef(EntityType.COURSE, "", scope)
     }
 
-    @Test
-    fun `地点引用接受校园图分层标识`() {
-        val place = PlaceRef(
-            id = "haut/lianhuajie/room/5-111",
-            scope = scope
-        )
+    @Test(expected = IllegalArgumentException::class)
+    fun `实体引用拒绝控制字符`() {
+        EntityRef(EntityType.COURSE, "course\u0001", scope)
+    }
 
-        assertEquals("haut/lianhuajie/room/5-111", place.id)
-        assertEquals(CampusId("lianhuajie"), place.scope.campusId)
+    @Test
+    fun `实体引用接受 256 字符边界`() {
+        val id = "a".repeat(256)
+        assertEquals(id, EntityRef(EntityType.COURSE, id, scope).id)
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun `地点引用必须落在明确校区作用域`() {
-        PlaceRef(
+    fun `实体引用拒绝 257 字符`() {
+        EntityRef(EntityType.COURSE, "a".repeat(257), scope)
+    }
+
+    @Test
+    fun `地点引用按学校校区级图实体身份解析`() {
+        val place = PlaceRef(
             id = "haut/lianhuajie/room/5-111",
-            scope = scope.copy(campusId = null)
+            schoolId = SchoolId("haut"),
+            campusId = CampusId("lianhuajie")
         )
+
+        assertEquals("haut/lianhuajie/room/5-111", place.id)
+        assertEquals(SchoolId("haut"), place.schoolId)
+        assertEquals(CampusId("lianhuajie"), place.campusId)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `地点引用拒绝学校前缀矛盾`() {
+        PlaceRef(
+            id = "other-school/lianhuajie/room/5-111",
+            schoolId = SchoolId("haut"),
+            campusId = CampusId("lianhuajie")
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `地点引用拒绝校区前缀矛盾`() {
+        PlaceRef(
+            id = "haut/songshanlu/room/5-111",
+            schoolId = SchoolId("haut"),
+            campusId = CampusId("lianhuajie")
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `地点引用拒绝不符合四段稳定图 ID`() {
+        PlaceRef(
+            id = "haut/lianhuajie/room",
+            schoolId = SchoolId("haut"),
+            campusId = CampusId("lianhuajie")
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `地点引用拒绝控制字符`() {
+        PlaceRef(
+            id = "haut/lianhuajie/room/5-11\u0001",
+            schoolId = SchoolId("haut"),
+            campusId = CampusId("lianhuajie")
+        )
+    }
+
+    @Test
+    fun `地点引用接受总长 256 字符边界`() {
+        val prefix = "haut/lianhuajie/room/"
+        val id = prefix + "a".repeat(256 - prefix.length)
+        assertEquals(256, id.length)
+        assertEquals(id, PlaceRef(id, SchoolId("haut"), CampusId("lianhuajie")).id)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `地点引用拒绝总长 257 字符`() {
+        val prefix = "haut/lianhuajie/room/"
+        val id = prefix + "a".repeat(257 - prefix.length)
+        assertEquals(257, id.length)
+        PlaceRef(id, SchoolId("haut"), CampusId("lianhuajie"))
     }
 
     @Test
@@ -84,6 +147,26 @@ class KernelRefsTest {
         )
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun `来源证据拒绝空白 providerId`() {
+        SourceRef(EntityRef(EntityType.EXAM, "exam-2026-math", scope), provenance().copy(providerId = "  "))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `来源证据拒绝空白 sourceSystem`() {
+        SourceRef(EntityRef(EntityType.EXAM, "exam-2026-math", scope), provenance().copy(sourceSystem = ""))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `来源证据拒绝空 sourceRecordId`() {
+        SourceRef(EntityRef(EntityType.EXAM, "exam-2026-math", scope), provenance().copy(sourceRecordId = " "))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `来源证据拒绝含控制字符 sourceRecordId`() {
+        SourceRef(EntityRef(EntityType.EXAM, "exam-2026-math", scope), provenance().copy(sourceRecordId = "exam\u0002"))
+    }
+
     @Test
     fun `字段差异区分不存在和 JSON null`() {
         val diff = FieldDiff(
@@ -107,13 +190,25 @@ class KernelRefsTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun `修改字段不得使用相同前后值伪造变更`() {
+    fun `修改字段不得用规范等值数字伪造变更`() {
         FieldChange(
-            path = "/room",
+            path = "/payload",
             kind = FieldChangeKind.MODIFIED,
-            before = JsonValue.Str("W111"),
-            after = JsonValue.Str("W111")
+            before = Json.parse("""{"a":1.0,"nested":{"x":2.50}}"""),
+            after = Json.parse("""{"nested":{"x":2.5},"a":1}""")
         )
+    }
+
+    @Test
+    fun `修改字段接受 CanonicalJson 语义下真实差异`() {
+        val change = FieldChange(
+            path = "/payload",
+            kind = FieldChangeKind.MODIFIED,
+            before = Json.parse("""{"a":1,"nested":{"x":2.5}}"""),
+            after = Json.parse("""{"nested":{"x":2.5},"a":2}""")
+        )
+
+        assertEquals("/payload", change.path)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -136,8 +231,14 @@ class KernelRefsTest {
         )
     }
 
+    @Test
+    fun `JSON Pointer 根斜杠是空键合法路径`() {
+        val change = FieldChange("/", FieldChangeKind.ADDED, null, JsonValue.Str("empty-key"))
+        assertEquals("/", change.path)
+    }
+
     @Test(expected = IllegalArgumentException::class)
-    fun `字段路径必须是非根 JSON Pointer`() {
+    fun `字段路径必须以斜杠开始`() {
         FieldChange("room", FieldChangeKind.ADDED, null, JsonValue.Str("W111"))
     }
 
