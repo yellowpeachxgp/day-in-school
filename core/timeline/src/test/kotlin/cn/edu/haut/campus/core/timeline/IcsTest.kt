@@ -128,6 +128,38 @@ class IcsTest {
     }
 
     @Test
+    fun `非截止点缺 DTEND 按 RFC 零时长语义拒绝`() {
+        val zeroDuration = "BEGIN:VCALENDAR\r\n" +
+            "VERSION:2.0\r\n" +
+            "BEGIN:VEVENT\r\n" +
+            "UID:course:rfc-zero-duration\r\n" +
+            "DTSTART:20260302T090000Z\r\n" +
+            "SUMMARY:RFC 零时长事件\r\n" +
+            "END:VEVENT\r\n" +
+            "END:VCALENDAR\r\n"
+
+        try {
+            IcsParser.parseEvents(zeroDuration)
+            fail("预期非截止点缺 DTEND 被拒绝")
+        } catch (expected: IcsParseException) {
+            assertTrue(expected.message.orEmpty().contains("零时长"))
+        }
+    }
+
+    @Test
+    fun `SEQUENCE 与 X-DIS-REVISION 不一致会拒绝导入`() {
+        val exported = StandardIcsExporter.export(listOf(event(revision = 2)), "课程日历")
+        val mismatched = exported.replace("SEQUENCE:2\r\n", "SEQUENCE:3\r\n")
+
+        try {
+            IcsParser.parseEvents(mismatched)
+            fail("预期 SEQUENCE 与 X-DIS-REVISION 冲突被拒绝")
+        } catch (expected: IcsParseException) {
+            assertTrue(expected.message.orEmpty().contains("X-DIS-REVISION 冲突"))
+        }
+    }
+
+    @Test
     fun `相同输入导出幂等且 UID 逐字等于 TimelineEventId`() {
         val stable = event(id = "course:term-1:rule-9:2026-03-02")
 

@@ -257,6 +257,12 @@ object IcsParser {
         if (deadline && parsedEnd != null) {
             throw IcsParseException("截止点 VEVENT 不能同时携带 DTEND")
         }
+        if (!deadline && parsedEnd == null) {
+            throw IcsParseException("非截止点 VEVENT 缺少 DTEND；RFC 5545 缺省是零时长而非 Timeline deadline")
+        }
+        if (disRevision != null && sequence != null && disRevision != sequence) {
+            throw IcsParseException("SEQUENCE 与 X-DIS-REVISION 冲突")
+        }
         val endInstant = if (deadline) null else parsedEnd?.first
         if (endInstant != null && !endInstant.isAfter(parsedStart.first)) {
             throw IcsParseException("非截止点 VEVENT 的 DTEND 必须晚于 DTSTART")
