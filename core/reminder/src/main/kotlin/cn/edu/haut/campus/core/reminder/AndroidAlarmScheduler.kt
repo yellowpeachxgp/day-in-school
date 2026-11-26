@@ -24,6 +24,11 @@ sealed interface ScheduleOutcome {
 
 interface AlarmScheduler {
     fun schedule(task: ReminderTaskDomain, preferExact: Boolean): ScheduleOutcome
+
+    /** 供实况进度链式节拍使用的非精确窗口闹钟；测试替身可退回普通非精确调度。 */
+    fun scheduleInexactWindow(task: ReminderTaskDomain, windowLengthMs: Long): ScheduleOutcome =
+        schedule(task, preferExact = false)
+
     fun cancel(taskId: String, generation: Int)
 }
 
@@ -45,6 +50,8 @@ class AndroidAlarmScheduler(
             taskId = task.id,
             generation = task.generation,
             eventKey = task.eventKey,
+            eventRevision = task.eventRevision,
+            policyRevision = task.policyRevision,
             noCreate = false
         ) ?: return ScheduleOutcome.Failed("PENDING_INTENT_NULL")
 
@@ -85,6 +92,38 @@ class AndroidAlarmScheduler(
             pendingIntent = pendingIntent,
             fallbackNote = if (preferExact && !canUseExact) "EXACT_PERMISSION_DENIED_INEXACT" else null
         )
+    }
+
+    override fun scheduleInexactWindow(
+        task: ReminderTaskDomain,
+        windowLengthMs: Long
+    ): ScheduleOutcome {
+        if (!isActive()) return ScheduleOutcome.Failed("ACCOUNT_SESSION_EXPIRED")
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            ?: return ScheduleOutcome.Failed("ALARM_MANAGER_NULL")
+        val pendingIntent = buildFirePendingIntent(
+            taskId = task.id,
+            generation = task.generation,
+            eventKey = task.eventKey,
+            eventRevision = task.eventRevision,
+            policyRevision = task.policyRevision,
+            noCreate = false
+        ) ?: return ScheduleOutcome.Failed("PENDING_INTENT_NULL")
+
+        return try {
+            alarmManager.setWindow(
+                AlarmManager.RTC_WAKEUP,
+                task.scheduledAtEpochMs,
+                windowLengthMs.coerceAtLeast(1L),
+                pendingIntent
+            )
+            ScheduleOutcome.Scheduled(
+                mode = ReminderAccuracyMode.INEXACT,
+                schedulerState = ReminderSchedulerState.SCHEDULED
+            )
+        } catch (t: Throwable) {
+            ScheduleOutcome.Failed("INEXACT_WINDOW_SCHEDULE_ERROR:${t.javaClass.simpleName}")
+        }
     }
 
     private fun scheduleInexactFallback(
@@ -138,6 +177,8 @@ class AndroidAlarmScheduler(
         taskId: String,
         generation: Int,
         eventKey: String?,
+        eventRevision: String? = null,
+        policyRevision: String? = null,
         noCreate: Boolean,
         attachAccountScope: Boolean = true
     ): PendingIntent? {
@@ -148,6 +189,12 @@ class AndroidAlarmScheduler(
             putExtra(EXTRA_GENERATION, generation)
             if (eventKey != null) {
                 putExtra(EXTRA_EVENT_KEY, eventKey)
+            }
+            if (eventRevision != null) {
+                putExtra(EXTRA_EVENT_REVISION, eventRevision)
+            }
+            if (policyRevision != null) {
+                putExtra(EXTRA_POLICY_REVISION, policyRevision)
             }
         }
         if (attachAccountScope) accountScope?.attach(intent)
@@ -165,5 +212,7 @@ class AndroidAlarmScheduler(
         const val EXTRA_TASK_ID = "extra_reminder_task_id"
         const val EXTRA_GENERATION = "extra_reminder_generation"
         const val EXTRA_EVENT_KEY = "extra_reminder_event_key"
+        const val EXTRA_EVENT_REVISION = "extra_reminder_event_revision"
+        const val EXTRA_POLICY_REVISION = "extra_reminder_policy_revision"
     }
 }

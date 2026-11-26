@@ -596,6 +596,7 @@ class CampusRepository internal constructor(
             examHourBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
             examSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
             preciseReminderPreferred = prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
+            liveProgressRefreshMinutes = (prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] ?: 5).takeIf { it in setOf(1, 5, 10) } ?: 5,
             lockscreenPrivate = prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
             quietMode = quietMode
         )
@@ -3942,6 +3943,7 @@ class CampusRepository internal constructor(
             prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
             prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
             prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
+            prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] = updated.liveProgressRefreshMinutes.takeIf { it in setOf(1, 5, 10) } ?: 5
             prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
             prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
             prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(

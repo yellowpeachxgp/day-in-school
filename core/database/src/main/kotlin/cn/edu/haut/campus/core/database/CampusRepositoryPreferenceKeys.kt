@@ -56,6 +56,7 @@ internal object CampusRepositoryPrefKeys {
     val EXAM_HOUR_BEFORE_ENABLED = booleanPreferencesKey("exam_hour_before_enabled")
     val EXAM_SNOOZE_MAX_COUNT = intPreferencesKey("exam_snooze_max_count")
     val PRECISE_REMINDER_PREFERRED = booleanPreferencesKey("precise_reminder_preferred")
+    val LIVE_PROGRESS_REFRESH_MINUTES = intPreferencesKey("live_progress_refresh_minutes_v1")
     val REMINDER_LOCKSCREEN_PRIVATE = booleanPreferencesKey("reminder_lockscreen_private")
     val REMINDER_QUIET_MODE = stringPreferencesKey("reminder_quiet_mode")
     val REMINDER_POLICY_REVISION = stringPreferencesKey("reminder_policy_revision")
