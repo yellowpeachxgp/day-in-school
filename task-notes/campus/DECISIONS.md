@@ -40,7 +40,7 @@
 | AUTO-011 | 2026-11-27 | W0-07 独占既有 build.gradle.kts/gradle/**；W1/W4 新纯 JVM 模块在并行期只允许新增本模块 build.gradle.kts 并在 settings.gradle.kts 末尾追加注册，不得修改 root 或既有构建文件。此为例行解释而非放松热点规则，冲突由列车处理；自主决策，待用户复核 | 主代理热点文件解释：限制并行期 Gradle 冲突面，同时不改变 W0-07 对既有构建文件的独占；列车负责相邻追加行冲突合并 | 待用户复核 |
 | AUTO-012 | 2026-11-27 | W0-08 不改 contracts/；97 个 core endpoint 做 OpenAPI/inventory/runtime 三方 100% 双向，12 个预存 moments extension 只做显式 extension inventory 与 exact 自检，契约化缺口由 INF-02/契约线关闭；自主决策，待用户复核 | 主代理契约边界裁决：W0-08 专注路由拆分与既有 core endpoint 对齐，不越权修改契约权威；extension 缺口必须由契约线关闭 | 待用户复核 |
 | AUTO-013 | 2026-11-27 | W0-08 因拆分 `app.mjs` 必然改变整文件 hash，授权最小扩大到 `tools/contract-ci/generate-reservation-fixtures.mjs` 与 `tests/fixtures/reservation-*.json`；优先改语义指纹，不得改 `contracts/`；自主决策，待用户复核 | 主代理行为不变证据裁决：纯搬移后整文件 hash 必然变化，语义指纹比文件 hash 更能证明 handler 等价；范围不得再扩大 | 待用户复核 |
-| AUTO-014 | 2026-11-27 | W0-02 可对 `CampusRepository.kt` 做 3 行配置接缝、对 `core/reminder/build.gradle.kts` 做最小测试依赖改动；不得扩大；自主决策，待用户复核 | 主代理最小接缝裁决：实况进度需要读取刷新频率配置并补测试依赖，但不得演变成 Repository 或构建文件宽泛改动 | 待用户复核 |
+| AUTO-014 | 2026-11-27 | W0-02 可对 `CampusRepository.kt` 做 3 行配置接缝、对 `core/model/src/main/kotlin/cn/edu/haut/campus/core/model/ReminderModels.kt` 做 1 行 `liveProgressRefreshMinutes` 配置字段、对 `core/reminder/build.gradle.kts` 做最小测试依赖改动；不得扩大；自主决策，待用户复核 | 主代理最小接缝裁决：实况进度需要读取刷新频率配置并补测试依赖，三处均为必要最小接缝，但不得演变成 Repository、模型或构建文件宽泛改动 | 待用户复核 |
 | AUTO-015 | 2026-11-27 | INF-00/INF-01 bootstrap 列车中，`contracts` 的两仓预存漂移归 INF-02；scanner 未合入前的 exit3 只适用于 INF-00；INF-01 起 secrets 必须真实通过。workflow 暂不覆盖 `train/**`，以原 PR 托管 CI 作合并记录；自主决策，待用户复核 | 主代理 bootstrap 边界裁决：区分工具未合入的 exit3 与真实扫描通过，避免把 INF-02 契约漂移或 train 分支覆盖缺口记为 INF-00/INF-01 内容失败 | 待用户复核 |
 
 ## 追加规则

@@ -10,20 +10,20 @@
 | 1 | s1-w007 | W0-07a dep-check 与 file-line-gate | feat/cis-w0-07-guardrails / PR#61 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
 | 2 | s2b-inf01fin | INF-01 治理与基线 | feat/cis-inf-01-governance-clean2 / Android PR#57、cloud PR#7 | 2026-11-26 | 已合并 | Android 合并 `04d4424`；cloud 合并 `5480f0d` |
 | 3 | s2-w008 | W0-08 云端路由拆分 | feat/cis-w0-08-router-split / cloud PR#8 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
-| 4 | s6-w002 | W0-02 实况进度条 | feat/cis-w0-02-live-progress / PR#65 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
+| 4 | s6b-w002finish | W0-02 实况进度条 | feat/cis-w0-02-live-progress / PR#65 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
 | 5 | s8d-w008prep | R01 FTS 中文分词调研 | docs/cis-r01-fts-research / PR#60 | 2026-11-27 | 已合并 | 合并 `b3f15cf` |
 | 6 | s10b-accfinish | W1-01 core events（W1-01a） | feat/cis-w1-01a-events-core / PR#64 | 2026-11-27 | PR 已创建 | 待列车/审阅；完整 W1-01 未收口 |
 | 7 | s2c-w102a | W1-00 shared kernel refs | feat/cis-w1-00-kernel-refs / PR#62 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
-| 8 | s9b-train | 审阅与集成列车 | PR#61/#62/#64/#65、cloud PR#8 | 2026-11-27 | 进行中 | 待列车/审阅 |
+| 8 | s9c-train | 审阅与集成列车 | PR#61/#62/#64/#65/#66、cloud PR#8 | 2026-11-27 | 进行中 | 待列车/审阅 |
 | 9 | s3-w409 | W4-09 core ledger | feat/cis-w4-09-ledger / PR#63 | 2026-11-27 | 已合并 | 合并 `8aadb4d` |
-| 10 | s10b-accfinish | stage-2 INF-01 联调验收 | 待列车/审阅 | 2026-11-27 | 开工中 | INF-01 已合并；验收报告待完成 |
+| 10 | s10b-accfinish | stage-2 INF-01 联调验收 | acc/cis-stage-2-inf01 / PR#66 | 2026-11-27 | PR 已创建/审阅中 | 待列车/审阅 |
 
 ## 阶段 S 卡片总表
 
 | 卡 | 内容 | 仓库 | 依赖 | 编号分配 | 能力 | 状态 | 子代理 | 分支 | PR | 结果 SHA | 合并 SHA | 阻断项 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | INF-00 | 开发机就绪：Android SDK、`cis-gate` / `cis-gradle` 脚本、裸库、缓存、内存守护、构建槽 | 两仓 `tools/devbox/` | — | — | C25 | 已合并 | s1b-inf00fix | feat/cis-inf-00-devbox-clean | Android PR#53；cloud PR#6 | Android 4dccda9；cloud 8493b2f | Android f18915f；cloud d4fb93c | stage-1 联调验收 PR#59 已合并（`d68ddca`） |
-| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | 已合并 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | Android PR#57；cloud PR#7 | Android d8e455a；cloud d38c59e | Android 04d4424；cloud 5480f0d | — |
+| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | 已合并 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | Android PR#57；cloud PR#7 | Android 50201c8c；cloud d38c59e | Android 04d4424；cloud 5480f0d | — |
 | INF-02 | 契约收敛：分析两份 `contracts/` 的差异并统一、同步脚本、两仓 CI 一致性检查（D15） | 两仓 | INF-01 | — | C28 | 未开始 | — | — | — | — | — | — |
 | R01 | FTS4 ICU 中文分词在 API 31–36 的可用性；不可用时的二元切分方案 | — | INF-00 | — | — | 已合并 | s8d-w008prep | docs/cis-r01-fts-research | PR#60 | — | b3f15cf | — |
 | R02 | 端侧 OCR 选型：不依赖 GMS、许可证、包体、中文准确率 | — | — | — | — | 已合并 | s6-r02 | docs/cis-r02-ocr-research | PR#54 | — | 02e5c48 | — |
@@ -31,7 +31,7 @@
 | R04 | 求解器方案与基准（50 个候选教学班 < 2 秒） | — | — | — | — | 已合并 | s5-r04 | docs/cis-r04-solver-research | PR#55 | — | 5a810e7 | — |
 | R05 | 巨型文件拆分映射：`CampusRepository` 方法 → 8 个 Repository；各 Screen 的拆分清单 | — | — | — | — | 已合并 | s3-r05 | docs/cis-r05-repo-map | PR#49 | — | 9e90a49 | — |
 | R06 | Room v10 现状、迁移链和擦除链路清单（`ProfileDataWiper` 注册点） | — | — | — | — | 已合并 | s4-r06 | docs/cis-r06-room-wipe | PR#50 | — | a44017b | — |
-| W0-02 | #24 实况进度条 | Android | INF-00 | — | C01 | PR 已创建 | s6-w002 | feat/cis-w0-02-live-progress | PR#65 | — | — | 待列车/审阅 |
+| W0-02 | #24 实况进度条 | Android | INF-00 | — | C01 | PR 已创建 | s6b-w002finish | feat/cis-w0-02-live-progress | PR#65 | — | — | 待列车/审阅 |
 | W0-03 | #12 学期上下文与提示条 | Android | W0-05 | — | C02 | 未开始 | — | — | — | — | — | — |
 | W0-04 | #22 / #8 / #15 节次与作息方案、实践课多日排课 | Android | W0-05 | Room v11 | C03 | 未开始 | — | — | — | — | — | — |
 | W0-05 | 拆分 `CampusRepository`（行为不变，调用方不改） | Android | INF-00、R05 | — | C25 | 未开始 | — | — | — | — | — | — |
