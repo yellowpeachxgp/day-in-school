@@ -158,6 +158,36 @@ class ExpenseSplitterTest {
     }
 
     @Test
+    fun canonicalSharedFixturesProduceExactFen() {
+        val lines = requireNotNull(javaClass.getResourceAsStream("/split-fixtures-v1.csv")) {
+            "split-fixtures-v1.csv test resource is missing"
+        }.bufferedReader().use { it.readLines() }
+        var executed = 0
+
+        for (line in lines) {
+            if (line.isBlank() || line.startsWith("#")) continue
+            val columns = line.split("|")
+            assertEquals("fixture columns: " + line, 6, columns.size)
+            val caseId = columns[0]
+            val total = Money(columns[2].toLong())
+            val members = parseIds(columns[3])
+            val rule = when (columns[1]) {
+                "EQUAL" -> SplitRule.Equal
+                "SELECTED" -> SplitRule.Selected(parseIds(columns[4]).toSet())
+                "RATIO" -> SplitRule.Ratios(parseWeights(columns[4]))
+                "STAY_DAYS" -> SplitRule.StayDays(parseWeights(columns[4]))
+                else -> error("unknown fixture mode in " + caseId)
+            }
+
+            val actual = ExpenseSplitter.split(total, members, rule)
+                .associate { it.participantId to it.amount.fen }
+            assertEquals("fixture " + caseId, parseExpected(columns[5]), actual)
+            executed += 1
+        }
+        assertEquals(9, executed)
+    }
+
+    @Test
     fun emptyMemberListIsRejected() {
         val error = assertThrows(LedgerException::class.java) {
             ExpenseSplitter.split(Money(1L), emptyList(), SplitRule.Equal)
@@ -224,5 +254,17 @@ class ExpenseSplitterTest {
             ExpenseSplitter.split(Money(1L), listOf(a, b), SplitRule.Selected(emptySet()))
         }
         assertEquals(LedgerErrorCode.NO_EFFECTIVE_PARTICIPANTS, error.code)
+    }
+
+    private fun parseIds(spec: String): List<ParticipantId> = spec.split(",").map { ParticipantId(it) }
+
+    private fun parseWeights(spec: String): Map<ParticipantId, Long> = spec.split(",").associate { entry ->
+        val columns = entry.split(":")
+        ParticipantId(columns[0]) to columns[1].toLong()
+    }
+
+    private fun parseExpected(spec: String): Map<ParticipantId, Long> = spec.split(",").associate { entry ->
+        val columns = entry.split("=")
+        ParticipantId(columns[0]) to columns[1].toLong()
     }
 }
