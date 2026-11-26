@@ -28,6 +28,7 @@
 | 编号 | 日期 | 结论 | 依据 | 状态 |
 |---|---|---|---|---|
 | AUTO-001 | 2026-11-26 | bootstrap 期间 INF-00/INF-01 与文档卡无法等待 cis-gate，可用静态自检先开 PR，后续仍须补现场门禁；自主决策，待用户复核 | INF-00 尚未使 cis-gate 可用；INF-01 属于治理与文档基线，若不先行入库会阻塞全部任务卡引用 | 待用户复核 |
+| AUTO-002 | 2026-11-26 | INF-01 不再持有 issue-replies.md，W0-09 作为该文件唯一 owner；自主决策，待用户复核 | 主代理冲突裁决：W0-09 已在 PR#47 中新增 substantive task-notes/campus/issue-replies.md，为避免 add/add 冲突并保持文件锁清晰 | 待用户复核 |
 
 ## 追加规则
 
