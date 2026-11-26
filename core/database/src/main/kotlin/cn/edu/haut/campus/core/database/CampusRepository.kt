@@ -215,6 +215,9 @@ class CloudPlanPriceDriftException(
     }
 )
 
+@Deprecated(
+    message = "W0-05 拆分过渡外观：新代码应使用具体领域 Repository；本类仅为兼容委托门面。"
+)
 class CampusRepository internal constructor(
     private val appContext: Context,
     private val database: HautDatabase,
@@ -235,6 +238,15 @@ class CampusRepository internal constructor(
     private val librarySeatAuthMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val repositoryEnvironment = CampusRepositoryEnvironment(
+        database = database,
+        preferences = preferences,
+        accountProfile = accountProfile,
+        scheduleOrPolicyChangedNotifier = { reason -> notifyScheduleOrPolicyChanged(reason) }
+    )
+    private val examRepository = ExamRepository(repositoryEnvironment)
+    private val gradesRepository = GradesRepository(repositoryEnvironment)
+    private val termRepository = TermRepository(repositoryEnvironment, examRepository)
 
     @Volatile
     private var activeSessionGeneration: Long? = null
@@ -303,111 +315,6 @@ class CampusRepository internal constructor(
         beforeWipeHooks[key] = hook
     }
 
-    private object PrefKeys {
-        val SEEDED = booleanPreferencesKey("seeded_initial_mock_data")
-        val CLEAN_BASE_V2 = booleanPreferencesKey("clean_base_dictionary_initialized_v3")
-        val GIS_DICTIONARY_SYNCED_V15 = booleanPreferencesKey("official_gis_dictionary_synced_v15")
-        val GIS_DICTIONARY_SYNCED_V16 = booleanPreferencesKey("official_gis_dictionary_synced_v16")
-        val GIS_DICTIONARY_SYNCED_V17 = booleanPreferencesKey("official_gis_dictionary_synced_v17")
-        val GIS_DICTIONARY_SYNCED_V18 = booleanPreferencesKey("official_gis_dictionary_synced_v18")
-        val PERIOD_TIMES_11_12_SYNCED_V1 = booleanPreferencesKey("period_times_11_12_synced_v1")
-        val TERM_MISMATCH_REPAIRED_V2 = booleanPreferencesKey("term_mismatch_repaired_v2")
-        val LAST_SEASONAL_ROLLOVER_TERM_ID = stringPreferencesKey("last_seasonal_rollover_term_id_v1")
-        val USER_MANUAL_TERM_SEASON = stringPreferencesKey("user_manual_term_override_season_v1")
-        val ONBOARDING_COMPLETED = booleanPreferencesKey("completed_onboarding_guide_v1")
-        val GPA_PRIVACY = booleanPreferencesKey("gpa_privacy_shield_enabled")
-        val DYNAMIC_COLOR = booleanPreferencesKey("use_material_you_dynamic_color")
-        val TIMELINE_SCALE = floatPreferencesKey("timeline_zoom_scale")
-        val OFFICIAL_GPA = stringPreferencesKey("official_gpa_value")
-        val OFFICIAL_GPA_NOTE = stringPreferencesKey("official_gpa_note")
-        val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_jw_enabled")
-        val AUTO_CHECK_UPDATE = booleanPreferencesKey("auto_check_github_release_enabled")
-        val LEGACY_SAVED_STUDENT_ID = stringPreferencesKey("saved_jw_student_id")
-        val LEGACY_SAVED_PASSWORD_BASE64 = stringPreferencesKey("saved_jw_password_local")
-        val ACADEMIC_CREDENTIAL_ACCOUNT_ID = stringPreferencesKey("academic_credential_account_id_v1")
-        val ACADEMIC_REAUTH_REQUIRED = booleanPreferencesKey("academic_reauthentication_required_v1")
-        val SAVED_SYNC_XNM = stringPreferencesKey("saved_jw_sync_xnm")
-        val SAVED_SYNC_XQM = stringPreferencesKey("saved_jw_sync_xqm")
-        val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
-        val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
-        val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
-        val CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1 = stringPreferencesKey("cloud_campus_content_json_v1")
-        val CLOUD_CAMPUS_CONTENT_JSON = stringPreferencesKey("cloud_campus_content_json_v2")
-        val CLOUD_CAMPUS_CONTENT_SYNCED_MS = longPreferencesKey("cloud_campus_content_synced_ms_v2")
-        val CLOUD_MOMENTS_SNAPSHOT_JSON = stringPreferencesKey("cloud_moments_snapshot_json_v1")
-        val MOMENTS_FAVORITE_POST_IDS = stringPreferencesKey("moments_favorite_post_ids_v1")
-        val MOMENTS_FAVORITE_BOOK_IDS = stringPreferencesKey("moments_favorite_book_ids_v1")
-        val MOMENTS_MY_POST_IDS = stringPreferencesKey("moments_my_post_ids_v1")
-        val MOMENTS_MY_BOOK_IDS = stringPreferencesKey("moments_my_book_ids_v1")
-        val MOMENTS_MY_TAG_CODES = stringPreferencesKey("moments_my_tag_codes_v1")
-        val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
-        val CLASS_LEAD_MINUTES = intPreferencesKey("class_lead_minutes")
-        val CLASS_SNOOZE_DEFAULT_MINUTES = intPreferencesKey("class_snooze_default_minutes")
-        val CLASS_SNOOZE_MAX_COUNT = intPreferencesKey("class_snooze_max_count")
-        val CLASS_SNOOZE_CUTOFF_MINUTES = intPreferencesKey("class_snooze_cutoff_minutes")
-        val EXAM_DAY_BEFORE_ENABLED = booleanPreferencesKey("exam_day_before_enabled")
-        val EXAM_HOUR_BEFORE_ENABLED = booleanPreferencesKey("exam_hour_before_enabled")
-        val EXAM_SNOOZE_MAX_COUNT = intPreferencesKey("exam_snooze_max_count")
-        val PRECISE_REMINDER_PREFERRED = booleanPreferencesKey("precise_reminder_preferred")
-        val REMINDER_LOCKSCREEN_PRIVATE = booleanPreferencesKey("reminder_lockscreen_private")
-        val REMINDER_QUIET_MODE = stringPreferencesKey("reminder_quiet_mode")
-        val REMINDER_POLICY_REVISION = stringPreferencesKey("reminder_policy_revision")
-        val LAST_REMINDER_RECONCILE_MS = longPreferencesKey("last_reminder_reconcile_ms")
-        val LAST_REMINDER_RECONCILE_SUMMARY = stringPreferencesKey("last_reminder_reconcile_summary")
-        val REMINDER_DIAGNOSTIC_LOGS = stringPreferencesKey("reminder_diagnostic_logs_v1")
-        val FF_UTILITIES_ENABLED = booleanPreferencesKey("ff_utilities_enabled_v1")
-        val FF_LIBRARY_NATIVE_ENABLED = booleanPreferencesKey("ff_library_native_enabled_v1")
-        val FF_LIBRARY_SEAT_ENABLED = booleanPreferencesKey("ff_library_seat_enabled_v1")
-        val FF_FOCUS_ENABLED = booleanPreferencesKey("ff_focus_enabled_v1")
-        val FF_TODAY_FOCUS_PILL = booleanPreferencesKey("ff_show_today_focus_pill_v1")
-        val FF_TIMETABLE_INTERCHANGE = booleanPreferencesKey("ff_timetable_interchange_v1")
-        val ALLOW_UNVERIFIED_UTILITY_TRANSPORT = booleanPreferencesKey("allow_unverified_utility_transport_v1")
-        val LAST_UTILITY_SAMPLE_MS = longPreferencesKey("last_utility_sample_epoch_ms_v1")
-        val UTILITY_DAILY_NOTIFY_ENABLED = booleanPreferencesKey("utility_daily_notify_enabled_v1")
-        val UTILITY_DAILY_NOTIFY_HOUR = intPreferencesKey("utility_daily_notify_hour_v1")
-        val UTILITY_LOW_BALANCE_THRESHOLD = floatPreferencesKey("utility_low_balance_threshold_v1")
-        val LAST_UTILITY_DAILY_NOTIFY_DATE = stringPreferencesKey("last_utility_daily_notify_date_v1")
-        val MEAL_RECOMMEND_ENABLED = booleanPreferencesKey("meal_recommend_enabled_v1")
-        val LAST_MEAL_RECOMMEND_BLOCK_KEY = stringPreferencesKey("last_meal_recommend_block_key_v1")
-        val CANTEEN_DISH_REVIEWS = stringPreferencesKey("canteen_dish_reviews_v1")
-        val SELECTED_FOCUS_MINUTES = intPreferencesKey("selected_focus_minutes_v1")
-        val THEME_MODE = stringPreferencesKey("theme_mode_v1")
-        val UI_DESIGN_STYLE = stringPreferencesKey("ui_design_style_v1")
-        val THEME_PALETTE_KEY = stringPreferencesKey("theme_palette_key_v1")
-        val CUSTOM_THEME_SEED_ARGB = longPreferencesKey("custom_theme_seed_argb_v1")
-        val CUSTOM_WALLPAPER_PATH = stringPreferencesKey("custom_wallpaper_path_v1")
-        val WALLPAPER_ALPHA = floatPreferencesKey("wallpaper_alpha_v1")
-        val WALLPAPER_BLUR_DP = floatPreferencesKey("wallpaper_blur_dp_v1")
-        val WALLPAPER_CARD_ALPHA = floatPreferencesKey("wallpaper_card_alpha_v1")
-        val EXTRACTED_WALLPAPER_COLORS = stringPreferencesKey("extracted_wallpaper_colors_v1")
-        val HOME_CARD_ORDER = stringPreferencesKey("home_card_order_v1")
-        val HIDDEN_HOME_CARDS = stringPreferencesKey("hidden_home_cards_v1")
-        val FULL_WIDTH_HOME_CARDS = stringPreferencesKey("full_width_home_cards_v1")
-        val PROXY_MODE = stringPreferencesKey("network_proxy_mode_v1")
-        val PROXY_PRESET_MIRROR_KEY = stringPreferencesKey("network_proxy_preset_mirror_key_v1")
-        val PROXY_CUSTOM_PREFIX = stringPreferencesKey("network_proxy_custom_prefix_v1")
-        val PROXY_HOST = stringPreferencesKey("network_proxy_host_v1")
-        val PROXY_PORT = intPreferencesKey("network_proxy_port_v1")
-        val PROXY_AUTO_FALLBACK = booleanPreferencesKey("network_proxy_auto_fallback_v1")
-        val CLOUD_API_BASE_URL = stringPreferencesKey("cloud_api_base_url_v1")
-        val CLOUD_ACCESS_TOKEN = stringPreferencesKey("cloud_access_token_v1")
-        val CLOUD_REFRESH_TOKEN = stringPreferencesKey("cloud_refresh_token_v1")
-        // 云身份会话世代（严格单调，存于 Room schema 之外的 DataStore，按 profileId 隔离）：
-        // 登录/换号/解绑均推进世代；解绑另存 tombstone，旧会话在途响应一律失效
-        val CLOUD_IDENTITY_GENERATION = longPreferencesKey("cloud_identity_generation_v1")
-        val CLOUD_IDENTITY_GENERATION_OWNER = stringPreferencesKey("cloud_identity_generation_owner_v1")
-        val CLOUD_IDENTITY_UNLINK_TOMBSTONE = stringPreferencesKey("cloud_identity_unlink_tombstone_v1")
-        val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
-        val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
-        val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
-        val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
-        /**
-         * 历史标记：V1 日期窗口猜测修复（已移除调用路径）曾写入的完成位。
-         * 仅作为「该行可能曾被 V1 按日期改写」的历史证据保留，绝不再触发任何修复；
-         * 缺逐行来源证明的历史考试行由 V2 记 REVIEW_REQUIRED，已误改的行需权威重同步纠正。
-         */
-        val EXAM_TERM_POISON_REPAIRED_V1 = booleanPreferencesKey("exam_term_poison_repaired_v1")
-    }
 
     init {
         registerBeforeWipeHook("campus_services_account_and_web_wipe") {
@@ -502,7 +409,7 @@ class CampusRepository internal constructor(
             "tag_default_01"
         )
         preferences.edit { prefs ->
-            val rawMoments = prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+            val rawMoments = prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
             if (!rawMoments.isNullOrBlank()) {
                 val parsed = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(rawMoments)
                 if (parsed != null) {
@@ -511,7 +418,7 @@ class CampusRepository internal constructor(
                         bookListings = parsed.bookListings.filterNot { it.id in legacyMomentsSampleIds },
                         antiLostTags = parsed.antiLostTags.filterNot { it.id in legacyMomentsSampleIds || it.tagCode == "HAUT-TAG-7E2A9B" }
                     )
-                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                         CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(cleanedSnap)
                 }
             }
@@ -521,22 +428,22 @@ class CampusRepository internal constructor(
     val preferencesFlow: Flow<AppPreferencesState> = preferences.data
         .onStart { migrateLegacyAcademicCredentialsIfNeeded() }
         .map { prefs ->
-        val credentialResult = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
+        val credentialResult = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
             academicCredentialVault.read(academicCredentialScope(accountId))
         } ?: AcademicCredentialReadResult.Empty
         val savedStudentId = (credentialResult as? AcademicCredentialReadResult.Available)
             ?.credentials?.use { it.studentId }
-        val requiresReauthentication = prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] == true ||
+        val requiresReauthentication = prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] == true ||
             credentialResult == AcademicCredentialReadResult.ReauthenticationRequired ||
-            (prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] != null && savedStudentId == null)
+            (prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] != null && savedStudentId == null)
         val reminderConfig = extractReminderConfig(prefs)
-        val rawOrder = prefs[PrefKeys.HOME_CARD_ORDER]
+        val rawOrder = prefs[CampusRepositoryPrefKeys.HOME_CARD_ORDER]
             ?.split(",")
             ?.map { it.trim() }
             .orEmpty()
         val normalizedOrder = HomeCardModule.normalizeOrderIds(rawOrder)
         val hiddenSet = HomeCardModule.normalizeHiddenIds(
-            prefs[PrefKeys.HIDDEN_HOME_CARDS]
+            prefs[CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS]
                 ?.split(",")
                 ?.map { it.trim() }
                 ?.filter { it.isNotBlank() }
@@ -544,7 +451,7 @@ class CampusRepository internal constructor(
                 ?: emptySet()
         )
         val fullWidthSet = HomeCardModule.normalizeFullWidthIds(
-            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS]
+            prefs[CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS]
                 ?.let { raw ->
                     if (raw == HomeCardModule.EMPTY_SET_SENTINEL) setOf(HomeCardModule.EMPTY_SET_SENTINEL)
                     else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
@@ -552,32 +459,32 @@ class CampusRepository internal constructor(
         )
 
         AppPreferencesState(
-            gpaPrivacyShieldEnabled = prefs[PrefKeys.GPA_PRIVACY] ?: false,
-            useDynamicColor = prefs[PrefKeys.DYNAMIC_COLOR] ?: false,
-            themeMode = prefs[PrefKeys.THEME_MODE] ?: "SYSTEM",
-            uiDesignStyle = prefs[PrefKeys.UI_DESIGN_STYLE]
-                ?: if (prefs[PrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FRESH_BREEZE",
-            themePaletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
+            gpaPrivacyShieldEnabled = prefs[CampusRepositoryPrefKeys.GPA_PRIVACY] ?: false,
+            useDynamicColor = prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] ?: false,
+            themeMode = prefs[CampusRepositoryPrefKeys.THEME_MODE] ?: "SYSTEM",
+            uiDesignStyle = prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE]
+                ?: if (prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FRESH_BREEZE",
+            themePaletteKey = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
             customThemeSeedArgb = run {
-                val paletteKey = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
-                val storedSeed = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB]
+                val paletteKey = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
+                val storedSeed = prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB]
                 when {
                     paletteKey == "HAUT_BLUE" && (storedSeed == null || storedSeed == 0xFF0066CCL) -> 0xFF053968L
                     storedSeed != null -> storedSeed
                     else -> 0xFF053968L
                 }
             },
-            customWallpaperPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
+            customWallpaperPath = prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
             wallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(
-                prefs[PrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
+                prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
             ),
             wallpaperBlurDp = ThemeVisualDefaults.clampWallpaperBlurDp(
-                prefs[PrefKeys.WALLPAPER_BLUR_DP] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+                prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
             ),
             wallpaperCardAlpha = ThemeVisualDefaults.clampWallpaperCardAlpha(
-                prefs[PrefKeys.WALLPAPER_CARD_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
             ),
-            extractedWallpaperColors = prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS]
+            extractedWallpaperColors = prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS]
                 ?.split(",")
                 ?.mapNotNull { it.trim().toLongOrNull() }
                 .orEmpty(),
@@ -585,30 +492,30 @@ class CampusRepository internal constructor(
             hiddenHomeCards = hiddenSet,
             fullWidthHomeCards = fullWidthSet,
             timelineZoomScale = ThemeVisualDefaults.clampTimelineZoomScale(
-                prefs[PrefKeys.TIMELINE_SCALE] ?: ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE
+                prefs[CampusRepositoryPrefKeys.TIMELINE_SCALE] ?: ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE
             ),
-            widgetDefaultCompact = prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
-            widgetDefaultPrivacyMode = prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false,
-            officialGpaValuePlain = prefs[PrefKeys.OFFICIAL_GPA],
-            officialGpaNote = prefs[PrefKeys.OFFICIAL_GPA_NOTE],
-            hasSeededInitialMockData = prefs[PrefKeys.SEEDED] ?: false,
-            hasCompletedOnboarding = prefs[PrefKeys.ONBOARDING_COMPLETED] ?: false,
-            autoSyncEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true,
-            autoCheckUpdateEnabled = prefs[PrefKeys.AUTO_CHECK_UPDATE] ?: true,
+            widgetDefaultCompact = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
+            widgetDefaultPrivacyMode = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false,
+            officialGpaValuePlain = prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA],
+            officialGpaNote = prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE],
+            hasSeededInitialMockData = prefs[CampusRepositoryPrefKeys.SEEDED] ?: false,
+            hasCompletedOnboarding = prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] ?: false,
+            autoSyncEnabled = prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] ?: true,
+            autoCheckUpdateEnabled = prefs[CampusRepositoryPrefKeys.AUTO_CHECK_UPDATE] ?: true,
             savedStudentId = savedStudentId,
             hasSavedCredentials = savedStudentId != null && !requiresReauthentication,
             academicReauthenticationRequired = requiresReauthentication,
-            syncXnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: AcademicTermResolver.defaultAcademicYearCode(),
-            syncXqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: AcademicTermResolver.defaultSemesterCode(),
-            lastAutoSyncEpochMillis = prefs[PrefKeys.LAST_AUTO_SYNC_MS],
-            customChannelUrls = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]),
-            customClubGroupNumbers = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]),
+            syncXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: AcademicTermResolver.defaultAcademicYearCode(),
+            syncXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: AcademicTermResolver.defaultSemesterCode(),
+            lastAutoSyncEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS],
+            customChannelUrls = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]),
+            customClubGroupNumbers = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]),
             campusCommunityCatalog = CampusCloudOidcHelper.parseCampusContentJsonString(
-                prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON]
+                prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON]
             ) ?: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
-            lastCampusContentSyncEpochMillis = prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS],
+            lastCampusContentSyncEpochMillis = prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS],
             reminderConfig = reminderConfig,
-            reminderPolicyRevision = prefs[PrefKeys.REMINDER_POLICY_REVISION]
+            reminderPolicyRevision = prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION]
                 ?: ReminderRevision.computePolicyRevision(
                     enabled = reminderConfig.enabled,
                     classLeadMinutes = reminderConfig.classLeadMinutes,
@@ -617,79 +524,79 @@ class CampusRepository internal constructor(
                     examDayEnabled = reminderConfig.examDayBeforeEnabled,
                     examHourEnabled = reminderConfig.examHourBeforeEnabled
                 ),
-            lastReminderReconcileEpochMillis = prefs[PrefKeys.LAST_REMINDER_RECONCILE_MS],
-            lastReminderReconcileSummary = prefs[PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY],
-            reminderDiagnosticLogs = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
+            lastReminderReconcileEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS],
+            lastReminderReconcileSummary = prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY],
+            reminderDiagnosticLogs = prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS]
                 ?.split("\n")
                 ?.filter { it.isNotBlank() }
                 .orEmpty(),
-            utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true),
-            libraryNativeEnabled = supportsHautServices && (prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true),
-            librarySeatEnabled = supportsHautServices && (prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true),
-            focusEnabled = prefs[PrefKeys.FF_FOCUS_ENABLED] ?: true,
-            showTodayFocusQuickPill = prefs[PrefKeys.FF_TODAY_FOCUS_PILL] ?: true,
-            timetableInterchangeEnabled = prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
-            allowUnverifiedUtilityTransport = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
-            lastUtilitySampleEpochMillis = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS],
-            utilityDailyNotifyEnabled = prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true,
-            utilityDailyNotifyHour = (prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23),
-            utilityLowBalanceThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).coerceIn(5f, 100f),
-            lastUtilityDailyNotifyDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
-            mealRecommendEnabled = supportsHautServices && (prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] ?: true),
-            lastMealRecommendBlockKey = prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY],
+            utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true),
+            libraryNativeEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true),
+            librarySeatEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true),
+            focusEnabled = prefs[CampusRepositoryPrefKeys.FF_FOCUS_ENABLED] ?: true,
+            showTodayFocusQuickPill = prefs[CampusRepositoryPrefKeys.FF_TODAY_FOCUS_PILL] ?: true,
+            timetableInterchangeEnabled = prefs[CampusRepositoryPrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
+            allowUnverifiedUtilityTransport = prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
+            lastUtilitySampleEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS],
+            utilityDailyNotifyEnabled = prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true,
+            utilityDailyNotifyHour = (prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23),
+            utilityLowBalanceThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).coerceIn(5f, 100f),
+            lastUtilityDailyNotifyDate = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
+            mealRecommendEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] ?: true),
+            lastMealRecommendBlockKey = prefs[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY],
             canteenDishReviews = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
             ),
             campusMomentsSnapshot = run {
                 val rawSnap = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(
-                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+                    prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
                 ) ?: cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
-                val hasCloudSessionToken = !prefs[PrefKeys.CLOUD_ACCESS_TOKEN].isNullOrBlank()
+                val hasCloudSessionToken = !prefs[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN].isNullOrBlank()
                 val baseSnap = if (hasCloudSessionToken) {
                     rawSnap
                 } else {
                     CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(rawSnap)
                 }
                 baseSnap.copy(
-                    favoritePostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[PrefKeys.MOMENTS_FAVORITE_POST_IDS]) else emptySet(),
-                    favoriteBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[PrefKeys.MOMENTS_FAVORITE_BOOK_IDS]) else emptySet(),
-                    myPostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_POST_IDS]) else emptySet(),
-                    myBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_BOOK_IDS]) else emptySet(),
-                    myTagCodes = if (hasCloudSessionToken) decodeCsvSet(prefs[PrefKeys.MOMENTS_MY_TAG_CODES]) else emptySet()
+                    favoritePostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS]) else emptySet(),
+                    favoriteBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS]) else emptySet(),
+                    myPostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS]) else emptySet(),
+                    myBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS]) else emptySet(),
+                    myTagCodes = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES]) else emptySet()
                 )
             },
-            selectedFocusMinutes = (prefs[PrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
+            selectedFocusMinutes = (prefs[CampusRepositoryPrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
             networkProxyConfig = extractNetworkProxyConfig(prefs),
-            selectedCampusId = prefs[PrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
-            customCampusZonesJson = prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
+            selectedCampusId = prefs[CampusRepositoryPrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
+            customCampusZonesJson = prefs[CampusRepositoryPrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
         )
     }.flowOn(Dispatchers.IO)
 
     private fun extractNetworkProxyConfig(prefs: androidx.datastore.preferences.core.Preferences): NetworkProxyConfig {
         return NetworkProxyConfig(
-            mode = ProxyMode.fromKey(prefs[PrefKeys.PROXY_MODE]),
-            presetMirrorKey = prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] ?: PresetMirrorNode.GHFAST_TOP.key,
-            customReverseProxyPrefix = prefs[PrefKeys.PROXY_CUSTOM_PREFIX] ?: "",
-            proxyHost = prefs[PrefKeys.PROXY_HOST]?.takeIf { it.isNotBlank() } ?: "127.0.0.1",
-            proxyPort = (prefs[PrefKeys.PROXY_PORT] ?: 7890).coerceIn(1, 65535),
-            autoFallbackMirror = prefs[PrefKeys.PROXY_AUTO_FALLBACK] ?: true,
-            customCloudApiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+            mode = ProxyMode.fromKey(prefs[CampusRepositoryPrefKeys.PROXY_MODE]),
+            presetMirrorKey = prefs[CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY] ?: PresetMirrorNode.GHFAST_TOP.key,
+            customReverseProxyPrefix = prefs[CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX] ?: "",
+            proxyHost = prefs[CampusRepositoryPrefKeys.PROXY_HOST]?.takeIf { it.isNotBlank() } ?: "127.0.0.1",
+            proxyPort = (prefs[CampusRepositoryPrefKeys.PROXY_PORT] ?: 7890).coerceIn(1, 65535),
+            autoFallbackMirror = prefs[CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK] ?: true,
+            customCloudApiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
         )
     }
 
     private fun extractReminderConfig(prefs: androidx.datastore.preferences.core.Preferences): ReminderGlobalConfig {
-        val quietMode = prefs[PrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
+        val quietMode = prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
         return ReminderGlobalConfig(
-            enabled = prefs[PrefKeys.REMINDERS_ENABLED] ?: true,
-            classLeadMinutes = (prefs[PrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 120),
-            classSnoozeDefaultMinutes = (prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
-            classSnoozeMaxCount = (prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            classSnoozeCutoffMinutes = (prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
-            examDayBeforeEnabled = prefs[PrefKeys.EXAM_DAY_BEFORE_ENABLED] ?: true,
-            examHourBeforeEnabled = prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
-            examSnoozeMaxCount = (prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            preciseReminderPreferred = prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
-            lockscreenPrivate = prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
+            enabled = prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] ?: true,
+            classLeadMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 120),
+            classSnoozeDefaultMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
+            classSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
+            classSnoozeCutoffMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
+            examDayBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] ?: true,
+            examHourBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
+            examSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
+            preciseReminderPreferred = prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
+            lockscreenPrivate = prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
             quietMode = quietMode
         )
     }
@@ -726,7 +633,7 @@ class CampusRepository internal constructor(
             val base = list.map { it.toDomain() }
             val songshan = if (supportsHautServices) ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS else emptyList()
             val customZones = cn.edu.haut.campus.core.model.CustomCampusZoneCodec.decodeList(
-                prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
+                prefs[CampusRepositoryPrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
             )
             val customBuildings = customZones.flatMap { it.buildings }
             (songshan + base.filter { it.campusId != "songshanlu" && it.id !in CampusDiningRecommender.CLOSED_CANTEEN_BUILDING_IDS } + customBuildings)
@@ -815,19 +722,19 @@ class CampusRepository internal constructor(
     suspend fun ensureInitialSeedIfNeeded() {
         val prefs = preferences.data.first()
         if (!accountProfile.isLegacy) {
-            if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
+            if (prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] != true) {
                 database.withTransaction {
                     if (supportsHautServices) seedBaseCampusDictionaryInternal() else seedOfflineDefaultsInternal()
                 }
                 preferences.edit {
-                    it[PrefKeys.CLEAN_BASE_V2] = true
-                    it[PrefKeys.SEEDED] = true
-                    it[PrefKeys.ONBOARDING_COMPLETED] = true
-                    it[PrefKeys.AUTO_SYNC_ENABLED] = false
-                    it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
-                    it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
+                    it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
+                    it[CampusRepositoryPrefKeys.SEEDED] = true
+                    it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
+                    it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
+                    it[CampusRepositoryPrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
+                    it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
                 }
-            } else if (supportsHautServices && prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V18] != true) {
+            } else if (supportsHautServices && prefs[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V18] != true) {
                 syncCampusDictionaryV18Internal()
             }
             ensureExtendedPeriodTimes11To12IfNeeded()
@@ -836,9 +743,9 @@ class CampusRepository internal constructor(
             ensureSeasonalTermRolloverIfNeeded()
             return
         }
-        if (prefs[PrefKeys.CLEAN_BASE_V2] != true) {
+        if (prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] != true) {
             database.withTransaction {
-                if (prefs[PrefKeys.ONBOARDING_COMPLETED] != true) {
+                if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] != true) {
                     dao.clearStudentProfile()
                     dao.clearCourses()
                     dao.clearRules()
@@ -848,22 +755,22 @@ class CampusRepository internal constructor(
                 seedBaseCampusDictionaryInternal()
             }
             preferences.edit {
-                it[PrefKeys.SEEDED] = true
-                it[PrefKeys.CLEAN_BASE_V2] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
-                it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
+                it[CampusRepositoryPrefKeys.SEEDED] = true
+                it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
+                it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+                it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
+                it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
+                it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
             }
         } else if (
-            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V15] != true ||
-            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V16] != true ||
-            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V17] != true ||
-            prefs[PrefKeys.GIS_DICTIONARY_SYNCED_V18] != true
+            prefs[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V15] != true ||
+            prefs[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V16] != true ||
+            prefs[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V17] != true ||
+            prefs[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V18] != true
         ) {
             syncCampusDictionaryV18Internal()
         }
-        if (prefs[PrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
+        if (prefs[CampusRepositoryPrefKeys.TERM_MISMATCH_REPAIRED_V2] != true) {
             database.withTransaction {
                 val existingTerms = dao.observeTerms().first().map { it.toDomain() }
                 val existingById = existingTerms.associateBy { it.id }
@@ -887,8 +794,8 @@ class CampusRepository internal constructor(
                 dao.upsertTerms(mergedTerms)
 
                 // 修复旧版本因 currentTerm 写死 2026-2027-1 导致历史学期同步课表被错存到 2026-2027-1 的问题（仅当用户曾显式保存过旧同步学期配置时执行）
-                val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
-                val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+                val savedXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM]
+                val savedXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM]
                 if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
                     val expectedTermId = HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
                     val allRules = dao.getRulesSnapshot()
@@ -901,8 +808,8 @@ class CampusRepository internal constructor(
                 }
             }
             preferences.edit {
-                it[PrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
-                it.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+                it[CampusRepositoryPrefKeys.TERM_MISMATCH_REPAIRED_V2] = true
+                it.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
             }
         }
         ensureExtendedPeriodTimes11To12IfNeeded()
@@ -925,8 +832,8 @@ class CampusRepository internal constructor(
      */
     internal suspend fun ensureExamTermRepairV2IfNeeded() {
         val prefs = preferences.data.first()
-        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
-        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM]
         val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
             runCatching { HautAcademicEndpoints.toTermId(savedXnm, savedXqm) }.getOrNull()
         } else null
@@ -1136,8 +1043,8 @@ class CampusRepository internal constructor(
         if (toInsert.isNotEmpty()) {
             dao.upsertPeriodTimes(toInsert)
         }
-        if (prefs[PrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] != true) {
-            preferences.edit { it[PrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] = true }
+        if (prefs[CampusRepositoryPrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] != true) {
+            preferences.edit { it[CampusRepositoryPrefKeys.PERIOD_TIMES_11_12_SYNCED_V1] = true }
         }
     }
 
@@ -1165,11 +1072,11 @@ class CampusRepository internal constructor(
         val seasonalXnm = AcademicTermResolver.defaultAcademicYearCode(today)
         val seasonalXqm = AcademicTermResolver.defaultSemesterCode(today)
         val prefs = preferences.data.first()
-        val manualSeason = prefs[PrefKeys.USER_MANUAL_TERM_SEASON]
-        val lastRolled = prefs[PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID]
+        val manualSeason = prefs[CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON]
+        val lastRolled = prefs[CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID]
         val currentTermEntity = dao.getCurrentTerm()
-        val savedXnm = prefs[PrefKeys.SAVED_SYNC_XNM]
-        val savedXqm = prefs[PrefKeys.SAVED_SYNC_XQM]
+        val savedXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM]
+        val savedXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM]
         val savedSyncTermId = if (!savedXnm.isNullOrBlank() && !savedXqm.isNullOrBlank()) {
             HautAcademicEndpoints.toTermId(savedXnm, savedXqm)
         } else null
@@ -1194,11 +1101,11 @@ class CampusRepository internal constructor(
             setCurrent = needsTermAdvance
         )
         preferences.edit { editPrefs ->
-            editPrefs[PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID] = seasonalTermId
+            editPrefs[CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID] = seasonalTermId
             if (needsSyncParamAdvance || needsTermAdvance) {
-                editPrefs[PrefKeys.SAVED_SYNC_XNM] = seasonalXnm
-                editPrefs[PrefKeys.SAVED_SYNC_XQM] = seasonalXqm
-                editPrefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
+                editPrefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = seasonalXnm
+                editPrefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = seasonalXqm
+                editPrefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
             }
         }
         if (needsTermAdvance) {
@@ -1208,14 +1115,14 @@ class CampusRepository internal constructor(
 
     suspend fun completeOnboarding() {
         preferences.edit {
-            it[PrefKeys.ONBOARDING_COMPLETED] = true
-            it[PrefKeys.CLEAN_BASE_V2] = true
+            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
+            it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
         }
     }
 
     suspend fun resetOnboardingForGuide() {
         preferences.edit {
-            it[PrefKeys.ONBOARDING_COMPLETED] = false
+            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
         }
     }
 
@@ -1229,11 +1136,11 @@ class CampusRepository internal constructor(
             seedDemoDataInternal()
         }
         preferences.edit {
-            it[PrefKeys.SEEDED] = true
-            it[PrefKeys.CLEAN_BASE_V2] = true
-            it[PrefKeys.ONBOARDING_COMPLETED] = true
-            it.remove(PrefKeys.OFFICIAL_GPA)
-            it.remove(PrefKeys.OFFICIAL_GPA_NOTE)
+            it[CampusRepositoryPrefKeys.SEEDED] = true
+            it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
+            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
+            it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
+            it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
         }
         notifyScheduleOrPolicyChanged("RESET_DEMO_SEED_DATA")
     }
@@ -1258,10 +1165,10 @@ class CampusRepository internal constructor(
             )
         }
         preferences.edit {
-            it[PrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
-            it[PrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
-            it[PrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
-            it[PrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
+            it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V15] = true
+            it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V16] = true
+            it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V17] = true
+            it[CampusRepositoryPrefKeys.GIS_DICTIONARY_SYNCED_V18] = true
         }
     }
 
@@ -1352,12 +1259,12 @@ class CampusRepository internal constructor(
         val (xnm, xqm) = HautAcademicEndpoints.fromTermId(termId)
         val seasonalTermId = AcademicTermResolver.defaultTermId(LocalDate.now(timeZone))
         preferences.edit { prefs ->
-            prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
-            prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
+            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = xnm
+            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = xqm
             if (termId != seasonalTermId) {
-                prefs[PrefKeys.USER_MANUAL_TERM_SEASON] = seasonalTermId
+                prefs[CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON] = seasonalTermId
             } else {
-                prefs.remove(PrefKeys.USER_MANUAL_TERM_SEASON)
+                prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
             }
         }
         notifyScheduleOrPolicyChanged("TERM_CHANGED")
@@ -2917,12 +2824,12 @@ class CampusRepository internal constructor(
             )
         }
         preferences.edit {
-            it[PrefKeys.ONBOARDING_COMPLETED] = true
-            it[PrefKeys.CLEAN_BASE_V2] = true
+            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
+            it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
             if (setAsCurrentTerm) {
                 val (xnm, xqm) = HautAcademicEndpoints.fromTermId(preview.termId)
-                it[PrefKeys.SAVED_SYNC_XNM] = xnm
-                it[PrefKeys.SAVED_SYNC_XQM] = xqm
+                it[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = xnm
+                it[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = xqm
             }
         }
         notifyScheduleOrPolicyChanged("COURSE_IMPORT_COMMITTED")
@@ -2941,14 +2848,14 @@ class CampusRepository internal constructor(
             dao.upsertGradeAttempts(attempts.map { it.toEntity() })
         }
         preferences.edit { prefs ->
-            prefs[PrefKeys.ONBOARDING_COMPLETED] = true
-            prefs[PrefKeys.CLEAN_BASE_V2] = true
+            prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
+            prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
             if (officialGpa != null) {
-                prefs[PrefKeys.OFFICIAL_GPA] = officialGpa.toPlainString()
-                prefs[PrefKeys.OFFICIAL_GPA_NOTE] = officialNote ?: "正方教务系统返回平均学分绩点"
+                prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA] = officialGpa.toPlainString()
+                prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE] = officialNote ?: "正方教务系统返回平均学分绩点"
             } else {
-                prefs.remove(PrefKeys.OFFICIAL_GPA)
-                prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
+                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
+                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
             }
         }
     }
@@ -3050,7 +2957,7 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setAutoSyncEnabled(enabled: Boolean) {
-        preferences.edit { it[PrefKeys.AUTO_SYNC_ENABLED] = enabled }
+        preferences.edit { it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = enabled }
     }
 
     suspend fun saveAuthorizedSyncCredentials(
@@ -3062,7 +2969,7 @@ class CampusRepository internal constructor(
         requireActiveSession()
         check(supportsHautServices) { "当前学校教务登录尚未适配，可使用离线导入" }
         academicCredentialMutex.withLock {
-            val previousId = preferences.data.first()[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]
+            val previousId = preferences.data.first()[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]
             val accountId = UUID.randomUUID().toString()
             val scope = academicCredentialScope(accountId)
             try {
@@ -3072,13 +2979,13 @@ class CampusRepository internal constructor(
                 }?.trim().orEmpty()
                 academicCredentialVault.save(scope, studentId, passwordPlain)
                 preferences.edit { prefs ->
-                    prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
-                    prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = false
-                    prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
-                    prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                    prefs[PrefKeys.SAVED_SYNC_XNM] = xnm
-                    prefs[PrefKeys.SAVED_SYNC_XQM] = xqm
-                    prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+                    prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
+                    prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = false
+                    prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
+                    prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                    prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = xnm
+                    prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = xqm
+                    prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
                 }
                 val nextStudentId = studentId.trim()
                 if (previousStudentId.isNotEmpty() && previousStudentId != nextStudentId) {
@@ -3102,33 +3009,33 @@ class CampusRepository internal constructor(
     /** 先保留稳定迁移引用；AES-GCM 密文回读成功后，在同一 DataStore 写入中删除旧学号和 Base64。 */
     private suspend fun migrateLegacyAcademicCredentialsIfNeeded() = withContext(Dispatchers.IO) {
         val current = preferences.data.first()
-        if (current[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
-            current[PrefKeys.LEGACY_SAVED_STUDENT_ID] == null
+        if (current[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
+            current[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID] == null
         ) {
             return@withContext
         }
         academicCredentialMutex.withLock {
             val original = preferences.data.first()
-            if (original[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
-                original[PrefKeys.LEGACY_SAVED_STUDENT_ID] == null
+            if (original[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
+                original[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID] == null
             ) {
                 return@withLock
             }
-            val accountId = original[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: UUID.randomUUID().toString()
+            val accountId = original[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: UUID.randomUUID().toString()
             preferences.edit { prefs ->
-                prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
+                prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
             }
             val migrated = migrateLegacyAcademicCredentials(
                 vault = academicCredentialVault,
                 scope = academicCredentialScope(accountId),
-                studentId = original[PrefKeys.LEGACY_SAVED_STUDENT_ID],
-                encodedPassword = original[PrefKeys.LEGACY_SAVED_PASSWORD_BASE64]
+                studentId = original[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID],
+                encodedPassword = original[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64]
             )
             preferences.edit { prefs ->
-                prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
-                prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                prefs[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = !migrated
-                if (!migrated) prefs[PrefKeys.AUTO_SYNC_ENABLED] = false
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = !migrated
+                if (!migrated) prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
         }
     }
@@ -3258,9 +3165,9 @@ class CampusRepository internal constructor(
         }
         val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
         preferences.edit { prefs ->
-            prefs[PrefKeys.SAVED_SYNC_XNM] = syncXnm
-            prefs[PrefKeys.SAVED_SYNC_XQM] = syncXqm
-            prefs[PrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
+            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = syncXnm
+            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = syncXqm
+            prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
         }
     }
 
@@ -3275,21 +3182,21 @@ class CampusRepository internal constructor(
         ensureSeasonalTermRolloverIfNeeded()
         academicCredentialMutex.withLock {
         val prefs = preferences.data.first()
-        val autoEnabled = prefs[PrefKeys.AUTO_SYNC_ENABLED] ?: true
+        val autoEnabled = prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] ?: true
         if (!force && !autoEnabled) return@withLock null
 
-        val lastSyncMs = prefs[PrefKeys.LAST_AUTO_SYNC_MS] ?: 0L
+        val lastSyncMs = prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] ?: 0L
         val nowMs = System.currentTimeMillis()
         if (!force && (nowMs - lastSyncMs) < 15 * 60 * 1000L) {
             return@withLock null
         }
 
-        val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
+        val accountId = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
         val credentialResult = academicCredentialVault.read(academicCredentialScope(accountId))
         if (credentialResult !is AcademicCredentialReadResult.Available) {
             preferences.edit {
-                it[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
-                it[PrefKeys.AUTO_SYNC_ENABLED] = false
+                it[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
+                it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
             return@withLock Result.failure(IllegalStateException("安全凭据已失效，请重新登录；本地课表和成绩已保留"))
         }
@@ -3297,8 +3204,8 @@ class CampusRepository internal constructor(
         val currentTermEntity = dao.getCurrentTerm()
         val defaultPair = currentTermEntity?.id?.let { HautAcademicEndpoints.fromTermId(it) }
             ?: (AcademicTermResolver.defaultAcademicYearCode() to AcademicTermResolver.defaultSemesterCode())
-        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
-        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
+        val xnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
+        val xqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
 
         credentialResult.credentials.use { credentials ->
             val result = HautLiveAcademicClient.fetchLiveAcademicData(
@@ -3312,8 +3219,8 @@ class CampusRepository internal constructor(
                     "AUTH_REJECTED", "CAPTCHA_REQUIRED", "SESSION_EXPIRED", "MANUAL_VERIFICATION"
                 )) {
                 preferences.edit {
-                    it[PrefKeys.AUTO_SYNC_ENABLED] = false
-                    it[PrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
+                    it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
+                    it[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
                 }
             }
             result.fold(
@@ -3425,7 +3332,7 @@ class CampusRepository internal constructor(
             // Level 3: 从加密凭据仓读取用户学号与统一认证密码执行后台自动重登
             val credentialPair: Pair<String, String>? = academicCredentialMutex.withLock {
                 val prefs = preferences.data.first()
-                val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
+                val accountId = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
                 val readResult = academicCredentialVault.read(academicCredentialScope(accountId))
                 if (readResult !is AcademicCredentialReadResult.Available) {
                     return@withLock null
@@ -3477,8 +3384,8 @@ class CampusRepository internal constructor(
         val currentTermEntity = dao.getCurrentTerm()
         val defaultPair = currentTermEntity?.id?.let { HautAcademicEndpoints.fromTermId(it) }
             ?: (AcademicTermResolver.defaultAcademicYearCode() to AcademicTermResolver.defaultSemesterCode())
-        val xnm = prefs[PrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
-        val xqm = prefs[PrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
+        val xnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
+        val xqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
         saveAuthorizedSyncCredentials(
             studentId = cleanId,
             passwordPlain = passwordPlain,
@@ -3569,16 +3476,16 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setGpaPrivacyShield(enabled: Boolean) {
-        preferences.edit { it[PrefKeys.GPA_PRIVACY] = enabled }
+        preferences.edit { it[CampusRepositoryPrefKeys.GPA_PRIVACY] = enabled }
     }
 
     suspend fun setUseDynamicColor(enabled: Boolean) {
-        preferences.edit { it[PrefKeys.DYNAMIC_COLOR] = enabled }
+        preferences.edit { it[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = enabled }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
     suspend fun setThemeMode(mode: String) {
-        preferences.edit { it[PrefKeys.THEME_MODE] = mode }
+        preferences.edit { it[CampusRepositoryPrefKeys.THEME_MODE] = mode }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
@@ -3590,30 +3497,30 @@ class CampusRepository internal constructor(
             else -> "FLUTTER_M3"
         }
         preferences.edit { prefs ->
-            prefs[PrefKeys.UI_DESIGN_STYLE] = normalized
-            val currentPalette = prefs[PrefKeys.THEME_PALETTE_KEY]
+            prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = normalized
+            val currentPalette = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY]
             when (normalized) {
                 "FRESH_BREEZE" -> {
                     if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE") {
-                        prefs[PrefKeys.THEME_PALETTE_KEY] = "MINT_BREEZE"
+                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "MINT_BREEZE"
                     }
                 }
                 "CREAM_PASTEL" -> {
                     if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE" || currentPalette == "MINT_BREEZE") {
-                        prefs[PrefKeys.THEME_PALETTE_KEY] = "PEACH_OOLONG"
+                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "PEACH_OOLONG"
                     }
                 }
                 "FLUTTER_M3" -> {
                     if (currentPalette == "LIQUID_GLASS") {
-                        prefs[PrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
+                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
                     }
                 }
                 "LIQUID_GLASS" -> {
-                    if (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                        prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                    if (prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+                        prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
                     }
-                    if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
-                        prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+                    if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
+                        prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
                     }
                 }
             }
@@ -3633,19 +3540,19 @@ class CampusRepository internal constructor(
             else -> "FLUTTER_M3"
         }
         preferences.edit { prefs ->
-            prefs[PrefKeys.UI_DESIGN_STYLE] = normalizedStyle
-            prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
-            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = normalizedStyle
+            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = paletteKey
+            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
             if (normalizedStyle == "LIQUID_GLASS") {
-                if (prefs[PrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] == null) {
+                    prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
                 }
-                if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
-                    prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
+                    prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
                 }
             }
             if (clearWallpaper) {
-                prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
+                prefs.remove(CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH)
             }
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
@@ -3653,20 +3560,20 @@ class CampusRepository internal constructor(
 
     suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.THEME_PALETTE_KEY] = paletteKey
-            prefs[PrefKeys.DYNAMIC_COLOR] = false
+            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = paletteKey
+            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
             if (paletteKey == "LIQUID_GLASS") {
-                prefs[PrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
-                val curCardAlpha = prefs[PrefKeys.WALLPAPER_CARD_ALPHA]
+                prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
+                val curCardAlpha = prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA]
                 if (curCardAlpha == null || curCardAlpha > 0.85f) {
-                    prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+                    prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
                 }
-                if (prefs[PrefKeys.WALLPAPER_BLUR_DP] == null) {
-                    prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
+                    prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
                 }
             }
             if (customSeedArgb != null) {
-                prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
+                prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
             }
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
@@ -3679,13 +3586,13 @@ class CampusRepository internal constructor(
         enableLiquidGlass: Boolean = false
     ) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
-            prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
-            prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
-            prefs[PrefKeys.DYNAMIC_COLOR] = false
-            prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
+            prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
+            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
+            prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
+            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
+            prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
             if (enableLiquidGlass) {
-                prefs[PrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
+                prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
             }
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
@@ -3696,10 +3603,10 @@ class CampusRepository internal constructor(
         extractedSwatches: List<Long>
     ) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
-            prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
-            prefs[PrefKeys.DYNAMIC_COLOR] = false
-            prefs[PrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
+            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
+            prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
+            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
+            prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
@@ -3710,32 +3617,32 @@ class CampusRepository internal constructor(
         cardAlpha: Float? = null
     ) {
         preferences.edit { prefs ->
-            alpha?.let { prefs[PrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.clampWallpaperAlpha(it) }
-            blurDp?.let { prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.clampWallpaperBlurDp(it) }
-            cardAlpha?.let { prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.clampWallpaperCardAlpha(it) }
+            alpha?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.clampWallpaperAlpha(it) }
+            blurDp?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.clampWallpaperBlurDp(it) }
+            cardAlpha?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.clampWallpaperCardAlpha(it) }
         }
     }
 
     suspend fun resetWallpaperVisualParams() {
         preferences.edit { prefs ->
-            prefs[PrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
-            prefs[PrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-            prefs[PrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
+            prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
+            prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
+            prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
     }
 
     suspend fun clearCustomWallpaperTheme() {
         preferences.edit { prefs ->
-            val oldPath = prefs[PrefKeys.CUSTOM_WALLPAPER_PATH]
+            val oldPath = prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH]
             if (!oldPath.isNullOrBlank()) {
                 runCatching { java.io.File(oldPath).delete() }
             }
-            prefs.remove(PrefKeys.CUSTOM_WALLPAPER_PATH)
-            prefs.remove(PrefKeys.EXTRACTED_WALLPAPER_COLORS)
-            if (prefs[PrefKeys.THEME_PALETTE_KEY] == "CUSTOM") {
-                prefs[PrefKeys.THEME_PALETTE_KEY] =
-                    if (prefs[PrefKeys.UI_DESIGN_STYLE] == "LIQUID_GLASS") "LIQUID_GLASS" else "HAUT_BLUE"
+            prefs.remove(CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH)
+            prefs.remove(CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS)
+            if (prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] == "CUSTOM") {
+                prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] =
+                    if (prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] == "LIQUID_GLASS") "LIQUID_GLASS" else "HAUT_BLUE"
             }
         }
         notifyScheduleOrPolicyChanged("THEME_UPDATED")
@@ -3749,25 +3656,25 @@ class CampusRepository internal constructor(
         val normalizedOrder = HomeCardModule.normalizeOrderIds(order)
         val normalizedHidden = HomeCardModule.normalizeHiddenIds(hidden)
         preferences.edit { prefs ->
-            prefs[PrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
-            prefs[PrefKeys.HIDDEN_HOME_CARDS] = normalizedHidden.joinToString(",")
-            prefs[PrefKeys.FULL_WIDTH_HOME_CARDS] =
+            prefs[CampusRepositoryPrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
+            prefs[CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS] = normalizedHidden.joinToString(",")
+            prefs[CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS] =
                 if (fullWidth.isEmpty()) HomeCardModule.EMPTY_SET_SENTINEL else fullWidth.joinToString(",")
         }
     }
 
     suspend fun resetHomeCardLayout() {
         preferences.edit { prefs ->
-            prefs.remove(PrefKeys.HOME_CARD_ORDER)
-            prefs.remove(PrefKeys.HIDDEN_HOME_CARDS)
-            prefs.remove(PrefKeys.FULL_WIDTH_HOME_CARDS)
+            prefs.remove(CampusRepositoryPrefKeys.HOME_CARD_ORDER)
+            prefs.remove(CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS)
+            prefs.remove(CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS)
         }
     }
 
     suspend fun getActiveThemeAccentArgb(): Int {
         val prefs = preferences.data.first()
-        val key = prefs[PrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
-        val custom = prefs[PrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF053968
+        val key = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
+        val custom = prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF053968
         val seedLong = when (key) {
             "MINT_BREEZE" -> 0xFF10B981
             "SKY_SODA" -> 0xFF0EA5E9
@@ -3791,7 +3698,7 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {
-        preferences.edit { it[PrefKeys.AUTO_CHECK_UPDATE] = enabled }
+        preferences.edit { it[CampusRepositoryPrefKeys.AUTO_CHECK_UPDATE] = enabled }
     }
 
     suspend fun getNetworkProxyConfigSnapshot(): NetworkProxyConfig {
@@ -3810,16 +3717,16 @@ class CampusRepository internal constructor(
                 var baseUrlChanged = false
                 preferences.edit { prefs ->
                     // 与身份快照同一规范化口径（normalizeCloudApiBaseUrl 幂等，等价于快照读到的 apiBaseUrl）
-                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
                     val newBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
                     baseUrlChanged = oldBase != newBase
-                    prefs[PrefKeys.PROXY_MODE] = config.mode.key
-                    prefs[PrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
-                    prefs[PrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
-                    prefs[PrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
-                    prefs[PrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
-                    prefs[PrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-                    prefs[PrefKeys.CLOUD_API_BASE_URL] = newBase
+                    prefs[CampusRepositoryPrefKeys.PROXY_MODE] = config.mode.key
+                    prefs[CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
+                    prefs[CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
+                    prefs[CampusRepositoryPrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
+                    prefs[CampusRepositoryPrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
+                    prefs[CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
+                    prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL] = newBase
                 }
                 if (baseUrlChanged) {
                     // 同一 owner 保留：这是"换址失效"而非解绑，绝不写 tombstone
@@ -3839,15 +3746,15 @@ class CampusRepository internal constructor(
             cloudIdentityMutex.withLock {
                 var baseUrlChanged = false
                 preferences.edit { prefs ->
-                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
                     baseUrlChanged = oldBase != NetworkProxyConfig.normalizeCloudApiBaseUrl(null)
-                    prefs.remove(PrefKeys.PROXY_MODE)
-                    prefs.remove(PrefKeys.PROXY_PRESET_MIRROR_KEY)
-                    prefs.remove(PrefKeys.PROXY_CUSTOM_PREFIX)
-                    prefs.remove(PrefKeys.PROXY_HOST)
-                    prefs.remove(PrefKeys.PROXY_PORT)
-                    prefs.remove(PrefKeys.PROXY_AUTO_FALLBACK)
-                    prefs.remove(PrefKeys.CLOUD_API_BASE_URL)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_MODE)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_HOST)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_PORT)
+                    prefs.remove(CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK)
+                    prefs.remove(CampusRepositoryPrefKeys.CLOUD_API_BASE_URL)
                 }
                 if (baseUrlChanged) {
                     bumpCloudIdentityGenerationLocked(
@@ -3861,25 +3768,25 @@ class CampusRepository internal constructor(
 
     suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
         preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
+            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
             if (inviteUrl.isBlank()) {
                 current.remove(channelId)
             } else {
                 current[channelId] = inviteUrl.trim()
             }
-            prefs[PrefKeys.CUSTOM_CHANNEL_URLS] = encodeKeyValueMap(current)
+            prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS] = encodeKeyValueMap(current)
         }
     }
 
     suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) {
         preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[PrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
+            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
             if (groupNumber.isBlank()) {
                 current.remove(clubId)
             } else {
                 current[clubId] = groupNumber.trim()
             }
-            prefs[PrefKeys.CUSTOM_CLUB_GROUPS] = encodeKeyValueMap(current)
+            prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS] = encodeKeyValueMap(current)
         }
     }
 
@@ -3899,9 +3806,9 @@ class CampusRepository internal constructor(
                 ) ?: throw IllegalStateException("无法连接云端获取最新校园频道与社团内容")
                 val now = System.currentTimeMillis()
                 preferences.edit { prefs ->
-                    prefs.remove(PrefKeys.CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1)
-                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
-                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
+                    prefs.remove(CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1)
+                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
+                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
                 }
                 catalog
             }
@@ -3969,12 +3876,12 @@ class CampusRepository internal constructor(
                     CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(rawFinalSnap)
                 }
                 preferences.edit { prefs ->
-                    prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                    prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                         CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(finalSnap)
                     if (token.isNotBlank()) {
-                        prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(effectiveMyPostIds)
+                        prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(effectiveMyPostIds)
                     } else {
-                        prefs.remove(PrefKeys.MOMENTS_MY_POST_IDS)
+                        prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
                     }
                 }
                 finalSnap
@@ -4042,9 +3949,9 @@ class CampusRepository internal constructor(
             val nextMyIds = curSnap.myPostIds + cloudSaved.id
             val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
             }
             cloudSaved
         }
@@ -4080,7 +3987,7 @@ class CampusRepository internal constructor(
             val nextPosts = curSnap.posts.map { if (it.id == postId) cloudUpdated else it }
             val nextSnap = curSnap.copy(posts = nextPosts)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             }
             cloudUpdated
@@ -4174,9 +4081,9 @@ class CampusRepository internal constructor(
             val nextMyIds = curSnap.myPostIds + claimedPost.id
             val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
             }
             claimedPost
         }
@@ -4258,7 +4165,7 @@ class CampusRepository internal constructor(
             }
             val nextSnap = curSnap.copy(posts = nextPosts)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             }
         }
@@ -4269,7 +4176,7 @@ class CampusRepository internal constructor(
         val curFavs = prefsState.campusMomentsSnapshot.favoritePostIds
         val nextFavs = if (postId in curFavs) curFavs - postId else curFavs + postId
         preferences.edit { prefs ->
-            prefs[PrefKeys.MOMENTS_FAVORITE_POST_IDS] = encodeCsvSet(nextFavs)
+            prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS] = encodeCsvSet(nextFavs)
         }
     }
 
@@ -4302,7 +4209,7 @@ class CampusRepository internal constructor(
             }
             val nextSnap = curSnap.copy(posts = nextPosts)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             }
             true
@@ -4333,9 +4240,9 @@ class CampusRepository internal constructor(
             val nextMyIds = curSnap.myPostIds - postId
             val nextSnap = curSnap.copy(posts = nextPosts, myPostIds = nextMyIds)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS] = encodeCsvSet(nextMyIds)
             }
             true
         }
@@ -4396,9 +4303,9 @@ class CampusRepository internal constructor(
             val nextMyBookIds = curSnap.myBookIds + cloudSaved.id
             val nextSnap = curSnap.copy(bookListings = nextBooks, myBookIds = nextMyBookIds)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
             }
             cloudSaved
         }
@@ -4409,7 +4316,7 @@ class CampusRepository internal constructor(
         val curFavs = prefsState.campusMomentsSnapshot.favoriteBookIds
         val nextFavs = if (bookId in curFavs) curFavs - bookId else curFavs + bookId
         preferences.edit { prefs ->
-            prefs[PrefKeys.MOMENTS_FAVORITE_BOOK_IDS] = encodeCsvSet(nextFavs)
+            prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS] = encodeCsvSet(nextFavs)
         }
     }
 
@@ -4433,7 +4340,7 @@ class CampusRepository internal constructor(
             }
             val nextSnap = curSnap.copy(bookListings = nextBooks)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
             }
             true
@@ -4455,9 +4362,9 @@ class CampusRepository internal constructor(
             val nextMyBookIds = curSnap.myBookIds - bookId
             val nextSnap = curSnap.copy(bookListings = nextBooks, myBookIds = nextMyBookIds)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS] = encodeCsvSet(nextMyBookIds)
             }
             true
         }
@@ -4515,9 +4422,9 @@ class CampusRepository internal constructor(
             val nextMyCodes = curSnap.myTagCodes + cloudSaved.tagCode
             val nextSnap = curSnap.copy(antiLostTags = nextTags, myTagCodes = nextMyCodes)
             preferences.edit { prefs ->
-                prefs[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                     CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(nextSnap)
-                prefs[PrefKeys.MOMENTS_MY_TAG_CODES] = encodeCsvSet(nextMyCodes)
+                prefs[CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES] = encodeCsvSet(nextMyCodes)
             }
             cloudSaved
         }
@@ -4561,7 +4468,7 @@ class CampusRepository internal constructor(
     }
 
     suspend fun setTimelineZoomScale(scale: Float) {
-        preferences.edit { it[PrefKeys.TIMELINE_SCALE] = ThemeVisualDefaults.clampTimelineZoomScale(scale) }
+        preferences.edit { it[CampusRepositoryPrefKeys.TIMELINE_SCALE] = ThemeVisualDefaults.clampTimelineZoomScale(scale) }
     }
 
     suspend fun saveWidgetConfig(config: WidgetInstanceConfig) {
@@ -4574,8 +4481,8 @@ class CampusRepository internal constructor(
         return WidgetInstanceConfig(
             appWidgetId = appWidgetId,
             widgetType = defaultType,
-            compact = prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
-            privacyMode = prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false
+            compact = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
+            privacyMode = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false
         )
     }
 
@@ -4584,8 +4491,8 @@ class CampusRepository internal constructor(
         privacyMode: Boolean? = null
     ) {
         preferences.edit { prefs ->
-            compact?.let { prefs[PrefKeys.WIDGET_DEFAULT_COMPACT] = it }
-            privacyMode?.let { prefs[PrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] = it }
+            compact?.let { prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] = it }
+            privacyMode?.let { prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] = it }
         }
         when {
             compact != null && privacyMode != null -> dao.updateAllWidgetConfigsDefaults(compact, privacyMode)
@@ -4612,18 +4519,18 @@ class CampusRepository internal constructor(
         preferences.edit { prefs ->
             val current = extractReminderConfig(prefs)
             val updated = transform(current)
-            prefs[PrefKeys.REMINDERS_ENABLED] = updated.enabled
-            prefs[PrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 120)
-            prefs[PrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
-            prefs[PrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
-            prefs[PrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
-            prefs[PrefKeys.EXAM_DAY_BEFORE_ENABLED] = updated.examDayBeforeEnabled
-            prefs[PrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
-            prefs[PrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
-            prefs[PrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
-            prefs[PrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
-            prefs[PrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
-            prefs[PrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(
+            prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] = updated.enabled
+            prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 120)
+            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
+            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
+            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
+            prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] = updated.examDayBeforeEnabled
+            prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
+            prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
+            prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
+            prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
+            prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
+            prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(
                 enabled = updated.enabled,
                 classLeadMinutes = updated.classLeadMinutes,
                 maxSnoozes = updated.classSnoozeMaxCount,
@@ -4654,15 +4561,15 @@ class CampusRepository internal constructor(
             .toString()
         val formatted = "[$timeText] $message"
         preferences.edit { prefs ->
-            val existing = prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS]
+            val existing = prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS]
                 ?.split("\n")
                 ?.filter { it.isNotBlank() }
                 .orEmpty()
             val updated = (listOf(formatted) + existing).take(30)
-            prefs[PrefKeys.REMINDER_DIAGNOSTIC_LOGS] = updated.joinToString("\n")
+            prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS] = updated.joinToString("\n")
             if (reconcileSummary != null) {
-                prefs[PrefKeys.LAST_REMINDER_RECONCILE_MS] = nowMs
-                prefs[PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY] = reconcileSummary
+                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS] = nowMs
+                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY] = reconcileSummary
             }
         }
     }
@@ -4676,44 +4583,44 @@ class CampusRepository internal constructor(
         timetableInterchangeEnabled: Boolean? = null
     ) {
         preferences.edit { prefs ->
-            utilitiesEnabled?.let { prefs[PrefKeys.FF_UTILITIES_ENABLED] = it }
-            libraryNativeEnabled?.let { prefs[PrefKeys.FF_LIBRARY_NATIVE_ENABLED] = it }
-            librarySeatEnabled?.let { prefs[PrefKeys.FF_LIBRARY_SEAT_ENABLED] = it }
-            focusEnabled?.let { prefs[PrefKeys.FF_FOCUS_ENABLED] = it }
-            showTodayFocusQuickPill?.let { prefs[PrefKeys.FF_TODAY_FOCUS_PILL] = it }
-            timetableInterchangeEnabled?.let { prefs[PrefKeys.FF_TIMETABLE_INTERCHANGE] = it }
+            utilitiesEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] = it }
+            libraryNativeEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_LIBRARY_NATIVE_ENABLED] = it }
+            librarySeatEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_LIBRARY_SEAT_ENABLED] = it }
+            focusEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_FOCUS_ENABLED] = it }
+            showTodayFocusQuickPill?.let { prefs[CampusRepositoryPrefKeys.FF_TODAY_FOCUS_PILL] = it }
+            timetableInterchangeEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_TIMETABLE_INTERCHANGE] = it }
         }
     }
 
     suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
+            prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
         }
     }
 
     suspend fun setMealRecommendEnabled(enabled: Boolean) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] = enabled
+            prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] = enabled
         }
         notifyScheduleOrPolicyChanged("MEAL_RECOMMEND_CONFIG_CHANGED")
     }
 
     suspend fun isMealRecommendEnabledSnapshot(): Boolean {
         val prefs = preferences.data.first()
-        return supportsHautServices && (prefs[PrefKeys.MEAL_RECOMMEND_ENABLED] ?: true)
+        return supportsHautServices && (prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] ?: true)
     }
 
     suspend fun getLastMealRecommendBlockKeySnapshot(): String? =
-        preferences.data.first()[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY]
+        preferences.data.first()[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY]
 
     suspend fun markMealRecommendNotified(blockKey: String) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY] = blockKey
+            prefs[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY] = blockKey
         }
     }
 
     suspend fun getCanteenDishReviewsSnapshot(): List<cn.edu.haut.campus.core.domain.CanteenDishReview> {
-        val raw = preferences.data.first()[PrefKeys.CANTEEN_DISH_REVIEWS]
+        val raw = preferences.data.first()[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
         return cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(raw)
     }
 
@@ -4733,7 +4640,7 @@ class CampusRepository internal constructor(
         val nowMs = System.currentTimeMillis()
         preferences.edit { prefs ->
             val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
             )
             val filtered = existing.filterNot {
                 it.canteenBuildingId == cleanCanteen && it.dishName.equals(cleanDish, ignoreCase = true)
@@ -4750,7 +4657,7 @@ class CampusRepository internal constructor(
                 updatedAtEpochMs = nowMs
             )
             val updated = listOf(newReview) + filtered
-            prefs[PrefKeys.CANTEEN_DISH_REVIEWS] =
+            prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS] =
                 cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated.take(120))
         }
     }
@@ -4758,19 +4665,19 @@ class CampusRepository internal constructor(
     suspend fun deleteCanteenDishReview(canteenBuildingId: String, dishName: String) {
         preferences.edit { prefs ->
             val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[PrefKeys.CANTEEN_DISH_REVIEWS]
+                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
             )
             val updated = existing.filterNot {
                 it.canteenBuildingId == canteenBuildingId && it.dishName.equals(dishName.trim(), ignoreCase = true)
             }
-            prefs[PrefKeys.CANTEEN_DISH_REVIEWS] =
+            prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS] =
                 cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated)
         }
     }
 
     suspend fun setSelectedFocusMinutes(minutes: Int) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.SELECTED_FOCUS_MINUTES] = minutes.coerceIn(1, 180)
+            prefs[CampusRepositoryPrefKeys.SELECTED_FOCUS_MINUTES] = minutes.coerceIn(1, 180)
         }
     }
 
@@ -4791,7 +4698,7 @@ class CampusRepository internal constructor(
                 switched = true
             }
             preferences.edit { prefs ->
-                prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = true
+                prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = true
             }
             if (switched) {
                 database.withTransaction {
@@ -4812,7 +4719,7 @@ class CampusRepository internal constructor(
 
         val startedAtMs = System.currentTimeMillis()
         val effectiveAllowOnline = allowUnverified || !rawAccount.isNullOrBlank() ||
-            (preferences.data.first()[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false)
+            (preferences.data.first()[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false)
         val snapshots = wanxiaoUtilityClient.queryOwnBoundRooms(
             account = accountToUse,
             allowUnverifiedTransport = effectiveAllowOnline
@@ -4852,7 +4759,7 @@ class CampusRepository internal constructor(
 
         if (snapshots.any { !it.failed }) {
             preferences.edit { prefs ->
-                prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
+                prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
             }
         }
         runCatching { notifyDailyUtilitySummaryIfEligible(finishedAtMs) }
@@ -4867,14 +4774,14 @@ class CampusRepository internal constructor(
         nowEpochMs: Long = System.currentTimeMillis()
     ): Boolean {
         val prefs = preferences.data.first()
-        val utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true)
-        val allowUnverified = prefs[PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
+        val utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true)
+        val allowUnverified = prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
         if (!utilitiesEnabled || !allowUnverified) {
             runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
             return false
         }
 
-        val lastSampleMs = prefs[PrefKeys.LAST_UTILITY_SAMPLE_MS] ?: 0L
+        val lastSampleMs = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS] ?: 0L
         if (!UtilitySamplingPolicy.shouldSample(lastSampleMs, nowEpochMs)) {
             runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
             return false
@@ -4900,9 +4807,9 @@ class CampusRepository internal constructor(
         lowBalanceThreshold: Float? = null
     ) {
         preferences.edit { prefs ->
-            enabled?.let { prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] = it }
-            dailyHour?.let { prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] = it.coerceIn(8, 23) }
-            lowBalanceThreshold?.let { prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] = it.coerceIn(5f, 100f) }
+            enabled?.let { prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] = it }
+            dailyHour?.let { prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] = it.coerceIn(8, 23) }
+            lowBalanceThreshold?.let { prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] = it.coerceIn(5f, 100f) }
         }
     }
 
@@ -4910,18 +4817,18 @@ class CampusRepository internal constructor(
         nowEpochMs: Long = System.currentTimeMillis()
     ): Boolean {
         val prefs = preferences.data.first()
-        val utilitiesEnabled = supportsHautServices && (prefs[PrefKeys.FF_UTILITIES_ENABLED] ?: true)
+        val utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true)
         if (!utilitiesEnabled) return false
 
-        val notifyEnabled = prefs[PrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true
+        val notifyEnabled = prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true
         if (!notifyEnabled) return false
 
         val zdt = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID)
         val todayDateText = zdt.toLocalDate().toString()
         val currentHour = zdt.hour
-        val targetHour = (prefs[PrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23)
-        val lowThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
-        val lastNotifiedDate = prefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE]
+        val targetHour = (prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23)
+        val lowThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
+        val lastNotifiedDate = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE]
 
         val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
             onlineRooms = utilityOnlineRoomsFlow.first(),
@@ -4952,7 +4859,7 @@ class CampusRepository internal constructor(
         )
         if (posted) {
             preferences.edit { editPrefs ->
-                editPrefs[PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE] = todayDateText
+                editPrefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE] = todayDateText
             }
         }
         return posted
@@ -4963,7 +4870,7 @@ class CampusRepository internal constructor(
     ): Boolean {
         val prefs = preferences.data.first()
         val todayDateText = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID).toLocalDate().toString()
-        val lowThreshold = (prefs[PrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
+        val lowThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
         val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
             onlineRooms = utilityOnlineRoomsFlow.first(),
             dailySamples = utilityDailySamplesFlow.first(),
@@ -4998,8 +4905,8 @@ class CampusRepository internal constructor(
             utilityAndFocusDao.clearAllDailySamples()
         }
         preferences.edit { prefs ->
-            prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
-            prefs.remove(PrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE)
+            prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS)
+            prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE)
         }
     }
 
@@ -5096,15 +5003,15 @@ class CampusRepository internal constructor(
     suspend fun wipeAllPersonalData() {
         academicCredentialMutex.withLock {
             val prefs = preferences.data.first()
-            prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
+            prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
                 withContext(Dispatchers.IO) { academicCredentialVault.delete(academicCredentialScope(accountId)) }
             }
             preferences.edit {
-                it.remove(PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
-                it.remove(PrefKeys.ACADEMIC_REAUTH_REQUIRED)
-                it.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
-                it.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                it[PrefKeys.AUTO_SYNC_ENABLED] = false
+                it.remove(CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
+                it.remove(CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED)
+                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
+                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
         }
         for (hook in beforeWipeHooks.values) {
@@ -5157,31 +5064,31 @@ class CampusRepository internal constructor(
             cachedCloudRefreshToken = ""
             lastCloudTokenRefreshAtMs = 0L
             preferences.edit { prefs ->
-                prefs.remove(PrefKeys.OFFICIAL_GPA)
-                prefs.remove(PrefKeys.OFFICIAL_GPA_NOTE)
-                prefs.remove(PrefKeys.LEGACY_SAVED_STUDENT_ID)
-                prefs.remove(PrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                prefs.remove(PrefKeys.SAVED_SYNC_XNM)
-                prefs.remove(PrefKeys.SAVED_SYNC_XQM)
-                prefs.remove(PrefKeys.USER_MANUAL_TERM_SEASON)
-                prefs.remove(PrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
-                prefs.remove(PrefKeys.LAST_AUTO_SYNC_MS)
-                prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_MS)
-                prefs.remove(PrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
-                prefs.remove(PrefKeys.REMINDER_DIAGNOSTIC_LOGS)
-                prefs.remove(PrefKeys.LAST_UTILITY_SAMPLE_MS)
-                prefs.remove(PrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
-                prefs.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
-                prefs.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
-                prefs.remove(PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON)
-                prefs.remove(PrefKeys.MOMENTS_MY_POST_IDS)
-                prefs.remove(PrefKeys.MOMENTS_MY_BOOK_IDS)
-                prefs.remove(PrefKeys.MOMENTS_MY_TAG_CODES)
-                prefs.remove(PrefKeys.MOMENTS_FAVORITE_POST_IDS)
-                prefs.remove(PrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
-                prefs[PrefKeys.SEEDED] = true
-                prefs[PrefKeys.CLEAN_BASE_V2] = true
-                prefs[PrefKeys.ONBOARDING_COMPLETED] = false
+                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
+                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
+                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XNM)
+                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XQM)
+                prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
+                prefs.remove(CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS)
+                prefs.remove(CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
+                prefs.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
+                prefs.remove(CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN)
+                prefs.remove(CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON)
+                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
+                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS)
+                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
+                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
+                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
+                prefs[CampusRepositoryPrefKeys.SEEDED] = true
+                prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
+                prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
             }
         }
     }
@@ -5211,13 +5118,13 @@ class CampusRepository internal constructor(
 
     suspend fun setSelectedCampusId(campusId: String) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.SELECTED_CAMPUS_ID] = campusId.trim().ifBlank { "auto" }
+            prefs[CampusRepositoryPrefKeys.SELECTED_CAMPUS_ID] = campusId.trim().ifBlank { "auto" }
         }
     }
 
     suspend fun saveCustomCampusZonesJson(json: String) {
         preferences.edit { prefs ->
-            prefs[PrefKeys.CUSTOM_CAMPUS_ZONES_JSON] = json.trim().ifBlank { "[]" }
+            prefs[CampusRepositoryPrefKeys.CUSTOM_CAMPUS_ZONES_JSON] = json.trim().ifBlank { "[]" }
         }
     }
 
@@ -5244,7 +5151,7 @@ class CampusRepository internal constructor(
     )
 
     private suspend fun readCloudIdentityGeneration(): Long =
-        preferences.data.first()[PrefKeys.CLOUD_IDENTITY_GENERATION] ?: 0L
+        preferences.data.first()[CampusRepositoryPrefKeys.CLOUD_IDENTITY_GENERATION] ?: 0L
 
     /** 必须在 cloudIdentityMutex 内调用：世代严格单调递增，同账号重新登录也推进世代。 */
     private suspend fun bumpCloudIdentityGenerationLocked(
@@ -5253,14 +5160,14 @@ class CampusRepository internal constructor(
     ): Long {
         val next = readCloudIdentityGeneration() + 1L
         preferences.edit {
-            it[PrefKeys.CLOUD_IDENTITY_GENERATION] = next
+            it[CampusRepositoryPrefKeys.CLOUD_IDENTITY_GENERATION] = next
             if (cloudUserId.isNullOrBlank()) {
-                it.remove(PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER)
+                it.remove(CampusRepositoryPrefKeys.CLOUD_IDENTITY_GENERATION_OWNER)
             } else {
-                it[PrefKeys.CLOUD_IDENTITY_GENERATION_OWNER] = cloudUserId.trim()
+                it[CampusRepositoryPrefKeys.CLOUD_IDENTITY_GENERATION_OWNER] = cloudUserId.trim()
             }
             if (markUnlinkTombstone) {
-                it[PrefKeys.CLOUD_IDENTITY_UNLINK_TOMBSTONE] =
+                it[CampusRepositoryPrefKeys.CLOUD_IDENTITY_UNLINK_TOMBSTONE] =
                     "${cloudUserId.orEmpty().trim()}:$next:${System.currentTimeMillis()}"
             }
         }
@@ -5434,8 +5341,8 @@ class CampusRepository internal constructor(
                 return@withLock cachedCloudAccessToken
             }
             var prefs = preferences.data.first()
-            val legacyAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
-            val legacyRt = prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty()
+            val legacyAt = prefs[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN].orEmpty()
+            val legacyRt = prefs[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN].orEmpty()
             // v0.20.2 前所有档案都可能保存原文令牌。仅在原账号归属一致时一次性密封，
             // 不能把另一账号的旧凭据带入当前会话，也不能在加密失败时发送原文。
             if (identitySnapshot != null &&
@@ -5455,11 +5362,11 @@ class CampusRepository internal constructor(
                         cloudIdentityMutex.withLock {
                             if (isCloudIdentitySnapshotCurrentLocked(identitySnapshot)) {
                                 preferences.edit {
-                                    if (it[PrefKeys.CLOUD_ACCESS_TOKEN] == legacyAt &&
-                                        it[PrefKeys.CLOUD_REFRESH_TOKEN] == legacyRt
+                                    if (it[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN] == legacyAt &&
+                                        it[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN] == legacyRt
                                     ) {
-                                        it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedPair.first
-                                        it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedPair.second
+                                        it[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN] = sealedPair.first
+                                        it[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN] = sealedPair.second
                                     }
                                 }
                             }
@@ -5468,9 +5375,9 @@ class CampusRepository internal constructor(
                     }
                 }
             }
-            val storedAt = prefs[PrefKeys.CLOUD_ACCESS_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
+            val storedAt = prefs[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
             val storedRt = cachedCloudRefreshToken.ifBlank {
-                prefs[PrefKeys.CLOUD_REFRESH_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
+                prefs[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN].orEmpty().let { cloudTokenVault.unseal(it) }
             }
             if (!forceRefresh && storedAt.isNotBlank() && isJwtNotExpired(storedAt, nowMs)) {
                 cachedCloudAccessToken = storedAt
@@ -5487,7 +5394,7 @@ class CampusRepository internal constructor(
                 }
                 // 网络地址沿已验证 base：快照里的 apiBaseUrl 才是本次会话校验过的云端地址
                 val verifiedBase = identitySnapshot?.apiBaseUrl?.takeIf { it.isNotBlank() }
-                    ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[PrefKeys.CLOUD_API_BASE_URL])
+                    ?: NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
                 val refreshed = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
                     val pair = CampusCloudOidcHelper.refreshCloudSession(
                         storedRt,
@@ -5508,8 +5415,8 @@ class CampusRepository internal constructor(
                             val sealedRt = runCatching { cloudTokenVault.seal(pair.second) }.getOrNull()
                             if (sealedAt != null && sealedRt != null) {
                                 preferences.edit {
-                                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
-                                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
+                                    it[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN] = sealedAt
+                                    it[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN] = sealedRt
                                 }
                             }
                         }
@@ -5638,26 +5545,26 @@ class CampusRepository internal constructor(
             preferences.edit {
                 if (isSwitchingIdentity) {
                     // 切换云端账号时立即脱敏清除上一账号曾获批的受限联系方式、防丢码与个人关联集合
-                    it.remove(PrefKeys.MOMENTS_MY_POST_IDS)
-                    it.remove(PrefKeys.MOMENTS_MY_BOOK_IDS)
-                    it.remove(PrefKeys.MOMENTS_MY_TAG_CODES)
-                    it.remove(PrefKeys.MOMENTS_FAVORITE_POST_IDS)
-                    it.remove(PrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
-                    val rawMoments = it[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+                    it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
+                    it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS)
+                    it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
+                    it.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
+                    it.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
+                    val rawMoments = it[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
                     if (!rawMoments.isNullOrBlank()) {
                         val parsed = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(rawMoments)
                         if (parsed != null) {
                             val scrubbed = CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(parsed)
-                            it[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                            it[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                                 CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(scrubbed)
                         }
                     }
                 }
                 if (profile.accessToken.isNotBlank()) {
-                    it[PrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(profile.accessToken)
+                    it[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN] = cloudTokenVault.seal(profile.accessToken)
                 }
                 if (profile.refreshToken.isNotBlank()) {
-                    it[PrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(profile.refreshToken)
+                    it[CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN] = cloudTokenVault.seal(profile.refreshToken)
                 }
             }
         }
@@ -5800,7 +5707,7 @@ class CampusRepository internal constructor(
         val cachedLibSession = readCachedLibrarySeatSession()
         val credentialPair: Pair<String, String>? = academicCredentialMutex.withLock {
             val prefs = preferences.data.first()
-            val accountId = prefs[PrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
+            val accountId = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
             val readResult = academicCredentialVault.read(academicCredentialScope(accountId))
             if (readResult !is AcademicCredentialReadResult.Available) return@withLock null
             readResult.credentials.use { creds ->
@@ -6367,8 +6274,8 @@ class CampusRepository internal constructor(
             val rawCampusContent = verifiedSnapshot.campusContentRawJson
             if (!rawCampusContent.isNullOrBlank()) {
                 preferences.edit { prefs ->
-                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawCampusContent
-                    prefs[PrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
+                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawCampusContent
+                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
                 }
             }
 
@@ -6503,19 +6410,19 @@ class CampusRepository internal constructor(
             cachedCloudRefreshToken = ""
             lastCloudTokenRefreshAtMs = 0L
             preferences.edit {
-                it.remove(PrefKeys.CLOUD_ACCESS_TOKEN)
-                it.remove(PrefKeys.CLOUD_REFRESH_TOKEN)
-                it.remove(PrefKeys.MOMENTS_MY_POST_IDS)
-                it.remove(PrefKeys.MOMENTS_MY_BOOK_IDS)
-                it.remove(PrefKeys.MOMENTS_MY_TAG_CODES)
-                it.remove(PrefKeys.MOMENTS_FAVORITE_POST_IDS)
-                it.remove(PrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
-                val rawMoments = it[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
+                it.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
+                it.remove(CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN)
+                it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
+                it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS)
+                it.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
+                it.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
+                it.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
+                val rawMoments = it[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
                 if (!rawMoments.isNullOrBlank()) {
                     val parsed = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(rawMoments)
                     if (parsed != null) {
                         val scrubbed = CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(parsed)
-                        it[PrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
+                        it[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
                             CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(scrubbed)
                     }
                 }
