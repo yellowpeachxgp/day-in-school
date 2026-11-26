@@ -1,14 +1,14 @@
 # 阶段 S 任务板（TASKBOARD）
 
 > 本文件是阶段 S 进度的唯一来源。每次派发、交回、阻塞、PR 创建、合并都必须立即更新，并经 PR 合入。
-> 当前快照：2026-11-26（Asia/Shanghai）收尾验证状态；AUTO-001 仅描述 bootstrap 时 cis-gate 暂不可用，后续现场门禁结果必须回填。
+> 当前快照：2026-11-27（Asia/Shanghai）PR 创建后状态；AUTO-001 仅描述 bootstrap 时 cis-gate 暂不可用，后续现场门禁结果必须回填。
 
 ## 10 槽位状态
 
 | 槽位 | 子代理 | 当前任务 | 分支或 PR | 开始时间 | 状态 | 阻塞项 |
 |---|---|---|---|---|---|---|
 | 1 | s1b-inf00fix | INF-00 开发机收尾修复 | feat/cis-inf-00-devbox-clean / Android PR#53、cloud PR#6 | 2026-11-26 | 审验中 | 恢复代理已接手；安全/门禁交叉审阅与补缺进行中 |
-| 2 | s2b-inf01fin | INF-01 治理与基线 | feat/cis-inf-01-governance-clean2 / PR 待创建 | 2026-11-26 | 返工收尾中 | 一审阻断已裁定；需二次干净重建并重跑最终门禁 |
+| 2 | s2b-inf01fin | INF-01 治理与基线 | feat/cis-inf-01-governance-clean2 / Android PR#57、cloud PR#7 | 2026-11-26 | PR 已创建 | 等待交叉审阅、独立验证与托管 CI |
 | 3 | s3-r05 | R05 巨型文件拆分映射 | docs/cis-r05-repo-map / PR#49 | 2026-11-26 | 审验中 | 开发完成；独立复审与增量审阅进行中 |
 | 4 | s4-r06 | R06 Room 与擦除链路调研 | docs/cis-r06-room-wipe / PR#50 | 2026-11-26 | 审验中 | 开发完成；开发机门禁复核进行中 |
 | 5 | s5-r04 | R04 选课求解调研 | docs/cis-r04-solver-research / PR#55 | 2026-11-26 | 审验中 | 开发完成；交叉审阅与门禁验证待完成 |
@@ -23,7 +23,7 @@
 | 卡 | 内容 | 仓库 | 依赖 | 编号分配 | 能力 | 状态 | 子代理 | 分支 | PR | 结果 SHA | 合并 SHA | 阻断项 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | INF-00 | 开发机就绪：Android SDK、`cis-gate` / `cis-gradle` 脚本、裸库、缓存、内存守护、构建槽 | 两仓 `tools/devbox/` | — | — | C25 | 审验中 | s1b-inf00fix | feat/cis-inf-00-devbox-clean | Android PR#53；cloud PR#6 | — | — | 恢复代理接手；安全/门禁交叉审阅与补缺进行中 |
-| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | 返工收尾中 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | 待创建 | — | — | AUTO-008：一审阻断后需二次干净重建并重跑最终门禁 |
+| INF-01 | 治理：计划入库、两仓 `AGENTS.md`、任务板 / 决策记录 / DEVBOX、敏感信息扫描、基线记录（原 W0-01） | 两仓 | — | — | C25 | PR 已创建 | s2b-inf01fin | feat/cis-inf-01-governance-clean2 | Android PR#57；cloud PR#7 | — | — | AUTO-008 二次干净重建完成；等待交叉审阅、独立验证与托管 CI |
 | INF-02 | 契约收敛：分析两份 `contracts/` 的差异并统一、同步脚本、两仓 CI 一致性检查（D15） | 两仓 | INF-01 | — | C28 | 未开始 | — | — | — | — | — | — |
 | R01 | FTS4 ICU 中文分词在 API 31–36 的可用性；不可用时的二元切分方案 | — | INF-00 | — | — | 未开始 | — | — | — | — | — | — |
 | R02 | 端侧 OCR 选型：不依赖 GMS、许可证、包体、中文准确率 | — | — | — | — | 审验中 | s6-r02 | docs/cis-r02-ocr-research | PR#54 | — | — | 交叉审阅进行中 |
