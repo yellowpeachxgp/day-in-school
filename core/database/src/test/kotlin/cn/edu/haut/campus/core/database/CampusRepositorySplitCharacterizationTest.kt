@@ -52,11 +52,14 @@ class CampusRepositorySplitCharacterizationTest {
 
     @Test
     fun w005a_public_instance_api_name_snapshot() {
-        // 不能过滤 isSynthetic：若公开 Kotlin API 返回 inline/value class（如 Result），
-        // JVM 只能以 synthetic 实现方法承载该签名；它们仍是调用方可达到的兼容 API。
+        // 不能过滤 isSynthetic，也不能只按未改编名匹配：若公开 Kotlin API 返回
+        // inline/value class（如 Result），JVM 方法会带 "-" 哈希后缀以防误调用；
+        // 该后缀是同一 Kotlin 源码级公开 API 的兼容实现形态。
         val declaredNames = CampusRepository::class.java.declaredMethods
             .map { it.name }
             .toSet()
+        fun hasSourceApiName(sourceName: String): Boolean =
+            declaredNames.any { it == sourceName || it.startsWith(sourceName + "-") }
         val expectedPublicMethods = listOf(
             "requireActiveSession",
             "registerBeforeWipeHook",
@@ -224,7 +227,7 @@ class CampusRepositorySplitCharacterizationTest {
             "removeExtensionPlugin"
         )
         assertEquals(164, expectedPublicMethods.distinct().size)
-        val missingMethods = expectedPublicMethods.filterNot { it in declaredNames }
+        val missingMethods = expectedPublicMethods.filterNot { hasSourceApiName(it) }
         assertEquals("CampusRepository 公开实例方法不得减少", emptyList<String>(), missingMethods)
 
         val expectedAccessors = listOf(
