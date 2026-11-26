@@ -1,7 +1,8 @@
 # INF-02 契约漂移差异分析（C28）
 
 > 日期：2026-11-27（Asia/Shanghai）  
-> 基线：cloud-in-school origin/main 5480f0d907bd799e83ab4de7e15f2a1b666e8eec；day-in-school origin/main 04d4424b164ddf0044bea45d491c526849816355  
+> 初始漂移基线：cloud-in-school origin/main 5480f0d907bd799e83ab4de7e15f2a1b666e8eec；day-in-school origin/main 04d4424b164ddf0044bea45d491c526849816355
+> 一审后合并复核基线：cloud-in-school origin/main dc990d614e5f3a771ebe122c250362bf67104dd9（W0-08 路由拆分已合入）；契约树指纹未变
 > 范围：两仓 contracts/**、contract-ci、CI 契约检查；不修改 apps/api/src，不修改业务逻辑，不把 moments extension 契约化。
 
 ## 1. 结论
@@ -9,9 +10,9 @@
 1. cloud-in-school/contracts/ 是更新且应与运行路由对齐的一侧，继续作为唯一权威；day-in-school/contracts/ 是滞后的同步副本。
 2. 漂移只出现在 2 个文件：contracts/openapi/cloud-v1.yaml 与 contracts/endpoints/endpoint-inventory.yaml；其余 10 个 contracts 文件逐字节相同。
 3. 云端权威副本声明 97 个 core operations；Android 漂移副本声明 67 个。云端多 30 个，Android 没有独有 endpoint，operationId 没有冲突。
-4. 静态抽取 cloud origin/main 的 97 个 register core 路由后，method+path+operationId+auth 与云端 OpenAPI 和 endpoint inventory 均为 100% 双向一致。
-5. 静态抽取 W0-08 进行中分支的 route(...) 表后，也是 97 个 core 路由与同一云端契约 100% 双向一致；因此本次收敛不与 W0-08 路由拆分方向冲突。
-6. 12 个 /api/v1/moments/** extension 路由在 main 与 W0-08 中都实际存在，但不在 OpenAPI/endpoint inventory；这是 AUTO-012 已记录的显式缺口。本卡按要求只记录缺口和建立机制，未把 moments 契约化、未改业务。
+4. 在初始漂移基线 5480f0d 静态抽取 97 个 register core 路由后，method+path+operationId+auth 与云端 OpenAPI 和 endpoint inventory 均为 100% 双向一致。
+5. 一审后 cloud main dc990d6 已合入 W0-08；按新 main 复核 routes/*.mjs 运行表，仍为 97 个 core 路由与同一云端契约 100% 双向一致，另有 12 个 moments extension。本次收敛不与已合入的路由拆分冲突。
+6. 12 个 /api/v1/moments/** extension 在新 main 中已有 exact runtime inventory 并由 contract-parity 精确固定，但仍不在 OpenAPI/endpoint inventory；这是 AUTO-012 已记录的显式缺口。本卡按要求只记录缺口和建立机制，未把 moments 契约化、未改业务。
 
 ## 1.1 对独立盘点结论的逐项确认与纠偏
 
@@ -25,9 +26,9 @@
 
 ## 2. 方法与证据边界
 
-- 用 SHA-256 对两仓 contracts/ 全树逐文件比对；用 YAML 解析比较 OpenAPI paths、operationId、endpoint inventory；用正则静态提取 app.mjs 的 register/registerExtension 以及 W0-08 routes/*.mjs 的 route(...) 表。
-- 本机只进行静态分析和只读脚本检查；未运行 npm、node --test、Gradle、Docker 或业务测试。动态门禁以 devbox cis-gate 结果为准。
-- W0-08 仍是未合入分支，本分析只读其当前工作区；最终合并状态以 main 为准。
+- 用 SHA-256 对两仓 contracts/ 全树逐文件比对；用 YAML 解析比较 OpenAPI paths、operationId、endpoint inventory；初始基线用正则静态提取 app.mjs 的 register/registerExtension，W0-08 合入后复核 routes/*.mjs 组合后的运行表。
+- 本机只进行静态分析、轻量实例只读核对和只读脚本检查；未运行 npm、node --test、Gradle、Docker 或业务测试。动态门禁以 devbox cis-gate 结果为准。
+- W0-08 在一审后已合入 cloud main dc990d6；本卡最终结论以该新 main 复核为准，初始基线仅用于解释漂移来源。
 
 ## 3. 文件级漂移
 
@@ -76,21 +77,23 @@
 
 ## 7. 与 cloud 运行路由的一致性
 
-### 7.1 当前 origin/main
+### 7.1 初始 origin/main 5480f0d
 
 - 静态提取 apps/api/src/app.mjs：register core 97 个，registerExtension 12 个。
 - 97 个 core 路由与云端 OpenAPI 97 项、endpoint inventory 97 项在 method+path+operationId+auth 上完全一致；无 runtime-only core，无 contract-only core，无 operationId mismatch。
-- inject 实际运行时会合并 coreRoutes 与 extensionRoutes；getRegisteredRoutes 在当前 main 只返回 97 个 core route。这意味着 moments extension 是实际可调用但未契约化的运行时面。
+- 该初始基线用于解释漂移来源；最终结论不依赖旧 main。
 
-### 7.2 W0-08 进行中分支
+### 7.2 W0-08 合入后的 origin/main dc990d6
 
-- 静态提取 apps/api/src/routes/*.mjs：core route(...) 97 个，moments extension route(...) 12 个；97 个 core 与同一云端契约完全匹配。
-- W0-08 的 contract-parity 测试把 97 core 与 12 extension 分开，并显式断言 moments 不在 OpenAPI/inventory；该分支还标记 moments-extension/v0-pending-inf02。
-- 因用户对本卡的约束，INF-02 不消灭该缺口；后续必须由契约线单独决定是否及如何契约化 moments，并同步调整 W0-08 的显式测试边界。
+- 轻量实例只读复核合并后的运行表：getRegisteredCoreRoutes 97 个、getRegisteredExtensionRoutes 12 个、getRegisteredRoutes 合计 109 个。
+- 97 个 core 路由与云端 OpenAPI 97 项、endpoint inventory 97 项在 method+path+operationId+auth 上完全一致；missingCore=0、contractOnly=0、mismatches=0。
+- 12 个 moments extension 与新 main 的 exact runtime inventory 一致，且 extInContracts=0；即它们被精确记录但未进入 OpenAPI/endpoint inventory。
+- 新 main 的 contract-parity 测试把 97 core 与 12 extension 分开，显式断言 moments 不在 OpenAPI/inventory，并标记 moments-extension/v0-pending-inf02。
+- 因用户对本卡的约束，INF-02 不消灭该缺口；后续必须由契约线单独决定是否及如何契约化 moments，并同步调整该显式测试边界。
 
 ## 8. moments extension 显式缺口（仅记录，不契约化）
 
-当前 12 个运行时 extension 是：
+dc990d6 后，12 个运行时 extension 已由 main 的 exact runtime inventory 精确固定；该 inventory 是运行时边界记录，不等于 OpenAPI/endpoint inventory 契约化。当前 12 个运行时 extension 是：
 
 1. GET /api/v1/moments/snapshot — getMomentsSnapshot — public
 2. POST /api/v1/moments/posts — createMomentsPost — public
@@ -130,9 +133,18 @@
 
 动态 contracts/cloud/android/secrets 门禁结果仍以最终 PR 正文和 <campus-root>/logs/ 为准。
 
+## 9.2 W0-08 合入后的复核
+
+一审后按主代理要求把 cloud origin/main dc990d6 合并入云端 INF-02 分支，并重新核对新基线：
+
+1. 运行路由与契约：core=97、inventory=97、OpenAPI=97、extension=12、all=109；missingCore=0、contractOnly=0、mismatches=0、extInContracts=0。
+2. AUTO-012 边界：12 个 moments extension 的 method+path+operationId+auth 与 main 的 exact runtime inventory 一致，但在 contracts/** 中仍为 0 命中；本卡仍未把 moments 契约化。
+3. secrets allowlist：合并后只读扫描 SECRET_SCAN_PASS，files=149、tracked=150、findings=0、allowlistEntries=113、allowlistUsed=113、warnings=0；W0-08 更新的行号在当前合并树上仍准确。
+4. 契约树内容未因 W0-08 合并改变，CONTRACTS_TREE_SHA256 仍为 2115b1723a714ed2b65cd9c4348864a8e96f7605e2e0ec597e610397148473a1。
+
 ## 10. 残留风险与待决
 
-1. AUTO-012 的 moments extension 仍是实际运行时未契约化面；这不是 INF-02 已解决项，必须保留为后续契约线阻断/待决事项。
+1. AUTO-012 的 moments extension 即使在 dc990d6 后已有 exact runtime inventory，仍是实际运行时未契约化面；这不是 INF-02 已解决项，必须保留为后续契约线阻断/待决事项。
 2. 云端权威 OpenAPI 的部分新增 endpoint 只列了最小响应，请求体、完整错误码、幂等说明和示例仍不满足 CT 线的完整 Contract-First 深度；本卡只做收敛，不擅自补语义，后续 CT 卡应逐项补强。
 3. INF-00 的 devbox cis-gate contracts 目前用另一仓 main 做双向 diff。云端侧在 Android main 尚未合入同步副本前可能因顺序性漂移失败；这属于成对 PR 的顺序风险，是否需要 pair-ref/方向性门禁应由主代理另行决策，本卡未越权修改 tools/devbox。
 4. Android CI 以云端 main 为准；若云端 main 在 Android PR 生命周期内继续前进，Android CI 会因新漂移变红。这是 D15 的预期行为，契约线应重新同步后再合并。
