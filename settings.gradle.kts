@@ -44,3 +44,4 @@ include(
 )
 
 include(":core:ledger")
+include(":core:textextract")
