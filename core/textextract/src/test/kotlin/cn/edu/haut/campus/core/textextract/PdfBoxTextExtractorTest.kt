@@ -33,4 +33,20 @@ class PdfBoxTextExtractorTest {
         assertEquals(1, result.metadata.pageCount)
         assertEquals(ExtractionConfirmationState.UNCONFIRMED, result.confirmationState)
     }
+    @Test
+    fun invalidPdfFailsWithExplicitError() = runBlocking {
+        val extractor = PdfBoxTextExtractor()
+        try {
+            extractor.extractPdf(
+                PdfExtractionRequest(
+                    pdfBytes = byteArrayOf(1, 2, 3, 4),
+                    context = TextExtractionContext.synthetic()
+                )
+            )
+            org.junit.Assert.fail("非法 PDF 不应成功")
+        } catch (error: TextExtractionException) {
+            assertEquals(TextExtractErrorKind.PDF_INVALID, error.kind)
+        }
+    }
+
 }

@@ -44,7 +44,7 @@ class PaddleOcrOnnxEngine(
 ) : OcrEnginePort {
     private val backend = OnnxRuntimeBackend(detModelBytes, recModelBytes, config.numThreads)
     private val characterList = characterList.toList()
-    private val modelSha256Text = "det=" + detModelSha256 + ",rec=" + recModelSha256
+    private val modelArtifactsSha256 = mapOf("det" to detModelSha256, "rec" to recModelSha256)
 
     @Volatile
     private var closed = false
@@ -126,7 +126,7 @@ class PaddleOcrOnnxEngine(
                     engineVersion = "onnxruntime-android-1.21.1",
                     modelName = PaddleOcrConfig.MODEL_NAME,
                     modelVersion = PaddleOcrConfig.MODEL_VERSION,
-                    modelSha256 = modelSha256Text
+                    modelArtifactsSha256 = modelArtifactsSha256
                 ),
                 extractedAt = extractedAt,
                 durationMs = duration,

@@ -82,7 +82,8 @@ data class ExtractionEngineInfo(
     val engineVersion: String,
     val modelName: String? = null,
     val modelVersion: String? = null,
-    val modelSha256: String? = null
+    /** 模型组件名到 SHA-256 的固定映射，例如 det/rec，避免把多个哈希拼成不可验证字符串。 */
+    val modelArtifactsSha256: Map<String, String> = emptyMap()
 )
 
 data class ExtractionMetadata(

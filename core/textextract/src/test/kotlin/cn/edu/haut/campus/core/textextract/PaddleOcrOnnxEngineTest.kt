@@ -52,7 +52,8 @@ class PaddleOcrOnnxEngineTest {
             assertNotEquals(VerificationLevel.DEVICE_TESTED, result.provenance.trust)
             assertEquals(ExtractionConfirmationState.UNCONFIRMED, result.confirmationState)
             assertTrue(result.metadata.requiresUserConfirmation)
-            assertTrue(result.metadata.engine.modelSha256?.contains(PaddleOcrConfig.DET_SHA256) == true)
+            assertEquals(PaddleOcrConfig.DET_SHA256, result.metadata.engine.modelArtifactsSha256["det"])
+            assertEquals(PaddleOcrConfig.REC_SHA256, result.metadata.engine.modelArtifactsSha256["rec"])
         } finally {
             engine.close()
         }

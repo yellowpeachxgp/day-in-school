@@ -8,9 +8,9 @@
 | PaddleOCR PP-OCRv6_tiny recognition ONNX | HuggingFace `PaddlePaddle/PP-OCRv6_tiny_rec_onnx` revision `2612ab37152ae0a677521bae4e1e3d4fb4cf7c30` | Apache-2.0（模型卡声明；PaddleOCR 上游同为 Apache-2.0） | bundled asset `ppocrv6_tiny_rec.onnx`，SHA-256 `9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6` |
 | ONNX Runtime Android | Maven `com.microsoft.onnxruntime:onnxruntime-android:1.21.1` | MIT | Android 生产推理运行时；R02 静态测量确认 arm64/x86_64 LOAD align `0x4000` |
 | ONNX Runtime JVM | Maven `com.microsoft.onnxruntime:onnxruntime:1.21.1` | MIT | 仅 `testImplementation`，让 JVM 单测在开发机执行同一模型；不进入 APK |
-| PdfBox-Android | Maven `com.tom-roush:pdfbox-android:2.0.27.0` | Apache-2.0 | 未加密 PDF 文本与坐标抽取；首版排除 BouncyCastle 加密/签名传递依赖 |
+| PdfBox-Android | Maven `com.tom-roush:pdfbox-android:2.0.27.0` | 主代码 Apache-2.0；捆绑 LiberationSans 字体 SIL OFL 1.1，另含 Adobe Glyph List、Unicode Bidi Mirroring、TwelveMonkeys 等上游通知 | 未加密 PDF 文本与坐标抽取；首版排除 BouncyCastle 加密/签名传递依赖 |
 
-许可证全文：Apache-2.0 见 [Apache-2.0.txt](Apache-2.0.txt)，MIT 见 [MIT.txt](MIT.txt)。
+许可证全文：Apache-2.0 见 [Apache-2.0.txt](Apache-2.0.txt)，MIT 见 [MIT.txt](MIT.txt)。PDFBox 上游完整 LICENSE（含 Liberation Fonts SIL OFL 1.1 与其他捆绑组件条款）见 [PdfBox-LICENSE-and-bundled-licenses.txt](PdfBox-LICENSE-and-bundled-licenses.txt)，NOTICE 见 [PdfBox-NOTICE.txt](PdfBox-NOTICE.txt)。
 
 ## 明确排除
 
@@ -21,6 +21,7 @@
 ## 静态体积证据（非完整 APK 实测）
 
 R02 对公开构件的直接测量：ONNX Runtime Android 1.21.1 arm64-v8a native compressed 6,465,334 B；PP-OCRv6_tiny 两个 ONNX gzip-9 合计约 5,696,970 B（本模块重新核验 det 1,589,574 B + rec 4,107,396 B）。arm64 split 的理论 OCR 增量约 12.16 MiB；universal 四 ABI 约 33.4 MiB + Kotlin SDK。PdfBox-Android AAR 文件 3,254,019 B；`classes.jar` entry compressed 1,609,777 B。AAR/JAR 到 DEX/APK 的转换会改变实际体积，因此 PDF 部分只能作为静态估算，不能写成 APK 实测。
+
 ## 测试资源副本
 
-`src/test/resources/com/tom_roush/pdfbox/resources/` 是从 PdfBox-Android AAR assets 提取的 Apache-2.0 资源副本，只用于 JVM local unit test 的 classpath fallback；不进入生产 AAR/APK。
+`src/test/resources/com/tom_roush/pdfbox/resources/` 是从 PdfBox-Android AAR assets 提取的资源副本（许可随上游 LICENSE/NOTICE，含 SIL OFL 字体），只用于 JVM local unit test 的 classpath fallback；不进入生产 AAR/APK。

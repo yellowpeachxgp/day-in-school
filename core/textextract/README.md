@@ -43,7 +43,7 @@ try {
 
 ## 测试实现说明
 
-`src/test/resources/com/tom_roush/pdfbox/resources/` 是从 PdfBox-Android AAR assets 提取的 Apache-2.0 资源副本，只用于 JVM local unit test 的 classpath fallback；生产 Android 路径仍由 `PDFBoxResourceLoader` 从 dependency assets 加载。
+`src/test/resources/com/tom_roush/pdfbox/resources/` 是从 PdfBox-Android AAR assets 提取的资源副本（许可随上游 LICENSE/NOTICE，含 SIL OFL 字体），只用于 JVM local unit test 的 classpath fallback；生产 Android 路径仍由 `PDFBoxResourceLoader` 从 dependency assets 加载。
 
 ## 门禁
 
