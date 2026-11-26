@@ -29,7 +29,7 @@ enum class TextCoordinateSpace {
     /** x/y 使用原图像素，原点在左上角；OCR 多边形可旋转。 */
     IMAGE_PIXEL_TOP_LEFT,
 
-    /** x/y 使用 PDF point，原点按 PDFBox 方向调整后位于左上角。 */
+    /** x/y 使用 PDF point；原点位于显示页左上角，页旋转已折算，四边形可随文本方向旋转。 */
     PDF_POINT_TOP_LEFT
 }
 
@@ -38,7 +38,7 @@ data class TextPoint(
     val y: Float
 )
 
-/** 四点多边形；OCR 保留旋转四边形，PDF 目前输出轴对齐矩形。 */
+/** 四点多边形；OCR 保留旋转四边形，PDF 也可按文本方向输出旋转四边形。 */
 data class TextBoundingBox(
     val points: List<TextPoint>
 ) {
@@ -170,14 +170,22 @@ data class ImageExtractionRequest(
     val context: TextExtractionContext,
     /** 若调用方保存了原始图片字节，可传入原始字节哈希；缺省时使用规范化像素哈希。 */
     val sourceHashSha256: String? = null
-)
+) {
+    init {
+        if (sourceHashSha256 != null && !sourceHashSha256.matches(Regex("[0-9a-fA-F]{64}"))) {
+            throw TextExtractionException(TextExtractErrorKind.INVALID_INPUT, "图片 sourceHashSha256 必须是 SHA-256 hex")
+        }
+    }
+}
 
 data class PdfExtractionRequest(
     val pdfBytes: ByteArray,
     val context: TextExtractionContext
 ) {
     init {
-        require(pdfBytes.isNotEmpty()) { "PDF 输入不能为空" }
+        if (pdfBytes.isEmpty()) {
+            throw TextExtractionException(TextExtractErrorKind.INVALID_INPUT, "PDF 输入不能为空")
+        }
     }
 }
 

@@ -13,6 +13,7 @@ import cn.edu.haut.campus.core.textextract.TextCoordinateSpace
 import cn.edu.haut.campus.core.textextract.TextExtractErrorKind
 import cn.edu.haut.campus.core.textextract.TextExtractHashes
 import cn.edu.haut.campus.core.textextract.TextExtractionException
+import cn.edu.haut.campus.core.textextract.TextPoint
 import cn.edu.haut.campus.core.textextract.extractionProvenance
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
@@ -23,6 +24,7 @@ import java.io.IOException
 import java.io.StringWriter
 import java.time.Instant
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -51,6 +53,12 @@ class PdfBoxTextExtractor(
         }
 
         try {
+            if (document.isEncrypted) {
+                throw TextExtractionException(
+                    TextExtractErrorKind.PDF_ENCRYPTED,
+                    "PDF 已加密，当前版本只抽取未加密 PDF"
+                )
+            }
             val stripper = LineCollectingPdfTextStripper()
             val plainFallback = try {
                 stripper.getText(document)
@@ -113,12 +121,15 @@ class PdfBoxTextExtractor(
     private data class PdfGlyph(
         val pageIndex: Int,
         val text: String,
-        val x: Float,
-        val baselineY: Float,
-        val width: Float,
+        /** 阅读顺序坐标只用于分行/排序；高亮坐标使用 display* 页面坐标。 */
+        val readingX: Float,
+        val readingY: Float,
+        val readingWidth: Float,
         val height: Float,
-        val pageWidth: Float,
-        val pageHeight: Float
+        val displayStartX: Float,
+        val displayStartY: Float,
+        val displayEndX: Float,
+        val displayEndY: Float
     )
 
     private class LineCollectingPdfTextStripper : PDFTextStripper() {
@@ -138,18 +149,49 @@ class PdfBoxTextExtractor(
             super.processTextPosition(text)
             val unicode = text.unicode ?: return
             if (unicode.isEmpty()) return
+            val displayStart = displayPoint(
+                x = text.textMatrix.translateX,
+                y = text.textMatrix.translateY,
+                rotation = text.rotation,
+                pageWidth = currentPageWidth,
+                pageHeight = currentPageHeight
+            )
+            val displayEnd = displayPoint(
+                x = text.endX,
+                y = text.endY,
+                rotation = text.rotation,
+                pageWidth = currentPageWidth,
+                pageHeight = currentPageHeight
+            )
             glyphs.add(
                 PdfGlyph(
                     pageIndex = currentPageIndex,
                     text = unicode,
-                    x = text.xDirAdj,
-                    baselineY = text.yDirAdj,
-                    width = text.widthDirAdj,
+                    readingX = text.xDirAdj,
+                    readingY = text.yDirAdj,
+                    readingWidth = text.widthDirAdj,
                     height = text.heightDir,
-                    pageWidth = currentPageWidth,
-                    pageHeight = currentPageHeight
+                    displayStartX = displayStart.first,
+                    displayStartY = displayStart.second,
+                    displayEndX = displayEnd.first,
+                    displayEndY = displayEnd.second
                 )
             )
+        }
+
+        private fun displayPoint(
+            x: Float,
+            y: Float,
+            rotation: Int,
+            pageWidth: Float,
+            pageHeight: Float
+        ): Pair<Float, Float> {
+            return when ((rotation % 360 + 360) % 360) {
+                90 -> Pair(y, x)
+                180 -> Pair(pageWidth - x, y)
+                270 -> Pair(pageHeight - y, pageWidth - x)
+                else -> Pair(x, pageHeight - y)
+            }
         }
     }
 
@@ -157,16 +199,16 @@ class PdfBoxTextExtractor(
         val output = mutableListOf<ExtractedTextLine>()
         val pageIndexes = glyphs.map { it.pageIndex }.distinct().sorted()
         for (pageIndex in pageIndexes) {
-            val pageGlyphs = glyphs.filter { it.pageIndex == pageIndex }.sortedWith(compareBy({ it.baselineY }, { it.x }))
+            val pageGlyphs = glyphs.filter { it.pageIndex == pageIndex }.sortedWith(compareBy({ it.readingY }, { it.readingX }))
             val groups = mutableListOf<MutableList<PdfGlyph>>()
             for (glyph in pageGlyphs) {
                 val current = groups.lastOrNull()
                 if (current == null) {
                     groups.add(mutableListOf(glyph))
                 } else {
-                    val referenceY = current.map { it.baselineY }.average().toFloat()
+                    val referenceY = current.map { it.readingY }.average().toFloat()
                     val threshold = max(2.0f, max(glyph.height, current.maxOf { it.height }) * 0.45f)
-                    if (abs(glyph.baselineY - referenceY) <= threshold) {
+                    if (abs(glyph.readingY - referenceY) <= threshold) {
                         current.add(glyph)
                     } else {
                         groups.add(mutableListOf(glyph))
@@ -175,20 +217,16 @@ class PdfBoxTextExtractor(
             }
 
             for (group in groups) {
-                val ordered = group.sortedBy { it.x }
+                val ordered = group.sortedBy { it.readingX }
                 val text = mergeGlyphText(ordered)
                 if (text.isBlank()) continue
-                val left = ordered.minOf { it.x }
-                val right = ordered.maxOf { it.x + it.width }
-                val top = ordered.minOf { it.baselineY - it.height }
-                val bottom = ordered.maxOf { it.baselineY + it.height * 0.22f }
                 output.add(
                     ExtractedTextLine(
                         lineIndex = output.size,
                         pageIndex = pageIndex,
                         text = text.trim(),
                         confidence = null,
-                        box = TextBoundingBox.axisAligned(left, top, right, bottom),
+                        box = lineBoundingBox(ordered),
                         coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
                     )
                 )
@@ -197,20 +235,56 @@ class PdfBoxTextExtractor(
         return output
     }
 
+    /** 用首个/末个字形基线端点构造显示页面坐标系中的旋转四边形。 */
+    private fun lineBoundingBox(glyphs: List<PdfGlyph>): TextBoundingBox {
+        require(glyphs.isNotEmpty()) { "行坐标至少需要一个字形" }
+        val first = glyphs.first()
+        val last = glyphs.last()
+        val startX = first.displayStartX
+        val startY = first.displayStartY
+        var endX = last.displayEndX
+        var endY = last.displayEndY
+        var dx = endX - startX
+        var dy = endY - startY
+        var length = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        if (length < 0.5f) {
+            endX = startX + first.readingWidth.coerceAtLeast(1f)
+            endY = startY
+            dx = endX - startX
+            dy = endY - startY
+            length = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        }
+        val ux = dx / length
+        val uy = dy / length
+        val downX = -uy
+        val downY = ux
+        val lineHeight = glyphs.maxOf { it.height }.coerceAtLeast(1f)
+        val ascent = lineHeight
+        val descent = lineHeight * 0.22f
+        return TextBoundingBox(
+            listOf(
+                TextPoint(startX - downX * ascent, startY - downY * ascent),
+                TextPoint(endX - downX * ascent, endY - downY * ascent),
+                TextPoint(endX + downX * descent, endY + downY * descent),
+                TextPoint(startX + downX * descent, startY + downY * descent)
+            )
+        )
+    }
+
     private fun mergeGlyphText(glyphs: List<PdfGlyph>): String {
         val output = StringBuilder()
         var previousEnd = 0f
         var previousHeight = 0f
         for ((index, glyph) in glyphs.withIndex()) {
             if (index > 0) {
-                val gap = glyph.x - previousEnd
+                val gap = glyph.readingX - previousEnd
                 val needsSpace = gap > max(1.0f, previousHeight * 0.28f)
                 if (needsSpace && output.lastOrNull()?.isWhitespace() != true && !glyph.text.first().isWhitespace()) {
                     output.append(' ')
                 }
             }
             output.append(glyph.text)
-            previousEnd = glyph.x + glyph.width
+            previousEnd = glyph.readingX + glyph.readingWidth
             previousHeight = glyph.height
         }
         return output.toString()
