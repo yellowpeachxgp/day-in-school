@@ -67,10 +67,11 @@
 - **改动范围**：两仓 `AGENTS.md`、Android 仓库 `docs/roadmap/**`、`task-notes/campus/**`、两仓 `tools/secret-scan/**`。
 
 ### INF-02 [S] 契约收敛（`xhigh`，D15）
-- **背景**：两仓的 `contracts/openapi/cloud-v1.yaml` 和 `contracts/endpoints/endpoint-inventory.yaml` 已经不同。
+- **背景**：两仓的 `contracts/openapi/cloud-v1.yaml` 和 `contracts/endpoints/endpoint-inventory.yaml` 已经不同；I43 同时发现插件契约 Schema、SDK 与 Android 解析器的事实源漂移。
 - **任务**：逐项列出差异，判断哪一侧更新、是否与云端运行中的路由一致；以 `cloud-in-school/contracts/` 为权威统一；新增 `tools/contract-ci/sync-contracts.mjs`（把云端仓库的契约复制到 Android 仓库）和一致性检查（Android 仓库 CI 下载云端 `main` 的契约并比对哈希）。
+- **扩充任务（2026-11-27，按 `task-notes/campus/research/I43.md` §4 阶段0）**：为 W6-00 提供契约事实源基础设施，包括插件 Schema 校验入口、`host-api-matrix.yaml` 比对入口、`contracts/fixtures/plugins/` 共享夹具目录和「示例按 Schema 校验」CI 步骤；插件语义收敛本身由 W6-00 执行。
 - **改动范围**：两仓 `contracts/**`、`tools/contract-ci/**`、两仓 CI 中契约检查的步骤。
-- **验收**：两份契约逐字节一致；故意改动一侧时 CI 变红；差异分析写入 `task-notes/campus/research/INF-02.md`。
+- **验收**：两份契约逐字节一致；故意改动一侧时 CI 变红；差异分析写入 `task-notes/campus/research/INF-02.md`；新增契约夹具与示例校验入口可被 W6-00 直接复用。
 
 ---
 
@@ -288,13 +289,18 @@
 
 ## W6 · 平台与空间
 
+> 2026-11-27 用户指示：所有插件相关卡先读 `task-notes/campus/research/I43.md`。阶段顺序为 W6-HOTFIX / W6-00 → W6-01a → W6-02/W6-05 → W6-01b；目录与自动化联动后置到 W5/W2 对应卡片。
+
 | 卡 | 任务 | 关键验收 |
 |---|---|---|
-| W6-01 [S] | 插件 v2.1：§6.5 的新 types、slots、permissions（含保留的 `community.boards`），保持 v1 / v2 兼容；`dis-plugin validate / simulate / pack / sign` | 旧插件全部可装；权限扩大时要求重新授权 |
-| W6-02 [S] | `:core:ui-runtime`：`feature-ui-v1` 声明式节点渲染器（从 `XPeachSdkComponents` 抽出），不执行任意代码 | 每种节点都有 fixtures 和截图 |
+| W6-HOTFIX [S]（`xhigh`，需 2 个独立审阅） | 插件安全热修（依赖 INF-01；无迁移）：只修 I43 §3 的 S1 升级权限确认、S2 回滚收权、S3 Android 手填入口隐藏或禁用、S5 参考插件加载失败可见；关键路径之后优先补位；实施前必读 `task-notes/campus/research/I43.md` | 四项反例测试全部通过；修好前 Android「添加扩展功能」入口保持隐藏或禁用；不扩大到其他插件重构 |
+| W6-00 [S] | 插件规范收敛（依赖 INF-02）：按 I43 §4 阶段0统一运行时 snake_case `dis-extension/v2`、6 个槽位、`host-api-matrix.yaml`、`contracts/fixtures/plugins/` 共享夹具、示例可加载与诚实文档 | AC-01…AC-05；两端读取同一批夹具且结论一致；全新克隆可加载内置参考插件 |
+| W6-01a [S] | 插件安全底座（依赖 W6-00、W0-08、W0-06c）：权限确认、回滚收权、逐项撤权、信任根、云端 SQL 0011 持久化、账号/学校作用域、声明式命令、故障隔离、卸载清理、Android 签名安装链路；Room v19 预留为 Android 插件 schema 演进（若最终不需要则按 D14 顺延） | AC-11…AC-24；全部为安全类，终验必须由第二独立验收子代理复核 |
+| W6-01b [S] | 插件开发者工具（依赖 W6-00）：`keygen / pack / simulate / doctor`，三种 `init` 模板，从零到上架指南与错误码速查 | AC-41…AC-43；`simulate` 离线可跑通，`pack` 产物两端可安装，空目录教程可复现 |
+| W6-02 [S] | `:core:ui-runtime` 与阶段2宿主接入（依赖 W6-01a）：`feature-ui-v1` 首批节点渲染器、6 个槽位接入、插件管理页；不执行任意代码 | AC-31…AC-33；每种节点和每个槽位都有完整状态矩阵截图 |
 | W6-03 [S] | #35 室内路网试点：1 栋楼的教室级路网数据包、跨楼层路线、室外到入口的衔接、手动或扫码定位起点；骨架 UI | C23 全部要点 |
 | W6-04 [S] | #44 一日回放：在现有 2.5D 底图上按时间播放全天路线，对比两套课表的步行距离、跨楼次数、通勤时间；骨架 UI | C24 全部要点 |
-| W6-05 [S] | 非官方示例插件：只用公开 SDK 完成卡片、命令、自动化动作和数据包的接入；宿主 Git tree 和构建校验 SHA 不变（契约 I.4） | 安装、停用、升级、回滚、卸载全流程；故障插件被隔离 |
+| W6-05 [S] | 阶段2官方与非官方示例（依赖 W6-01a、W6-02）：「计算机服务社维修预约」官方示例和第二个发布者密钥签名的非官方示例，完成加载、渲染、命令、升级、回滚、卸载、零修改宿主与失败安全验收 | AC-34…AC-36；宿主 Git tree 与构建产物 SHA 不变；四类失败安全反例全部拒绝或降级 |
 
 ---
 
