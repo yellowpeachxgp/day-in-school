@@ -121,12 +121,22 @@ object DualEngineReservationPlanner {
         var fireAtMs = targetZdt.toInstant().toEpochMilli()
         val effectiveLatenessSec = if (maxLatenessSeconds <= 0L) 1800L else maxLatenessSeconds
         val clampedLatenessMs = effectiveLatenessSec.coerceIn(300L, 1800L) * 1000L
-        var expiresAtMs = minOf(fireAtMs + clampedLatenessMs, windowEndMs)
+        var expiresAtMs = LibraryBookingTripleSchedulePolicy.expiresAtEpochMillis(
+            targetLocalDate = targetDate,
+            timezoneId = zoneId,
+            fireAtEpochMillis = fireAtMs,
+            maxLatenessMillis = clampedLatenessMs
+        )
 
         if (nowEpochMillis > expiresAtMs) {
             if (nowEpochMillis < windowEndMs) {
                 fireAtMs = minOf(nowEpochMillis + 3_000L, windowEndMs - 1_000L)
-                expiresAtMs = minOf(fireAtMs + maxOf(clampedLatenessMs, 300_000L), windowEndMs)
+                expiresAtMs = LibraryBookingTripleSchedulePolicy.expiresAtEpochMillis(
+                    targetLocalDate = targetDate,
+                    timezoneId = zoneId,
+                    fireAtEpochMillis = fireAtMs,
+                    maxLatenessMillis = maxOf(clampedLatenessMs, 300_000L)
+                )
             } else {
                 throw IllegalArgumentException("目标预约时刻 T 已过有效期窗口 (MISSED_WINDOW)")
             }
