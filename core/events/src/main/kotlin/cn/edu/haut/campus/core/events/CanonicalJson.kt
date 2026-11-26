@@ -1,10 +1,12 @@
 package cn.edu.haut.campus.core.events
 
+import java.math.BigDecimal
+
 /**
  * 确定性 JSON 文本：对象键按 Unicode 码点排序、去除无意义空白，字符串只使用必要转义。
  *
  * 这是 W1-01a 的最小 canonical envelope 基础，不引入 kotlinx.serialization 或 Android 依赖。
- * 数字会按 JSON 语法校验，但保留输入词素；业务编码器应始终生成同一数字格式。
+ * 数字按数值规范化：去除尾零；短十进制形式不超过 128 字符时使用 plain decimal，更大/更小量级使用 BigDecimal 的科学计数形式；负零归一到 0。
  */
 @JvmInline
 value class CanonicalJson private constructor(val text: String) {
@@ -242,7 +244,26 @@ internal object JsonCanonicalizer {
                 if (index >= raw.length || !raw[index].isDigit()) fail("指数缺少数字")
                 while (index < raw.length && raw[index].isDigit()) index++
             }
-            return raw.substring(start, index)
+            return canonicalNumber(raw.substring(start, index))
+        }
+
+        private fun canonicalNumber(lexeme: String): String {
+            val decimal = try {
+                BigDecimal(lexeme).stripTrailingZeros()
+            } catch (error: NumberFormatException) {
+                fail("数字格式非法")
+            }
+            if (decimal.compareTo(BigDecimal.ZERO) == 0) return "0"
+
+            val precision = decimal.precision().toLong()
+            val scale = decimal.scale().toLong()
+            val point = precision - scale
+            val plainLength = when {
+                point >= precision -> point
+                point > 0 -> precision + 1
+                else -> 2L - point + precision
+            }
+            return if (plainLength <= 128) decimal.toPlainString() else decimal.toString()
         }
 
         private fun expectLiteral(literal: String) {
