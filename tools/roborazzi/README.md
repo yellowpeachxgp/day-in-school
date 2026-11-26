@@ -5,7 +5,7 @@
 ## 技术基线评估
 
 - **Roborazzi 1.60.0**：1.61+ 的发布物使用 Kotlin 2.3.x 元数据，本项目 Kotlin 2.1.10 无法读取；1.60.0 是兼容的最高稳定线（Kotlin 2.0.x 元数据），且支持把 golden/reference 与 compare 输出拆到不同目录。
-- **Robolectric 4.17**：main 已在使用 4.17；该版本支持 SDK 37，覆盖项目 `compileSdk` / smoke 使用的 API 36。接入本卡不额外升级到 4.18.x，避免把运行时升级和截图链路接入混在一起。
+- **Robolectric 4.18.1**：main 原使用 4.17；devbox 首轮 smoke 在 Native Graphics 初始化时命中 4.17 的 fonts jar zipfs `FileSystemAlreadyExistsException`（上游 #10116，4.18 已修复）。4.18.1 同时覆盖 API 36、修复该字体复制竞态并带来 native runtime 性能改进，因此本卡统一现有 Robolectric 引用到 4.18.1；SDK 23 移除不影响本项目 minSdk 31。
 - **Native Graphics 与 API 36**：smoke 固定 `@GraphicsMode(NATIVE)`、`@Config(sdk = [36], qualifiers = Pixel5)`，并启用 `robolectric.pixelCopyRenderMode=hardware`。
 - **字体一致性**：Roborazzi/Robolectric 不保证跨 macOS、Linux、Windows 逐像素一致。因此基线只允许在 devbox Linux 录制并提交；devbox 与 GitHub Ubuntu runner 只做 verify/compare，不用本机 macOS 录制。若未来 Debian/Ubuntu 字体包差异导致文字 diff，先查看 compare 产物并固定测试字体或 CI 字体包，不得直接放宽阈值。
 - **isIncludeAndroidResources**：`:app` 已启用 `unitTests.isIncludeAndroidResources = true`，smoke 复核该配置能与 Native Graphics 一起工作。
