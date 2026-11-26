@@ -16,7 +16,7 @@
 | 7 | s2c-w102a | W1-00 shared kernel refs | feat/cis-w1-00-kernel-refs / PR#62 | 2026-11-27 | PR 已创建 | 待列车/审阅 |
 | 8 | s9b-train | 审阅与集成列车 | PR#61/#62/#64/#65、cloud PR#8 | 2026-11-27 | 进行中 | 待列车/审阅 |
 | 9 | s3-w409 | W4-09 core ledger | feat/cis-w4-09-ledger / PR#63 | 2026-11-27 | 已合并 | 合并 `8aadb4d` |
-| 10 | s10b-accfinish | stage-2 INF-01 联调验收 | acc/cis-stage-2-inf01 / 报告待写 | 2026-11-27 | 开工中 | INF-01 已合并；验收报告待完成 |
+| 10 | s10b-accfinish | stage-2 INF-01 联调验收 | 待列车/审阅 | 2026-11-27 | 开工中 | INF-01 已合并；验收报告待完成 |
 
 ## 阶段 S 卡片总表
 
