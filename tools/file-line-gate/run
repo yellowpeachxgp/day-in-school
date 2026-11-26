@@ -133,8 +133,10 @@ else
   printf 'file-line-gate: 棘轮参照版本：%s\n' "$ref_source"
   printf '%s\n' "$ref_baseline" | grep -vE '^[[:space:]]*(#|$)' | awk -F '\t' 'NF == 2 && $1 != "" && $2 ~ /^[0-9]+$/ { print }' > "$tmp_ref" || true
   # 当前条目相对参照：新增 → FAILED；数值上升 → FAILED
-  ratchet_hits=$(awk -F '\t' '
-    NR==FNR { ref[$1] = $2; next }
+  # 注意：不能用 NR==FNR 区分两个输入文件——首文件为空时第二个文件的
+  # 全部记录会被误判为首文件（NR 与 FNR 同步递增），必须按 FILENAME 区分。
+  ratchet_hits=$(awk -F '\t' -v reffile="$tmp_ref" '
+    FILENAME == reffile { ref[$1] = $2; next }
     {
       if ($1 in ref) {
         if (($2 + 0) > (ref[$1] + 0)) printf("UP\t%s\t%s\t%s\n", $1, $2, ref[$1])
@@ -156,8 +158,8 @@ else
 
   # 反向棘轮：参照中存在但当前被删除的条目。删除白名单不能让大文件逃逸——
   # 仅当文件已消失、已降至 ≤1500 行、或 baseline 内有 '# allow-remove: <path>' 显式例外时允许。
-  removed=$(awk -F '\t' '
-    NR==FNR { cur[$1] = 1; next }
+  removed=$(awk -F '\t' -v curfile="$tmp_entries" '
+    FILENAME == curfile { cur[$1] = 1; next }
     !($1 in cur) { printf("%s\t%s\n", $1, $2) }
   ' "$tmp_entries" "$tmp_ref")
   if [ -n "$removed" ]; then
