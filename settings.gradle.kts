@@ -40,8 +40,8 @@ include(
     ":widget:nextclass",
     ":widget:today",
     ":widget:timeline",
-    ":widget:week",
-    ":core:events"
+    ":widget:week"
 )
 
 include(":core:ledger")
+include(":core:events")
