@@ -40,6 +40,7 @@
 2. 禁止写入真实开发机账号、地址、IP、密码、Token、Key，也禁止写入本机绝对路径。
 3. 公开证据路径推荐使用 `<campus-root>/logs/<仓库>/<分支>/<sha>-<门禁>.log`；也可以使用等价的 `campus://logs/...`。
 4. `record-evidence.mjs` 会把可识别的开发机 campus 绝对路径规范化成 `<campus-root>/...` 后再写入；真实路径只允许作为命令行输入或 `--campus-root` / `CIS_CAMPUS_ROOT` 的临时值，不会落盘。
+5. 命令型证据记录命令、退出码和日志路径；`github-ci-run`、`manual-device-note`、`screenshot-or-recording`、`source-audit-note` 等非命令型证据可改用 artifact、testName、notes 和显式 outcome。证据类型必须与矩阵中该条目的 required/pending 类型一致。
 
 ## 阶段联调验收流程（§12.8）
 
@@ -56,7 +57,7 @@
 
    实际是否需要三条全部运行，以该趟列车改动仓库和 PR 声明为准；§12.8 的默认要求是 `android-full`、`cloud`、`contracts`。示例中的 `<campus-root>` 是公开占位符，执行时由操作者在本机环境或 devbox 配置中解析。
 3. 从 `cis-gate` 输出记录：命令、退出码、确切 SHA、耗时、开发机日志路径。写入仓库前必须按上一节脱敏。
-4. 用 `tools/acceptance/record-evidence.mjs` 把每条命令证据追加到 `evidence/stage-<序号>.jsonl`。
+4. 用 `tools/acceptance/record-evidence.mjs` 把每条命令证据追加到 `evidence/stage-<序号>.jsonl`；GitHub CI、截图、人工核验或来源审计等非命令证据按类型记录 artifact/testName/notes，不伪造 command、exitCode 或 logPath。
 5. 按列车 PR 声明的能力编号逐项核对，复制 `stage-report-template.md` 为 `stage-<序号>.md` 并填写。
 6. 失败项立即回报主代理建修复卡；不得修改断言迁就结果，不得把 `skipped`、`flaky`、重试后通过或超时写成通过。
 7. 报告由另一个未参与开发的审阅子代理交叉复核后，某一波次能力才算完成。
