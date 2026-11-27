@@ -377,11 +377,13 @@ internal fun SettingsAcademicSectionContent(
 
                     fun requestPin(label: String, providerClass: String) {
                         val ok = WidgetRefreshCoordinator.requestPinAppWidget(context, providerClass)
-                        onFeedback(if (ok) {)
-                            "请在系统弹窗中确认添加「$label」"
-                        } else {
-                            "请长按手机桌面空白处添加小组件"
-                        }
+                        onFeedback(
+                            if (ok) {
+                                "请在系统弹窗中确认添加「$label」"
+                            } else {
+                                "请长按手机桌面空白处添加小组件"
+                            }
+                        )
                     }
 
                     // 横向 Bento 小组件高保真预览画廊
@@ -1058,11 +1060,13 @@ internal fun SettingsAcademicSectionContent(
                             } else {
                                 scope.launch {
                                     val sent = actions.triggerTestReminder()
-                                    onFeedback(if (sent) {)
-                                        "已发送测试通知"
-                                    } else {
-                                        "发送失败，请先开启通知权限"
-                                    }
+                                    onFeedback(
+                                        if (sent) {
+                                            "已发送测试通知"
+                                        } else {
+                                            "发送失败，请先开启通知权限"
+                                        }
+                                    )
                                 }
                             }
                         },
