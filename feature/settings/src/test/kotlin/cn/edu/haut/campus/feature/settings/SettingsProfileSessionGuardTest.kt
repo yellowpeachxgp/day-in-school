@@ -5,6 +5,9 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.feature.settings.root.home.SettingsHomeViewModel
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotEquals
@@ -23,7 +26,30 @@ import org.robolectric.shadows.ShadowLooper
 class SettingsProfileSessionGuardTest {
 
     @Test
-    fun oldHomeViewModelStopsUpdatingAfterProfileSwitch() = runBlocking {
+    fun oldHomeViewModelStopsUpdatingAfterProfileSwitch() {
+        // Robolectric 测试本体运行在 Android main thread；viewModelScope 也依赖该 Looper。
+        // 因此把 runBlocking 放到 worker，main thread 在这里持续驱动 Looper，避免互相等待。
+        val failure = AtomicReference<Throwable?>()
+        val done = CountDownLatch(1)
+        val worker = Thread {
+            try {
+                runBlocking { verifyOldHomeViewModelStopsUpdatingAfterProfileSwitch() }
+            } catch (error: Throwable) {
+                failure.set(error)
+            } finally {
+                done.countDown()
+            }
+        }
+        worker.start()
+        while (!done.await(20L, TimeUnit.MILLISECONDS)) {
+            ShadowLooper.shadowMainLooper().idle()
+        }
+        ShadowLooper.shadowMainLooper().idle()
+        worker.join(1_000L)
+        failure.get()?.let { throw it }
+    }
+
+    private suspend fun verifyOldHomeViewModelStopsUpdatingAfterProfileSwitch() {
         val context = RuntimeEnvironment.getApplication()
         val coordinator = AccountSessionCoordinator.getInstance(context)
         val firstSession = coordinator.initialize()
@@ -34,7 +60,7 @@ class SettingsProfileSessionGuardTest {
         oldRepository.saveStudentProfile(
             StudentProfile(id = "stu_local", schoolId = "20230001", displayName = beforeMarker)
         )
-        pumpMainUntil("旧 ViewModel 未收到切换前资料") {
+        waitUntil("旧 ViewModel 未收到切换前资料") {
             viewModel.uiState.value.studentProfile?.displayName == beforeMarker
         }
 
@@ -46,7 +72,7 @@ class SettingsProfileSessionGuardTest {
         assertNotEquals(firstSession.profileId, secondSession.profileId)
         assertNotEquals(firstSession.generation, secondSession.generation)
 
-        pumpMainUntil("旧 ViewModel 未在切换后清空状态") {
+        waitUntil("旧 ViewModel 未在切换后清空状态") {
             viewModel.uiState.value.studentProfile == null
         }
 
@@ -54,27 +80,23 @@ class SettingsProfileSessionGuardTest {
         oldRepository.saveStudentProfile(
             StudentProfile(id = "stu_local", schoolId = "20230001", displayName = afterMarker)
         )
-        pumpMainFor(900L)
+        waitFor(900L)
 
         assertNull(viewModel.uiState.value.studentProfile)
     }
 
-    private suspend fun pumpMainUntil(message: String, condition: () -> Boolean) {
+    private suspend fun waitUntil(message: String, condition: () -> Boolean) {
         val deadlineMs = System.currentTimeMillis() + 5_000L
         while (!condition()) {
-            ShadowLooper.shadowMainLooper().idle()
             if (System.currentTimeMillis() >= deadlineMs) fail(message)
             delay(20L)
         }
-        ShadowLooper.shadowMainLooper().idle()
     }
 
-    private suspend fun pumpMainFor(durationMs: Long) {
+    private suspend fun waitFor(durationMs: Long) {
         val deadlineMs = System.currentTimeMillis() + durationMs
         while (System.currentTimeMillis() < deadlineMs) {
-            ShadowLooper.shadowMainLooper().idle()
             delay(20L)
         }
-        ShadowLooper.shadowMainLooper().idle()
     }
 }
