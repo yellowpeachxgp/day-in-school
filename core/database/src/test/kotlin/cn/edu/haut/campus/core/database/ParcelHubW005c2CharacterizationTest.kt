@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.database
 
+import android.security.keystore.KeyGenParameterSpec
 import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -15,6 +16,21 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.InputStream
+import java.io.OutputStream
+import java.security.Key
+import java.security.KeyStoreSpi
+import java.security.Provider
+import java.security.SecureRandom
+import java.security.Security
+import java.security.cert.Certificate
+import java.security.spec.AlgorithmParameterSpec
+import java.util.Collections
+import java.util.Date
+import java.util.Enumeration
+import javax.crypto.KeyGenerator
+import javax.crypto.KeyGeneratorSpi
+import javax.crypto.SecretKey
 
 /**
  * W0-05-c2 搬迁前特征冻结：Parcel Hub 手动包裹、取件状态流转、
@@ -24,12 +40,56 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [31])
 class ParcelHubW005c2CharacterizationTest {
+    companion object {
+        /** 内存 JCE 密钥端口：只替换 Robolectric 缺失的 AndroidKeyStore Provider，不冒充硬件隔离。 */
+        val keys = mutableMapOf<String, Key>()
+    }
+
+    class TestKeyStore : KeyStoreSpi() {
+        override fun engineGetKey(alias: String, password: CharArray?) = keys[alias]
+        override fun engineGetCertificateChain(alias: String): Array<Certificate>? = null
+        override fun engineGetCertificate(alias: String): Certificate? = null
+        override fun engineGetCreationDate(alias: String) = Date(0)
+        override fun engineSetKeyEntry(alias: String, key: Key, password: CharArray?, chain: Array<out Certificate>?) { keys[alias] = key }
+        override fun engineSetKeyEntry(alias: String, key: ByteArray, chain: Array<out Certificate>?) { error("不支持字节密钥") }
+        override fun engineSetCertificateEntry(alias: String, cert: Certificate) { error("不支持证书写入") }
+        override fun engineDeleteEntry(alias: String) { keys.remove(alias) }
+        override fun engineAliases(): Enumeration<String> = Collections.enumeration(keys.keys)
+        override fun engineContainsAlias(alias: String) = keys.containsKey(alias)
+        override fun engineSize() = keys.size
+        override fun engineIsKeyEntry(alias: String) = keys.containsKey(alias)
+        override fun engineIsCertificateEntry(alias: String) = false
+        override fun engineGetCertificateAlias(cert: Certificate): String? = null
+        override fun engineStore(stream: OutputStream?, password: CharArray?) = Unit
+        override fun engineLoad(stream: InputStream?, password: CharArray?) = Unit
+    }
+
+    class TestKeyGenerator : KeyGeneratorSpi() {
+        private var alias = ""
+        override fun engineInit(random: SecureRandom?) = Unit
+        override fun engineInit(size: Int, random: SecureRandom?) = Unit
+        override fun engineInit(params: AlgorithmParameterSpec, random: SecureRandom?) {
+            alias = (params as KeyGenParameterSpec).keystoreAlias
+        }
+        override fun engineGenerateKey(): SecretKey =
+            KeyGenerator.getInstance("AES", "SunJCE").apply { init(256) }.generateKey().also { keys[alias] = it }
+    }
+
+    private val provider = object : Provider("AndroidKeyStore", 1.0, "隔离测试密钥端口") {
+        init {
+            put("KeyStore.AndroidKeyStore", TestKeyStore::class.java.name)
+            put("KeyGenerator.AES", TestKeyGenerator::class.java.name)
+        }
+    }
+
     private lateinit var fixture: RepairTestFixture
     private val repo get() = fixture.repository
     private val parcelDao get() = fixture.database.cloudAndParcelDao()
 
     @Before
     fun setUp() {
+        keys.clear()
+        Security.addProvider(provider)
         fixture = RepairTestFixture.create(
             RuntimeEnvironment.getApplication(),
             "prof_w005c2_parcel_" + System.nanoTime()
@@ -40,6 +100,8 @@ class ParcelHubW005c2CharacterizationTest {
     fun tearDown() {
         repo.onScheduleOrPolicyChangedListener = null
         fixture.close()
+        Security.removeProvider(provider.name)
+        keys.clear()
     }
 
     @Test
