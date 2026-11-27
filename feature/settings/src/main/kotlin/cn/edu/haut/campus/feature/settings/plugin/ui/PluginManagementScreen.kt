@@ -119,7 +119,7 @@ private fun PluginCard(
             InfoRow("发布者", plugin.publisherId)
             InfoRow("来源 / 签名", plugin.schemaFormat + if (plugin.signatureVerified) " · 签名已验证" else " · 签名验证失败")
             InfoRow("槽位", plugin.uiSlotCount.toString() + " 个声明式槽位")
-            InfoRow("数据占用", "存储 " + plugin.storageFiles + " 项 · 缓存 " + plugin.cacheFiles + " 项")
+            InfoRow("数据占用", "存储 " + plugin.storageFiles + " 项/" + formatBytes(plugin.storageBytes) + " · 缓存 " + plugin.cacheFiles + " 项/" + formatBytes(plugin.cacheBytes))
             InfoRow("更新时间", UPDATE_TIME_FMT.format(Instant.ofEpochMilli(plugin.updatedAtEpochMillis)))
             plugin.disabledReason?.let { InfoRow("最近错误", it) }
             plugin.recentErrors.lastOrNull()?.let { InfoRow("审计/错误", it.take(160)) }
@@ -207,6 +207,12 @@ private fun PendingUpgradeCard(
             ) { Text("确认升级权限") }
         }
     }
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> (bytes / (1024.0 * 1024.0)).let { "%.1f MB".format(it) }
+    bytes >= 1024 -> (bytes / 1024.0).let { "%.1f KB".format(it) }
+    else -> bytes.toString() + " B"
 }
 
 @Composable

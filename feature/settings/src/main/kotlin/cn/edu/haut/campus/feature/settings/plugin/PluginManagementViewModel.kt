@@ -99,7 +99,7 @@ class PluginManagementViewModel(
         }
         val activePermissions = activeVerified?.manifest?.permissions.orEmpty()
         val pendingPermissions = pendingVerified?.manifest?.permissions.orEmpty()
-        val counts = installer.scopedStorageCounts(repository.schoolId, installation.pluginId)
+        val usage = installer.scopedStorageUsage(repository.schoolId, installation.pluginId)
         val auditErrors = installer.auditLines()
             .filter { it.contains(installation.pluginId) }
             .takeLast(3)
@@ -115,12 +115,21 @@ class PluginManagementViewModel(
             signatureVerified = activeVerified != null,
             declaredPermissions = activePermissions.sorted(),
             grantedPermissions = installation.grantedPermissions.toSet(),
-            pendingPermissionDiff = PluginPermissionDiff(
-                added = (pendingPermissions - activePermissions).sorted(),
-                removed = (activePermissions - pendingPermissions).sorted()
-            ),
-            storageFiles = counts.first,
-            cacheFiles = counts.second,
+            pendingPermissionDiff = if (installation.pendingVersion == null) {
+                PluginPermissionDiff()
+            } else if (pendingVerified != null && activeVerified != null) {
+                PluginPermissionDiff(
+                    added = (pendingPermissions - activePermissions).sorted(),
+                    removed = (activePermissions - pendingPermissions).sorted()
+                )
+            } else {
+                // 目标版本损坏时不得把“无法验证”误报成“全部权限被移除”。
+                PluginPermissionDiff(added = installation.pendingPermissions.sorted())
+            },
+            storageFiles = usage.first.files,
+            storageBytes = usage.first.bytes,
+            cacheFiles = usage.second.files,
+            cacheBytes = usage.second.bytes,
             recentErrors = auditErrors,
             disabledReason = installation.disabledReason,
             uiSlotCount = activeVerified?.manifest?.uiSlots?.size ?: 0,

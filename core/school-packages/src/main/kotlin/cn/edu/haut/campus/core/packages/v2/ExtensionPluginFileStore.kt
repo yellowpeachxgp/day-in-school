@@ -39,6 +39,12 @@ data class ExtensionCleanupResult(
     val cacheFiles: Int
 )
 
+/** File count and byte usage of one plugin-scoped storage/cache partition. */
+data class ExtensionScopedStorageUsage(
+    val files: Int,
+    val bytes: Long
+)
+
 /**
  * Profile-local file store for declarative extension packages.
  *
@@ -171,10 +177,13 @@ class ExtensionPluginFileStore(
         writeBytesAtomic(target, bytes)
     }
 
-    fun countScopedFiles(kind: String, schoolId: String, pluginId: String): Int {
+    fun countScopedFiles(kind: String, schoolId: String, pluginId: String): Int =
+        measureScopedFiles(kind, schoolId, pluginId).files
+
+    fun measureScopedFiles(kind: String, schoolId: String, pluginId: String): ExtensionScopedStorageUsage {
         val base = if (kind == "storage") storageDir else cacheDir
         val dir = base.resolve(encodeKey(schoolId)).resolve(encodeKey(pluginId))
-        return countRegularFiles(dir)
+        return measureRegularFiles(dir)
     }
 
     @Synchronized
@@ -251,13 +260,19 @@ class ExtensionPluginFileStore(
         }
     }
 
-    private fun countRegularFiles(dir: Path): Int {
-        if (!Files.isDirectory(dir)) return 0
+    private fun countRegularFiles(dir: Path): Int = measureRegularFiles(dir).files
+
+    private fun measureRegularFiles(dir: Path): ExtensionScopedStorageUsage {
+        if (!Files.isDirectory(dir)) return ExtensionScopedStorageUsage(0, 0L)
         var count = 0
+        var bytes = 0L
         Files.walk(dir).use { stream ->
-            stream.filter { Files.isRegularFile(it) }.forEach { count += 1 }
+            stream.filter { Files.isRegularFile(it) }.forEach { file ->
+                count += 1
+                bytes += runCatching { Files.size(file) }.getOrDefault(0L)
+            }
         }
-        return count
+        return ExtensionScopedStorageUsage(count, bytes)
     }
 
     private fun deleteRecursively(path: Path) {

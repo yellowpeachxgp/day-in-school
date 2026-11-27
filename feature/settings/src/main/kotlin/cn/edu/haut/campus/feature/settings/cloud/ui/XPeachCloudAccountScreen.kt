@@ -573,6 +573,39 @@ internal fun XPeachCloudAccountScreenContent(
                     state = pluginManagementState,
                     onAction = onPluginManagementAction
                 )
+
+                val legacyUnverifiedPlugins = plugins.filter { it.status == "LEGACY_UNVERIFIED" }
+                legacyUnverifiedPlugins.forEach { legacy ->
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(
+                                    text = legacy.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "未验证遗留扩展 · 不会渲染；只能移除",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        actions.removeExtensionPlugin(legacy.pluginId)
+                                        feedbackBanner = "已移除未验证遗留扩展"
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(32.dp))
         }

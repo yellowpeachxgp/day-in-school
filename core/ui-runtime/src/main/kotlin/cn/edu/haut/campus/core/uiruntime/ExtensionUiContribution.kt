@@ -64,10 +64,16 @@ class ExtensionUiPackageLoader(
                 installer.verifiedStoredPackage(schoolId, installation.pluginId)
             }.getOrNull()
             val slots = verified?.manifest?.uiSlots ?: decodeUiSlotsJson(installation.uiSlotsJson)
+            val normalizedCounts = slots.groupBy {
+                it.slotId + "/" + FeatureUiCardCodec.componentIdForCardId(it.cardId)
+            }.mapValues { entry -> entry.value.map { it.cardId }.toSet().size }
             val seenComponents = mutableSetOf<String>()
             for (slot in slots) {
                 if (!seenComponents.add(slot.slotId + "/" + slot.cardId)) continue
-                result += contributionFor(installation, slot, verified?.manifest, verified?.artifactMap)
+                val normalizedCollision = normalizedCounts.getValue(
+                    slot.slotId + "/" + FeatureUiCardCodec.componentIdForCardId(slot.cardId)
+                ) > 1
+                result += contributionFor(installation, slot, verified?.manifest, verified?.artifactMap, normalizedCollision)
             }
         }
         return result.sortedWith(compareBy<ExtensionUiContribution> { it.slotId }.thenBy { it.pluginId }.thenBy { it.cardId })
@@ -77,7 +83,8 @@ class ExtensionUiPackageLoader(
         installation: cn.edu.haut.campus.core.packages.v2.ExtensionInstallation,
         slot: UiSlotDeclaration,
         manifest: cn.edu.haut.campus.core.packages.v2.ExtensionManifestV2?,
-        artifactMap: Map<String, ByteArray>?
+        artifactMap: Map<String, ByteArray>?,
+        normalizedCollision: Boolean
     ): ExtensionUiContribution {
         val baseCommands = manifest?.commands.orEmpty()
         val granted = installation.grantedPermissions.toSet()
@@ -111,6 +118,10 @@ class ExtensionUiPackageLoader(
         }
         if (manifest == null || artifactMap == null) {
             return copy(ExtensionContributionStatus.ERROR, errorCard(slot, installation.name, "插件验签失败", "签名或产物摘要在读取时未通过"), "签名或产物摘要在读取时未通过")
+        }
+        if (normalizedCollision) {
+            val message = "card_id 规范化后发生冲突，已 fail-closed"
+            return copy(ExtensionContributionStatus.ERROR, errorCard(slot, installation.name, "插件卡片冲突", message), message)
         }
         if ("ui.slot.render" !in granted) {
             val message = "缺少 ui.slot.render 授权"

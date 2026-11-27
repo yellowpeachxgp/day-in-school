@@ -212,6 +212,9 @@ class ExtensionPluginInstaller(
     fun scopedStorageCounts(schoolId: String, pluginId: String): Pair<Int, Int> =
         store.countScopedFiles("storage", schoolId, pluginId) to store.countScopedFiles("cache", schoolId, pluginId)
 
+    fun scopedStorageUsage(schoolId: String, pluginId: String): Pair<ExtensionScopedStorageUsage, ExtensionScopedStorageUsage> =
+        store.measureScopedFiles("storage", schoolId, pluginId) to store.measureScopedFiles("cache", schoolId, pluginId)
+
     fun putScopedStorageForTest(schoolId: String, pluginId: String, key: String, bytes: ByteArray, cache: Boolean = false) {
         store.putScopedBytes(if (cache) "cache" else "storage", schoolId, pluginId, key, bytes)
     }
