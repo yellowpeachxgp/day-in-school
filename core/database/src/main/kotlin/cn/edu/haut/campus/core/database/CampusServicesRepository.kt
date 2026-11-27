@@ -43,6 +43,9 @@ class CampusServicesRepository internal constructor(
     suspend fun ensureDefaultReferencePluginsInstalled() =
         extensionPluginRegistry.ensureDefaultReferencePluginsInstalled()
 
+    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
+        extensionPluginRegistry.upsertExtensionPlugin(entity)
+
     suspend fun installSignedExtensionPackageZip(zipBytes: ByteArray) =
         extensionPluginRegistry.installSignedExtensionPackageZip(zipBytes)
 

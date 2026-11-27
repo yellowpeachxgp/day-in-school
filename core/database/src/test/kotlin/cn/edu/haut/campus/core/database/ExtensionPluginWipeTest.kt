@@ -46,6 +46,7 @@ class ExtensionPluginWipeTest {
             it.writeBytes(byteArrayOf(1))
         }
 
+        ExtensionPluginWipeRegistration.register(fixture.repository)
         fixture.repository.wipeAllPersonalData()
 
         db.query("SELECT COUNT(*) FROM installed_extension_plugins").use { cursor ->

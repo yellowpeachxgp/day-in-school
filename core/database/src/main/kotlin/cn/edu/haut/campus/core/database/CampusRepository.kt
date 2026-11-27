@@ -1893,7 +1893,6 @@ class CampusRepository internal constructor(
         runCatching {
             java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
         }
-        runCatching { campusServicesRepository.wipeExtensionPluginData("USER_DATA_DELETE") }
         // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回。
         // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
         // 世代推进先于 Room 事务执行（避免在事务内嵌套身份锁），
@@ -1926,7 +1925,6 @@ class CampusRepository internal constructor(
                 cloudAndParcelDao.clearCloudIdentityBinding()
                 cloudAndParcelDao.clearLibraryBookingPlans()
                 cloudAndParcelDao.clearParcelItems()
-                cloudAndParcelDao.clearInstalledExtensionPlugins()
             }
         }
         cloudTokenMutex.withLock {
@@ -3741,15 +3739,18 @@ class CampusRepository internal constructor(
         parcelHubRepository.fetchXiaomiParcelDetail(parcelId)
 
     // --- Unified Extension Plugins (dis-extension/v2 + dis-campus-plugin/v1) ---
-    val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> = campusServicesRepository.installedExtensionPluginsFlow
-    suspend fun ensureDefaultReferencePluginsInstalled() = campusServicesRepository.ensureDefaultReferencePluginsInstalled()
-    suspend fun installSignedExtensionPackageZip(zipBytes: ByteArray) = campusServicesRepository.installSignedExtensionPackageZip(zipBytes)
-    suspend fun installSignedExtensionPackage(manifestBytes: ByteArray, artifactMap: Map<String, ByteArray>) = campusServicesRepository.installSignedExtensionPackage(manifestBytes, artifactMap)
-    suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean) = campusServicesRepository.setExtensionPluginEnabled(pluginId, enabled)
-    suspend fun confirmExtensionPluginPermissions(pluginId: String) = campusServicesRepository.confirmExtensionPluginPermissions(pluginId)
-    suspend fun revokeExtensionPluginPermission(pluginId: String, permission: String) = campusServicesRepository.revokeExtensionPluginPermission(pluginId, permission)
-    suspend fun rollbackExtensionPlugin(pluginId: String, targetVersion: String? = null) = campusServicesRepository.rollbackExtensionPlugin(pluginId, targetVersion)
-    suspend fun removeExtensionPlugin(pluginId: String) = campusServicesRepository.removeExtensionPlugin(pluginId)
+    val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =
+        campusServicesRepository.installedExtensionPluginsFlow
+
+    suspend fun ensureDefaultReferencePluginsInstalled() =
+        campusServicesRepository.ensureDefaultReferencePluginsInstalled()
+
+    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
+        campusServicesRepository.upsertExtensionPlugin(entity)
+
+    suspend fun removeExtensionPlugin(pluginId: String) =
+        campusServicesRepository.removeExtensionPlugin(pluginId)
+
     companion object {
         private const val LOG_TAG = "CampusRepository"
 

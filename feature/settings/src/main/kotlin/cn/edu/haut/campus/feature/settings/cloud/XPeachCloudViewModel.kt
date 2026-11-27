@@ -8,6 +8,7 @@ import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.CloudIdentityBindingEntity
+import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiAction
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
@@ -40,12 +41,9 @@ class XPeachCloudViewModel(
         repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
     override suspend fun reconfirmAndRestoreCloudBookingPlans(): Result<CloudSyncSnapshotResult> =
         repository.reconfirmAndRestoreCloudBookingPlans()
-    override suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean) {
-        repository.setExtensionPluginEnabled(pluginId, enabled)
-    }
-    override suspend fun removeExtensionPlugin(pluginId: String) {
-        repository.removeExtensionPlugin(pluginId)
-    }
+    override suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
+        repository.upsertExtensionPlugin(entity)
+    override suspend fun removeExtensionPlugin(pluginId: String) = repository.removeExtensionPlugin(pluginId)
 
     override fun resetStateForInvalidSession() {
         mutableUiState.value = XPeachCloudUiState()

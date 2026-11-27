@@ -596,6 +596,11 @@ internal fun XPeachCloudAccountScreenContent(
                                     text = "已启用",
                                     dotColor = XPeachTheme.readablePrimary
                                 )
+                            } else if (plugin.status == "LEGACY_UNVERIFIED") {
+                                XPeachStatusDotText(
+                                    text = "未验证遗留",
+                                    dotColor = MaterialTheme.colorScheme.error
+                                )
                             } else {
                                 XPeachStatusDotText(
                                     text = "已停用",
@@ -627,22 +632,26 @@ internal fun XPeachCloudAccountScreenContent(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            FilledTonalButton(
-                                onClick = {
-                                    scope.launch {
-                                        val next = if (plugin.status == "ENABLED") "DISABLED" else "ENABLED"
-                                        actions.setExtensionPluginEnabled(
-                                            pluginId = plugin.pluginId,
-                                            enabled = next == "ENABLED"
-                                        )
-                                        feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
-                                    }
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(if (plugin.status == "ENABLED") "停用扩展" else "启用扩展")
+                            if (plugin.status == "ENABLED" || plugin.status == "DISABLED") {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            val next = if (plugin.status == "ENABLED") "DISABLED" else "ENABLED"
+                                            actions.upsertExtensionPlugin(
+                                                plugin.copy(
+                                                    status = next,
+                                                    updatedAtEpochMillis = System.currentTimeMillis()
+                                                )
+                                            )
+                                            feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(if (plugin.status == "ENABLED") "停用扩展" else "启用扩展")
+                                }
                             }
                             OutlinedButton(
                                 onClick = {

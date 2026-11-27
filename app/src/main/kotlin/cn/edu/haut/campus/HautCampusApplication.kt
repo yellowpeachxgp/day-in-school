@@ -2,6 +2,7 @@ package cn.edu.haut.campus
 
 import android.app.Application
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.database.ExtensionPluginWipeRegistration
 import cn.edu.haut.campus.core.designsystem.LauncherIconAliasReconciler
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
@@ -30,6 +31,13 @@ class HautCampusApplication : Application() {
             ParcelAppWidgetProvider::class.java
         )
         val sessions = AccountSessionCoordinator.getInstance(this)
+        sessions.registerLifecycleHook(
+            key = "extension_plugin_security_wipe",
+            beforeSwitch = { },
+            afterSwitch = { active ->
+                ExtensionPluginWipeRegistration.register(active.repository)
+            }
+        )
         sessions.registerLifecycleHook(
             key = "account_background_work",
             beforeSwitch = { old ->
