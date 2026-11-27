@@ -52,6 +52,8 @@
 | AUTO-017 | 2026-11-27 | `file-line-gate` 不把 `contracts/**` 纳入源代码棘轮；契约文件的规模与演进由契约线、contract parity 和专门 CI 治理；自主决策，待用户复核 | 主代理门禁边界裁决：`contracts/**` 包含契约 YAML/JSON 与同步副本，不是应用源代码棘轮对象，避免契约补全文档时被错误拦截 | 待用户复核 |
 | AUTO-018 | 2026-11-27 | 允许 PR#58 为 acceptance 合成 fixture 增加精确 allowlist 条目；仅限合成测试样例的精确值，不放宽真实秘密、生产凭据或通用模式；自主决策，待用户复核 | 主代理最小例外裁决：验收合成 fixture 需要可重复示例，但 scanner 例外必须精确、可审计、可过期 | 待用户复核 |
 | AUTO-019 | 2026-11-27 | W0-05 按 a/b/c/d 分批拆分 `CampusRepository`；每批独立 PR、行为不变、特征测试一致，公开 API 外观先保持兼容；自主决策，待用户复核 | 主代理拆分节奏裁决：巨型 Repository 一次拆分风险过高，分批可降低冲突并让每批可编译、可审阅、可回退 | 待用户复核 |
+| AUTO-020 | 2026-11-27 | INF-02 成对契约列车存在循环依赖（两仓 contracts 同步副本互相依赖对方先合入）；以两仓 train 分支 contracts 逐字节 diff 一致加内层 contract-ci PASS 作为列车合并证据，合入后 main 必须重跑 contracts 全绿作为强制补偿；自主决策，待用户复核 | 主代理循环依赖裁决：成对契约 PR 互相校验对方 main 未更新时无法先绿，列车级字节一致加 main 重跑等价于双边门禁且不放松最终约束 | 待用户复核 |
+| AUTO-021 | 2026-11-27 | CT 系列 planned 契约机制：OpenAPI 操作标 `x-dis-status: planned`，endpoint inventory 标 `status: planned` 并记 `contract_card`；active 端点仍保持 100% 双向 parity，planned 显式计数且唯一，runtime 出现未登记 active 路由必须失败；实现卡合入时同一 PR 把 planned 转 active；自主决策，待用户复核 | 主代理契约演进裁决：契约先行（contract-first）需要不落地的登记位，planned 语义既阻止 runtime 偷跑又避免 active parity 被未实现端点破坏 | 待用户复核 |
 
 ## 追加规则
 

@@ -57,7 +57,6 @@ import cn.edu.haut.campus.core.campusservices.MobileAuthTransactionStart
 import cn.edu.haut.campus.core.campusservices.NativeOidcLoginResult
 import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.CampusRepository
-import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
@@ -88,7 +87,6 @@ fun XPeachCloudAccountScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showBindDialog by remember { mutableStateOf(false) }
-    var showInstallPluginDialog by remember { mutableStateOf(false) }
     var isSyncingSnapshot by remember { mutableStateOf(false) }
     var feedbackBanner by remember { mutableStateOf<String?>(null) }
 
@@ -556,13 +554,6 @@ fun XPeachCloudAccountScreen(
                                 .weight(1f)
                                 .padding(end = 10.dp)
                         )
-                        Button(
-                            onClick = { showInstallPluginDialog = true },
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text("添加扩展")
-                        }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -692,75 +683,6 @@ fun XPeachCloudAccountScreen(
         )
     }
 
-    if (showInstallPluginDialog) {
-        var pluginIdInput by remember { mutableStateOf("") }
-        var pluginNameInput by remember { mutableStateOf("") }
-        var versionInput by remember { mutableStateOf("1.0.0") }
-
-        XPeachAlertDialog(
-            onDismissRequest = { showInstallPluginDialog = false },
-            title = { Text("添加扩展功能") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = pluginNameInput,
-                        onValueChange = { pluginNameInput = it },
-                        label = { Text("扩展名称") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = pluginIdInput,
-                        onValueChange = { pluginIdInput = it },
-                        label = { Text("扩展标识") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = versionInput,
-                        onValueChange = { versionInput = it },
-                        label = { Text("版本号") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    shape = RoundedCornerShape(12.dp),
-                    onClick = {
-                        scope.launch {
-                            repository.upsertExtensionPlugin(
-                                InstalledExtensionPluginEntity(
-                                    pluginId = pluginIdInput.trim(),
-                                    name = pluginNameInput.trim(),
-                                    activeVersion = versionInput.trim(),
-                                    previousVersion = null,
-                                    schemaFormat = "dis-extension/v2",
-                                    status = "ENABLED",
-                                    grantedPermissionsJson = """["ui.slot.render","storage.scoped"]""",
-                                    uiSlotsJson = """[{"slot_id":"campus.services","title":"${pluginNameInput.trim()}"}]""",
-                                    updatedAtEpochMillis = System.currentTimeMillis()
-                                )
-                            )
-                            showInstallPluginDialog = false
-                            feedbackBanner = "已添加「${pluginNameInput.trim()}」"
-                        }
-                    }
-                ) {
-                    Text("确认添加")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showInstallPluginDialog = false }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
 }
 
 @Composable

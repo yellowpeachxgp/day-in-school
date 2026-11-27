@@ -46,4 +46,5 @@ include(
 
 include(":core:ledger")
 include(":core:events")
+include(":core:textextract")
 include(":core:solver")
