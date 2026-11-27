@@ -168,12 +168,6 @@ class PdfBoxTextExtractor(
         val pieces: List<PdfLinePiece>
     )
 
-    private data class OrderedPdfLinePiece(
-        val order: Int,
-        val pageIndex: Int,
-        val piece: PdfLinePiece
-    )
-
     /**
      * 只消费 PDFBox writeString/writeWordSeparator/writeLineSeparator 的规范化输出。
      * 这样 overprint 去重、diacritic 合并、Unicode normalization 与 RTL logical order 都由 PDFBox 决定，
@@ -400,7 +394,7 @@ class PdfBoxTextExtractor(
     ): PdfMergeDecision {
         val currentGeometry = current.geometry ?: return PdfMergeDecision(false, false)
         val nextGeom = nextGeometry ?: return PdfMergeDecision(false, false)
-        if (current.pageIndex != next.pageIndex || current.articleIndex != next.articleIndex) {
+        if (current.pageIndex != next.pageIndex) {
             return PdfMergeDecision(false, false)
         }
 
@@ -429,9 +423,11 @@ class PdfBoxTextExtractor(
         val spaceWidth = maxOf(currentGeometry.maxSpaceWidth, nextGeom.maxSpaceWidth).coerceAtLeast(2.0f)
         val directJoinGap = maxOf(1.0f, spaceWidth * 0.6f)
         val wordJoinGap = maxOf(spaceWidth * 2.75f, maxHeight * 1.1f)
-        // PDFBox 可能把旋转断行误标成新 paragraph；只有连续/近连续字形投影能跨这种伪边界。
-        // 真正跨 paragraph 的 positioned words 至少保留边界，绝不会无空格融合。
-        if (current.paragraphIndex != next.paragraphIndex && gap > directJoinGap) {
+        // PDFBox bead fallback 与旋转断行都可能产生伪 article/paragraph 边界；只有连续/近连续
+        // 字形投影允许跨这些伪边界。真正跨边界的 positioned words 至少保留间距，绝不会无空格融合。
+        if ((current.articleIndex != next.articleIndex || current.paragraphIndex != next.paragraphIndex) &&
+            gap > directJoinGap
+        ) {
             return PdfMergeDecision(false, false)
         }
         return when {

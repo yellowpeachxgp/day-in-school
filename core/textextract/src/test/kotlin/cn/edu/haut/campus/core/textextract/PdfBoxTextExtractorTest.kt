@@ -12,7 +12,6 @@ import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.interactive.pagenavigation.PDThread
 import com.tom_roush.pdfbox.pdmodel.interactive.pagenavigation.PDThreadBead
-import com.tom_roush.pdfbox.util.Matrix
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -205,64 +204,6 @@ class PdfBoxTextExtractorTest {
         assertTrue(line.text.indexOf("Report") < line.text.indexOf("[1]"))
     }
 
-    @Test
-    fun debugArticleDraftMetadata() {
-        org.junit.Assert.fail(probeDrafts(articleBoundaryVerticalLabelsPdf()))
-    }
-
-    private fun probeDrafts(pdfBytes: ByteArray): String {
-        val stripperClass = Class.forName("cn.edu.haut.campus.core.textextract.pdf.PdfBoxTextExtractor\$LineCollectingPdfTextStripper")
-        val constructor = stripperClass.getDeclaredConstructor()
-        constructor.isAccessible = true
-        val stripper = constructor.newInstance()
-        val document = PDDocument.load(pdfBytes)
-        try {
-            val beadSummary = document.getPage(0).threadBeads.mapIndexed { index, bead ->
-                val rect = bead.rectangle
-                "b" + index + "[x" + rect.lowerLeftX + ".." + rect.upperRightX + ",y" + rect.lowerLeftY + ".." + rect.upperRightY + "]"
-            }.joinToString(",")
-            val getText = stripperClass.methods.first { it.name == "getText" && it.parameterCount == 1 }
-            getText.invoke(stripper, document)
-            val mutatedBeadSummary = document.getPage(0).threadBeads.mapIndexed { index, bead ->
-                val rect = bead.rectangle
-                "b" + index + "[x" + rect.lowerLeftX + ".." + rect.upperRightX + ",y" + rect.lowerLeftY + ".." + rect.upperRightY + "]"
-            }.joinToString(",")
-            val drafts = readField(stripper, "lineDrafts") as List<*>
-            val runtimeBeads = (readField(stripper, "beadRectangles") as List<*>).mapIndexed { index, rect ->
-                if (rect == null) {
-                    "b" + index + "[null]"
-                } else {
-                    val pdRect = rect as PDRectangle
-                    "b" + index + "[x" + pdRect.lowerLeftX + ".." + pdRect.upperRightX + ",y" + pdRect.lowerLeftY + ".." + pdRect.upperRightY + "]"
-                }
-            }.joinToString(",")
-            return drafts.joinToString(prefix = "beads=" + beadSummary + ";mutated=" + mutatedBeadSummary + ";runtime=" + runtimeBeads + ";drafts=", separator = "|") { draft ->
-                val pieces = readField(draft!!, "pieces") as List<*>
-                val text = pieces.joinToString("") { piece -> readField(piece!!, "text") as String }
-                val glyphs = pieces.flatMap { piece -> readField(piece!!, "glyphs") as List<*> }
-                val xs = glyphs.flatMap { glyph -> listOf(readField(glyph!!, "displayStartX") as Float, readField(glyph, "displayEndX") as Float) }
-                val ys = glyphs.flatMap { glyph -> listOf(readField(glyph!!, "displayStartY") as Float, readField(glyph, "displayEndY") as Float) }
-                "o" + readField(draft, "order") + "/a" + readField(draft, "articleIndex") + "/p" + readField(draft, "paragraphIndex") + ":" + text + "@x" + (xs.minOrNull() ?: 0f) + ".." + (xs.maxOrNull() ?: 0f) + ",y" + (ys.minOrNull() ?: 0f) + ".." + (ys.maxOrNull() ?: 0f)
-            }
-        } finally {
-            document.close()
-        }
-    }
-
-    private fun readField(target: Any, name: String): Any? {
-        var type: Class<*>? = target.javaClass
-        while (type != null) {
-            try {
-                val field = type.getDeclaredField(name)
-                field.isAccessible = true
-                return field.get(target)
-            } catch (_: NoSuchFieldException) {
-                type = type.superclass
-            }
-        }
-        throw NoSuchFieldException(name + " on " + target.javaClass.name)
-    }
-
     private fun pdfWithPages(vararg pages: Pair<Int, List<String>>): ByteArray {
         val document = PDDocument()
         try {
@@ -376,19 +317,6 @@ class PdfBoxTextExtractorTest {
         contentStream.beginText()
         contentStream.setFont(PDType1Font.HELVETICA, fontSize)
         contentStream.newLineAtOffset(x, y)
-        contentStream.showText(text)
-        contentStream.endText()
-    }
-
-    private fun writeText(
-        contentStream: PDPageContentStream,
-        text: String,
-        matrix: Matrix,
-        fontSize: Float
-    ) {
-        contentStream.beginText()
-        contentStream.setFont(PDType1Font.HELVETICA, fontSize)
-        contentStream.setTextMatrix(matrix)
         contentStream.showText(text)
         contentStream.endText()
     }
