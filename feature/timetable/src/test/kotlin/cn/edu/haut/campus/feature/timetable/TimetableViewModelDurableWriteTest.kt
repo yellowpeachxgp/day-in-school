@@ -9,9 +9,14 @@ import androidx.room.Room
 import cn.edu.haut.campus.core.database.AccountProfileEntity
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
+import cn.edu.haut.campus.core.model.OccurrenceRule
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import java.io.File
 import java.time.DayOfWeek
+import java.time.LocalTime
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -257,6 +262,83 @@ class TimetableViewModelDurableWriteTest {
         } finally {
             firstGate.complete(Unit)
             secondGate.complete(Unit)
+            writeScope.cancel()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun practicalMatrixActionWritesUiModelThroughDurableRepositoryBoundary() = runBlocking {
+        val fixture = DurableWriteViewModelFixture.create(
+            RuntimeEnvironment.getApplication(),
+            "prof_tt_matrix_" + System.nanoTime()
+        )
+        val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val executor = TimetableWriteExecutor(
+                writeScope = writeScope,
+                runner = object : TimetableSessionWriteRunner {
+                    override suspend fun <T : Any> withActiveSessionWrite(
+                        profileId: String,
+                        sessionGeneration: Long,
+                        write: suspend () -> T
+                    ): T? = write()
+                }
+            )
+            val viewModel = TimetableViewModel(fixture.repository, executor)
+            val entity = UnscheduledAcademicCourseEntity(
+                termId = "2026-2027-1",
+                sourceKey = "matrix-source-key",
+                sourceId = "matrix-source",
+                name = "矩阵实践课",
+                teacher = "合成教师",
+                creditPlain = "2.0",
+                rawWeeks = "14-16周",
+                category = "集中实践",
+                syncedAtEpochMilli = 1L
+            )
+            fixture.dao.upsertUnscheduledCourses(listOf(entity))
+            val uiModel = UnscheduledPracticalCourseUiModel(
+                termId = entity.termId,
+                sourceKey = entity.sourceKey,
+                sourceId = entity.sourceId,
+                name = entity.name,
+                teacher = entity.teacher,
+                creditPlain = entity.creditPlain,
+                rawWeeks = entity.rawWeeks,
+                category = entity.category,
+                syncedAtEpochMilli = entity.syncedAtEpochMilli
+            )
+
+            viewModel.onAction(
+                TimetableUiAction.SchedulePracticalCourseMatrix(
+                    unscheduled = uiModel,
+                    occurrences = listOf(
+                        OccurrenceRule(
+                            weekday = DayOfWeek.WEDNESDAY,
+                            startPeriod = 7,
+                            endPeriod = 8,
+                            weeks = setOf(14),
+                            rawRoom = "工程中心B",
+                            customStartTime = LocalTime.of(13, 30),
+                            customEndTime = LocalTime.of(16, 30)
+                        )
+                    ),
+                    writeToken = "matrix-token"
+                )
+            )
+            withTimeout(2_000) {
+                while (!viewModel.uiState.value.writeCompletions.containsKey("matrix-token")) yield()
+            }
+            val completion = viewModel.uiState.value.writeCompletions.getValue("matrix-token")
+            assertEquals(TimetableWriteKind.SchedulePracticalCourseMatrix, completion.kind)
+            assertTrue(completion.errorMessage, completion.isSuccess)
+            assertTrue(fixture.dao.getUnscheduledCoursesSnapshot().isEmpty())
+            val rule = fixture.dao.getRulesSnapshot().single()
+            assertEquals(DayOfWeek.WEDNESDAY.value, rule.weekdayIso)
+            assertEquals("13:30", rule.customStartTimeIso)
+            assertEquals("16:30", rule.customEndTimeIso)
+        } finally {
             writeScope.cancel()
             fixture.close()
         }
