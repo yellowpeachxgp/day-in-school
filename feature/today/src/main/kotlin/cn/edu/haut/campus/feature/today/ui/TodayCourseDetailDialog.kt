@@ -38,7 +38,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
@@ -117,10 +116,6 @@ internal fun CourseDetailAndSnoozeDialog(
 
     XPeachAlertDialog(
         onDismissRequest = { if (!cancelWritePending) onDismiss() },
-        properties = DialogProperties(
-            dismissOnBackPress = !cancelWritePending,
-            dismissOnClickOutside = !cancelWritePending
-        ),
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(occ.courseName, style = MaterialTheme.typography.titleLarge)

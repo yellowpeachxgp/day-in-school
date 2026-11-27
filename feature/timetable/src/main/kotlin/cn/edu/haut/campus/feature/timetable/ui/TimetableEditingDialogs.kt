@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCoursePalette
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
@@ -97,11 +96,6 @@ private fun rememberTimetableDialogWriteLifecycle(
     }
     return lifecycle
 }
-
-private fun writeAwareDialogProperties(pending: Boolean): DialogProperties = DialogProperties(
-    dismissOnBackPress = !pending,
-    dismissOnClickOutside = !pending
-)
 
 @Composable
 internal fun TimetableEditingDialogs(
@@ -160,7 +154,6 @@ internal fun TimetableEditingDialogs(
 
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onEditingOccurrenceDismiss() },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("课程调整") },
             text = {
                 Column(
@@ -549,7 +542,6 @@ internal fun TimetableEditingDialogs(
 
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onEditingMasterRuleDismiss() },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("编辑排课规则") },
             text = {
                 Column(
@@ -760,7 +752,6 @@ internal fun TimetableEditingDialogs(
         val writePending = writeLifecycle.pending
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onConfirmDeleteMasterRuleChange(null) },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("确认删除排课时段？") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -825,7 +816,6 @@ internal fun TimetableEditingDialogs(
         val writePending = writeLifecycle.pending
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onSchedulingPracticalCourseDismiss() },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("设置实践课时间") },
             text = {
                 Column(
@@ -1023,7 +1013,6 @@ internal fun TimetableEditingDialogs(
 
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onAddCourseDialogDismiss() },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("添加课程") },
             text = {
                 Column(
@@ -1223,7 +1212,6 @@ internal fun TimetableEditingDialogs(
 
         XPeachAlertDialog(
             onDismissRequest = { if (!writePending) onTermSwitcherDialogDismiss() },
-            properties = writeAwareDialogProperties(writePending),
             title = { Text("学期与校历") },
             text = {
                 Column(
