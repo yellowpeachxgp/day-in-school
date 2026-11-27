@@ -158,7 +158,8 @@ private fun PluginCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
                     onClick = { onAction(PluginManagementUiAction.SetEnabled(plugin.pluginId, plugin.status != "ENABLED")) },
-                    enabled = actionsEnabled && plugin.status != "PENDING_PERMISSION_REVIEW" && plugin.status != "LEGACY_UNVERIFIED",
+                    enabled = actionsEnabled && plugin.status != "PENDING_PERMISSION_REVIEW" && plugin.status != "LEGACY_UNVERIFIED" &&
+                        (plugin.status == "ENABLED" || plugin.signatureVerified),
                     modifier = Modifier.weight(1f).testTag("toggle-plugin")
                 ) { Text(if (plugin.status == "ENABLED") "停用" else "启用") }
                 OutlinedButton(
