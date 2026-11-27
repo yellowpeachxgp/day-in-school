@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.database
 
 import androidx.datastore.preferences.core.edit
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
+import cn.edu.haut.campus.core.domain.ReminderRevision
 import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.HomeCardModule
 import cn.edu.haut.campus.core.model.NetworkProxyConfig
