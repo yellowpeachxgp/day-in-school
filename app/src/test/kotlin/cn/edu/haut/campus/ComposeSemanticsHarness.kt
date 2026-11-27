@@ -1,5 +1,7 @@
 package cn.edu.haut.campus
 
+import android.app.Application
+import android.content.ComponentName
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -13,7 +15,9 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
 import org.robolectric.Robolectric
+import org.robolectric.Shadows
 import java.io.Closeable
 
 /** Robolectric 专用空 Activity；只在 src/test 注册，不进入生产 manifest。 */
@@ -140,6 +144,12 @@ class ComposeSemanticsHarness private constructor(
 
     companion object {
         fun launch(content: @Composable () -> Unit): ComposeSemanticsHarness {
+            // src/test 的 manifest 合并不保证注册测试 Activity；按 Robolectric 推荐路径动态登记，
+            // 与 Roborazzi 的 registerRoborazziActivityToRobolectricIfNeeded 同一规避方式。
+            val appContext: Application = ApplicationProvider.getApplicationContext()
+            Shadows.shadowOf(appContext.packageManager).addActivityIfNotPresent(
+                ComponentName(appContext, ComposeSemanticsHarnessActivity::class.java)
+            )
             val scenario = ActivityScenario.launch(ComposeSemanticsHarnessActivity::class.java)
             var root: RootForTest? = null
             scenario.onActivity { activity ->
