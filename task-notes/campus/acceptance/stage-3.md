@@ -54,7 +54,7 @@
 | `android` | 0 | 28s | 主构建 `BUILD SUCCESSFUL in 14s`，836 actionable tasks（441 executed、395 from cache）；pure-JVM second pass `BUILD SUCCESSFUL in 4s`，38 actionable tasks；dep-check 27 modules / 86 edges / 0 violations；file-line-gate 439 files，FAILED=0、WARNING=0、INFO=1 | `<campus-root>/logs/day-in-school/main/8a978f7be998b082c881c97937b34ee51df2d178-android.log` |
 | `secrets` | 0 | 4s | `SECRET_SCAN_PASS files=658 tracked=672 findings=0 allowlistEntries=60 allowlistUsed=60 warnings=0` | `<campus-root>/logs/day-in-school/main/8a978f7be998b082c881c97937b34ee51df2d178-secrets.log` |
 
-该结果只说明最新 main 当前仍可构建且无 secrets 命中；**不得**倒填 train/cis-003 的 exact 验收证据。
+该结果只说明最新 main 当前仍可构建且无 secrets 命中；**不得**倒填 train/cis-003 的 exact 验收证据。为避免证据链失真，`evidence/stage-3.jsonl` 中对应两条记录的 notes 均明确标注为 current-main supplemental observation only, not exact train evidence。
 
 ## 3. R01–R06 调研产出验收
 
