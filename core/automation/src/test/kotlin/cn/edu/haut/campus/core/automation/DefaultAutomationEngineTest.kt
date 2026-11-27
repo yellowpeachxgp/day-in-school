@@ -213,6 +213,33 @@ class DefaultAutomationEngineTest {
     }
 
     @Test
+    fun longConditionFailureReasonsAreTruncatedIntoValidRunRecord() = runTest {
+        val longReason = "证据不足-" + "x".repeat(500)
+        val condition = AutomationTestFixtures.RecordingConditionEvaluator(
+            results = listOf(
+                ConditionResult(conditionType = "test.condition", passed = false, reason = longReason),
+                ConditionResult(conditionType = "test.condition", passed = false, reason = longReason),
+                ConditionResult(conditionType = "test.condition", passed = false, reason = longReason)
+            )
+        )
+        val harness = newHarness(conditionEvaluator = condition)
+        val rule = AutomationTestFixtures.rule(
+            conditions = listOf(
+                ConditionSpec("test.condition"),
+                ConditionSpec("test.condition"),
+                ConditionSpec("test.condition")
+            )
+        )
+        harness.ruleStore.upsert(rule)
+
+        val result = harness.engine.executeTrigger(TriggerInstance(rule.id, "long-reasons", firedAt))
+
+        val run = (result as TriggerExecutionResult.Executed).run
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        assertTrue((run.statusReason?.length ?: 0) <= 1000)
+    }
+
+    @Test
     fun quietHoursSuppressLocalNotifyButKeepAuditableOutcome() = runTest {
         val action = AutomationTestFixtures.RecordingActionExecutor(risk = ActionRisk.LOCAL_NOTIFY)
         val harness = newHarness(actionExecutor = action)

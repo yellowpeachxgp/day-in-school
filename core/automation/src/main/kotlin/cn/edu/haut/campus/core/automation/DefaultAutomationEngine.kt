@@ -215,7 +215,7 @@ class DefaultAutomationEngine(
         dedupeKey = dedupeKey,
         startedAt = startedAt,
         finishedAt = clock.instant(),
-        statusReason = statusReason
+        statusReason = statusReason?.let { sanitizeDetail(it, 1000) }
     )
 
     private fun validateRuleAgainstRegistry(rule: AutomationRule): List<String> {
