@@ -39,7 +39,7 @@
 | endpoints/endpoint-inventory.yaml | 不同 | d440f21dd0aea7ecdc4c058ad22097a268a8e10fa1fe2f0d8c647ab796ea48f1 |
 | errors/error-catalog.yaml | 相同 | 56fa86bacebec8d9e454fa32ee7bc12fefabeefd1b27bc577c0174257b85147c |
 | examples/cloud-api-examples.http | 相同 | e6548be218974f57ea29449d445ec06cc4adad2369a1db9768e7e32eabf07fca |
-| openapi/cloud-v1.yaml | 不同 | 1ad2050b9b4850e696c57b0633e71735ee3cea704d7d6b3354b81dca19166301 |
+| openapi/cloud-v1.yaml | 不同 | f74c8e5a8b73605700426a08f9ca898e76225158ffbb07359ab7d589cc830b90 |
 | permissions/permission-catalog.yaml | 相同 | c59ad4aab72a18dbc1027f520479b95c8ce2e536e48b02a40a4f81de9876653f |
 | schemas/booking-rule-v1.schema.json | 相同 | 5819990676391f4c73bb7470cb28e0596fb1e209d733fd2e04eb273f2c071dec |
 | schemas/feature-ui-v1.schema.json | 相同 | 0002904414cad9d289f46ad0fc2b66696f3fba6d8981ebb02dbff1c9839a125e |
@@ -47,7 +47,7 @@
 | schemas/plugin-extension-v2.schema.json | 相同 | 08e1c7ac3bc5adde5de0922fc24c19cdc4fc576b99fff4bbbf2124dd4fe88bfb5 |
 | schemas/reservation-quote-v1.schema.json | 相同 | 12d053f2044a32a975abaf6889e19e86c5ab0bb535cb086ac10fee7c88ff72f9 |
 
-权威树指纹（契约审阅修复后）：CONTRACTS_TREE_SHA256=43f31a536ab609b191052be1d06221993b8f7616fa7908e3eb0c4dda461b5028。
+权威树指纹（契约审阅修复后）：CONTRACTS_TREE_SHA256=116b92fd8c971e86cc03d63f54c71566859eef0d111b9cb63c0d7acdf666344f。
 
 ## 4. 哪一侧更新
 
@@ -140,7 +140,7 @@ dc990d6 后，12 个运行时 extension 已由 main 的 exact runtime inventory 
 1. 运行路由与契约：core=97、inventory=97、OpenAPI=97、extension=12、all=109；missingCore=0、contractOnly=0、mismatches=0、extInContracts=0。
 2. AUTO-012 边界：12 个 moments extension 的 method+path+operationId+auth 与 main 的 exact runtime inventory 一致，但在 contracts/** 中仍为 0 命中；本卡仍未把 moments 契约化。
 3. secrets allowlist：合并后只读扫描 SECRET_SCAN_PASS，files=149、tracked=150、findings=0、allowlistEntries=113、allowlistUsed=113、warnings=0；W0-08 更新的行号在当前合并树上仍准确。
-4. W0-08 合入本身未改变契约树；随后的契约审阅修复把权威树更新为 43f31a536ab609b191052be1d06221993b8f7616fa7908e3eb0c4dda461b5028。
+4. W0-08 合入本身未改变契约树；随后的契约审阅修复把权威树更新为 116b92fd8c971e86cc03d63f54c71566859eef0d111b9cb63c0d7acdf666344f。
 
 ## 9.3 契约审阅四项阻断修复
 
