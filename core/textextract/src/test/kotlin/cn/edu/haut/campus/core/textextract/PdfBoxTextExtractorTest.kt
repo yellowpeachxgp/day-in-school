@@ -8,6 +8,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
 import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
+import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.runBlocking
@@ -105,6 +106,41 @@ class PdfBoxTextExtractorTest {
         }
     }
 
+    @Test
+    fun contentlessFirstPageDoesNotShiftPhysicalPageIndexes() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(contentlessFirstPagePdf(), TextExtractionContext.synthetic())
+        )
+
+        val line = result.lines.single { it.text.contains("Second physical page") }
+        assertEquals(2, result.metadata.pageCount)
+        assertEquals(1, line.pageIndex)
+    }
+
+    @Test
+    fun overprintedDuplicateTextUsesPdfBoxDeduplicatedPositions() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(overprintedPdf(), TextExtractionContext.synthetic())
+        )
+
+        assertEquals(1, Regex("DUPLICATE").findAll(result.plainText).count())
+        assertEquals("DUPLICATE", result.lines.single().text)
+        assertTrue(result.lines.single().box.width > 40f)
+    }
+
+    @Test
+    fun rtlHebrewUsesPdfBoxLogicalTextAndKeepsTraceableBox() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(rtlHebrewPdf(), TextExtractionContext.synthetic())
+        )
+
+        val line = result.lines.single()
+        assertEquals("שלום", line.text)
+        assertEquals(TextCoordinateSpace.PDF_POINT_TOP_LEFT, line.coordinateSpace)
+        assertTrue(line.box.width > 20f)
+        assertEquals(4, line.box.points.size)
+    }
+
     private fun pdfWithPages(vararg pages: Pair<Int, List<String>>): ByteArray {
         val document = PDDocument()
         try {
@@ -126,6 +162,83 @@ class PdfBoxTextExtractorTest {
                 } finally {
                     contentStream.close()
                 }
+            }
+            val output = ByteArrayOutputStream()
+            document.save(output)
+            return output.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
+
+    private fun contentlessFirstPagePdf(): ByteArray {
+        val document = PDDocument()
+        try {
+            document.addPage(PDPage(PDRectangle(612f, 792f)))
+            val secondPage = PDPage(PDRectangle(612f, 792f))
+            document.addPage(secondPage)
+            val contentStream = PDPageContentStream(document, secondPage)
+            try {
+                contentStream.beginText()
+                contentStream.setFont(PDType1Font.HELVETICA, 12f)
+                contentStream.newLineAtOffset(72f, 720f)
+                contentStream.showText("Second physical page")
+                contentStream.endText()
+            } finally {
+                contentStream.close()
+            }
+            val output = ByteArrayOutputStream()
+            document.save(output)
+            return output.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
+
+    private fun overprintedPdf(): ByteArray {
+        val document = PDDocument()
+        try {
+            val page = PDPage(PDRectangle(612f, 792f))
+            document.addPage(page)
+            val contentStream = PDPageContentStream(document, page)
+            try {
+                repeat(2) {
+                    contentStream.beginText()
+                    contentStream.setFont(PDType1Font.HELVETICA, 12f)
+                    contentStream.newLineAtOffset(72f, 720f)
+                    contentStream.showText("DUPLICATE")
+                    contentStream.endText()
+                }
+            } finally {
+                contentStream.close()
+            }
+            val output = ByteArrayOutputStream()
+            document.save(output)
+            return output.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
+
+    private fun rtlHebrewPdf(): ByteArray {
+        val document = PDDocument()
+        try {
+            val page = PDPage(PDRectangle(612f, 792f))
+            document.addPage(page)
+            val fontBytes = requireNotNull(
+                javaClass.getResourceAsStream("/com/tom_roush/pdfbox/resources/ttf/LiberationSans-Regular.ttf")
+            ) { "缺少 LiberationSans 测试字体" }.use { it.readBytes() }
+            val font = PDType0Font.load(document, fontBytes.inputStream(), true)
+            val contentStream = PDPageContentStream(document, page)
+            try {
+                contentStream.beginText()
+                contentStream.setFont(font, 18f)
+                contentStream.newLineAtOffset(300f, 720f)
+                // 按视觉顺序写入；PDFBox 规范化输出应恢复 Hebrew logical order。
+                contentStream.showText("םולש")
+                contentStream.endText()
+            } finally {
+                contentStream.close()
             }
             val output = ByteArrayOutputStream()
             document.save(output)
