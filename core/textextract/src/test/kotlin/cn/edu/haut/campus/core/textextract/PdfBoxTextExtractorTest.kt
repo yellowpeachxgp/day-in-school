@@ -243,20 +243,22 @@ class PdfBoxTextExtractorTest {
     }
 
     private fun articleBoundaryVerticalLabelsPdf(): ByteArray {
-        return singlePagePdf(configurePage = { page ->
+        return singlePagePdf(rotation = 90, configurePage = { page ->
+            // PdfBox 2.0 的 bead rectangle 按未旋转页面坐标换算；这里按 /Rotate 90 后的
+            // display x/y 目标区域反写 PDF 坐标，确保两块 vertical label 落入不同 article bead。
             val firstBead = PDThreadBead()
             firstBead.page = page
-            firstBead.rectangle = PDRectangle(50f, 40f, 120f, 65f)
+            firstBead.rectangle = PDRectangle(250f, 715f, 300f, 57f)
             val secondBead = PDThreadBead()
             secondBead.page = page
-            secondBead.rectangle = PDRectangle(50f, 105f, 120f, 90f)
+            secondBead.rectangle = PDRectangle(250f, 642f, 300f, 73f)
             val thread = PDThread()
             thread.firstBead = firstBead
             firstBead.appendBead(secondBead)
             page.threadBeads = listOf(firstBead, secondBead)
         }) { contentStream ->
-            writeText(contentStream, "AAA", Matrix.getRotateInstance(Math.PI / 2, 100f, 80f), 12f)
-            writeText(contentStream, "BBB", Matrix.getRotateInstance(Math.PI / 2, 100f, 108f), 12f)
+            writeText(contentStream, "AAA", 50f, 400f, 12f)
+            writeText(contentStream, "BBB", 80f, 400f, 12f)
         }
     }
 
