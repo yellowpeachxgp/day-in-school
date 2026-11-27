@@ -23,7 +23,7 @@ interface AutomationEngine {
     /** 试运行：求值规则并预览动作，但不调用 ActionExecutor、不写 dedupe/run store。 */
     suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun
 
-    /** 幂等键 = ruleId + triggerInstanceKey（或 DedupePolicy 指定的更粗时间桶）。 */
+    /** 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。 */
     suspend fun onTrigger(ruleId: String, triggerInstanceKey: String)
 
     /** 带事件的完整触发入口；重复实例返回 Duplicate，不追加第二份运行记录。 */
