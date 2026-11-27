@@ -50,7 +50,7 @@ class ExtensionManifestV2RuntimeConformanceTest {
     }
 
     @Test
-    fun parity缺口legacy枚举非空白显示串与整数字面量全部对齐() {
+    fun parity缺口legacy枚举ECMA空白整数上限与严格词法JSON全部对齐() {
         val legacy = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-legacy-schema-version.json"))
         assertEquals("dis-campus-plugin/v1", legacy.legacySchemaVersion)
 
@@ -58,11 +58,23 @@ class ExtensionManifestV2RuntimeConformanceTest {
         assertEquals("  Runtime Fixture Plugin  ", padded.name)
         assertEquals("  Runtime Fixture Card  ", padded.uiSlots[0].title)
 
+        val controlWhitespaceName = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-ecma-whitespace-u001e-name.json"))
+        assertEquals("\u001E", controlWhitespaceName.name)
+        val hostBoundary = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-host-api-int32-max.json"))
+        assertEquals(Int.MAX_VALUE, hostBoundary.maxHostApi)
+        val sizeBoundary = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-size-bytes-int32-max.json"))
+        assertEquals(Int.MAX_VALUE.toLong(), sizeBoundary.entryArtifacts[0].sizeBytes)
+
         listOf(
             "invalid-runtime_schema_invalid-invalid-legacy-schema-version.json",
             "invalid-runtime_schema_invalid-blank-name.json",
             "invalid-runtime_schema_invalid-blank-ui-slot-title.json",
-            "invalid-runtime_schema_invalid-decimal-integer-min-host-api.json"
+            "invalid-runtime_schema_invalid-decimal-integer-min-host-api.json",
+            "invalid-runtime_schema_invalid-ecma-whitespace-feff-name.json",
+            "invalid-runtime_schema_invalid-host-api-int32-overflow.json",
+            "invalid-runtime_schema_invalid-size-bytes-int32-overflow.json",
+            "invalid-runtime_schema_invalid-duplicate-top-level-key.json",
+            "invalid-runtime_schema_invalid-overlong-number-literal.json"
         ).forEach { fileName ->
             try {
                 ExtensionManifestV2Codec.parseOrAdapt(fixtureText(fileName))

@@ -93,6 +93,7 @@ object ExtensionManifestV2Codec {
     private val SHA256_LOWER = Regex("^[a-f0-9]{64}$")
     private val BASE64_SIGNATURE = Regex("^[A-Za-z0-9+/]+={0,2}$")
     private val INTEGER_LITERAL = Regex("^-?[0-9]+$")
+    private const val MAX_SIZE_BYTES: Long = 2147483647L
 
     private val TOP_LEVEL_KEYS = setOf(
         "schema_version",
@@ -155,7 +156,7 @@ object ExtensionManifestV2Codec {
         }
 
         val name = requiredString(root, "name")
-        if (name.isBlank() || name.length > 80) {
+        if (isEcmaScriptBlank(name) || name.length > 80) {
             reject(PackageError.MANIFEST_INVALID, "插件名称 name 长度必须为 1..80")
         }
 
@@ -226,7 +227,7 @@ object ExtensionManifestV2Codec {
                 reject(PackageError.MANIFEST_INVALID, "ui_slots.card_id 格式非法")
             }
             val title = requiredString(obj, "title")
-            if (title.isBlank() || title.length > 60) {
+            if (isEcmaScriptBlank(title) || title.length > 60) {
                 reject(PackageError.MANIFEST_INVALID, "ui_slots.title 长度必须为 1..60")
             }
             val subtitle = optionalString(obj, "subtitle") ?: ""
@@ -278,7 +279,7 @@ object ExtensionManifestV2Codec {
                 ?: reject(PackageError.MANIFEST_INVALID, "entry_artifacts 条目必须是对象")
             rejectUnknownFields(obj, ARTIFACT_KEYS, "entry_artifacts 条目")
             val relPath = requiredString(obj, "path")
-            if (relPath.isBlank() || relPath.length > 240) {
+            if (isEcmaScriptBlank(relPath) || relPath.length > 240) {
                 reject(PackageError.MANIFEST_INVALID, "插件文件路径长度必须为 1..240")
             }
             assertSafeRelativePathWithRuntimeCode(relPath)
@@ -290,14 +291,14 @@ object ExtensionManifestV2Codec {
                     RUNTIME_DIGEST_INVALID
                 )
             }
-            val sizeBytes = requiredStrictInt(obj, "size_bytes")
-            if (sizeBytes < 0) {
-                reject(PackageError.MANIFEST_INVALID, "size_bytes 必须是非负整数")
+            val sizeBytes = requiredStrictLong(obj, "size_bytes")
+            if (sizeBytes < 0 || sizeBytes > MAX_SIZE_BYTES) {
+                reject(PackageError.MANIFEST_INVALID, "size_bytes 必须是 0.." + MAX_SIZE_BYTES + " 的整数")
             }
             ExtensionArtifactDigest(
                 path = relPath,
                 sha256 = sha256,
-                sizeBytes = sizeBytes.toLong()
+                sizeBytes = sizeBytes
             )
         }
 
@@ -369,7 +370,7 @@ object ExtensionManifestV2Codec {
     }
 
     fun assertSafeRelativePath(path: String) {
-        if (path.isBlank() ||
+        if (isEcmaScriptBlank(path) ||
             path.startsWith("/") ||
             path.startsWith("\\") ||
             path.contains("..") ||
@@ -461,13 +462,42 @@ object ExtensionManifestV2Codec {
     private fun requiredStrictInt(obj: JsonValue.Obj, key: String): Int {
         val raw = obj.fields[key]
             ?: reject(PackageError.MANIFEST_INVALID, "缺少必填整数字段 " + key)
+        val literal = strictIntegerLiteral(raw, key)
+        return literal.toIntOrNull()
+            ?: reject(PackageError.MANIFEST_INVALID, "字段 " + key + " 超出整数范围")
+    }
+
+    private fun requiredStrictLong(obj: JsonValue.Obj, key: String): Long {
+        val raw = obj.fields[key]
+            ?: reject(PackageError.MANIFEST_INVALID, "缺少必填整数字段 " + key)
+        val literal = strictIntegerLiteral(raw, key)
+        return literal.toLongOrNull()
+            ?: reject(PackageError.MANIFEST_INVALID, "字段 " + key + " 超出整数范围")
+    }
+
+    private fun strictIntegerLiteral(raw: JsonValue?, key: String): String {
         val literal = (raw as? JsonValue.Num)?.literal
         if (literal == null || !INTEGER_LITERAL.matches(literal)) {
             reject(PackageError.MANIFEST_INVALID, "字段 " + key + " 必须是整数")
         }
-        return literal.toIntOrNull()
-            ?: reject(PackageError.MANIFEST_INVALID, "字段 " + key + " 超出整数范围")
+        return literal
     }
+
+    /**
+     * ECMAScript \s 的手写等价集。Kotlin/Java isBlank 会把 U+001C..U+001F
+     * 当作空白且不包含 U+FEFF；运行时清单跨端 parity 必须以 ECMAScript 为准。
+     */
+    private fun isEcmaScriptWhitespace(ch: Char): Boolean {
+        val code = ch.code
+        return code == 0x0009 || code == 0x000A || code == 0x000B ||
+            code == 0x000C || code == 0x000D || code == 0x0020 ||
+            code == 0x00A0 || code == 0x1680 ||
+            code in 0x2000..0x200A ||
+            code == 0x2028 || code == 0x2029 || code == 0x202F ||
+            code == 0x205F || code == 0x3000 || code == 0xFEFF
+    }
+
+    private fun isEcmaScriptBlank(value: String): Boolean = value.all(::isEcmaScriptWhitespace)
 
     private fun rejectUnknownFields(
         obj: JsonValue.Obj,
