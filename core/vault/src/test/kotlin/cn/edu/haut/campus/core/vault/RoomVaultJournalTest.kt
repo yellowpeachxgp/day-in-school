@@ -240,6 +240,28 @@ class RoomVaultJournalTest {
     }
 
     @Test
+    fun revertGradeUpdateRestoresRowAndMarksJournal() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        val gradeRef = EntityRef(EntityType.GRADE_ATTEMPT, "grade-1", scope)
+        journal.write(gradeRef, Actor.SYNC) {
+            database.campusDao().upsertGradeAttempts(listOf(gradeRow()))
+        }
+        journal.write(gradeRef, Actor.SYNC) {
+            database.campusDao().upsertGradeAttempts(listOf(gradeRow().copy(rawGrade = "59", numericScorePlain = "59")))
+        }
+        val update = journal.history(gradeRef).first().first { it.op == ChangeKind.UPDATED }
+
+        val result = journal.revert(update.changeId, Actor.USER)
+
+        assertEquals(RevertStatus.APPLIED, result.status)
+        assertEquals("92", database.campusDao().getGradeAttemptById("grade-1")?.rawGrade)
+        val history = journal.history(gradeRef).first()
+        assertEquals(result.revertChangeId, history.first { it.changeId == update.changeId }.revertedByChangeId)
+        assertEquals(ChangeKind.UPDATED, history.first { it.changeId == result.revertChangeId }.op)
+    }
+
+    @Test
     fun sensitiveSnapshotKeysFailClosedBeforeBusinessWrite() = runBlocking {
         val sensitiveStore = object : EntitySnapshotStore {
             override val type: EntityType = EntityType.PROFILE
