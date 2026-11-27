@@ -144,6 +144,7 @@ import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSect
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
 import cn.edu.haut.campus.feature.settings.root.home.SettingsHomeRouteSection
 import cn.edu.haut.campus.feature.settings.root.academic.SettingsAcademicRouteSection
+import cn.edu.haut.campus.feature.settings.root.theme.SettingsThemeRouteSection
 import cn.edu.haut.campus.feature.settings.root.network.SettingsNetworkRouteSection
 import kotlinx.coroutines.launch
 import java.io.File
@@ -475,155 +476,10 @@ fun SettingsScreen(
                     onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
                 )
 
-            // 7.5 主题、透明液态毛玻璃 UI、系统桌面背景同步、调色盘与模块化卡片布局
-            val runDesktopWallpaperSync: () -> Unit = {
-                scope.launch {
-                    feedbackText = "正在同步系统桌面背景与主题色..."
-                    WallpaperThemeEngine.syncSystemDesktopWallpaper(context)
-                        .onSuccess { result ->
-                            repository.saveCustomWallpaperTheme(
-                                localPath = result.localFilePath,
-                                primarySeedArgb = result.primarySeedArgb,
-                                extractedSwatches = result.extractedSwatches,
-                                enableLiquidGlass = true
-                            )
-                            WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                            val hexStr = String.format("#%06X", 0xFFFFFF and result.primarySeedArgb.toInt())
-                            feedbackText = "${result.statusMessage} ($hexStr)"
-                        }
-                        .onFailure { err ->
-                            feedbackText = "获取桌面背景失败：${err.message ?: "请稍后重试"}"
-                        }
-                }
-            }
-
-            val desktopWallpaperPermLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.RequestPermission()
-            ) {
-                runDesktopWallpaperSync()
-            }
-
-            val wallpaperPickerLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.GetContent()
-            ) { uri: Uri? ->
-                if (uri != null) {
-                    scope.launch {
-                        feedbackText = "正在应用背景图片..."
-                        WallpaperThemeEngine.importWallpaperAndExtractPalette(context, uri)
-                            .onSuccess { result ->
-                                repository.saveCustomWallpaperTheme(
-                                    localPath = result.localFilePath,
-                                    primarySeedArgb = result.primarySeedArgb,
-                                    extractedSwatches = result.extractedSwatches
-                                )
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                val hexStr = String.format("#%06X", 0xFFFFFF and result.primarySeedArgb.toInt())
-                                feedbackText = "已应用自定义背景图 ($hexStr)"
-                            }
-                            .onFailure { err ->
-                                feedbackText = "导入背景图失败：${err.message ?: "请换一张图片重试"}"
-                            }
-                    }
-                }
-            }
-
-            ThemePaletteAndCardLayoutSection(
-                prefs = prefs,
-                onSelectThemeMode = { mode ->
-                    scope.launch { repository.setThemeMode(mode) }
-                },
-                onSelectUiDesignStyle = { styleKey ->
-                    scope.launch {
-                        repository.setUiDesignStyle(styleKey)
-                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        val chosenStyle = UiDesignStyle.fromKey(styleKey)
-                        feedbackText = "已切换为「${chosenStyle.label}」视觉风格"
-                    }
-                },
-                onApplyCuratedPreset = { styleKey, paletteKey, title ->
-                    scope.launch {
-                        repository.applyCuratedThemePreset(styleKey, paletteKey)
-                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = "已应用「$title」清新套装"
-                    }
-                },
-                onToggleDynamicColor = { enabled ->
-                    scope.launch { repository.setUseDynamicColor(enabled) }
-                },
-                onSelectPalette = { key, seedArgb ->
-                    scope.launch {
-                        repository.setThemePalette(key, seedArgb)
-                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                        feedbackText = when (key) {
-                            PresetThemePalette.LIQUID_GLASS.key -> "已启用 Liquid Glass 主题"
-                            PresetThemePalette.HAUT_BLUE.key -> "已切换为工大校徽深蓝 (#053968)"
-                            else -> "已更新主题配色"
-                        }
-                    }
-                },
-                onSyncDesktopWallpaper = {
-                    if (WallpaperThemeEngine.hasSystemWallpaperPermission(context)) {
-                        runDesktopWallpaperSync()
-                    } else {
-                        desktopWallpaperPermLauncher.launch(
-                            WallpaperThemeEngine.requiredWallpaperPermissionName()
-                        )
-                    }
-                },
-                onExtractDesktopColors = {
-                    scope.launch {
-                        WallpaperThemeEngine.extractSystemDesktopColorsOnly(context)
-                            .onSuccess { swatches ->
-                                val primary = swatches.firstOrNull() ?: 0xFF0EA5E9L
-                                repository.saveExtractedDesktopSwatches(
-                                    primarySeedArgb = primary,
-                                    extractedSwatches = swatches
-                                )
-                                WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
-                                val hexStr = String.format("#%06X", 0xFFFFFF and primary.toInt())
-                                feedbackText = "已提取并应用系统桌面主题色 ($hexStr)"
-                            }
-                            .onFailure { err ->
-                                feedbackText = "提取桌面主题色失败：${err.message ?: "请重试"}"
-                            }
-                    }
-                },
-                onPickWallpaperImage = {
-                    wallpaperPickerLauncher.launch("image/*")
-                },
-                onUpdateWallpaperParams = { alpha, blurDp, cardAlpha ->
-                    scope.launch {
-                        repository.updateWallpaperVisualParams(
-                            alpha = alpha,
-                            blurDp = blurDp,
-                            cardAlpha = cardAlpha
-                        )
-                    }
-                },
-                onResetWallpaperParams = {
-                    scope.launch {
-                        repository.resetWallpaperVisualParams()
-                        feedbackText = "已恢复默认 Liquid Glass 参数"
-                    }
-                },
-                onClearWallpaper = {
-                    scope.launch {
-                        repository.clearCustomWallpaperTheme()
-                        feedbackText = "已移除自定义背景图片"
-                    }
-                },
-                onUpdateCardLayout = { order, hidden, fullWidth ->
-                    scope.launch {
-                        repository.updateHomeCardLayout(order, hidden, fullWidth)
-                        feedbackText = "已更新首页卡片布局"
-                    }
-                },
-                onResetCardLayout = {
-                    scope.launch {
-                        repository.resetHomeCardLayout()
-                        feedbackText = "已恢复默认首页卡片布局"
-                    }
-                }
+            SettingsThemeRouteSection(
+                repository = repository,
+                onFeedback = { feedbackText = it },
+                onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
             )
 
             // 8. 外观、隐私安全与数据管理
