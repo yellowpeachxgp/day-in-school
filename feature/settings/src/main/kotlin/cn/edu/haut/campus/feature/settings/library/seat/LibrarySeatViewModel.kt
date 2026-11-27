@@ -21,7 +21,7 @@ import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiActio
 import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
 import java.time.LocalDate
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.update
 /** 图书馆选座状态 holder：聚合偏好/计划/云身份，并委托全部既有座位动作。 */
 class LibrarySeatViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    sessionStates: StateFlow<AccountSessionState>
 ) : ProfileSessionScopedViewModel(repository, sessionStates), LibrarySeatUiAction {
     private val mutableUiState = MutableStateFlow(LibrarySeatUiState())
     val uiState: StateFlow<LibrarySeatUiState> = mutableUiState.asStateFlow()
@@ -90,7 +90,7 @@ class LibrarySeatViewModel(
     companion object {
         fun factory(
             repository: CampusRepository,
-            sessionStates: Flow<AccountSessionState>
+            sessionStates: StateFlow<AccountSessionState>
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { LibrarySeatViewModel(repository, sessionStates) }
         }

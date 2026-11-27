@@ -10,7 +10,7 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.dorm.state.DormElectricityUiAction
 import cn.edu.haut.campus.feature.settings.dorm.state.DormElectricityUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.update
 /** 宿舍水电状态 holder：聚合水电 Flow，并把拆分前 Repository 写动作委托在 ViewModel 内。 */
 class DormElectricityViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    sessionStates: StateFlow<AccountSessionState>
 ) : ProfileSessionScopedViewModel(repository, sessionStates), DormElectricityUiAction {
     private val mutableUiState = MutableStateFlow(DormElectricityUiState())
     val uiState: StateFlow<DormElectricityUiState> = mutableUiState.asStateFlow()
@@ -68,7 +68,7 @@ class DormElectricityViewModel(
     companion object {
         fun factory(
             repository: CampusRepository,
-            sessionStates: Flow<AccountSessionState>
+            sessionStates: StateFlow<AccountSessionState>
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { DormElectricityViewModel(repository, sessionStates) }
         }

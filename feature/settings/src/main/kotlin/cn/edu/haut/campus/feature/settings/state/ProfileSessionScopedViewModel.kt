@@ -8,21 +8,23 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 /**
  * 高隐私设置页 ViewModel 的账号串扰防线。
  *
- * ViewModel key 会让新 Profile/generation 得到新实例，但 AndroidViewModelStore 不会在
- * 底栏重组时主动清空旧实例。这里监听 AccountSessionCoordinator：一旦发生切换或当前
- * Ready 会话不再是本实例绑定的 repository/profileId/generation，立即取消全部收集协程
- * 并把状态清空；竞态中晚到的 Flow 发射也会被丢弃。
+ * 组合作用域 Owner 是第一道生命周期边界；本类作为独立防线继续监听
+ * AccountSessionCoordinator：一旦发生切换或当前 Ready 会话不再是本实例绑定的
+ * repository/profileId/generation，立即取消全部收集协程并把状态清空；竞态中晚到的
+ * Flow 发射也会先对照当前会话快照再丢弃。
  */
 abstract class ProfileSessionScopedViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    private val sessionStates: StateFlow<AccountSessionState>
 ) : ViewModel() {
     private val expectedProfileId: String = repository.profileId
     private val expectedGeneration: Long? = repository.sessionGeneration
@@ -34,6 +36,8 @@ abstract class ProfileSessionScopedViewModel(
 
     init {
         viewModelScope.launch {
+            // 避免在基类构造期间同步回调尚未完成初始化的子类；同时仍能在下一次调度点尽快失配。
+            yield()
             sessionStates.first { state -> shouldInvalidateFor(state) }
             invalidateSession()
         }
@@ -56,6 +60,7 @@ abstract class ProfileSessionScopedViewModel(
 
     protected fun isSessionValidForEmission(): Boolean =
         !sessionInvalidated &&
+            !shouldInvalidateFor(sessionStates.value) &&
             repository.isSessionActive &&
             expectedGeneration != null &&
             repository.sessionGeneration == expectedGeneration

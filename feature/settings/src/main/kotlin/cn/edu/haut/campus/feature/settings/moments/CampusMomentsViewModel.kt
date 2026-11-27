@@ -15,7 +15,7 @@ import cn.edu.haut.campus.core.model.MomentsTextbookListing
 import cn.edu.haut.campus.feature.settings.moments.state.CampusMomentsUiAction
 import cn.edu.haut.campus.feature.settings.moments.state.CampusMomentsUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.update
 /** Moments 状态 holder：聚合快照输入并委托全部写动作。 */
 class CampusMomentsViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    sessionStates: StateFlow<AccountSessionState>
 ) : ProfileSessionScopedViewModel(repository, sessionStates), CampusMomentsUiAction {
     private val mutableUiState = MutableStateFlow(CampusMomentsUiState())
     val uiState: StateFlow<CampusMomentsUiState> = mutableUiState.asStateFlow()
@@ -115,7 +115,7 @@ class CampusMomentsViewModel(
     companion object {
         fun factory(
             repository: CampusRepository,
-            sessionStates: Flow<AccountSessionState>
+            sessionStates: StateFlow<AccountSessionState>
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { CampusMomentsViewModel(repository, sessionStates) }
         }

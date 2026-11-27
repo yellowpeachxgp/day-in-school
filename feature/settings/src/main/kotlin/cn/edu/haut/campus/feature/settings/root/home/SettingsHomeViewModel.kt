@@ -13,7 +13,7 @@ import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
 import cn.edu.haut.campus.feature.settings.state.resetTransientForExit
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 /** 设置一级「我的」页分区状态 holder；不承接系统设置二级页。 */
 class SettingsHomeViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    sessionStates: StateFlow<AccountSessionState>
 ) : ProfileSessionScopedViewModel(repository, sessionStates) {
     private val mutableUiState = MutableStateFlow(SettingsHomeUiState())
     val uiState: StateFlow<SettingsHomeUiState> = mutableUiState.asStateFlow()
@@ -135,7 +135,7 @@ class SettingsHomeViewModel(
     companion object {
         fun factory(
             repository: CampusRepository,
-            sessionStates: Flow<AccountSessionState>
+            sessionStates: StateFlow<AccountSessionState>
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { SettingsHomeViewModel(repository, sessionStates) }
         }

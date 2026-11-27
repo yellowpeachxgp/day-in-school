@@ -12,7 +12,7 @@ import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiAction
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.update
 /** 云账号页状态 holder：聚合云身份、预约计划与已安装扩展 Flow。 */
 class XPeachCloudViewModel(
     private val repository: CampusRepository,
-    sessionStates: Flow<AccountSessionState>
+    sessionStates: StateFlow<AccountSessionState>
 ) : ProfileSessionScopedViewModel(repository, sessionStates), XPeachCloudUiAction {
     private val mutableUiState = MutableStateFlow(XPeachCloudUiState())
     val uiState: StateFlow<XPeachCloudUiState> = mutableUiState.asStateFlow()
@@ -53,7 +53,7 @@ class XPeachCloudViewModel(
     companion object {
         fun factory(
             repository: CampusRepository,
-            sessionStates: Flow<AccountSessionState>
+            sessionStates: StateFlow<AccountSessionState>
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer { XPeachCloudViewModel(repository, sessionStates) }
         }
