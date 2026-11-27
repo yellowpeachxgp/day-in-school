@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.timetable
+package cn.edu.haut.campus.feature.timetable.ui
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,12 +17,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachTheme
@@ -30,7 +28,10 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.PeriodTimeEditor
 import cn.edu.haut.campus.core.domain.WeeksSetParser
 import cn.edu.haut.campus.core.model.OccurrenceRule
-import kotlinx.coroutines.launch
+import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import java.time.DayOfWeek
 import java.time.LocalTime
 
@@ -51,12 +52,18 @@ private data class PracticeRuleGroupDraft(
  */
 @Composable
 fun PracticeCourseScheduleMatrixDialog(
-    unscheduled: UnscheduledAcademicCourseEntity,
+    unscheduled: UnscheduledPracticalCourseUiModel,
+    writeCompletions: Map<String, TimetableWriteCompletion>,
     onDismiss: () -> Unit,
-    onSave: suspend (List<OccurrenceRule>) -> Unit,
-    onSaved: () -> Unit
+    onAction: (TimetableUiAction) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
+    val writeLifecycle = rememberTimetableWriteLifecycle(
+        key = unscheduled.termId to unscheduled.sourceKey,
+        writeCompletions = writeCompletions,
+        onWriteSuccess = onDismiss,
+        onConsumeCompletion = { token -> onAction(TimetableUiAction.ConsumeWriteCompletion(token)) }
+    )
+    val writePending = writeLifecycle.pending
     var groups by remember(unscheduled.termId, unscheduled.sourceKey) {
         mutableStateOf(
             listOf(
@@ -68,7 +75,7 @@ fun PracticeCourseScheduleMatrixDialog(
         )
     }
     var error by remember(unscheduled.termId, unscheduled.sourceKey) { mutableStateOf<String?>(null) }
-    var saving by remember(unscheduled.termId, unscheduled.sourceKey) { mutableStateOf(false) }
+    val writeError = writeLifecycle.errorMessage
 
     fun updateGroup(id: String, transform: (PracticeRuleGroupDraft) -> PracticeRuleGroupDraft) {
         groups = groups.map { if (it.id == id) transform(it) else it }
@@ -102,7 +109,7 @@ fun PracticeCourseScheduleMatrixDialog(
     }
 
     XPeachAlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
+        onDismissRequest = { if (!writePending) onDismiss() },
         title = { Text("设置实践课多日排课") },
         text = {
             Column(
@@ -289,7 +296,8 @@ fun PracticeCourseScheduleMatrixDialog(
                 ) {
                     Text("+ 增加时段组")
                 }
-                error?.let {
+                val shownError = error ?: writeError
+                shownError?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
@@ -300,32 +308,29 @@ fun PracticeCourseScheduleMatrixDialog(
         },
         confirmButton = {
             Button(
-                enabled = !saving,
+                enabled = !writePending,
                 onClick = {
                     error = null
                     val parsed = runCatching { parseGroups() }.getOrElse {
                         error = it.message ?: "排课输入无效"
                         return@Button
                     }
-                    saving = true
-                    scope.launch {
-                        val result = runCatching { onSave(parsed) }
-                        saving = false
-                        if (result.isSuccess) {
-                            onSaved()
-                            onDismiss()
-                        } else {
-                            error = result.exceptionOrNull()?.message ?: "保存实践课排课失败"
-                        }
-                    }
+                    val writeToken = writeLifecycle.begin(TimetableWriteKind.SchedulePracticalCourseMatrix)
+                    onAction(
+                        TimetableUiAction.SchedulePracticalCourseMatrix(
+                            unscheduled = unscheduled,
+                            occurrences = parsed,
+                            writeToken = writeToken
+                        )
+                    )
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(if (saving) "保存中…" else "排入课表")
+                Text(if (writePending) "保存中…" else "排入课表")
             }
         },
         dismissButton = {
-            TextButton(onClick = { if (!saving) onDismiss() }) {
+            TextButton(onClick = { if (!writePending) onDismiss() }) {
                 Text("取消")
             }
         }

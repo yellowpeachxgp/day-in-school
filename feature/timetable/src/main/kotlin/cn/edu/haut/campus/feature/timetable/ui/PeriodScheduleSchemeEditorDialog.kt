@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.timetable
+package cn.edu.haut.campus.feature.timetable.ui
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -29,7 +28,9 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
-import kotlinx.coroutines.launch
+import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -50,17 +51,21 @@ fun PeriodScheduleSchemeEditorDialog(
     term: Term,
     periodTimes: List<PeriodTime>,
     schemes: List<PeriodTimeScheme>,
+    writeCompletions: Map<String, TimetableWriteCompletion>,
     onDismiss: () -> Unit,
-    onSaveBase: suspend (List<PeriodTime>) -> Unit,
-    onSaveScheme: suspend (schemeId: String?, name: String, startDate: LocalDate, endDate: LocalDate, periods: List<PeriodTime>) -> Unit,
-    onDeleteScheme: suspend (String) -> Unit,
-    onSaved: () -> Unit
+    onAction: (TimetableUiAction) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
+    val writeLifecycle = rememberTimetableWriteLifecycle(
+        key = term.id,
+        writeCompletions = writeCompletions,
+        onWriteSuccess = onDismiss,
+        onConsumeCompletion = { token -> onAction(TimetableUiAction.ConsumeWriteCompletion(token)) }
+    )
+    val writePending = writeLifecycle.pending
+    val writeError = writeLifecycle.errorMessage
     val termSchemes = schemes.filter { it.termId == term.id }
     var target by remember(term.id) { mutableStateOf("base") }
     var error by remember(target) { mutableStateOf<String?>(null) }
-    var saving by remember(target) { mutableStateOf(false) }
 
     fun rowsForTarget(targetId: String): List<PeriodDraftRow> {
         val baseRows = periodTimes
@@ -114,7 +119,7 @@ fun PeriodScheduleSchemeEditorDialog(
     }
 
     XPeachAlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
+        onDismissRequest = { if (!writePending) onDismiss() },
         title = { Text("节次与作息方案") },
         text = {
             Column(
@@ -184,19 +189,16 @@ fun PeriodScheduleSchemeEditorDialog(
                     }
                     if (selectedScheme != null) {
                         TextButton(
-                            enabled = !saving,
+                            enabled = !writePending,
                             onClick = {
-                                saving = true
-                                scope.launch {
-                                    val result = runCatching { onDeleteScheme(selectedScheme.id) }
-                                    saving = false
-                                    if (result.isSuccess) {
-                                        onSaved()
-                                        onDismiss()
-                                    } else {
-                                        error = result.exceptionOrNull()?.message ?: "删除作息方案失败"
-                                    }
-                                }
+                                error = null
+                                val writeToken = writeLifecycle.begin(TimetableWriteKind.DeletePeriodTimeScheme)
+                                onAction(
+                                    TimetableUiAction.DeletePeriodTimeScheme(
+                                        schemeId = selectedScheme.id,
+                                        writeToken = writeToken
+                                    )
+                                )
                             }
                         ) {
                             Text("删除该日期方案")
@@ -222,7 +224,7 @@ fun PeriodScheduleSchemeEditorDialog(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 TextButton(
-                                    enabled = rows.size > 1 && !saving,
+                                    enabled = rows.size > 1 && !writePending,
                                     onClick = { rows = rows.filterNot { it.key == row.key } }
                                 ) {
                                     Text("删除")
@@ -263,7 +265,7 @@ fun PeriodScheduleSchemeEditorDialog(
                     }
                 }
                 TextButton(
-                    enabled = !saving,
+                    enabled = !writePending,
                     onClick = {
                         val maxNo = rows.mapNotNull { it.periodNo.toIntOrNull() }.maxOrNull() ?: 0
                         if (maxNo >= 30) {
@@ -285,7 +287,8 @@ fun PeriodScheduleSchemeEditorDialog(
                 ) {
                     Text("+ 添加节次")
                 }
-                error?.let {
+                val shownError = error ?: writeError
+                shownError?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
@@ -296,50 +299,52 @@ fun PeriodScheduleSchemeEditorDialog(
         },
         confirmButton = {
             Button(
-                enabled = !saving,
+                enabled = !writePending,
                 onClick = {
                     error = null
                     val parsedPeriods = runCatching { parseRows() }.getOrElse {
                         error = it.message ?: "节次输入无效"
                         return@Button
                     }
-                    saving = true
-                    scope.launch {
-                        val result = runCatching {
-                            if (target == "base") {
-                                onSaveBase(parsedPeriods)
-                            } else {
-                                val start = runCatching { LocalDate.parse(schemeStart.trim()) }.getOrElse {
-                                    throw IllegalArgumentException("开始日期必须是 YYYY-MM-DD")
-                                }
-                                val end = runCatching { LocalDate.parse(schemeEnd.trim()) }.getOrElse {
-                                    throw IllegalArgumentException("结束日期必须是 YYYY-MM-DD")
-                                }
-                                onSaveScheme(
-                                    if (target == "new") null else target,
-                                    schemeName,
-                                    start,
-                                    end,
-                                    parsedPeriods
-                                )
-                            }
+                    if (target == "base") {
+                        val writeToken = writeLifecycle.begin(TimetableWriteKind.SaveBasePeriodTimes)
+                        onAction(
+                            TimetableUiAction.SaveBasePeriodTimes(
+                                timeTableId = term.timeTableId,
+                                periods = parsedPeriods,
+                                writeToken = writeToken
+                            )
+                        )
+                    } else {
+                        val start = runCatching { LocalDate.parse(schemeStart.trim()) }.getOrElse {
+                            error = "开始日期必须是 YYYY-MM-DD"
+                            return@Button
                         }
-                        saving = false
-                        if (result.isSuccess) {
-                            onSaved()
-                            onDismiss()
-                        } else {
-                            error = result.exceptionOrNull()?.message ?: "保存作息方案失败"
+                        val end = runCatching { LocalDate.parse(schemeEnd.trim()) }.getOrElse {
+                            error = "结束日期必须是 YYYY-MM-DD"
+                            return@Button
                         }
+                        val writeToken = writeLifecycle.begin(TimetableWriteKind.SavePeriodTimeScheme)
+                        onAction(
+                            TimetableUiAction.SavePeriodTimeScheme(
+                                term = term,
+                                schemeId = if (target == "new") null else target,
+                                name = schemeName,
+                                startDate = start,
+                                endDate = end,
+                                periods = parsedPeriods,
+                                writeToken = writeToken
+                            )
+                        )
                     }
                 },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(if (saving) "保存中…" else "保存")
+                Text(if (writePending) "保存中…" else "保存")
             }
         },
         dismissButton = {
-            TextButton(onClick = { if (!saving) onDismiss() }) {
+            TextButton(onClick = { if (!writePending) onDismiss() }) {
                 Text("取消")
             }
         }
