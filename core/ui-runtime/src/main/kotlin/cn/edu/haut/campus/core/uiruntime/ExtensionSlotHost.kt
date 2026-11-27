@@ -43,7 +43,7 @@ fun ExtensionSlotHost(
     contributions: List<ExtensionUiContribution>,
     modifier: Modifier = Modifier,
     showEmptyState: Boolean = false,
-    allowedHostRoutes: Set<String> = DEFAULT_EXTENSION_HOST_ROUTES,
+    allowedHostRoutes: Set<String> = emptySet(),
     onCommand: DeclarativeCommandHandler = DeclarativeCommandHandler { }
 ) {
     val policy = ExtensionSlotPolicies.policyFor(slotId) ?: return
