@@ -19,6 +19,7 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusGeofenceRecognizer
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
+import cn.edu.haut.campus.core.location.CampusMapViewportMath
 import cn.edu.haut.campus.core.location.GisBuildingFootprint
 import cn.edu.haut.campus.core.location.GisCampusVectorDataset
 import cn.edu.haut.campus.core.location.GisGeoPoint
@@ -741,13 +742,13 @@ internal fun rememberMapScreenAssembly(
                 }
                 mapCenterLatGcj = action.centerLatGcj
                 mapCenterLonGcj = action.centerLonGcj
-                mapZoom = if (action.fromFullScreenMap) action.zoom else action.zoom.coerceIn(12.6f, 18.8f)
+                mapZoom = if (action.fromFullScreenMap) action.zoom else CampusMapViewportMath.clampZoom(action.zoom)
                 if (action.fromFullScreenMap && expandRouteSteps) {
                     expandRouteSteps = false
                 }
             }
-            MapUiAction.ZoomIn -> mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f)
-            MapUiAction.ZoomOut -> mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f)
+            MapUiAction.ZoomIn -> mapZoom = CampusMapViewportMath.zoomInByButton(mapZoom)
+            MapUiAction.ZoomOut -> mapZoom = CampusMapViewportMath.zoomOutByButton(mapZoom)
             MapUiAction.ShowRouteOverview -> {
                 isFollowingUser = false
                 if (navigationPlan != null) {

@@ -68,6 +68,7 @@ import cn.edu.haut.campus.core.domain.CampusHospitalPharmacyCatalog
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusMapNavigator
+import cn.edu.haut.campus.core.location.CampusMapViewportMath
 import cn.edu.haut.campus.core.location.GisMapStyleMode
 import cn.edu.haut.campus.core.location.HautOfficialGisClient
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
@@ -681,7 +682,7 @@ internal fun CampusMapScreenContent(
                             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
-                            zoom = mapZoom.coerceIn(12.6f, 18.8f),
+                            zoom = CampusMapViewportMath.clampZoom(mapZoom),
                             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
                             gisDataset = if (isLianhuajieActive) gisDataset else null,
                             activeBuildingFootprint = activeBuildingFootprint,
@@ -706,12 +707,12 @@ internal fun CampusMapScreenContent(
                             XPeachIconButton(
                                 icon = Icons.Default.Add,
                                 contentDescription = "放大地图",
-                                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
+                                onClick = { mapZoom = CampusMapViewportMath.zoomInByButton(mapZoom) }
                             )
                             XPeachIconButton(
                                 icon = Icons.Default.Remove,
                                 contentDescription = "缩小地图",
-                                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
+                                onClick = { mapZoom = CampusMapViewportMath.zoomOutByButton(mapZoom) }
                             )
                         }
                     }
@@ -1532,12 +1533,12 @@ internal fun CampusMapScreenContent(
             XPeachIconButton(
                 icon = Icons.Default.Add,
                 contentDescription = "放大地图",
-                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
+                onClick = { mapZoom = CampusMapViewportMath.zoomInByButton(mapZoom) }
             )
             XPeachIconButton(
                 icon = Icons.Default.Remove,
                 contentDescription = "缩小地图",
-                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
+                onClick = { mapZoom = CampusMapViewportMath.zoomOutByButton(mapZoom) }
             )
             XPeachIconButton(
                 icon = Icons.Default.ZoomOutMap,
