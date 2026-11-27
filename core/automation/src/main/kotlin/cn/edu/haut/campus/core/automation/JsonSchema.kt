@@ -81,7 +81,7 @@ class JsonSchema private constructor(
 }
 
 private val SCHEMA_KEYWORDS = setOf(
-    "$schema", "title", "description", "default", "examples",
+    "\$schema", "title", "description", "default", "examples",
     "type", "properties", "required", "additionalProperties", "items",
     "minItems", "maxItems", "minLength", "maxLength", "pattern",
     "minimum", "maximum", "enum", "const",
