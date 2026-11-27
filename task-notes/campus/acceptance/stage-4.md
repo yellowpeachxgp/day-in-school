@@ -22,6 +22,8 @@
 
 补充核验：`git diff --quiet origin/train/cis-004 0e83b780541ca526c450e7ac78e5fbf2ada4c4a6` 为空，证明 train exact tree 与对应 main tree 一致；因此 train SHA 上的门禁可代表该趟列车合入后的 main tree。后续合入的 W1-01a、W0-07a、W0-11a 等不属于本 stage 的声明能力。
 
+2026-11-27 一致性复核补充：证据索引前 3 条命令记录的 `durationMs` 原为空，已按对应 devbox `.log.summary` 回填为 15s/22s/6s，并在 notes 写明关键数字；本次只校正文档证据元数据，未重跑、未改业务代码。
+
 ## 2. 开发机门禁汇总
 
 | 门禁 | 命令（脱敏模板） | SHA | 退出码 | 耗时 | 开发机日志路径 | 结论 |
