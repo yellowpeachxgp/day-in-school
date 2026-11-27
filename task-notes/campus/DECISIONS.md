@@ -63,6 +63,7 @@
 | AUTO-028 | 2026-11-27 | W6-00 运行时 parity 缺口裁定语义：`legacy_schema_version` 若存在必须枚举校验（仅 `dis-campus-plugin/v1`）两端一致拒绝非法值；`name`/`ui_slots[].title` 等显示字符串非空白（拒绝纯空格，字符集按 ECMAScript `\s` 对齐）；`min_host_api`/`max_host_api` 仅接受整数且上限 2^31-1；取最严合理解释双端对齐并补跨端夹具；自主决策，待用户复核 | 主代理一致性裁决：跨端运行时语义分歧时取最严合理解释，避免宽松端成为注入面 | 待用户复核 |
 | AUTO-029 | 2026-11-27 | AUTO-025 细化：parity fail-closed 要求 runtime 路由必须登记 active，故实现卡与 planned→active 翻转必须原子合并；契约线无在途卡时实现卡可在同 PR 携带自己端点的翻转；有在途契约卡时仍需排序避让；自主决策，待用户复核 | 主代理原子性裁决：翻转拆出会造成 runtime 已上线而契约 planned 的 fail-closed 违例窗口，原子合并优先于文件级排序便利 | 待用户复核 |
 | AUTO-030 | 2026-11-27 | 成员忙闲 `sharing_level` 严格自服务：只有成员本人可修改自己的共享级别；OWNER/ADMIN 不得为他人开启/修改共享（管理动作仅在成员退出/移除时由系统置 NONE）；CT-01 契约文本与此冲突处以本决策从严，契约线后续对齐文本；自主决策，待用户复核 | 主代理隐私裁决：隐私同意优先于管理便利，忙闲共享属个人数据授权，管理员不得代为开启 | 待用户复核 |
+| AUTO-031 | 2026-11-27 | `feature:map` 的 `lintAnalyzeRelease` NoClassDefFoundError 经诊断为 lint 31.8.2（AGP 8.8.2）/compose ui 1.7.8 lint.jar 在高并发分析窗口的偶发类加载失败，非代码缺陷；批准仅 feature:map 禁用 `MultipleAwaitPointerEventScopes` 单项检查（全仓唯一 `awaitPointerEventScope` 调用点且用法合规），须带证据注释与 issue 跟踪草稿，AGP/compose 升级后复评移除；注：审阅发现初版证据中「触发文件在 3 个绿色 main SHA 均已存在」对其中 2 个 SHA 不实、flake 实证链部分不可审计，已要求作者修正降级表述，该瑕疵不改变工具链竞态的核心诊断（红色失败日志与闲时多次复现绿均真实）；自主决策，待用户复核 | 主代理工具链裁决：风格类检查在唯一合规调用点上的覆盖损失，小于 main 门禁随机阻断的协作成本；证据不实部分必须诚实降级，不得因结论方向正确而姑息 | 待用户复核 |
 
 ## 追加规则
 
