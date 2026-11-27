@@ -317,15 +317,21 @@ class CampusRepositoryW005c4CloudIdentityCharacterizationTest {
         val jwtB = testCloudJwt("cloud_user_B")
         repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA))
         dao.upsertLibraryBookingPlan(cloudPlan("plan_a_armed", "cloud_user_A", "ARMED"))
+        dao.upsertLibraryBookingPlan(cloudPlan("plan_a_cjob", "cloud_user_A", "ARMED", cloudJobId = "cjob_loc"))
         dao.upsertLibraryBookingPlan(cloudPlan("plan_a_executing", "cloud_user_A", "EXECUTING"))
         dao.upsertLibraryBookingPlan(cloudPlan("plan_a_confirmed", "cloud_user_A", "CONFIRMED"))
 
         repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_B", jwtB))
 
+        // 测试装配下假传输跳过联网登出确认：真实云端排队任务按"离线切换"分支隔离待核对
         val armed = dao.getLibraryBookingPlanById("plan_a_armed")!!
-        assertEquals("CANCELLED", armed.status)
-        assertEquals("已切换云端账号，原账号未派发的排队计划已停止", armed.lastDiagnosticMessage)
+        assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", armed.status)
+        assertEquals("离线切换云端账号：未能联网确认原账号排队任务是否已停止，已隔离保留待核对记录", armed.lastDiagnosticMessage)
         assertEquals("cloud_user_A", armed.ownerCloudUserId)
+
+        val cjob = dao.getLibraryBookingPlanById("plan_a_cjob")!!
+        assertEquals("CANCELLED", cjob.status)
+        assertEquals("已切换云端账号，原账号未派发的排队计划已停止", cjob.lastDiagnosticMessage)
 
         val executing = dao.getLibraryBookingPlanById("plan_a_executing")!!
         assertEquals("DELEGATION_STOPPED_RESULT_UNKNOWN", executing.status)
