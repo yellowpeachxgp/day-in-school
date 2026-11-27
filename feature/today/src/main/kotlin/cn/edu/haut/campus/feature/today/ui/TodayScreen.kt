@@ -154,14 +154,15 @@ private fun TodayLegacyContent(
     }
 
     val todayClock = LocalTodayClock.current
-    var currentNow by remember { mutableStateOf(todayClock.now()) }
-    var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
-    var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
-    var showTermSwitcherDialog by remember { mutableStateOf(false) }
-    var showCardCustomizerDialog by remember { mutableStateOf(false) }
-    var showDiningDialog by remember { mutableStateOf(false) }
-    var diningShuffleOffset by remember { mutableIntStateOf(0) }
-    var dismissedMealBlockKey by remember { mutableStateOf<String?>(null) }
+    val interactionState = rememberTodayInteractionState(todayClock.now())
+    var currentNow by interactionState.currentNow
+    var selectedDate by interactionState.selectedDate
+    var selectedOccurrenceForDetail by interactionState.selectedOccurrenceForDetail
+    var showTermSwitcherDialog by interactionState.showTermSwitcherDialog
+    var showCardCustomizerDialog by interactionState.showCardCustomizerDialog
+    var showDiningDialog by interactionState.showDiningDialog
+    var diningShuffleOffset by interactionState.diningShuffleOffset
+    var dismissedMealBlockKey by interactionState.dismissedMealBlockKey
 
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

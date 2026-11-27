@@ -118,15 +118,15 @@ private fun TimetableLegacyContent(
     val onNavigateToImporter: () -> Unit = { onAction(TimetableUiAction.OpenImporter) }
     val onNavigateToMapWithRoom: (String) -> Unit = { room -> onAction(TimetableUiAction.OpenMapRoom(room)) }
 
-    var showUnscheduled by remember { mutableStateOf(false) }
-
     val timetableClock = LocalTimetableClock.current
     val today = remember { timetableClock.today() }
     val currentActualWeek = remember(term, today, calendarOverrides) {
         term?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }
 
-    var selectedWeek by remember { mutableIntStateOf(currentActualWeek) }
+    val interactionState = rememberTimetableInteractionState(currentActualWeek)
+    var showUnscheduled by interactionState.showUnscheduled
+    var selectedWeek by interactionState.selectedWeek
     LaunchedEffect(currentActualWeek, term?.id) {
         selectedWeek = currentActualWeek
     }
@@ -136,16 +136,14 @@ private fun TimetableLegacyContent(
         }
     }
 
-    var editingOccurrence by remember { mutableStateOf<ClassOccurrence?>(null) }
-    var editingMasterRule by remember { mutableStateOf<CourseScheduleRule?>(null) }
-    var schedulingPracticalCourse by remember {
-        mutableStateOf<cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity?>(null)
-    }
-    var showCanceledCoursesDialog by remember { mutableStateOf(false) }
-    var showAddCourseDialog by remember { mutableStateOf(false) }
-    var showTermSwitcherDialog by remember { mutableStateOf(false) }
-    var confirmDeleteMasterRule by remember { mutableStateOf<CourseScheduleRule?>(null) }
-    var viewMode by remember { mutableIntStateOf(0) } // 0: 周网格, 1: 周清单, 2: 总课表
+    var editingOccurrence by interactionState.editingOccurrence
+    var editingMasterRule by interactionState.editingMasterRule
+    var schedulingPracticalCourse by interactionState.schedulingPracticalCourse
+    var showCanceledCoursesDialog by interactionState.showCanceledCoursesDialog
+    var showAddCourseDialog by interactionState.showAddCourseDialog
+    var showTermSwitcherDialog by interactionState.showTermSwitcherDialog
+    var confirmDeleteMasterRule by interactionState.confirmDeleteMasterRule
+    var viewMode by interactionState.viewMode // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
 
     // 已取消分组语义（与恢复一致）：
