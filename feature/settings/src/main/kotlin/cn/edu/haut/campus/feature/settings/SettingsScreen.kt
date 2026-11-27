@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.academic.GitHubReleaseInfo
 import cn.edu.haut.campus.core.academic.GitHubReleaseUpdater
 import cn.edu.haut.campus.core.academic.HautSessionManager
@@ -143,6 +144,7 @@ import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
 import cn.edu.haut.campus.feature.settings.root.ui.SyncHistoryDialog
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
+import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateViewModel
 import cn.edu.haut.campus.feature.settings.root.home.SettingsHomeRouteSection
 import cn.edu.haut.campus.feature.settings.root.academic.SettingsAcademicRouteSection
 import cn.edu.haut.campus.feature.settings.root.theme.SettingsThemeRouteSection
@@ -197,6 +199,29 @@ fun SettingsScreen(
     val rootSessionKey = settingsSessionKey(repository.profileId, repository.sessionGeneration)
     val rootViewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(rootSessionKey)
     val transientResetRegistry = remember { SettingsTransientResetRegistry() }
+    // GitHub Release 自动版本检测与在线拉取直装状态；ViewModel 与拆分前一样随根设置页创建。
+    val currentInstalledVersion = remember(context) {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.18.0" }
+            .getOrDefault("0.18.0")
+    }
+    val updateSessionKey = "settings-update-" + rootSessionKey
+    val settingsUpdateViewModel: SettingsUpdateViewModel = viewModel(
+        viewModelStoreOwner = rootViewModelStoreOwner,
+        key = updateSessionKey,
+        factory = SettingsUpdateViewModel.factory(
+            repository = repository,
+            currentInstalledVersion = currentInstalledVersion,
+            apkDownloader = { info, proxy, onProgress ->
+                GitHubReleaseUpdater.downloadReleaseApk(
+                    context = context,
+                    releaseInfo = info,
+                    proxyConfig = proxy,
+                    onProgress = onProgress
+                )
+            },
+            apkInstaller = { file -> GitHubReleaseUpdater.triggerInstallApk(context, file) }
+        )
+    )
     // 拆分前同步/资料/更新等 remember 都挂在根 SettingsScreen；底栏切换导致根页退出时才统一重置。
     DisposableEffect(repository, transientResetRegistry) {
         onDispose { transientResetRegistry.resetAll() }
@@ -227,12 +252,6 @@ fun SettingsScreen(
     // 各类弹窗与折叠状态
     var showImportHistoryDialog by remember { mutableStateOf(false) }
     var feedbackText by remember { mutableStateOf<String?>(null) }
-
-    // GitHub Release 自动版本检测与在线拉取直装状态
-    val currentInstalledVersion = remember(context) {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.18.0" }
-            .getOrDefault("0.18.0")
-    }
 
     Column(
         modifier = Modifier
@@ -414,10 +433,8 @@ fun SettingsScreen(
             )
 
             SettingsUpdateRouteSection(
-                repository = repository,
-                currentInstalledVersion = currentInstalledVersion,
                 transientResetRegistry = transientResetRegistry,
-                viewModelStoreOwner = rootViewModelStoreOwner
+                viewModel = settingsUpdateViewModel
             )
             }
                 }

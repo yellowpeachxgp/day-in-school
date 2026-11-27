@@ -35,11 +35,18 @@ class SettingsUpdateViewModel(
     private var checkJob: Job? = null
     private var downloadJob: Job? = null
     private var transientEpoch: Long = 0L
+    private var lastAutoCheckKey: String? = null
 
     init {
         viewModelScope.launch {
             repository.preferencesFlow.collectLatest { prefs ->
+                val key = prefs.networkProxyConfig.mode.key + ":" + prefs.networkProxyConfig.presetMirrorKey
+                val shouldCheck = key != lastAutoCheckKey
+                lastAutoCheckKey = key
                 mutableUiState.update { it.copy(prefs = prefs) }
+                if (shouldCheck) {
+                    checkLatestRelease(manual = false)
+                }
             }
         }
     }
