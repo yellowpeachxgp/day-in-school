@@ -845,11 +845,13 @@ class CampusRepository internal constructor(
     suspend fun commitCourseImportDiff(
         preview: ImportDiffPreview,
         overwriteUserConflicts: Boolean = false,
-        setAsCurrentTerm: Boolean = true
+        setAsCurrentTerm: Boolean = true,
+        actor: Actor = Actor.SYNC
     ) = timetableRepository.commitCourseImportDiff(
         preview = preview,
         overwriteUserConflicts = overwriteUserConflicts,
-        setAsCurrentTerm = setAsCurrentTerm
+        setAsCurrentTerm = setAsCurrentTerm,
+        actor = actor
     )
 
     suspend fun saveImportedGrades(
