@@ -116,8 +116,8 @@ class CampusRepositoryW005c3LibrarySeatCharacterizationTest {
 
     private fun sessionSnapshot(token: String) = LibrarySeatSessionSnapshot(
         rawToken = token,
-        casTgcCookie = "castgc-w005c3",
-        casJsessionId = "jsession-w005c3",
+        casTgcCookie = "dummy",
+        casJsessionId = "dummy",
         userInfo = LibrarySeatUserInfo(
             userNo = "20260001",
             userName = "测试同学",
