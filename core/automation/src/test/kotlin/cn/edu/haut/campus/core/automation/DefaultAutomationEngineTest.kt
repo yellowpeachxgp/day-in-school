@@ -330,6 +330,40 @@ class DefaultAutomationEngineTest {
     }
 
     @Test
+    fun runAppendedBeforeDedupeCompletionCrashIsRepairedWithoutReexecution() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val mutableClock = MutableClock(clockNow)
+        val dedupeStore = FailOnceMarkRunRecordedDedupeStore(InMemoryAutomationDedupeStore())
+        val harness = newHarness(
+            actionExecutor = action,
+            dedupeStore = dedupeStore,
+            clock = mutableClock,
+            pendingLease = Duration.ofSeconds(30)
+        )
+        val rule = AutomationTestFixtures.rule()
+        harness.ruleStore.upsert(rule)
+        val instance = TriggerInstance(rule.id, "append-before-completion-crash", firedAt)
+        val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey)
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
+
+        val crash = runCatching { harness.engine.executeTrigger(instance) }.exceptionOrNull()
+
+        assertTrue(crash is IllegalStateException)
+        assertEquals(1, action.calls.size)
+        val appendedRun = harness.runStore.get(runId) ?: error("run append 成功后即使终态转换崩溃也应保留运行记录")
+        val pendingRecord = dedupeStore.find(dedupeKey) ?: error("终态转换崩溃后应保留 PENDING dedupe 记录")
+        assertEquals(AutomationDedupeState.PENDING, pendingRecord.state)
+
+        val redelivered = harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(5)))
+
+        assertTrue(redelivered is TriggerExecutionResult.Duplicate)
+        assertEquals(appendedRun, (redelivered as TriggerExecutionResult.Duplicate).existingRun)
+        assertEquals("run 已存在时重投只能修复终态，不得再次执行动作", 1, action.calls.size)
+        val completedRecord = dedupeStore.find(dedupeKey) ?: error("重投修复后 dedupe 应存在")
+        assertEquals(AutomationDedupeState.RUN_RECORDED, completedRecord.state)
+    }
+
+    @Test
     fun quietHoursSuppressLocalNotifyButKeepAuditableOutcome() = runTest {
         val action = AutomationTestFixtures.RecordingActionExecutor(risk = ActionRisk.LOCAL_NOTIFY)
         val harness = newHarness(actionExecutor = action)
@@ -466,6 +500,25 @@ class DefaultAutomationEngineTest {
         fun advance(duration: Duration) {
             now = now.plus(duration)
         }
+    }
+
+    private class FailOnceMarkRunRecordedDedupeStore(
+        private val delegate: InMemoryAutomationDedupeStore
+    ) : AutomationDedupeStore {
+        private val shouldFail = AtomicBoolean(true)
+
+        override suspend fun tryAcquire(record: AutomationDedupeRecord): DedupeAcquireResult = delegate.tryAcquire(record)
+
+        override suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean {
+            if (shouldFail.compareAndSet(true, false)) {
+                throw IllegalStateException("模拟 run append 后、dedupe 终态前崩溃")
+            }
+            return delegate.markRunRecorded(expected, completedAt)
+        }
+
+        override suspend fun find(dedupeKey: String): AutomationDedupeRecord? = delegate.find(dedupeKey)
+
+        override suspend fun count(): Int = delegate.count()
     }
 
     private class FailOnceAppendRunStore(

@@ -33,7 +33,12 @@ interface AutomationEngine {
     fun runs(ruleId: String): Flow<List<AutomationRun>>
 }
 
-/** MASTER_PLAN §6.3 的纯 JVM 自动化引擎核心；调度、Room 持久化和 UI 由后续卡接入。 */
+/**
+ * MASTER_PLAN §6.3 的纯 JVM 自动化引擎核心；调度、Room 持久化和 UI 由后续卡接入。
+ *
+ * pendingLease 是崩溃恢复窗口：lease 内重投视为同一执行窗口，过期后才允许补处理重新获得执行权。
+ * 实现方应让 lease 大于动作最坏执行时间；过期恢复时动作必须用 RunContext 中稳定的 runId/dedupeKey 做副作用幂等。
+ */
 class DefaultAutomationEngine(
     private val ruleStore: AutomationRuleStore,
     private val runStore: AutomationRunStore,
@@ -116,7 +121,10 @@ class DefaultAutomationEngine(
 
         val run = executeRule(rule, boundInstance, dryRun = false)
         runStore.append(run)
-        dedupeStore.markRunRecorded(acquired, clock.instant())
+        val markedTerminal = dedupeStore.markRunRecorded(acquired, clock.instant())
+        if (!markedTerminal) {
+            throw AutomationDedupeCompletionException(dedupeKey)
+        }
         return TriggerExecutionResult.Executed(run)
     }
 

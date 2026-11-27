@@ -82,6 +82,9 @@ sealed interface DedupeAcquireResult {
 class AutomationDedupeConflictException(dedupeKey: String) :
     IllegalStateException("dedupeKey 已存在但触发实例身份或策略不一致: " + dedupeKey)
 
+class AutomationDedupeCompletionException(dedupeKey: String) :
+    IllegalStateException("dedupe PENDING 记录在运行结束前失去所有权: " + dedupeKey)
+
 /**
  * 去重端口。tryAcquire 必须是原子 check-and-insert/reacquire：
  * RUN_RECORDED 或 lease 未过期的 PENDING 会直接判重；lease 过期的 PENDING 允许崩溃恢复重投原子替换。
