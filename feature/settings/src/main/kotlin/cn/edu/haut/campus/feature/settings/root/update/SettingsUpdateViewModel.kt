@@ -17,7 +17,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -26,26 +25,38 @@ class SettingsUpdateViewModel(
     private val repository: CampusRepository,
     private val currentInstalledVersion: String,
     private val apkDownloader: suspend (GitHubReleaseInfo, NetworkProxyConfig, (Long, Long) -> Unit) -> Result<File>,
-    private val apkInstaller: (File) -> Result<Boolean>
+    private val apkInstaller: (File) -> Result<Boolean>,
+    private val releaseChecker: suspend (String, NetworkProxyConfig) -> Result<GitHubReleaseInfo> = { currentVersionName, proxyConfig ->
+        GitHubReleaseUpdater.checkLatestRelease(
+            currentVersionName = currentVersionName,
+            proxyConfig = proxyConfig
+        )
+    }
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(
         SettingsUpdateUiState(currentInstalledVersion = currentInstalledVersion)
     )
     val uiState: StateFlow<SettingsUpdateUiState> = mutableUiState.asStateFlow()
     private var checkJob: Job? = null
+    private var autoCheckJob: Job? = null
     private var downloadJob: Job? = null
     private var transientEpoch: Long = 0L
     private var lastAutoCheckKey: String? = null
 
     init {
         viewModelScope.launch {
-            repository.preferencesFlow.collectLatest { prefs ->
+            repository.preferencesFlow.collect { prefs ->
                 val key = prefs.networkProxyConfig.mode.key + ":" + prefs.networkProxyConfig.presetMirrorKey
-                val shouldCheck = key != lastAutoCheckKey
+                val shouldRestartAutoCheck = key != lastAutoCheckKey
                 lastAutoCheckKey = key
                 mutableUiState.update { it.copy(prefs = prefs) }
-                if (shouldCheck) {
-                    checkLatestRelease(manual = false)
+                if (shouldRestartAutoCheck) {
+                    // 与拆分前 LaunchedEffect(mode, presetMirrorKey) 对齐：线路 key 变化时
+                    // 立即取消仍在等待的旧线路检查，并用新线路重新检查；其它偏好变化不影响在途检查。
+                    autoCheckJob?.cancel()
+                    autoCheckJob = viewModelScope.launch {
+                        runReleaseCheck(manual = false, proxyConfig = prefs.networkProxyConfig)
+                    }
                 }
             }
         }
@@ -74,47 +85,48 @@ class SettingsUpdateViewModel(
 
     private fun checkLatestRelease(manual: Boolean) {
         if (mutableUiState.value.isCheckingRelease) return
-        val epoch = transientEpoch
+        val proxyConfig = mutableUiState.value.prefs.networkProxyConfig
         checkJob = viewModelScope.launch {
-            val proxyConfig = mutableUiState.value.prefs.networkProxyConfig
+            runReleaseCheck(manual = manual, proxyConfig = proxyConfig)
+        }
+    }
+
+    private suspend fun runReleaseCheck(manual: Boolean, proxyConfig: NetworkProxyConfig) {
+        val epoch = transientEpoch
+        updateIfCurrent(epoch) {
+            it.copy(
+                isCheckingRelease = true,
+                releaseStatusMessage = if (manual) {
+                    "正在通过「" + proxyConfig.statusSummaryLabel() + "」检查更新..."
+                } else {
+                    it.releaseStatusMessage
+                }
+            )
+        }
+        val checkRes = releaseChecker(currentInstalledVersion, proxyConfig)
+        updateIfCurrent(epoch) { it.copy(isCheckingRelease = false) }
+        checkRes.onSuccess { info ->
             updateIfCurrent(epoch) {
                 it.copy(
-                    isCheckingRelease = true,
-                    releaseStatusMessage = if (manual) {
-                        "正在通过「" + proxyConfig.statusSummaryLabel() + "」检查更新..."
+                    releaseInfo = info,
+                    showReleaseNotesDialog = if (manual) true else it.showReleaseNotesDialog,
+                    releaseStatusMessage = if (info.hasNewerVersion) {
+                        if (manual) {
+                            "发现新版本 " + info.tagName + "（" + info.resolvedViaRoute + "），点击右侧按钮下载安装。"
+                        } else {
+                            "发现新版本 " + info.tagName
+                        }
+                    } else if (manual) {
+                        "当前 v" + currentInstalledVersion + " 已是最新版本（" + info.resolvedViaRoute + "）。"
                     } else {
-                        it.releaseStatusMessage
+                        "当前已是最新版本（v" + currentInstalledVersion + "）"
                     }
                 )
             }
-            val checkRes = GitHubReleaseUpdater.checkLatestRelease(
-                currentVersionName = currentInstalledVersion,
-                proxyConfig = proxyConfig
-            )
-            updateIfCurrent(epoch) { it.copy(isCheckingRelease = false) }
-            checkRes.onSuccess { info ->
+        }.onFailure { err ->
+            if (manual) {
                 updateIfCurrent(epoch) {
-                    it.copy(
-                        releaseInfo = info,
-                        showReleaseNotesDialog = if (manual) true else it.showReleaseNotesDialog,
-                        releaseStatusMessage = if (info.hasNewerVersion) {
-                            if (manual) {
-                                "发现新版本 " + info.tagName + "（" + info.resolvedViaRoute + "），点击右侧按钮下载安装。"
-                            } else {
-                                "发现新版本 " + info.tagName
-                            }
-                        } else if (manual) {
-                            "当前 v" + currentInstalledVersion + " 已是最新版本（" + info.resolvedViaRoute + "）。"
-                        } else {
-                            "当前已是最新版本（v" + currentInstalledVersion + "）"
-                        }
-                    )
-                }
-            }.onFailure { err ->
-                if (manual) {
-                    updateIfCurrent(epoch) {
-                        it.copy(releaseStatusMessage = "检查失败：" + (err.message ?: "请尝试在上方切换加速镜像或代理"))
-                    }
+                    it.copy(releaseStatusMessage = "检查失败：" + (err.message ?: "请尝试在上方切换加速镜像或代理"))
                 }
             }
         }
@@ -151,10 +163,7 @@ class SettingsUpdateViewModel(
                 )
             }
             val targetInfo = mutableUiState.value.releaseInfo
-                ?: GitHubReleaseUpdater.checkLatestRelease(
-                    currentVersionName = currentInstalledVersion,
-                    proxyConfig = proxyConfig
-                ).getOrNull()
+                ?: releaseChecker(currentInstalledVersion, proxyConfig).getOrNull()
             if (targetInfo == null) {
                 updateIfCurrent(epoch) {
                     it.copy(
@@ -210,14 +219,17 @@ class SettingsUpdateViewModel(
     fun resetTransientStateOnExit() {
         transientEpoch += 1L
         checkJob?.cancel()
+        autoCheckJob?.cancel()
         downloadJob?.cancel()
         checkJob = null
+        autoCheckJob = null
         downloadJob = null
         mutableUiState.update { it.resetTransientForExit() }
     }
 
     override fun onCleared() {
         checkJob?.cancel()
+        autoCheckJob?.cancel()
         downloadJob?.cancel()
         super.onCleared()
     }
@@ -227,10 +239,16 @@ class SettingsUpdateViewModel(
             repository: CampusRepository,
             currentInstalledVersion: String,
             apkDownloader: suspend (GitHubReleaseInfo, NetworkProxyConfig, (Long, Long) -> Unit) -> Result<File>,
-            apkInstaller: (File) -> Result<Boolean>
+            apkInstaller: (File) -> Result<Boolean>,
+            releaseChecker: suspend (String, NetworkProxyConfig) -> Result<GitHubReleaseInfo> = { currentVersionName, proxyConfig ->
+                GitHubReleaseUpdater.checkLatestRelease(
+                    currentVersionName = currentVersionName,
+                    proxyConfig = proxyConfig
+                )
+            }
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                SettingsUpdateViewModel(repository, currentInstalledVersion, apkDownloader, apkInstaller)
+                SettingsUpdateViewModel(repository, currentInstalledVersion, apkDownloader, apkInstaller, releaseChecker)
             }
         }
     }

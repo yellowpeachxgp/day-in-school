@@ -171,7 +171,8 @@ class SettingsLifecycleWiringGuardTest {
         assertTrue(settingsScreen.contains("val settingsUpdateViewModel"))
         assertTrue(settingsScreen.contains("viewModelStoreOwner = rootViewModelStoreOwner"))
         assertTrue(updateViewModel.contains("lastAutoCheckKey"))
-        assertTrue(updateViewModel.contains("checkLatestRelease(manual = false)"))
+        assertTrue(updateViewModel.contains("autoCheckJob?.cancel()"))
+        assertTrue(updateViewModel.contains("runReleaseCheck(manual = false"))
     }
 
     @Test
