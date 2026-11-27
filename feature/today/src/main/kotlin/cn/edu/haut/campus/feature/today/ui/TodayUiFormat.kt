@@ -1,9 +1,21 @@
 package cn.edu.haut.campus.feature.today.ui
 
+import androidx.compose.runtime.staticCompositionLocalOf
+import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
 internal val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 internal val DATE_TITLE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("MM月dd日")
+
+/** 运行期仍为系统时钟；Preview/Roborazzi 可注入固定时钟以避免日期漂移。 */
+internal fun interface TodayClock {
+    fun now(): ZonedDateTime
+}
+
+internal val LocalTodayClock = staticCompositionLocalOf<TodayClock> {
+    TodayClock { ZonedDateTime.now(HAUT_ZONE_ID) }
+}
 
 internal fun String?.cleanUiText(): String? {
     val trimmed = this?.trim() ?: return null

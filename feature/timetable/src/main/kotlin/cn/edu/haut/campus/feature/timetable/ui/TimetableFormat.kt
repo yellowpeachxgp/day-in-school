@@ -102,6 +102,15 @@ import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
 internal val SHORT_DATE_FMT = DateTimeFormatter.ofPattern("MM/dd")
 internal val PERIOD_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm")
 
+/** 运行期仍为系统日期；Preview/Roborazzi 可注入固定日期以避免截图漂移。 */
+internal fun interface TimetableClock {
+    fun today(): LocalDate
+}
+
+internal val LocalTimetableClock = androidx.compose.runtime.staticCompositionLocalOf<TimetableClock> {
+    TimetableClock { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+}
+
 internal fun dateMonthLabel(date: LocalDate?): String =
     date?.let { "${it.monthValue}月" } ?: ""
 

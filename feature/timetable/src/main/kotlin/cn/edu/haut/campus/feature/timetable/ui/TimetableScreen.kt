@@ -150,7 +150,8 @@ private fun TimetableLegacyContent(
 
     var showUnscheduled by remember { mutableStateOf(false) }
 
-    val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
+    val timetableClock = LocalTimetableClock.current
+    val today = remember { timetableClock.today() }
     val currentActualWeek = remember(term, today, calendarOverrides) {
         term?.let { TeachingWeekCalculator.resolveDate(today, it, calendarOverrides).teachingWeek } ?: 1
     }

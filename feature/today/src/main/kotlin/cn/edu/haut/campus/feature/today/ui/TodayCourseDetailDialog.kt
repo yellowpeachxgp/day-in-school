@@ -423,7 +423,7 @@ internal fun CourseDetailAndSnoozeDialog(
                         },
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        val isTodayOcc = occ.date == LocalDate.now(HAUT_ZONE_ID)
+                        val isTodayOcc = occ.date == LocalTodayClock.current.now().toLocalDate()
                         Text(if (isTodayOcc) "今日停课" else "本节停课", maxLines = 1, softWrap = false)
                     }
                     OutlinedButton(

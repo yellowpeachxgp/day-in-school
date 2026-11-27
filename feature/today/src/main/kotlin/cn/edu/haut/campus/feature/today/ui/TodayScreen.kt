@@ -217,7 +217,8 @@ private fun TodayLegacyContent(
         reminderOverrides.associateBy { it.eventScopeKey }
     }
 
-    var currentNow by remember { mutableStateOf(ZonedDateTime.now(HAUT_ZONE_ID)) }
+    val todayClock = LocalTodayClock.current
+    var currentNow by remember { mutableStateOf(todayClock.now()) }
     var selectedDate by remember { mutableStateOf(currentNow.toLocalDate()) }
     var selectedOccurrenceForDetail by remember { mutableStateOf<TimelineOccurrenceState?>(null) }
     var showTermSwitcherDialog by remember { mutableStateOf(false) }
@@ -229,7 +230,7 @@ private fun TodayLegacyContent(
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                val updatedNow = ZonedDateTime.now(HAUT_ZONE_ID)
+                val updatedNow = todayClock.now()
                 val previousDate = currentNow.toLocalDate()
                 currentNow = updatedNow
                 if (selectedDate == previousDate && updatedNow.toLocalDate() != previousDate) {
