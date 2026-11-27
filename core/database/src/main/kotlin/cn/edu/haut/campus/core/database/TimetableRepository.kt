@@ -628,8 +628,20 @@ class TimetableRepository internal constructor(
     suspend fun commitCourseImportDiff(
         preview: ImportDiffPreview,
         overwriteUserConflicts: Boolean = false,
+        setAsCurrentTerm: Boolean = true
+    ) = commitCourseImportDiffWithActor(
+        preview = preview,
+        overwriteUserConflicts = overwriteUserConflicts,
+        setAsCurrentTerm = setAsCurrentTerm,
+        actor = Actor.SYNC
+    )
+
+    /** 与兼容签名分离的显式 actor 入口；自动同步使用 SYNC，用户确认的导入 UI 使用 USER。 */
+    suspend fun commitCourseImportDiffWithActor(
+        preview: ImportDiffPreview,
+        overwriteUserConflicts: Boolean = false,
         setAsCurrentTerm: Boolean = true,
-        actor: Actor = Actor.SYNC
+        actor: Actor
     ) {
         val palette = listOf(
             0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,

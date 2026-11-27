@@ -845,9 +845,20 @@ class CampusRepository internal constructor(
     suspend fun commitCourseImportDiff(
         preview: ImportDiffPreview,
         overwriteUserConflicts: Boolean = false,
-        setAsCurrentTerm: Boolean = true,
-        actor: Actor = Actor.SYNC
+        setAsCurrentTerm: Boolean = true
     ) = timetableRepository.commitCourseImportDiff(
+        preview = preview,
+        overwriteUserConflicts = overwriteUserConflicts,
+        setAsCurrentTerm = setAsCurrentTerm
+    )
+
+    /** 显式 actor 的导入确认入口；保留原 commitCourseImportDiff JVM 形状用于既有调用方。 */
+    suspend fun commitCourseImportDiffWithActor(
+        preview: ImportDiffPreview,
+        overwriteUserConflicts: Boolean = false,
+        setAsCurrentTerm: Boolean = true,
+        actor: Actor
+    ) = timetableRepository.commitCourseImportDiffWithActor(
         preview = preview,
         overwriteUserConflicts = overwriteUserConflicts,
         setAsCurrentTerm = setAsCurrentTerm,
@@ -858,14 +869,12 @@ class CampusRepository internal constructor(
         attempts: List<GradeAttempt>,
         officialGpa: BigDecimal? = null,
         officialNote: String? = null,
-        replaceExisting: Boolean = false,
-        actor: Actor = Actor.SYNC
+        replaceExisting: Boolean = false
     ) = gradesRepository.saveImportedGrades(
         attempts = attempts,
         officialGpa = officialGpa,
         officialNote = officialNote,
-        replaceExisting = replaceExisting,
-        actor = actor
+        replaceExisting = replaceExisting
     )
 
     suspend fun saveStudentProfile(profile: StudentProfile) =
@@ -876,15 +885,13 @@ class CampusRepository internal constructor(
         replaceExisting: Boolean = true,
         targetTermId: String? = null,
         targetTermComplete: Boolean = true,
-        completedTermIds: Set<String> = emptySet(),
-        actor: Actor = Actor.SYNC
+        completedTermIds: Set<String> = emptySet()
     ) = examRepository.saveImportedExams(
         exams = exams,
         replaceExisting = replaceExisting,
         targetTermId = targetTermId,
         targetTermComplete = targetTermComplete,
-        completedTermIds = completedTermIds,
-        actor = actor
+        completedTermIds = completedTermIds
     )
 
     suspend fun setAutoSyncEnabled(enabled: Boolean) =

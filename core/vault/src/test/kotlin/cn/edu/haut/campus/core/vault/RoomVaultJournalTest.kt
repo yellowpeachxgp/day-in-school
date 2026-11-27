@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.vault
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import cn.edu.haut.campus.core.database.CourseEntity
 import cn.edu.haut.campus.core.database.CourseScheduleRuleEntity
 import cn.edu.haut.campus.core.database.ExamScheduleEntity
@@ -193,8 +194,10 @@ class RoomVaultJournalTest {
             actorDetail = "batch-test",
             writeGroupId = "group-grade-exam"
         ) {
-            database.campusDao().upsertGradeAttempts(listOf(gradeRow()))
-            database.campusDao().upsertExamSchedules(listOf(examRow()))
+            database.withTransaction {
+                database.campusDao().upsertGradeAttempts(listOf(gradeRow()))
+                database.campusDao().upsertExamSchedules(listOf(examRow()))
+            }
         }
 
         val rows = database.vaultDao().getJournalGroup("group-grade-exam")

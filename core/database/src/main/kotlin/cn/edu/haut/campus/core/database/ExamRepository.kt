@@ -221,8 +221,7 @@ class ExamRepository internal constructor(
         replaceExisting: Boolean = true,
         targetTermId: String? = null,
         targetTermComplete: Boolean = true,
-        completedTermIds: Set<String> = emptySet(),
-        actor: Actor = Actor.SYNC
+        completedTermIds: Set<String> = emptySet()
     ) {
         val incomingIds = exams.map { it.id }
         environment.academicEntityWritePort.writeMany(
@@ -231,7 +230,7 @@ class ExamRepository internal constructor(
                     .distinct()
                     .map { environment.academicRef(EntityType.EXAM, it) }
             },
-            actor = actor,
+            actor = Actor.SYNC,
             actorDetail = "exams-import",
             writeGroupId = "exams-import:" + UUID.randomUUID().toString()
         ) {

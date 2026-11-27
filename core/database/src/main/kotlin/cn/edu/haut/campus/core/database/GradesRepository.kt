@@ -32,8 +32,7 @@ class GradesRepository internal constructor(
         attempts: List<GradeAttempt>,
         officialGpa: BigDecimal? = null,
         officialNote: String? = null,
-        replaceExisting: Boolean = false,
-        actor: Actor = Actor.SYNC
+        replaceExisting: Boolean = false
     ) {
         val incomingIds = attempts.map { it.id }
         environment.academicEntityWritePort.writeMany(
@@ -41,7 +40,7 @@ class GradesRepository internal constructor(
                 val replacedIds = if (replaceExisting) dao.getGradeAttemptsSnapshot().map { it.id } else emptyList()
                 (replacedIds + incomingIds).distinct().map { environment.academicRef(EntityType.GRADE_ATTEMPT, it) }
             },
-            actor = actor,
+            actor = Actor.SYNC,
             actorDetail = "grades-import",
             writeGroupId = "grades-import:" + UUID.randomUUID().toString()
         ) {
