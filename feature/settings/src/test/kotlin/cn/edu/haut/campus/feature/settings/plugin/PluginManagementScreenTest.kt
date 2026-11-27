@@ -1,11 +1,17 @@
 package cn.edu.haut.campus.feature.settings.plugin
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import cn.edu.haut.campus.feature.settings.plugin.preview.PluginManagementPreviewFixtures
 import cn.edu.haut.campus.feature.settings.plugin.state.PluginManagementUiAction
 import cn.edu.haut.campus.feature.settings.plugin.ui.PluginManagementScreen
@@ -26,11 +32,14 @@ class PluginManagementScreenTest {
     @Test
     fun publisherPermissionsAndUpgradeDiffAreVisible() {
         composeRule.setContent {
-            PluginManagementScreen(state = PluginManagementPreviewFixtures.content, onAction = {})
+            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                PluginManagementScreen(state = PluginManagementPreviewFixtures.content, onAction = {})
+            }
         }
 
-        composeRule.onNodeWithText("fixture-official-examples").assertIsDisplayed()
+        composeRule.onAllNodesWithText("fixture-official-examples")[0].assertIsDisplayed()
         composeRule.onNodeWithText("network.request").assertIsDisplayed()
+        composeRule.onNodeWithTag("permission-diff").performScrollTo()
         composeRule.onNodeWithText("新增权限：network.request").assertIsDisplayed()
         composeRule.onNodeWithText("移除权限：parcel.ai.invoke").assertIsDisplayed()
         composeRule.onNodeWithText("签名已验证", substring = true).assertIsDisplayed()
@@ -40,14 +49,16 @@ class PluginManagementScreenTest {
     fun revokeDisableRollbackUninstallAndConfirmUpgradeInvokeActions() {
         val actions = mutableListOf<PluginManagementUiAction>()
         composeRule.setContent {
-            PluginManagementScreen(state = PluginManagementPreviewFixtures.content, onAction = actions::add)
+            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                PluginManagementScreen(state = PluginManagementPreviewFixtures.content, onAction = { action -> actions += action })
+            }
         }
 
-        composeRule.onNodeWithTag("revoke-network.request").performClick()
-        composeRule.onAllNodesWithTag("toggle-plugin")[0].performClick()
-        composeRule.onAllNodesWithTag("rollback-plugin")[0].performClick()
-        composeRule.onAllNodesWithTag("uninstall-plugin")[0].performClick()
-        composeRule.onNodeWithTag("confirm-upgrade").performClick()
+        composeRule.onNodeWithTag("revoke-network.request").performScrollTo().performClick()
+        composeRule.onAllNodesWithTag("toggle-plugin")[0].performScrollTo().performClick()
+        composeRule.onAllNodesWithTag("rollback-plugin")[0].performScrollTo().performClick()
+        composeRule.onAllNodesWithTag("uninstall-plugin")[0].performScrollTo().performClick()
+        composeRule.onNodeWithTag("confirm-upgrade").performScrollTo().performClick()
 
         assertEquals(
             listOf(
