@@ -30,7 +30,7 @@ import org.robolectric.annotation.Config
 
 /** PR#104 B1 竞态回归：保存已受理后立刻离场清空 owner，写入仍必须完成。 */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [32])
 class TimetableWriteExecutorRaceTest {
 
     @Test
