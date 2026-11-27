@@ -258,8 +258,7 @@ class ExtensionPluginFileStore(
         Files.createDirectories(auditPath.parent)
         Files.write(
             auditPath,
-            (Json.canonical(row) + "
-").toByteArray(StandardCharsets.UTF_8),
+            (Json.canonical(row) + "\n").toByteArray(StandardCharsets.UTF_8),
             StandardOpenOption.CREATE,
             StandardOpenOption.APPEND
         )

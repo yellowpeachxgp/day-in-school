@@ -45,7 +45,7 @@ object ExtensionZipPackageReader {
                         error.runtimeValidationCode
                     )
                 }
-                val normalized = name.replace('\', '/')
+                val normalized = name.replace('\\', '/')
                 if (!seen.add(normalized.lowercase())) {
                     throw PackageException(PackageError.DUPLICATE_ENTRY, "插件 ZIP 存在重复条目：" + name)
                 }
