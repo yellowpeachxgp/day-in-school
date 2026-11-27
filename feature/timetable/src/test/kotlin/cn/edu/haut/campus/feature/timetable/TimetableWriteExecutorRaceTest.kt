@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.feature.timetable
 
+import android.os.Looper
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
@@ -12,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -291,7 +293,11 @@ class TimetableWriteExecutorRaceTest {
         }
         worker.isDaemon = true
         worker.start()
-        worker.join(30_000)
+        val deadlineAt = System.nanoTime() + 30_000_000_000L
+        while (worker.isAlive && System.nanoTime() < deadlineAt) {
+            shadowOf(Looper.getMainLooper()).idle()
+            worker.join(25)
+        }
         assertFalse("真实会话竞态测试不得挂死；超时线程已按 daemon 隔离", worker.isAlive)
         failure.get()?.let { throw it }
     }

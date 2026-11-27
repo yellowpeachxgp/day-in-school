@@ -3,6 +3,8 @@ package cn.edu.haut.campus.feature.today
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import cn.edu.haut.campus.core.model.Term
@@ -61,7 +63,7 @@ class TodayWriteFailureUiTest {
         composeRule.onNodeWithText(target.displayName).performClick()
         val select = actions.filterIsInstance<TodayUiAction.SelectCurrentTerm>().single()
         assertNotNull(select.writeToken)
-        composeRule.onNodeWithText("写入中…").assertIsDisplayed()
+        composeRule.onAllNodesWithText("写入中…").onFirst().assertIsDisplayed()
 
         val token = requireNotNull(select.writeToken)
         uiState.value = uiState.value.copy(
