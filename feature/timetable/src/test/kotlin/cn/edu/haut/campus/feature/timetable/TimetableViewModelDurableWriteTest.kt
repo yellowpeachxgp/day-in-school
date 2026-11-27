@@ -84,9 +84,9 @@ private class DurableWriteViewModelFixture(
             profile: AccountProfileEntity
         ): CampusRepository {
             val constructor = CampusRepository::class.java.declaredConstructors
-                .single { it.parameterCount == 5 }
+                .single { it.parameterCount == 6 }
             constructor.isAccessible = true
-            val repository = constructor.newInstance(context, database, dataStore, profile, null) as CampusRepository
+            val repository = constructor.newInstance(context, database, dataStore, profile, null, null) as CampusRepository
             val sessionField = CampusRepository::class.java.getDeclaredField("activeSessionGeneration")
             sessionField.isAccessible = true
             sessionField.set(repository, 1L)
