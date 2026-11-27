@@ -65,7 +65,6 @@ import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.concurrent.ConcurrentHashMap
 
 
 
@@ -329,21 +328,14 @@ class CampusRepository internal constructor(
             timetableRepository.occurrenceWriteContext.occurrenceCommandWriteProgressHook = value
         }
 
-    private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
-
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
-        get() = beforeWipeHooks["reminder_coordinator_hook"]
+        get() = profileDataWiper.onBeforeWipePersonalDataHook
         set(value) {
-            if (value == null) {
-                beforeWipeHooks.remove("reminder_coordinator_hook")
-            } else {
-                beforeWipeHooks["reminder_coordinator_hook"] = value
-            }
+            profileDataWiper.onBeforeWipePersonalDataHook = value
         }
 
-    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) {
-        beforeWipeHooks[key] = hook
-    }
+    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) =
+        profileDataWiper.registerBeforeWipeHook(key, hook)
 
 
     private val profileDataWiper = ProfileDataWiper(
@@ -360,8 +352,7 @@ class CampusRepository internal constructor(
         cloudTokenMutex = cloudTokenMutex,
         bookingPlanStateMutex = bookingPlanStateMutex,
         cloudIdentityRepository = cloudIdentityRepository,
-        syncOrchestrator = syncOrchestrator,
-        beforeWipeHooks = beforeWipeHooks
+        syncOrchestrator = syncOrchestrator
     )
 
     init {

@@ -34,9 +34,24 @@ class ProfileDataWiper internal constructor(
     private val cloudTokenMutex: Mutex,
     private val bookingPlanStateMutex: Mutex,
     private val cloudIdentityRepository: CloudIdentityRepository,
-    private val syncOrchestrator: SyncOrchestrator,
-    private val beforeWipeHooks: ConcurrentHashMap<String, suspend () -> Unit>
+    private val syncOrchestrator: SyncOrchestrator
 ) {
+    private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
+
+    var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
+        get() = beforeWipeHooks["reminder_coordinator_hook"]
+        set(value) {
+            if (value == null) {
+                beforeWipeHooks.remove("reminder_coordinator_hook")
+            } else {
+                beforeWipeHooks["reminder_coordinator_hook"] = value
+            }
+        }
+
+    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) {
+        beforeWipeHooks[key] = hook
+    }
+
     internal suspend fun sanitizePersistedNullLiteralsForFacade(
         sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null
     ) = sanitizePersistedNullLiterals(sanitizeBookingPlanWriteHookForTest)
