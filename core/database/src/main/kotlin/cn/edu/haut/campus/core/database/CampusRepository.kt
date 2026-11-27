@@ -29,6 +29,7 @@ import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -855,12 +856,14 @@ class CampusRepository internal constructor(
         attempts: List<GradeAttempt>,
         officialGpa: BigDecimal? = null,
         officialNote: String? = null,
-        replaceExisting: Boolean = false
+        replaceExisting: Boolean = false,
+        actor: Actor = Actor.SYNC
     ) = gradesRepository.saveImportedGrades(
         attempts = attempts,
         officialGpa = officialGpa,
         officialNote = officialNote,
-        replaceExisting = replaceExisting
+        replaceExisting = replaceExisting,
+        actor = actor
     )
 
     suspend fun saveStudentProfile(profile: StudentProfile) =
@@ -871,13 +874,15 @@ class CampusRepository internal constructor(
         replaceExisting: Boolean = true,
         targetTermId: String? = null,
         targetTermComplete: Boolean = true,
-        completedTermIds: Set<String> = emptySet()
+        completedTermIds: Set<String> = emptySet(),
+        actor: Actor = Actor.SYNC
     ) = examRepository.saveImportedExams(
         exams = exams,
         replaceExisting = replaceExisting,
         targetTermId = targetTermId,
         targetTermComplete = targetTermComplete,
-        completedTermIds = completedTermIds
+        completedTermIds = completedTermIds,
+        actor = actor
     )
 
     suspend fun setAutoSyncEnabled(enabled: Boolean) =

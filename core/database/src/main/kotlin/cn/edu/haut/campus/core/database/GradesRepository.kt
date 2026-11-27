@@ -2,11 +2,14 @@ package cn.edu.haut.campus.core.database
 
 import androidx.datastore.preferences.core.edit
 import androidx.room.withTransaction
+import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.StudentProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.math.BigDecimal
+import java.util.UUID
 
 /**
  * 成绩 attempts、官方 GPA 本地记录、成绩隐私偏好与临时 StudentProfile 存储。
@@ -29,13 +32,25 @@ class GradesRepository internal constructor(
         attempts: List<GradeAttempt>,
         officialGpa: BigDecimal? = null,
         officialNote: String? = null,
-        replaceExisting: Boolean = false
+        replaceExisting: Boolean = false,
+        actor: Actor = Actor.SYNC
     ) {
-        database.withTransaction {
-            if (replaceExisting) {
-                dao.clearGradeAttempts()
+        val incomingIds = attempts.map { it.id }
+        environment.academicEntityWritePort.writeMany(
+            refsProvider = {
+                val replacedIds = if (replaceExisting) dao.getGradeAttemptsSnapshot().map { it.id } else emptyList()
+                (replacedIds + incomingIds).distinct().map { environment.academicRef(EntityType.GRADE_ATTEMPT, it) }
+            },
+            actor = actor,
+            actorDetail = "grades-import",
+            writeGroupId = "grades-import:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
+                if (replaceExisting) {
+                    dao.clearGradeAttempts()
+                }
+                dao.upsertGradeAttempts(attempts.map { it.toEntity() })
             }
-            dao.upsertGradeAttempts(attempts.map { it.toEntity() })
         }
         preferences.edit { prefs ->
             prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true

@@ -2,10 +2,13 @@ package cn.edu.haut.campus.core.database
 
 import androidx.room.withTransaction
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
+import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 
 /**
  * 考试安排、考试学期修复审计与考试快照。
@@ -54,7 +57,15 @@ class ExamRepository internal constructor(
             runCatching { HautAcademicEndpoints.toTermId(savedXnm, savedXqm) }.getOrNull()
         } else null
         var changed = false
-        database.withTransaction {
+        environment.academicEntityWritePort.writeMany(
+            refsProvider = {
+                dao.getExamSchedulesSnapshot().map { environment.academicRef(EntityType.EXAM, it.id) }
+            },
+            actor = Actor.SYNC,
+            actorDetail = "exam-term-repair",
+            writeGroupId = "exam-term-repair:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
             val exams = dao.getExamSchedulesSnapshot()
             val audits = dao.getExamTermRepairAuditsSnapshot()
             val auditsByRow = audits.filter { it.ruleVersion == EXAM_TERM_REPAIR_RULE_V2 }
@@ -172,6 +183,7 @@ class ExamRepository internal constructor(
             }
             if (toRepair.isNotEmpty()) dao.upsertExamSchedules(toRepair)
             if (toWrite.isNotEmpty()) dao.upsertExamTermRepairAudits(toWrite)
+            }
         }
         if (changed) notifyScheduleOrPolicyChanged("EXAM_TERM_REPAIR_V2")
     }
@@ -209,9 +221,21 @@ class ExamRepository internal constructor(
         replaceExisting: Boolean = true,
         targetTermId: String? = null,
         targetTermComplete: Boolean = true,
-        completedTermIds: Set<String> = emptySet()
+        completedTermIds: Set<String> = emptySet(),
+        actor: Actor = Actor.SYNC
     ) {
-        database.withTransaction {
+        val incomingIds = exams.map { it.id }
+        environment.academicEntityWritePort.writeMany(
+            refsProvider = {
+                (dao.getExamSchedulesSnapshot().map { it.id } + incomingIds)
+                    .distinct()
+                    .map { environment.academicRef(EntityType.EXAM, it) }
+            },
+            actor = actor,
+            actorDetail = "exams-import",
+            writeGroupId = "exams-import:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
             if (replaceExisting) {
                 if (!targetTermId.isNullOrBlank()) {
                     if (targetTermComplete) {
@@ -291,6 +315,7 @@ class ExamRepository internal constructor(
             }
             if (mergedAudits.isNotEmpty()) {
                 dao.upsertExamTermRepairAudits(mergedAudits)
+            }
             }
         }
         notifyScheduleOrPolicyChanged("EXAMS_IMPORTED")

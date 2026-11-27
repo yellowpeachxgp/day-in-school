@@ -1,7 +1,13 @@
 package cn.edu.haut.campus.core.database
 
+import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.EntityRef
+import cn.edu.haut.campus.core.model.EntityType
+import cn.edu.haut.campus.core.model.ProfileId
+import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.SourceRef
 
 /**
@@ -33,6 +39,16 @@ interface AcademicEntityWritePort {
         block: suspend () -> T
     ): T
 }
+
+internal fun AccountProfileEntity.academicWriteScope(): SchoolAccountScope = SchoolAccountScope(
+    schoolId = SchoolId(schoolId),
+    accountId = AccountId(accountId),
+    profileId = ProfileId(id),
+    campusId = campusId?.let(::CampusId)
+)
+
+internal fun CampusRepositoryEnvironment.academicRef(type: EntityType, id: String): EntityRef =
+    EntityRef(type, id, accountProfile.academicWriteScope())
 
 /** 未安装 Vault 时的直通实现；不吞异常、不改变调用方事务形状。 */
 object DirectAcademicEntityWritePort : AcademicEntityWritePort {
