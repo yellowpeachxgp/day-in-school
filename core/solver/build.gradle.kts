@@ -25,11 +25,7 @@ tasks.register("testDebugUnitTest") {
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     useJUnit()
     testLogging {
-        events(
-            org.gradle.api.tasks.testing.TestLoggingEvent.PASSED,
-            org.gradle.api.tasks.testing.TestLoggingEvent.FAILED,
-            org.gradle.api.tasks.testing.TestLoggingEvent.SKIPPED
-        )
+        events("passed", "failed", "skipped")
         showStandardStreams = true
     }
 }
