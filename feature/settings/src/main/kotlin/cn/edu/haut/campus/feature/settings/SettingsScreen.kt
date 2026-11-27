@@ -316,9 +316,6 @@ fun SettingsScreen(
             .getOrDefault("0.18.0")
     }
 
-        }
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
