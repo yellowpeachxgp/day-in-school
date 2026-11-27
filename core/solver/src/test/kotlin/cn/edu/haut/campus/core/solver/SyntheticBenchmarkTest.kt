@@ -185,7 +185,6 @@ class SyntheticBenchmarkTest {
         println(line)
         val output = File("build/reports/solver-benchmark/benchmark-evidence.txt")
         output.parentFile.mkdirs()
-        output.appendText(line + "
-")
+        output.appendText(line + "\n")
     }
 }

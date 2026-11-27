@@ -421,25 +421,25 @@ internal object SyntheticBenchmarkGenerator {
     ): String {
         val candidates = problem.candidates.sortedBy { it.id }.joinToString(separator = ",") { candidate ->
             val slots = candidate.slots.sortedWith(compareBy<SolverClassSlot> { it.weekday }.thenBy { it.startSection }).joinToString(separator = ",") { slot ->
-                "{"endSection":" + slot.endSection +
-                    ","location":" + quote(slot.location?.let { (it.campusId?.value ?: "unknown") + "/" + (it.buildingId ?: "unknown") } ?: "unknown") +
-                    ","startSection":" + slot.startSection +
-                    ","weekday":" + slot.weekday +
-                    ","weeks":" + quote(if (slot.weeks.isKnown) slot.weeks.weeks.sorted().joinToString("+") else "unknown") +
+                "{\"endSection\":" + slot.endSection +
+                    ",\"location\":" + quote(slot.location?.let { (it.campusId?.value ?: "unknown") + "/" + (it.buildingId ?: "unknown") } ?: "unknown") +
+                    ",\"startSection\":" + slot.startSection +
+                    ",\"weekday\":" + slot.weekday +
+                    ",\"weeks\":" + quote(if (slot.weeks.isKnown) slot.weeks.weeks.sorted().joinToString("+") else "unknown") +
                     "}"
             }
-            "{"capacity":" + quote(capacityText(candidate.capacity)) +
-                ","credits":" + quote(candidate.credits.stripTrailingZeros().toPlainString()) +
-                ","id":" + quote(candidate.id) +
-                ","offeringId":" + quote(candidate.offeringId) +
-                ","slots":[" + slots + "]}"
+            "{\"capacity\":" + quote(capacityText(candidate.capacity)) +
+                ",\"credits\":" + quote(candidate.credits.stripTrailingZeros().toPlainString()) +
+                ",\"id\":" + quote(candidate.id) +
+                ",\"offeringId\":" + quote(candidate.offeringId) +
+                ",\"slots\":[" + slots + "]}"
         }
-        return "{"candidates":[" + candidates + "]" +
-            ","creditRange":[" + quote(problem.creditRange.start.stripTrailingZeros().toPlainString()) + "," + quote(problem.creditRange.endInclusive.stripTrailingZeros().toPlainString()) + "]" +
-            ","family":" + quote(family.wireId) +
-            ","required":[" + required.sorted().joinToString(separator = ",") { quote(it) } + "]" +
-            ","seed":" + seed +
-            ","size":" + size + "}"
+        return "{\"candidates\":[" + candidates + "]" +
+            ",\"creditRange\":[" + quote(problem.creditRange.start.stripTrailingZeros().toPlainString()) + "," + quote(problem.creditRange.endInclusive.stripTrailingZeros().toPlainString()) + "]" +
+            ",\"family\":" + quote(family.wireId) +
+            ",\"required\":[" + required.sorted().joinToString(separator = ",") { quote(it) } + "]" +
+            ",\"seed\":" + seed +
+            ",\"size\":" + size + "}"
     }
 
     private fun capacityText(capacity: ClassCapacity): String = when (capacity) {
@@ -452,18 +452,18 @@ internal object SyntheticBenchmarkGenerator {
         out.append('"')
         for (ch in value) {
             when (ch) {
-                '\' -> out.append("\\")
-                '"' -> out.append("\"")
-                '
-' -> out.append("\n")
-                '' -> out.append("\r")
-                '	' -> out.append("\t")
+                '\\' -> out.append("\\\\")
+                '"' -> out.append("\\\"")
+                '\n' -> out.append("\\n")
+                '\r' -> out.append("\\r")
+                '\t' -> out.append("\\t")
                 else -> out.append(ch)
             }
         }
         out.append('"')
         return out.toString()
     }
+
 
     private fun sha256(text: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
