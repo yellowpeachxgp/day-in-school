@@ -215,18 +215,12 @@ class CampusRepositoryW005c8ProfileLifecycleCharacterizationTest {
                 diagnostic = "null"
             )
         )
-        cloudDao.upsertInstalledExtensionPlugin(
-            InstalledExtensionPluginEntity(
-                pluginId = "org.example.hello-campus",
-                name = "legacy sample",
-                activeVersion = "1.0.0",
-                previousVersion = null,
-                schemaFormat = "dis-extension/v2",
-                status = "ENABLED",
-                grantedPermissionsJson = "[]",
-                uiSlotsJson = "[]",
-                updatedAtEpochMillis = 1_000L
-            )
+        // W6-01a 后手工 DAO upsert 已按唯一签名安装路径移除；这里只用 SQL 构造
+        // 拆分前遗留 Room 行作为启动清洗输入，不把该行重新建模成可安装/可启用插件。
+        database.openHelper.writableDatabase.execSQL(
+            "INSERT INTO installed_extension_plugins (" +
+                "pluginId, name, activeVersion, previousVersion, schemaFormat, status, grantedPermissionsJson, uiSlotsJson, updatedAtEpochMillis" +
+                ") VALUES ('org.example.hello-campus', 'legacy sample', '1.0.0', NULL, 'dis-extension/v2', 'ENABLED', '[]', '[]', 1000)"
         )
         val writeEvents = Collections.synchronizedList(mutableListOf<String>())
         val afterWrite = CountDownLatch(1)
