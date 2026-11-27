@@ -7,8 +7,9 @@ import java.io.File
 /**
  * #19 用户交流 QQ 群/频道配置入口的源码级守卫（issue 原文：设立QQ群或QQ频道供用户讨论问题）。
  *
- * 修复点位于 Compose 界面内联逻辑，W0-10 约束不改生产代码、不新增生产接缝，
- * 因此采用与 MainActivityLaunchIntentGuardTest 相同的源码扫描方式锁定：
+ * 修复点位于 Compose 界面内联逻辑。W0-06c 拆分后，UI 通过 CampusCommunityUiAction
+ * 动作面写入、CampusCommunityViewModel 再委托 repository；本守卫按拆分后的真实结构扫描
+ * UI 与 ViewModel 两处源码，仍不改生产代码、不新增生产接缝，锁定：
  * - 哨兵键 "__app_user_feedback_qq_group__" / "__app_user_feedback_channel__" 的读写路径；
  * - 用户覆盖 → 云端 officialChannels 回退的两级 Elvis 链与空白穿透；
  * - 频道链接拒绝把 github.com 当作 QQ 频道展示；
@@ -25,19 +26,24 @@ class Issue19UserFeedbackEntryGuardTest {
         error("无法定位仓库根目录（feature/settings 单元测试工作目录应在模块内）")
     }
 
-    private fun normalizedSource(): String {
-        val file = File(
-            repoRoot(),
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/CampusHubScreens.kt"
-        )
+    private fun normalizedSource(relativePath: String): String {
+        val file = File(repoRoot(), relativePath)
         assertTrue("被守卫的界面源文件必须存在: " + file.absolutePath, file.isFile)
         // 空白归一化后比对，免疫换行/缩进重排；语义符号序列仍被严格锁定
         return file.readText().replace(Regex("\\s+"), " ")
     }
 
+    private fun communitySource(): String = normalizedSource(
+        "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/hub/ui/CampusCommunityScreen.kt"
+    )
+
+    private fun viewModelSource(): String = normalizedSource(
+        "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/hub/CampusCommunityViewModel.kt"
+    )
+
     @Test
     fun sentinelKeysHaveBothReadAndWritePaths() {
-        val text = normalizedSource()
+        val text = communitySource()
         val qqKey = "\"__app_user_feedback_qq_group__\""
         val channelKey = "\"__app_user_feedback_channel__\""
 
@@ -55,7 +61,7 @@ class Issue19UserFeedbackEntryGuardTest {
 
     @Test
     fun qqGroupResolutionIsUserOverrideThenCloudFallbackWithBlankPassthrough() {
-        val text = normalizedSource()
+        val text = communitySource()
         // 用户覆盖优先、空白穿透到云端目录、云端空白再穿透为「未配置」——整条 Elvis 链逐符号锁定
         val chain = "prefs.customClubGroupNumbers[\"__app_user_feedback_qq_group__\"]" +
             "?.takeIf { it.isNotBlank() }" +
@@ -68,7 +74,7 @@ class Issue19UserFeedbackEntryGuardTest {
 
     @Test
     fun channelResolutionExcludesGithubFallbackFromQqChannelDisplay() {
-        val text = normalizedSource()
+        val text = communitySource()
         val chain = "prefs.customChannelUrls[\"__app_user_feedback_channel__\"]" +
             "?.takeIf { it.isNotBlank() }" +
             " ?: catalog.officialChannels.userFeedbackChannelUrl.takeIf {" +
@@ -81,15 +87,30 @@ class Issue19UserFeedbackEntryGuardTest {
     }
 
     @Test
-    fun configDialogWritesTrimmedValuesThroughRepositoryWithSentinelKeys() {
-        val text = normalizedSource()
+    fun configDialogWritesTrimmedValuesThroughActionAndRepositoryWithSentinelKeys() {
+        val text = communitySource()
+        val viewModel = viewModelSource()
         assertTrue(
-            "配置对话框必须通过 repository 保存 QQ 群号（trim 后）",
-            text.contains("repository.saveCustomClubGroupNumber(\"__app_user_feedback_qq_group__\", qqInput.trim())")
+            "配置对话框必须通过 CampusCommunityUiAction 动作面保存 QQ 群号（trim 后）",
+            text.contains("actions.saveCustomClubGroupNumber(\"__app_user_feedback_qq_group__\", qqInput.trim())")
         )
         assertTrue(
-            "配置对话框必须通过 repository 保存频道链接（trim 后）",
-            text.contains("repository.saveCustomChannelUrl(\"__app_user_feedback_channel__\", chInput.trim())")
+            "配置对话框必须通过 CampusCommunityUiAction 动作面保存频道链接（trim 后）",
+            text.contains("actions.saveCustomChannelUrl(\"__app_user_feedback_channel__\", chInput.trim())")
+        )
+        assertTrue(
+            "CampusCommunityViewModel 必须把 QQ 群保存动作委托给 repository",
+            viewModel.contains(
+                "override suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) = " +
+                    "repository.saveCustomClubGroupNumber(clubId, groupNumber)"
+            )
+        )
+        assertTrue(
+            "CampusCommunityViewModel 必须把频道保存动作委托给 repository",
+            viewModel.contains(
+                "override suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) = " +
+                    "repository.saveCustomChannelUrl(channelId, inviteUrl)"
+            )
         )
         assertTrue(
             "配置入口对话框标题必须存在",
@@ -99,7 +120,7 @@ class Issue19UserFeedbackEntryGuardTest {
 
     @Test
     fun feedbackCardCopyKeepsIssue19PromiseAndHonestFallback() {
-        val text = normalizedSource()
+        val text = communitySource()
         val requiredCopy = listOf(
             "Day in School 用户交流与问题反馈",            // 专卡标题：用户交流入口存在
             "独立于校内社团招新群",                          // 与校内社团招新群严格区分的诚实声明
@@ -118,7 +139,7 @@ class Issue19UserFeedbackEntryGuardTest {
     @Test
     fun feedbackEntryStaysInsideCommunityScreenElseBranch() {
         // 结构守卫：反馈专卡位于「交流与反馈」页签分支，且在微信/防冒充声明卡之前渲染
-        val text = normalizedSource()
+        val text = communitySource()
         val feedbackIdx = text.indexOf("Day in School 用户交流与问题反馈")
         val wechatIdx = text.indexOf("微信公众号、小程序与防冒充声明")
         assertTrue("反馈专卡文案必须存在", feedbackIdx >= 0)

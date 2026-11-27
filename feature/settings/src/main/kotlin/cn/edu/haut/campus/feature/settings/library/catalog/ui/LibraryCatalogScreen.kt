@@ -1,0 +1,877 @@
+/*
+ * Adapted in part from HAUTPocket (https://github.com/rainthink-vanilla/HAUTPocket)
+ * Commit: aa83d6f7200ebde4a816e91191f19d9990563362
+ * Copyright (c) 2026 HAUTPocket contributors
+ * Licensed under the MIT License (see licenses/HAUTPocket-MIT.txt).
+ */
+package cn.edu.haut.campus.feature.settings.library.catalog.ui
+
+import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.net.http.SslError
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import cn.edu.haut.campus.core.campusservices.CatalogBook
+import cn.edu.haut.campus.core.campusservices.CatalogBookDetail
+import cn.edu.haut.campus.core.campusservices.HautLibraryOpacClient
+import cn.edu.haut.campus.core.campusservices.LibraryCatalogSnapshot
+import cn.edu.haut.campus.core.campusservices.LibrarySearchField
+import cn.edu.haut.campus.core.campusservices.OfficialServiceRoutePolicy
+import cn.edu.haut.campus.core.campusservices.OfficialWebScripts
+import cn.edu.haut.campus.core.campusservices.SafeCatalogCoverLoader
+import cn.edu.haut.campus.core.campusservices.SafeWebNavigationPolicy
+import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
+import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
+import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
+import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.designsystem.XPeachWell
+import cn.edu.haut.campus.feature.settings.library.catalog.state.LibraryCatalogUiAction
+import cn.edu.haut.campus.feature.settings.library.catalog.state.LibraryCatalogUiState
+
+@OptIn(ExperimentalLayoutApi::class)
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+internal fun LibraryCatalogScreenContent(
+    state: LibraryCatalogUiState,
+    onBack: () -> Unit,
+    onAction: (LibraryCatalogUiAction) -> Unit = {}
+) {
+    val focusManager = LocalFocusManager.current
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    val keywordInput = state.keywordInput
+    val selectedField = state.selectedField
+    val showOfficialWebMode = state.showOfficialWebMode
+    val hotKeywords = state.hotKeywords
+    val hotBooks = state.hotBooks
+    val isHomeLoading = state.isHomeLoading
+    val hasSearched = state.hasSearched
+    val activeQuery = state.activeQuery
+    val isSearching = state.isSearching
+    val isLoadingMore = state.isLoadingMore
+    val searchError = state.searchError
+    val currentPage = state.currentPage
+    val totalCount = state.totalCount
+    val hasMorePages = state.hasMorePages
+    val resultBooks = state.resultBooks
+    val selectedBook = state.selectedBook
+    val activeBookDetail = state.activeBookDetail
+    val isDetailLoading = state.isDetailLoading
+
+    fun executeSearch(
+        rawQuery: String = keywordInput,
+        field: LibrarySearchField = selectedField,
+        page: Int = 1
+    ) {
+        val clean = rawQuery.trim()
+        if (clean.isEmpty()) return
+        focusManager.clearFocus()
+
+        if (showOfficialWebMode) {
+            val syncScript = OfficialWebScripts.buildLibspaceSearchSyncScript(clean, field.fieldCode)
+            webViewRef?.evaluateJavascript(syncScript, null)
+            val url = LibraryCatalogSnapshot.buildSearchUrl(clean, field.fieldCode)
+            webViewRef?.loadUrl(url)
+        }
+        onAction(LibraryCatalogUiAction.ExecuteSearch(clean, field, page))
+    }
+
+    fun openBookDetail(book: CatalogBook) {
+        focusManager.clearFocus()
+        if (showOfficialWebMode && book.bibId.isNotBlank()) {
+            webViewRef?.loadUrl(LibraryCatalogSnapshot.buildDetailUrl(book.bibId))
+        }
+        onAction(LibraryCatalogUiAction.OpenBookDetail(book))
+    }
+
+    fun handleBackNavigation() {
+        when {
+            showOfficialWebMode && webViewRef?.canGoBack() == true -> {
+                webViewRef?.goBack()
+            }
+            selectedBook != null -> {
+                onAction(LibraryCatalogUiAction.CloseBookDetail)
+            }
+            hasSearched -> {
+                onAction(LibraryCatalogUiAction.CloseSearchResults)
+            }
+            else -> onBack()
+        }
+    }
+
+    BackHandler(enabled = selectedBook != null || hasSearched || (showOfficialWebMode && webViewRef?.canGoBack() == true)) {
+        handleBackNavigation()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "图书馆馆藏检索",
+            subtitle = "河南工业大学图书馆 · 莲花街 / 嵩山路馆藏",
+            navigationIcon = {
+                XPeachIconButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    onClick = ::handleBackNavigation
+                )
+            },
+            actions = {
+                XPeachFilterPill(
+                    label = if (showOfficialWebMode) "原生极速视图" else "官方网页视图",
+                    selected = showOfficialWebMode,
+                    onClick = { onAction(LibraryCatalogUiAction.SetOfficialWebMode(!showOfficialWebMode)) }
+                )
+            }
+        )
+
+        // 顶部常驻搜索栏与字段切换胶囊
+        XPeachCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = keywordInput,
+                        onValueChange = { onAction(LibraryCatalogUiAction.UpdateKeyword(it)) },
+                        placeholder = {
+                            Text(
+                                text = selectedField.placeholder,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                if (keywordInput.isNotBlank()) {
+                                    executeSearch(keywordInput, selectedField, page = 1)
+                                }
+                            }
+                        ),
+                        trailingIcon = {
+                            if (keywordInput.isNotEmpty()) {
+                                IconButton(
+                                    onClick = {
+                                        onAction(LibraryCatalogUiAction.ClearKeyword)
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Clear,
+                                        contentDescription = "清空关键词"
+                                    )
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        enabled = keywordInput.isNotBlank() && !isSearching,
+                        onClick = { executeSearch(keywordInput, selectedField, page = 1) },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("检索", maxLines = 1, softWrap = false)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (field in LibrarySearchField.entries) {
+                        XPeachFilterPill(
+                            label = field.label,
+                            selected = selectedField == field,
+                            compact = true,
+                            onClick = {
+                                onAction(LibraryCatalogUiAction.SetSelectedField(field))
+                                if (keywordInput.isNotBlank() && hasSearched) {
+                                    executeSearch(keywordInput, field, page = 1)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        val catalogViewStage = when {
+            showOfficialWebMode -> 3
+            selectedBook != null && activeBookDetail != null -> 2
+            isSearching || searchError != null || hasSearched -> 1
+            else -> 0
+        }
+
+        AnimatedContent(
+            targetState = catalogViewStage,
+            transitionSpec = {
+                val direction = if (targetState >= initialState) {
+                    AnimatedContentTransitionScope.SlideDirection.Start
+                } else {
+                    AnimatedContentTransitionScope.SlideDirection.End
+                }
+                (slideIntoContainer(
+                    towards = direction,
+                    animationSpec = tween(240, easing = FastOutSlowInEasing)
+                ) { it / 8 } + fadeIn(tween(190))) togetherWith
+                    (slideOutOfContainer(
+                        towards = direction,
+                        animationSpec = tween(190, easing = FastOutSlowInEasing)
+                    ) { it / 10 } + fadeOut(tween(140)))
+            },
+            label = "libraryCatalogStageTransition",
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) { stage ->
+            if (stage == 3) {
+                val initialWebUrl = remember(selectedBook?.bibId, activeQuery, selectedField) {
+                    val bookBibId = selectedBook?.bibId.orEmpty()
+                    when {
+                        bookBibId.isNotBlank() -> LibraryCatalogSnapshot.buildDetailUrl(bookBibId)
+                        activeQuery.isNotBlank() -> LibraryCatalogSnapshot.buildSearchUrl(activeQuery, selectedField.fieldCode)
+                        keywordInput.isNotBlank() -> LibraryCatalogSnapshot.buildSearchUrl(keywordInput, selectedField.fieldCode)
+                        else -> OfficialServiceRoutePolicy.CATALOG_INDEX_URL
+                    }
+                }
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            SchoolWebSessionManager.configureHardenedSchoolWebView(this)
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(
+                                    view: WebView?,
+                                    url: String?,
+                                    favicon: Bitmap?
+                                ) {
+                                    super.onPageStarted(view, url, favicon)
+                                    if (url != null && url.startsWith("https://libspace.haut.edu.cn")) {
+                                        val kw = activeQuery.ifBlank { keywordInput }
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibspaceSearchSyncScript(kw, selectedField.fieldCode),
+                                            null
+                                        )
+                                    }
+                                }
+
+                                override fun onPageFinished(
+                                    view: WebView?,
+                                    url: String?
+                                ) {
+                                    super.onPageFinished(view, url)
+                                    if (url != null && url.startsWith("https://libspace.haut.edu.cn")) {
+                                        val kw = activeQuery.ifBlank { keywordInput }
+                                        view?.evaluateJavascript(
+                                            OfficialWebScripts.buildLibspaceSearchSyncScript(kw, selectedField.fieldCode),
+                                            null
+                                        )
+                                    }
+                                }
+
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): Boolean {
+                                    return SafeWebNavigationPolicy.shouldBlockNavigation(request, view)
+                                }
+
+                                override fun shouldInterceptRequest(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): WebResourceResponse? {
+                                    return SafeWebNavigationPolicy.interceptSubresourceIfBlocked(
+                                        request = request,
+                                        allowCatalogCovers = true
+                                    )
+                                }
+
+                                override fun onReceivedSslError(
+                                    view: WebView?,
+                                    handler: SslErrorHandler?,
+                                    error: SslError?
+                                ) {
+                                    SafeWebNavigationPolicy.cancelOnSslError(handler, error)
+                                }
+                            }
+                            loadUrl(initialWebUrl)
+                            webViewRef = this
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val detailToShow = activeBookDetail
+                    when {
+                        stage == 2 && selectedBook != null && detailToShow != null -> {
+                            CatalogBookDetailView(
+                                detail = detailToShow,
+                                callNo = detailToShow.callNo.ifBlank { selectedBook?.callNo.orEmpty() },
+                                fallbackAvailableCount = selectedBook?.availableCount ?: 0,
+                                fallbackTotalCount = selectedBook?.totalCount ?: 0,
+                                isRefreshing = isDetailLoading,
+                                onCopyCallNo = { callNo ->
+                                    onAction(LibraryCatalogUiAction.CopyCallNo(callNo))
+                                },
+                                onBackToResults = {
+                                    onAction(LibraryCatalogUiAction.CloseBookDetail)
+                                }
+                            )
+                        }
+
+                        isSearching -> {
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Text(
+                                        text = "正在检索「$activeQuery」馆藏书目与在馆状态...",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                        }
+
+                        searchError != null -> {
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = searchError!!,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = { executeSearch(keywordInput, selectedField, page = 1) },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("重试检索")
+                                    }
+                                    FilledTonalButton(
+                                        onClick = { onAction(LibraryCatalogUiAction.SetOfficialWebMode(true)) },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text("打开官方网页视图")
+                                    }
+                                }
+                            }
+                        }
+
+                        stage == 1 && hasSearched -> {
+                            if (resultBooks.isEmpty()) {
+                                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "未找到与「$activeQuery」匹配的馆藏书目",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "建议切换检索字段为「全部」或缩短关键词重试。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "共找到 $totalCount 本相关馆藏 · 已显示 ${resultBooks.size} 本",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = "点击查看索书号",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+
+                                for (book in resultBooks) {
+                                    CatalogBookItemCard(
+                                        book = book,
+                                        onClick = { openBookDetail(book) }
+                                    )
+                                }
+
+                                if (hasMorePages) {
+                                    OutlinedButton(
+                                        enabled = !isLoadingMore,
+                                        onClick = {
+                                            executeSearch(activeQuery, selectedField, page = currentPage + 1)
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(16.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("正在加载下一页...")
+                                        } else {
+                                            Text("加载更多结果（已加载 ${resultBooks.size} / $totalCount）")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> {
+                            // 首页：热门检索词 + 热门借阅图书榜单
+                            XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = "全校热门检索",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "点击任意关键词即可直接查询莲花街与嵩山路校区实时在馆状态",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    for (rec in hotKeywords) {
+                                        XPeachFilterPill(
+                                            label = rec,
+                                            selected = false,
+                                            onClick = {
+                                                executeSearch(rec, LibrarySearchField.ALL, page = 1)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isHomeLoading && hotBooks.isEmpty()) {
+                                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Text(
+                                            text = "正在同步馆藏热借榜单...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else if (hotBooks.isNotEmpty()) {
+                                Text(
+                                    text = "近期热门借阅图书",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                                for (book in hotBooks) {
+                                    CatalogBookItemCard(
+                                        book = book,
+                                        onClick = { openBookDetail(book) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CatalogBookItemCard(
+    book: CatalogBook,
+    onClick: () -> Unit
+) {
+    val hasAvailableCopies = book.availableCount > 0
+    XPeachCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            SafeCatalogCoverBox(coverUrl = book.coverUrl)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (book.bibliography.isNotBlank()) {
+                    Text(
+                        text = book.bibliography,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (book.summary.isNotBlank()) {
+                    Text(
+                        text = book.summary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (book.resources.isNotBlank()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        XPeachStatusBadge(
+                            text = book.resources,
+                            containerColor = if (hasAvailableCopies) {
+                                XPeachTheme.successContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            contentColor = if (hasAvailableCopies) {
+                                XPeachTheme.onSuccessContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CatalogBookDetailView(
+    detail: CatalogBookDetail,
+    callNo: String,
+    fallbackAvailableCount: Int,
+    fallbackTotalCount: Int,
+    isRefreshing: Boolean,
+    onCopyCallNo: (String) -> Unit,
+    onBackToResults: () -> Unit
+) {
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = "书目与馆藏明细",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = XPeachTheme.readablePrimary
+                )
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = onBackToResults,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("返回列表")
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            SafeCatalogCoverBox(coverUrl = detail.coverUrl)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = detail.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (detail.bibliography.isNotBlank()) {
+                    Text(
+                        text = detail.bibliography,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val total = if (detail.totalHoldingsCount > 0) detail.totalHoldingsCount else fallbackTotalCount
+                    val avail = if (detail.totalHoldingsCount > 0) detail.availableHoldingsCount else fallbackAvailableCount
+                    val badgeText = if (total == 0 && isRefreshing) {
+                        "正在查询实时馆藏..."
+                    } else {
+                        "可借 $avail / 馆藏 $total 册"
+                    }
+                    XPeachStatusBadge(
+                        text = badgeText,
+                        containerColor = if (avail > 0) XPeachTheme.successContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (avail > 0) XPeachTheme.onSuccessContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (callNo.isNotBlank()) {
+                        XPeachFilterPill(
+                            label = "复制索书号",
+                            selected = false,
+                            compact = true,
+                            leadingIcon = Icons.Default.ContentCopy,
+                            onClick = { onCopyCallNo(callNo) }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = "纸本单册馆藏分布 (${detail.holdings.size})",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        if (detail.holdings.isEmpty()) {
+            XPeachWell(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (isRefreshing) "正在读取各校区书库在馆状态..." else "暂无纸本单册记录",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                detail.holdings.forEachIndexed { idx, h ->
+                    val isAvail = h.isAvailable
+                    if (idx > 0) {
+                        XPeachInsetDivider(verticalPadding = 8.dp)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = h.location,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                        )
+                        XPeachStatusDotText(
+                            text = h.status,
+                            dotColor = if (isAvail) Color(0xFF10B981) else MaterialTheme.colorScheme.outline
+                        )
+                    }
+                    if (h.lines.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = h.lines.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (h.shelf.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = h.shelf,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        if (detail.description.isNotBlank()) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "内容简介与文献附注",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = detail.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SafeCatalogCoverBox(coverUrl: String) {
+    var bitmap by remember(coverUrl) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(coverUrl) {
+        bitmap = SafeCatalogCoverLoader.loadCoverBitmap(coverUrl)
+    }
+
+    Box(
+        modifier = Modifier
+            .size(width = 64.dp, height = 88.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
