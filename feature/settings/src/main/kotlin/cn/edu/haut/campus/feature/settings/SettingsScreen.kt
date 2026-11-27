@@ -138,6 +138,7 @@ import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import cn.edu.haut.campus.feature.settings.hub.ui.CampusHospitalPharmacyDialog
 import cn.edu.haut.campus.feature.settings.root.ui.NetworkProxyAndCloudConfigSection
 import cn.edu.haut.campus.feature.settings.root.ui.ProfileDisclaimerSection
+import cn.edu.haut.campus.feature.settings.root.ui.ProfileMetricItem
 import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
 import kotlinx.coroutines.launch

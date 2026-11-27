@@ -351,5 +351,3 @@ internal fun ProfileMetricItem(
         )
     }
 }
-
-@OptIn(ExperimentalLayoutApi::class)
