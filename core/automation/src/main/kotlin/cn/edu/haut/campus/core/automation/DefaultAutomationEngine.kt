@@ -4,6 +4,7 @@ import cn.edu.haut.campus.core.events.DomainEventBus
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.timeline.TimelineService
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +27,7 @@ interface AutomationEngine {
     /** 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。 */
     suspend fun onTrigger(ruleId: String, triggerInstanceKey: String)
 
-    /** 带事件的完整触发入口；重复实例返回 Duplicate，不追加第二份运行记录。 */
+    /** 带事件的完整触发入口；DomainEvent key 由 eventId 强制派生，重复实例返回 Duplicate，不追加第二份运行记录。 */
     suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult
 
     fun runs(ruleId: String): Flow<List<AutomationRun>>
@@ -41,8 +42,13 @@ class DefaultAutomationEngine(
     private val clock: Clock = Clock.systemUTC(),
     private val timelineService: TimelineService? = null,
     private val domainEventBus: DomainEventBus? = null,
-    private val confirmationPort: ActionConfirmationPort? = null
+    private val confirmationPort: ActionConfirmationPort? = null,
+    private val pendingLease: Duration = DEFAULT_PENDING_LEASE
 ) : AutomationEngine {
+
+    init {
+        require(!pendingLease.isZero && !pendingLease.isNegative) { "dedupe pendingLease 必须为正时长" }
+    }
 
     override suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun {
         val triggerKey = AutomationKeys.dryRunTriggerInstanceKey(rule.id, at)
@@ -67,35 +73,68 @@ class DefaultAutomationEngine(
     }
 
     override suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult {
-        val rule = ruleStore.get(instance.ruleId) ?: throw AutomationRuleNotFoundException(instance.ruleId)
-        val event = instance.event
+        val boundInstance = bindDomainEventInstance(instance)
+        val rule = ruleStore.get(boundInstance.ruleId) ?: throw AutomationRuleNotFoundException(boundInstance.ruleId)
+        val event = boundInstance.event
         if (event != null && event.scope != rule.scope) throw CrossScopeAutomationException(rule.id)
 
-        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
-        val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey, instance.firedAt)
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, boundInstance.triggerInstanceKey, rule.dedupe, boundInstance.firedAt)
+        val runId = AutomationKeys.runId(rule.id, boundInstance.triggerInstanceKey)
+        val acquiredAt = clock.instant()
         val acquire = dedupeStore.tryAcquire(
             AutomationDedupeRecord(
                 dedupeKey = dedupeKey,
                 ruleId = rule.id,
-                triggerInstanceKey = instance.triggerInstanceKey,
+                triggerInstanceKey = boundInstance.triggerInstanceKey,
                 runId = runId,
-                acquiredAt = clock.instant(),
-                policyFingerprint = AutomationKeys.policyFingerprint(rule.dedupe)
+                acquiredAt = acquiredAt,
+                policyFingerprint = AutomationKeys.policyFingerprint(rule.dedupe),
+                leaseExpiresAt = acquiredAt.plus(pendingLease)
             )
         )
         if (acquire is DedupeAcquireResult.AlreadyExists) {
+            val existingRun = runStore.get(acquire.existing.runId)
+            if (existingRun != null && acquire.existing.state == AutomationDedupeState.PENDING) {
+                // 崩溃可能发生在 run append 成功之后、dedupe 转终态之前；发现 run 已持久化时直接修复终态。
+                dedupeStore.markRunRecorded(acquire.existing, clock.instant())
+            }
             return TriggerExecutionResult.Duplicate(
                 dedupeKey = dedupeKey,
-                existingRun = runStore.get(acquire.existing.runId)
+                existingRun = existingRun
             )
         }
 
-        val run = executeRule(rule, instance, dryRun = false)
+        val acquired = (acquire as DedupeAcquireResult.Acquired).record
+        val alreadyAppendedRun = runStore.get(runId)
+        if (alreadyAppendedRun != null) {
+            dedupeStore.markRunRecorded(acquired, clock.instant())
+            return TriggerExecutionResult.Duplicate(
+                dedupeKey = dedupeKey,
+                existingRun = alreadyAppendedRun
+            )
+        }
+
+        val run = executeRule(rule, boundInstance, dryRun = false)
         runStore.append(run)
+        dedupeStore.markRunRecorded(acquired, clock.instant())
         return TriggerExecutionResult.Executed(run)
     }
 
     override fun runs(ruleId: String): Flow<List<AutomationRun>> = runStore.runs(ruleId)
+
+    /**
+     * DomainEvent 的实例身份只能由 eventId 派生。即使调用方传入伪造或被改写的 key，
+     * 引擎也会用同一个确定性 key 计算 dedupe/run/context，重放不会获得新的执行权。
+     */
+    private fun bindDomainEventInstance(instance: TriggerInstance): TriggerInstance {
+        val event = instance.event ?: return instance
+        val boundKey = DomainEventTriggerSupport.triggerInstanceKey(event)
+        return if (instance.triggerInstanceKey == boundKey) {
+            instance
+        } else {
+            instance.copy(triggerInstanceKey = boundKey)
+        }
+    }
 
     private suspend fun executeRule(
         rule: AutomationRule,
@@ -104,7 +143,7 @@ class DefaultAutomationEngine(
     ): AutomationRun {
         val startedAt = clock.instant()
         val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
-        val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey, instance.firedAt)
+        val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey)
         val context = RunContext(
             scope = rule.scope,
             rule = rule,
@@ -466,5 +505,6 @@ class DefaultAutomationEngine(
 
     private companion object {
         const val MAX_EVIDENCE_PER_STEP: Int = 8
+        val DEFAULT_PENDING_LEASE: Duration = Duration.ofMinutes(5)
     }
 }

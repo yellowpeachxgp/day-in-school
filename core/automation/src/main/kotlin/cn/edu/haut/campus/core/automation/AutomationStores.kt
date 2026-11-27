@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.automation
 
+import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -78,9 +79,17 @@ sealed interface DedupeAcquireResult {
     data class AlreadyExists(val existing: AutomationDedupeRecord) : DedupeAcquireResult
 }
 
-/** 去重端口。tryAcquire 必须是原子 check-and-insert；并发同一 dedupeKey 只能有一个 Acquired。 */
+class AutomationDedupeConflictException(dedupeKey: String) :
+    IllegalStateException("dedupeKey 已存在但触发实例身份或策略不一致: " + dedupeKey)
+
+/**
+ * 去重端口。tryAcquire 必须是原子 check-and-insert/reacquire：
+ * RUN_RECORDED 或 lease 未过期的 PENDING 会直接判重；lease 过期的 PENDING 允许崩溃恢复重投原子替换。
+ * markRunRecorded 必须按获取到的整条 PENDING 记录做 compare-and-set，避免过期恢复后的旧执行体错误关闭新执行窗口。
+ */
 interface AutomationDedupeStore {
     suspend fun tryAcquire(record: AutomationDedupeRecord): DedupeAcquireResult
+    suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean
     suspend fun find(dedupeKey: String): AutomationDedupeRecord?
     suspend fun count(): Int
 }
@@ -91,15 +100,45 @@ class InMemoryAutomationDedupeStore : AutomationDedupeStore {
 
     override suspend fun tryAcquire(record: AutomationDedupeRecord): DedupeAcquireResult = mutex.withLock {
         val existing = records[record.dedupeKey]
-        if (existing != null) {
-            DedupeAcquireResult.AlreadyExists(existing)
+        if (existing != null && !existing.sameTriggerIdentityAs(record)) {
+            throw AutomationDedupeConflictException(record.dedupeKey)
+        }
+        val activePending = existing != null &&
+            existing.state == AutomationDedupeState.PENDING &&
+            record.acquiredAt.isBefore(existing.leaseExpiresAt)
+        when {
+            existing == null -> {
+                records[record.dedupeKey] = record
+                DedupeAcquireResult.Acquired(record)
+            }
+            existing != null && (existing.state == AutomationDedupeState.RUN_RECORDED || activePending) ->
+                DedupeAcquireResult.AlreadyExists(existing)
+            else -> {
+                records[record.dedupeKey] = record
+                DedupeAcquireResult.Acquired(record)
+            }
+        }
+    }
+
+    override suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean = mutex.withLock {
+        val existing = records[expected.dedupeKey]
+        if (existing != expected || existing.state != AutomationDedupeState.PENDING) {
+            false
         } else {
-            records[record.dedupeKey] = record
-            DedupeAcquireResult.Acquired(record)
+            records[expected.dedupeKey] = expected.copy(
+                state = AutomationDedupeState.RUN_RECORDED,
+                completedAt = completedAt
+            )
+            true
         }
     }
 
     override suspend fun find(dedupeKey: String): AutomationDedupeRecord? = mutex.withLock { records[dedupeKey] }
 
     override suspend fun count(): Int = mutex.withLock { records.size }
+
+    private fun AutomationDedupeRecord.sameTriggerIdentityAs(other: AutomationDedupeRecord): Boolean =
+        ruleId == other.ruleId &&
+            triggerInstanceKey == other.triggerInstanceKey &&
+            policyFingerprint == other.policyFingerprint
 }

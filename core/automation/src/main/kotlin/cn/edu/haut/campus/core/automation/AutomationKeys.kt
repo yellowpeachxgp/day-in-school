@@ -19,11 +19,14 @@ object AutomationKeys {
         DedupePolicy.OncePerTriggerInstance -> "once-per-trigger-instance"
     }
 
-    fun runId(ruleId: String, triggerInstanceKey: String, firedAt: Instant): String {
+    /**
+     * runId 只由触发实例身份派生，不包含投递时间。崩溃恢复或 outbox 重投即使 firedAt 不同，
+     * ActionExecutor 仍能用同一个 runId/dedupeKey 对外部副作用做幂等去重。
+     */
+    fun runId(ruleId: String, triggerInstanceKey: String): String {
         val material = "automation-run/v1\n" +
             lengthPrefixed(ruleId) + "\n" +
-            lengthPrefixed(triggerInstanceKey) + "\n" +
-            firedAt.epochSecond + "\n" + firedAt.nano
+            lengthPrefixed(triggerInstanceKey)
         return "run-" + sha256Hex(material).substring(0, 40)
     }
 

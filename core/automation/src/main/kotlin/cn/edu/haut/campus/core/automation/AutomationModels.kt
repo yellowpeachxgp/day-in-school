@@ -193,7 +193,10 @@ data class AutomationRule(
     }
 }
 
-/** 一次触发实例。DomainEvent 触发时必须以 eventId 派生 triggerInstanceKey，outbox 重投才不会重复执行。 */
+/**
+ * 一次触发实例。DomainEvent 触发时 triggerInstanceKey 只是调用方提示；引擎入口会强制用 eventId 重新派生，
+ * 因此改写传入 key 不能让同一事件获得第二次执行权，outbox 重投也不会重复执行。
+ */
 data class TriggerInstance(
     val ruleId: String,
     val triggerInstanceKey: String,
@@ -331,14 +334,26 @@ data class AutomationRun(
     }
 }
 
-/** 去重存根记录。持久化实现必须把 dedupe 记录与运行记录写入纳入一致的恢复语义。 */
+/** dedupe 保留状态。PENDING 表示执行窗口仍占用实例；RUN_RECORDED 是终态，表示对应 run 已追加。 */
+enum class AutomationDedupeState {
+    PENDING,
+    RUN_RECORDED
+}
+
+/**
+ * 去重存根记录。PENDING 记录带有 leaseExpiresAt：崩溃或取消不会把触发实例永久卡死；
+ * 超时后的重投可以原子重新获得执行权。run append 成功后必须按同一条 PENDING 记录条件式转为 RUN_RECORDED。
+ */
 data class AutomationDedupeRecord(
     val dedupeKey: String,
     val ruleId: String,
     val triggerInstanceKey: String,
     val runId: String,
     val acquiredAt: Instant,
-    val policyFingerprint: String
+    val policyFingerprint: String,
+    val leaseExpiresAt: Instant,
+    val state: AutomationDedupeState = AutomationDedupeState.PENDING,
+    val completedAt: Instant? = null
 ) {
     init {
         requireAutomationToken(dedupeKey, "dedupeKey", 1024)
@@ -346,6 +361,15 @@ data class AutomationDedupeRecord(
         requireAutomationToken(triggerInstanceKey, "triggerInstanceKey", 512)
         requireAutomationToken(runId, "runId", 128)
         requireAutomationToken(policyFingerprint, "policyFingerprint", 256)
+        require(!leaseExpiresAt.isBefore(acquiredAt)) { "dedupe lease 过期时间早于获取时间" }
+        when (state) {
+            AutomationDedupeState.PENDING -> require(completedAt == null) { "PENDING dedupe 不能有 completedAt" }
+            AutomationDedupeState.RUN_RECORDED -> {
+                val completed = completedAt
+                require(completed != null) { "RUN_RECORDED dedupe 缺少 completedAt" }
+                require(!completed.isBefore(acquiredAt)) { "dedupe completedAt 早于 acquiredAt" }
+            }
+        }
     }
 }
 

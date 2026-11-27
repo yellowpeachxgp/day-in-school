@@ -15,7 +15,7 @@ interface ArmContext {
     val timelineService: TimelineService?
     val domainEventBus: DomainEventBus?
 
-    /** 触发一次规则实例。DomainEvent 触发必须传 event，并用 eventId 派生 triggerInstanceKey。 */
+    /** 触发一次规则实例。DomainEvent 触发必须传 event；引擎会忽略传入 key 并用 eventId 强制派生实例身份。 */
     suspend fun fire(
         triggerInstanceKey: String,
         firedAt: Instant,

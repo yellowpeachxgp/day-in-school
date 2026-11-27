@@ -5,10 +5,13 @@ import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.timeline.LocalTimeWindow
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -213,6 +216,39 @@ class DefaultAutomationEngineTest {
     }
 
     @Test
+    fun oneTimeConfirmationSecondConsumeReturnsNullAndSecondTriggerIsBlocked() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor(risk = ActionRisk.NEEDS_USER_CONFIRM)
+        val rule = AutomationTestFixtures.rule()
+        val actionSpec = rule.actions.single()
+        val confirmationPort = AtomicOneTimeConfirmationPort(
+            ActionConfirmation(
+                confirmationId = "confirm-once-contract",
+                ruleId = rule.id,
+                actionType = actionSpec.type,
+                configDigest = AutomationKeys.sha256Hex(Json.canonical(actionSpec.config)),
+                confirmedAt = clockNow.minusSeconds(10),
+                expiresAt = clockNow.plusSeconds(60)
+            )
+        )
+        val harness = newHarness(actionExecutor = action, confirmationPort = confirmationPort)
+        harness.ruleStore.upsert(rule)
+
+        val first = harness.engine.executeTrigger(TriggerInstance(rule.id, "confirm-instance-1", firedAt))
+        val second = harness.engine.executeTrigger(TriggerInstance(rule.id, "confirm-instance-2", firedAt.plusSeconds(1)))
+
+        assertTrue(first is TriggerExecutionResult.Executed)
+        assertEquals(RunStatus.EXECUTED, (first as TriggerExecutionResult.Executed).run.status)
+        assertTrue(second is TriggerExecutionResult.Executed)
+        val secondRun = (second as TriggerExecutionResult.Executed).run
+        assertEquals(RunStatus.SUPPRESSED, secondRun.status)
+        assertEquals(ActionOutcomeStatus.BLOCKED_CONFIRMATION_REQUIRED, secondRun.outcomes.single().status)
+        assertEquals(2, confirmationPort.consumeResults.size)
+        assertNotNull(confirmationPort.consumeResults[0])
+        assertNull(confirmationPort.consumeResults[1])
+        assertEquals("一次性确认不得让第二个触发实例再次执行动作", 1, action.calls.size)
+    }
+
+    @Test
     fun longConditionFailureReasonsAreTruncatedIntoValidRunRecord() = runTest {
         val longReason = "证据不足-" + "x".repeat(500)
         val condition = AutomationTestFixtures.RecordingConditionEvaluator(
@@ -237,6 +273,60 @@ class DefaultAutomationEngineTest {
         val run = (result as TriggerExecutionResult.Executed).run
         assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
         assertTrue((run.statusReason?.length ?: 0) <= 1000)
+    }
+
+    @Test
+    fun crashedPendingDedupeCanRecoverAfterLeaseExpiryWithStableRunIdentity() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val mutableClock = MutableClock(clockNow)
+        val recoveringRunStore = FailOnceAppendRunStore(InMemoryAutomationRunStore())
+        val lease = Duration.ofSeconds(30)
+        val harness = newHarness(
+            actionExecutor = action,
+            runStore = recoveringRunStore,
+            clock = mutableClock,
+            pendingLease = lease
+        )
+        val rule = AutomationTestFixtures.rule()
+        harness.ruleStore.upsert(rule)
+        val instance = TriggerInstance(rule.id, "crash-recoverable-instance", firedAt)
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
+
+        val crash = runCatching { harness.engine.executeTrigger(instance) }.exceptionOrNull()
+
+        assertTrue(crash is IllegalStateException)
+        assertEquals(1, action.calls.size)
+        assertNull(recoveringRunStore.get(AutomationKeys.runId(rule.id, instance.triggerInstanceKey)))
+        val pendingRecord = harness.dedupeStore.find(dedupeKey) ?: error("崩溃后应保留 PENDING dedupe 记录")
+        assertEquals(AutomationDedupeState.PENDING, pendingRecord.state)
+
+        val beforeExpiry = harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(5)))
+        assertTrue(beforeExpiry is TriggerExecutionResult.Duplicate)
+        assertNull((beforeExpiry as TriggerExecutionResult.Duplicate).existingRun)
+        assertEquals("lease 未过期时不能并发恢复同一个触发实例", 1, action.calls.size)
+
+        mutableClock.advance(lease.plusSeconds(1))
+        val recoveredResult = harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(90)))
+
+        assertTrue(recoveredResult is TriggerExecutionResult.Executed)
+        val recoveredRun = (recoveredResult as TriggerExecutionResult.Executed).run
+        assertEquals(RunStatus.EXECUTED, recoveredRun.status)
+        assertEquals(2, action.calls.size)
+        assertEquals(
+            "崩溃恢复必须保留稳定 runId，动作实现方可对副作用做幂等",
+            action.contexts[0].runId,
+            action.contexts[1].runId
+        )
+        assertEquals(action.contexts[0].dedupeKey, action.contexts[1].dedupeKey)
+        assertEquals(recoveredRun, recoveringRunStore.get(recoveredRun.runId))
+        val completedRecord = harness.dedupeStore.find(dedupeKey) ?: error("run append 后 dedupe 应转为终态")
+        assertEquals(AutomationDedupeState.RUN_RECORDED, completedRecord.state)
+        assertNotNull(completedRecord.completedAt)
+
+        val afterCompletion = harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(120)))
+        assertTrue(afterCompletion is TriggerExecutionResult.Duplicate)
+        assertEquals(recoveredRun, (afterCompletion as TriggerExecutionResult.Duplicate).existingRun)
+        assertEquals(2, action.calls.size)
     }
 
     @Test
@@ -288,11 +378,46 @@ class DefaultAutomationEngineTest {
         assertEquals(1, action.calls.size)
     }
 
+    @Test
+    fun domainEventTriggerRewrittenKeyIsReboundToEventIdAndCannotReplay() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(
+            actionExecutor = action,
+            triggerTypes = setOf(TriggerSpec.OnEvent.TYPE)
+        )
+        val rule = AutomationTestFixtures.rule(trigger = TriggerSpec.OnEvent(eventType = "data.stale"))
+        harness.ruleStore.upsert(rule)
+        val event = DomainEvent.DataStale(
+            eventId = "stale-event-key-binding",
+            scope = AutomationTestFixtures.scope,
+            occurredAt = firedAt,
+            capability = CapabilityKind.TIMETABLE_READ,
+            since = firedAt.minusSeconds(3600)
+        )
+        val canonicalInstance = DomainEventTriggerSupport.triggerInstance(rule.id, event)
+        val rewritten = canonicalInstance.copy(triggerInstanceKey = "caller-controlled-replay-key")
+
+        val first = harness.engine.executeTrigger(rewritten)
+        val replay = harness.engine.executeTrigger(canonicalInstance)
+
+        assertTrue(first is TriggerExecutionResult.Executed)
+        val run = (first as TriggerExecutionResult.Executed).run
+        assertEquals(canonicalInstance.triggerInstanceKey, run.triggerInstanceKey)
+        assertEquals(canonicalInstance.triggerInstanceKey, action.contexts.single().triggerInstanceKey)
+        assertTrue("改写 key 的重放必须命中同一个 eventId 派生键", replay is TriggerExecutionResult.Duplicate)
+        assertEquals(1, action.calls.size)
+        assertEquals(1, harness.engine.runs(rule.id).first().size)
+    }
+
     private fun newHarness(
         conditionEvaluator: AutomationTestFixtures.RecordingConditionEvaluator = AutomationTestFixtures.RecordingConditionEvaluator(),
         actionExecutor: AutomationTestFixtures.RecordingActionExecutor = AutomationTestFixtures.RecordingActionExecutor(),
         triggerTypes: Set<String> = setOf(TriggerSpec.AtTime.TYPE),
-        confirmationPort: ActionConfirmationPort? = null
+        confirmationPort: ActionConfirmationPort? = null,
+        runStore: AutomationRunStore = InMemoryAutomationRunStore(),
+        dedupeStore: AutomationDedupeStore = InMemoryAutomationDedupeStore(),
+        clock: Clock = Clock.fixed(clockNow, ZoneOffset.UTC),
+        pendingLease: Duration = Duration.ofMinutes(5)
     ): Harness {
         val registry = AutomationTestFixtures.registryWith(
             triggerTypes = triggerTypes,
@@ -300,23 +425,70 @@ class DefaultAutomationEngineTest {
             actionExecutor = actionExecutor
         )
         val ruleStore = InMemoryAutomationRuleStore()
-        val runStore = InMemoryAutomationRunStore()
-        val dedupeStore = InMemoryAutomationDedupeStore()
         val engine = DefaultAutomationEngine(
             ruleStore = ruleStore,
             runStore = runStore,
             dedupeStore = dedupeStore,
             registry = registry,
-            clock = Clock.fixed(clockNow, ZoneOffset.UTC),
-            confirmationPort = confirmationPort
+            clock = clock,
+            confirmationPort = confirmationPort,
+            pendingLease = pendingLease
         )
         return Harness(ruleStore, runStore, dedupeStore, engine)
     }
 
+    private class AtomicOneTimeConfirmationPort(
+        private val confirmation: ActionConfirmation
+    ) : ActionConfirmationPort {
+        private val consumed = AtomicBoolean(false)
+        val consumeResults = CopyOnWriteArrayList<ActionConfirmation?>()
+
+        override suspend fun consumeConfirmation(
+            rule: AutomationRule,
+            action: ActionSpec,
+            ctx: RunContext
+        ): ActionConfirmation? {
+            val result = if (consumed.compareAndSet(false, true)) confirmation else null
+            consumeResults.add(result)
+            return result
+        }
+    }
+
+    private class MutableClock(initial: Instant) : Clock() {
+        @Volatile private var now: Instant = initial
+
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+
+        override fun withZone(zone: ZoneId): Clock = this
+
+        override fun instant(): Instant = now
+
+        fun advance(duration: Duration) {
+            now = now.plus(duration)
+        }
+    }
+
+    private class FailOnceAppendRunStore(
+        private val delegate: InMemoryAutomationRunStore
+    ) : AutomationRunStore {
+        private val shouldFail = AtomicBoolean(true)
+
+        override suspend fun append(run: AutomationRun): Boolean {
+            if (shouldFail.compareAndSet(true, false)) {
+                throw IllegalStateException("模拟 dedupe acquire 后、run append 前崩溃")
+            }
+            return delegate.append(run)
+        }
+
+        override suspend fun get(runId: String): AutomationRun? = delegate.get(runId)
+
+        override fun runs(ruleId: String) = delegate.runs(ruleId)
+    }
+
     private data class Harness(
         val ruleStore: InMemoryAutomationRuleStore,
-        val runStore: InMemoryAutomationRunStore,
-        val dedupeStore: InMemoryAutomationDedupeStore,
+        val runStore: AutomationRunStore,
+        val dedupeStore: AutomationDedupeStore,
         val engine: DefaultAutomationEngine
     )
 }
