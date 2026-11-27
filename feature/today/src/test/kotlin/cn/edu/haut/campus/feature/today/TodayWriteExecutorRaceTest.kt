@@ -163,7 +163,8 @@ class TodayWriteExecutorRaceTest {
         )
         val events = CopyOnWriteArrayList<String>()
         val hookKey = "today-session-race-" + System.nanoTime()
-        val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val runnerInvocations = CopyOnWriteArrayList<String>()
         val executor = TodayWriteExecutor(
             writeScope = writeScope,
             runner = object : TodaySessionWriteRunner {
@@ -171,8 +172,11 @@ class TodayWriteExecutorRaceTest {
                     profileId: String,
                     sessionGeneration: Long,
                     write: suspend () -> T
-                ): T? = sessions.withActiveSession(profileId, sessionGeneration) {
-                    write()
+                ): T? {
+                    runnerInvocations.add(profileId + ":" + sessionGeneration)
+                    return sessions.withActiveSession(profileId, sessionGeneration) {
+                        write()
+                    }
                 }
             }
         )
@@ -201,12 +205,12 @@ class TodayWriteExecutorRaceTest {
             )
             writeStarted.await()
 
-            val switchToSecond = async { sessions.switchProfile(secondProfile.id) }
+            val switchToSecond = async(Dispatchers.Default) { sessions.switchProfile(secondProfile.id) }
             yield()
             delay(50)
             assertFalse("真实 switchProfile 不得越过已经开始的 withActiveSession 写", events.contains("switch-before"))
             releaseWrite.complete(Unit)
-            switchToSecond.await()
+            withTimeout(5_000) { switchToSecond.await() }
             firstWriteJob.join()
             assertTrue(firstCompletion.get()?.isSuccess == true)
             assertTrue(
@@ -224,8 +228,8 @@ class TodayWriteExecutorRaceTest {
                 },
                 afterSwitch = { }
             )
-            val switchBack = async { sessions.switchProfile(first.profileId) }
-            switchHookEntered.await()
+            val switchBack = async(Dispatchers.Default) { sessions.switchProfile(first.profileId) }
+            withTimeout(5_000) { switchHookEntered.await() }
 
             val staleWriteCalled = AtomicBoolean(false)
             val staleCompletion = AtomicReference<Result<Unit>?>(null)
@@ -237,12 +241,15 @@ class TodayWriteExecutorRaceTest {
                     onComplete = { result -> staleCompletion.set(result) }
                 )
             )
-            yield()
+            withTimeout(2_000) {
+                val staleKey = first.profileId + ":" + first.generation
+                while (runnerInvocations.count { it == staleKey } < 2) yield()
+            }
             assertFalse("切换持锁期间旧会话写不得进入", staleWriteCalled.get())
             assertFalse(staleJob.isCompleted)
 
             releaseSwitchHook.complete(Unit)
-            switchBack.await()
+            withTimeout(5_000) { switchBack.await() }
             staleJob.join()
             assertFalse("切换完成后旧 generation 必须 fail-closed", staleWriteCalled.get())
             assertTrue(staleCompletion.get()?.exceptionOrNull() is TodaySessionMismatchWriteException)
