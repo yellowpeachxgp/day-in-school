@@ -431,22 +431,6 @@ internal fun CampusMapScreenContent(
 
     if (!isFullScreenMap) {
         // 默认展示「校园生活 + 地图预览」一体化概览页
-        val (elecBadge, elecSub) = remember(onlineRooms, utilityMeters, utilityReadings) {
-            if (onlineRooms.isNotEmpty()) {
-                val room = onlineRooms.first()
-                val firstDev = decodeOnlineDevicesJson(room.devicesJson).firstOrNull()
-                val b = firstDev?.balanceRaw?.takeIf { it.isNotBlank() } ?: "已绑定"
-                b to room.roomName
-            } else if (utilityMeters.isNotEmpty()) {
-                val meter = utilityMeters.first()
-                val latest = utilityReadings.filter { it.meterId == meter.id }
-                    .maxByOrNull { it.recordedAtEpochMs }
-                val b = if (latest != null) "${latest.value}${meter.unit}" else "记录"
-                b to "${meter.roomName} · ${meter.name}"
-            } else {
-                "电费" to "剩余电量与用电记录"
-            }
-        }
 
         Column(
             modifier = Modifier
@@ -1647,8 +1631,9 @@ internal fun CampusMapScreenContent(
                                     label = pillLabel,
                                     selected = selectedBuilding?.id == candidate.id,
                                     onClick = {
-                                    onAction(MapUiAction.ConfirmBuildingCandidate(candidate))
-                                }
+                                        onAction(MapUiAction.ConfirmBuildingCandidate(candidate))
+                                    }
+                                )
                             }
                         }
                     }
