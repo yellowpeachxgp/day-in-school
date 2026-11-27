@@ -1007,7 +1007,7 @@ private fun TodayLegacyContent(
                                 )
                             }
                             Text(
-                                text = if (isCurrent) "当前 ($count 门)" else "$count 门课",
+                                text = if (termWritePending) "写入中…" else if (isCurrent) "当前 ($count 门)" else "$count 门课",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                                 color = if (isCurrent) XPeachTheme.readablePrimary else MaterialTheme.colorScheme.onSurfaceVariant

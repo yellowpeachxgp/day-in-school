@@ -58,6 +58,9 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui)
     testImplementation(libs.androidx.compose.material3)
+    // Robolectric 失败 UI 回归测试使用 Compose 语义树；版本由已有 Compose BOM 统一约束。
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi.core)

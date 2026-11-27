@@ -22,6 +22,7 @@ import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +30,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -217,5 +221,79 @@ class TodayViewModelDurableWriteTest {
             NoopAlarmScheduler,
             AccountBackgroundScope(fixture.profile.id, 1L)
         ) as ReminderCoordinator
+    }
+
+    @Test
+    fun sameKindConcurrentCompletionsStayBoundToOwnOperationToken() = runBlocking {
+        val fixture = DurableWriteViewModelFixture.create(
+            RuntimeEnvironment.getApplication(),
+            "prof_today_token_" + System.nanoTime()
+        )
+        val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val firstGate = CompletableDeferred<Unit>()
+        val secondGate = CompletableDeferred<Unit>()
+        val firstStarted = CompletableDeferred<Unit>()
+        val secondStarted = CompletableDeferred<Unit>()
+        val starts = AtomicInteger(0)
+        try {
+            val executor = TodayWriteExecutor(
+                writeScope = writeScope,
+                runner = object : TodaySessionWriteRunner {
+                    override suspend fun <T : Any> withActiveSessionWrite(
+                        profileId: String,
+                        sessionGeneration: Long,
+                        write: suspend () -> T
+                    ): T? {
+                        val ordinal = starts.incrementAndGet()
+                        if (ordinal == 1) {
+                            firstStarted.complete(Unit)
+                            firstGate.await()
+                        } else {
+                            secondStarted.complete(Unit)
+                            secondGate.await()
+                        }
+                        return write()
+                    }
+                }
+            )
+            val viewModel = TodayViewModel(
+                repository = fixture.repository,
+                reminderCoordinator = createReminderCoordinator(fixture),
+                writeExecutor = executor
+            )
+
+            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-token-a", writeToken = "token-a"))
+            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-token-b", writeToken = "token-b"))
+            withTimeout(2_000) { firstStarted.await() }
+            withTimeout(2_000) { secondStarted.await() }
+            assertEquals(setOf("token-a", "token-b"), viewModel.uiState.value.pendingWrites.map { it.token }.toSet())
+
+            secondGate.complete(Unit)
+            withTimeout(2_000) {
+                while (!viewModel.uiState.value.writeCompletions.containsKey("token-b")) yield()
+            }
+            assertFalse("同 kind 的第二次完成不得被第一次操作误消费", viewModel.uiState.value.writeCompletions.containsKey("token-a"))
+            val completionB = viewModel.uiState.value.writeCompletions.getValue("token-b")
+            assertEquals("token-b", completionB.token)
+            assertTrue(completionB.isSuccess)
+            assertTrue(viewModel.uiState.value.pendingWrites.any { it.token == "token-a" })
+
+            viewModel.onAction(TodayUiAction.ConsumeWriteCompletion("token-b"))
+            assertFalse(viewModel.uiState.value.writeCompletions.containsKey("token-b"))
+
+            firstGate.complete(Unit)
+            withTimeout(2_000) {
+                while (!viewModel.uiState.value.writeCompletions.containsKey("token-a")) yield()
+            }
+            val completionA = viewModel.uiState.value.writeCompletions.getValue("token-a")
+            assertEquals("token-a", completionA.token)
+            assertTrue(completionA.isSuccess)
+            assertTrue(viewModel.uiState.value.pendingWrites.isEmpty())
+        } finally {
+            firstGate.complete(Unit)
+            secondGate.complete(Unit)
+            writeScope.cancel()
+            fixture.close()
+        }
     }
 }
