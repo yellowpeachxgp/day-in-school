@@ -4,6 +4,8 @@ import androidx.room.Room
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.CampusId
+import cn.edu.haut.campus.core.model.EntityRef
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
@@ -81,6 +83,24 @@ class VaultBlobStoreTest {
         assertNotEquals(first.blobId, second.blobId)
         assertNull(blobs.get(first.blobId, otherScope))
         assertEquals(1, blobs.get(second.blobId, otherScope)?.content()?.size)
+    }
+
+    @Test
+    fun sameBytesWithConflictingMetadataFailClosed() = runBlocking {
+        val bytes = byteArrayOf(7, 7, 7)
+        blobs.put(bytes, "text/plain", scope)
+
+        val mimeError = runCatching {
+            blobs.put(bytes, "application/json", scope)
+        }.exceptionOrNull()
+        assertTrue(mimeError is IllegalArgumentException)
+
+        val owner = EntityRef(EntityType.INBOX_ITEM, "inbox-1", scope)
+        val ownerError = runCatching {
+            blobs.put(bytes, "text/plain", scope, owner = owner)
+        }.exceptionOrNull()
+        assertTrue(ownerError is IllegalArgumentException)
+        assertEquals(1, blobs.count())
     }
 
     @Test

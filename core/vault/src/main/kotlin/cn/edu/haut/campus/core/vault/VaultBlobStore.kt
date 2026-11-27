@@ -83,6 +83,12 @@ class VaultBlobStore(
         } else {
             require(existing.sha256 == sha256) { "blobId 与 sha256 不一致" }
             require(existing.byteCount == content.size.toLong()) { "blob byteCount 与内容不一致" }
+            // v1 每行只有单 mimeType/单 owner 元数据；遇到同字节不同元数据时 fail-closed，
+            // 不得返回一行与持久化事实不一致的 StoredBlobRef。多 owner 分享需后续显式建模。
+            require(existing.mimeType == mimeType) { "同内容 blob 的 mimeType 冲突" }
+            require(existing.ownerEntityType == owner?.type?.name && existing.ownerEntityId == owner?.id) {
+                "同内容 blob 的 owner 冲突"
+            }
         }
         return ref
     }
