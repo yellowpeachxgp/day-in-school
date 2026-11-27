@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 /** 图书馆选座状态 holder：聚合偏好/计划/云身份，并委托全部既有座位动作。 */
 class LibrarySeatViewModel(

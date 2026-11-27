@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 /** 宿舍水电状态 holder：聚合水电 Flow，并把拆分前 Repository 写动作委托在 ViewModel 内。 */
 class DormElectricityViewModel(
