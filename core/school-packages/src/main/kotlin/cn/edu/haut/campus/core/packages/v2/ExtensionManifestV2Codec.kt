@@ -19,7 +19,11 @@ data class UiSlotDeclaration(
 data class PluginCommandDeclaration(
     val name: String,
     val description: String,
-    val requiredPermission: String?
+    val requiredPermission: String?,
+    val type: String? = null,
+    val route: String? = null,
+    val url: String? = null,
+    val artifactPath: String? = null
 )
 
 data class ExtensionArtifactDigest(
@@ -111,7 +115,7 @@ object ExtensionManifestV2Codec {
         "signature"
     )
     private val UI_SLOT_KEYS = setOf("slot_id", "card_id", "title", "subtitle", "action_command")
-    private val COMMAND_KEYS = setOf("name", "description", "required_permission")
+    private val COMMAND_KEYS = setOf("name", "description", "required_permission", "type", "route", "url", "artifact_path")
     private val ARTIFACT_KEYS = setOf("path", "sha256", "size_bytes")
     private val SIGNATURE_KEYS = setOf("algorithm", "key_id", "value_base64")
 
@@ -267,10 +271,33 @@ object ExtensionManifestV2Codec {
                     RUNTIME_PERMISSION_UNKNOWN
                 )
             }
+            val commandType = optionalString(obj, "type")
+            if (commandType != null && commandType.length > 64) {
+                reject(PackageError.MANIFEST_INVALID, "command.type 长度不能超过 64")
+            }
+            val route = optionalString(obj, "route")
+            if (route != null && route.length > 64) {
+                reject(PackageError.MANIFEST_INVALID, "command.route 长度不能超过 64")
+            }
+            val url = optionalString(obj, "url")
+            if (url != null && url.length > 240) {
+                reject(PackageError.MANIFEST_INVALID, "command.url 长度不能超过 240")
+            }
+            val artifactPath = optionalString(obj, "artifact_path")
+            if (artifactPath != null) {
+                if (artifactPath.isEmpty() || artifactPath.length > 240) {
+                    reject(PackageError.MANIFEST_INVALID, "command.artifact_path 长度必须为 1..240")
+                }
+                assertSafeRelativePathWithRuntimeCode(artifactPath)
+            }
             PluginCommandDeclaration(
                 name = commandName,
                 description = description,
-                requiredPermission = requiredPermission
+                requiredPermission = requiredPermission,
+                type = commandType,
+                route = route,
+                url = url,
+                artifactPath = artifactPath
             )
         }
 
