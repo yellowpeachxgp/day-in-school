@@ -128,18 +128,30 @@ class ExtensionUiPackageLoader(
         }
         val card = when (decoded) {
             null -> FeatureUiCardCodec.fallbackCard(slot.slotId, slot.cardId, slot.title, slot.subtitle, slot.actionCommand)
-            is FeatureUiCardCodec.DecodeResult.Invalid -> return copy(
-                ExtensionContributionStatus.ERROR,
-                errorCard(slot, installation.name, "插件卡片模型无效", decoded.reason),
-                decoded.reason
-            )
+            is FeatureUiCardCodec.DecodeResult.Invalid -> {
+                if (artifactPath == GENERIC_CARD_DATA_PATH) {
+                    // W6-01b pack fixture uses assets/card-data.json as command data, not necessarily as a feature-ui card.
+                    FeatureUiCardCodec.fallbackCard(slot.slotId, slot.cardId, slot.title, slot.subtitle, slot.actionCommand)
+                } else {
+                    return copy(
+                        ExtensionContributionStatus.ERROR,
+                        errorCard(slot, installation.name, "插件卡片模型无效", decoded.reason),
+                        decoded.reason
+                    )
+                }
+            }
             is FeatureUiCardCodec.DecodeResult.Valid -> {
                 val expectedComponent = FeatureUiCardCodec.componentIdForCardId(slot.cardId)
                 if (decoded.card.slot != slot.slotId || decoded.card.componentId != expectedComponent) {
-                    val reason = "卡片产物 slot/component_id 与 manifest 不匹配"
-                    return copy(ExtensionContributionStatus.ERROR, errorCard(slot, installation.name, "插件卡片不匹配", reason), reason)
+                    if (artifactPath == GENERIC_CARD_DATA_PATH) {
+                        FeatureUiCardCodec.fallbackCard(slot.slotId, slot.cardId, slot.title, slot.subtitle, slot.actionCommand)
+                    } else {
+                        val reason = "卡片产物 slot/component_id 与 manifest 不匹配"
+                        return copy(ExtensionContributionStatus.ERROR, errorCard(slot, installation.name, "插件卡片不匹配", reason), reason)
+                    }
+                } else {
+                    decoded.card
                 }
-                decoded.card
             }
         }
         return copy(ExtensionContributionStatus.READY, card)
@@ -152,7 +164,7 @@ class ExtensionUiPackageLoader(
             "cards/" + base + ".feature-ui.json",
             "ui/" + base + ".json",
             "assets/" + base + ".json",
-            "assets/card-data.json"
+            GENERIC_CARD_DATA_PATH
         )
         return candidates.firstOrNull { it in paths }
     }
@@ -182,5 +194,6 @@ class ExtensionUiPackageLoader(
 
     private companion object {
         const val MAX_CARD_ARTIFACT_BYTES = 256 * 1024
+        const val GENERIC_CARD_DATA_PATH = "assets/card-data.json"
     }
 }
