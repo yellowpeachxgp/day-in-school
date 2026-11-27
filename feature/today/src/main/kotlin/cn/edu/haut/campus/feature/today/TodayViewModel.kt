@@ -170,7 +170,7 @@ class TodayViewModel(
                 emit(TodayUiEffect.RefreshWidgets)
             }
             is TodayUiAction.LoadSnoozeOptions -> launchOperation {
-                loadSnoozeOptions(action.detailState, action.termId, clearFeedbackForNewKey = true)
+                loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = action.freshDialogLoad)
             }
             is TodayUiAction.ToggleCourseReminder -> launchOperation {
                 val occ = action.detailState.occurrence
@@ -193,7 +193,7 @@ class TodayViewModel(
                     termId = action.termId,
                     feedback = if (action.nextEnabled) "已开启提醒" else "已关闭提醒"
                 )
-                loadSnoozeOptions(action.detailState, action.termId, clearFeedbackForNewKey = false)
+                loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = false)
             }
             is TodayUiAction.SetCourseReminderLead -> launchOperation {
                 val occ = action.detailState.occurrence
@@ -212,7 +212,7 @@ class TodayViewModel(
                     termId = action.termId,
                     feedback = "已设为课前 " + action.leadMinutes + " 分钟提醒"
                 )
-                loadSnoozeOptions(action.detailState, action.termId, clearFeedbackForNewKey = false)
+                loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = false)
             }
             is TodayUiAction.SnoozeCourseReminder -> launchOperation {
                 val event = ReminderPlanner.projectClassOccurrenceToEvent(action.termId, action.detailState.occurrence)
@@ -236,7 +236,7 @@ class TodayViewModel(
                     SnoozeOutcome.InternalError -> "设置失败"
                 }
                 updateCourseReminderFeedback(action.detailState, action.termId, feedback)
-                loadSnoozeOptions(action.detailState, action.termId, clearFeedbackForNewKey = false)
+                loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = false)
             }
             is TodayUiAction.CancelClassOccurrence -> launchOperation {
                 repository.cancelClassOccurrenceOnDate(
@@ -381,9 +381,19 @@ class TodayViewModel(
     private suspend fun loadSnoozeOptions(
         detailState: TimelineOccurrenceState,
         termId: String,
-        clearFeedbackForNewKey: Boolean
+        freshDialogLoad: Boolean
     ) {
         val event = ReminderPlanner.projectClassOccurrenceToEvent(termId, detailState.occurrence)
+        if (freshDialogLoad) {
+            _uiState.update {
+                it.copy(
+                    snoozeOptionsEventKey = null,
+                    snoozeOptions = emptyList(),
+                    courseReminderFeedbackEventKey = null,
+                    courseReminderFeedback = null
+                )
+            }
+        }
         val options = reminderCoordinator.evaluateSnoozeOptionsForEvent(
             event = event,
             kind = ReminderKind.CLASS_BEFORE,
@@ -395,12 +405,12 @@ class TodayViewModel(
             state.copy(
                 snoozeOptionsEventKey = eventKey,
                 snoozeOptions = options,
-                courseReminderFeedbackEventKey = if (clearFeedbackForNewKey && state.courseReminderFeedbackEventKey != eventKey) {
+                courseReminderFeedbackEventKey = if (freshDialogLoad) {
                     null
                 } else {
                     state.courseReminderFeedbackEventKey
                 },
-                courseReminderFeedback = if (clearFeedbackForNewKey && state.courseReminderFeedbackEventKey != eventKey) {
+                courseReminderFeedback = if (freshDialogLoad) {
                     null
                 } else {
                     state.courseReminderFeedback

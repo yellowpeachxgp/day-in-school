@@ -158,8 +158,16 @@ internal fun CourseDetailAndSnoozeDialog(
         ReminderPolicyEngine.resolveEffectivePolicy(event, globalConfig, overridesByScope)
     }
 
+    var hasLoadedSnoozeOptions by remember(detailState) { mutableStateOf(false) }
     LaunchedEffect(event, activeTask, effectivePolicy) {
-        onAction(TodayUiAction.LoadSnoozeOptions(detailState, termId))
+        onAction(
+            TodayUiAction.LoadSnoozeOptions(
+                detailState = detailState,
+                termId = termId,
+                freshDialogLoad = !hasLoadedSnoozeOptions
+            )
+        )
+        hasLoadedSnoozeOptions = true
     }
 
     XPeachAlertDialog(

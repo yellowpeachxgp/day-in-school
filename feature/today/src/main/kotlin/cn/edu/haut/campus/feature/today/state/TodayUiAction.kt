@@ -65,7 +65,8 @@ sealed interface TodayUiAction {
 
     data class LoadSnoozeOptions(
         val detailState: TimelineOccurrenceState,
-        val termId: String
+        val termId: String,
+        val freshDialogLoad: Boolean = false
     ) : TodayUiAction
     data class ToggleCourseReminder(
         val detailState: TimelineOccurrenceState,
