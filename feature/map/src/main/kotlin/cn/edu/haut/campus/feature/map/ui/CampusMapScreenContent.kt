@@ -221,7 +221,6 @@ internal fun CampusMapScreenContent(
 ) {
     val preferences = state.preferences
     val activeSchool = state.activeSchool
-    val mapProvider: Any? = if (state.mapProviderAvailable) Unit else null
     val customZones = state.customZones
     val detectedCampus = state.detectedCampus
     val isLianhuajieActive = state.isLianhuajieActive
@@ -674,7 +673,7 @@ internal fun CampusMapScreenContent(
                     }
                 }
 
-                if (mapProvider == null && customZones.isEmpty()) {
+                if (!state.mapProviderAvailable && customZones.isEmpty()) {
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Text(
                             text = "暂未收录该校地图数据",
