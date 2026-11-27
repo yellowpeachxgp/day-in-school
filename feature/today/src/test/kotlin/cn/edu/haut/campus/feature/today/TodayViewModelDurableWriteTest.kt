@@ -15,7 +15,7 @@ import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.AlarmScheduler
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
-import cn.edu.haut.campus.core.reminder.ReminderTaskDomain
+import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.reminder.ScheduleOutcome
 import cn.edu.haut.campus.feature.today.state.TodayUiAction
 import java.io.File
