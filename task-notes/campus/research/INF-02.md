@@ -2,7 +2,7 @@
 
 > 日期：2026-11-27（Asia/Shanghai）  
 > 初始漂移基线：cloud-in-school origin/main 5480f0d907bd799e83ab4de7e15f2a1b666e8eec；day-in-school origin/main 04d4424b164ddf0044bea45d491c526849816355
-> 一审后合并复核基线：cloud-in-school origin/main dc990d614e5f3a771ebe122c250362bf67104dd9（W0-08 路由拆分已合入）；契约树指纹未变
+> 一审后合并复核基线：cloud-in-school origin/main dc990d614e5f3a771ebe122c250362bf67104dd9（W0-08 路由拆分已合入）；W0-08 合入本身未变契约树，契约审阅修复后的新指纹见 §3
 > 范围：两仓 contracts/**、contract-ci、CI 契约检查；不修改 apps/api/src，不修改业务逻辑，不把 moments extension 契约化。
 
 ## 1. 结论
@@ -38,8 +38,8 @@
 | compatibility/host-api-matrix.yaml | 相同 | d7aee18bc74de0fe343edfb1b2d0e3c1f61069075fdd7d9974990ca6a29a034c |
 | endpoints/endpoint-inventory.yaml | 不同 | d440f21dd0aea7ecdc4c058ad22097a268a8e10fa1fe2f0d8c647ab796ea48f1 |
 | errors/error-catalog.yaml | 相同 | 56fa86bacebec8d9e454fa32ee7bc12fefabeefd1b27bc577c0174257b85147c |
-| examples/cloud-api-examples.http | 相同 | 37d1f0741d1846ffd565e2a95d2a40d3b9f2884820c507c18c5ac8c52697592a |
-| openapi/cloud-v1.yaml | 不同 | 9b634ab0f6f1834b8c81c3b5410168b246be8e5dd4accb8bfaebdf25f0678739 |
+| examples/cloud-api-examples.http | 相同 | e6548be218974f57ea29449d445ec06cc4adad2369a1db9768e7e32eabf07fca |
+| openapi/cloud-v1.yaml | 不同 | 1ad2050b9b4850e696c57b0633e71735ee3cea704d7d6b3354b81dca19166301 |
 | permissions/permission-catalog.yaml | 相同 | c59ad4aab72a18dbc1027f520479b95c8ce2e536e48b02a40a4f81de9876653f |
 | schemas/booking-rule-v1.schema.json | 相同 | 5819990676391f4c73bb7470cb28e0596fb1e209d733fd2e04eb273f2c071dec |
 | schemas/feature-ui-v1.schema.json | 相同 | 0002904414cad9d289f46ad0fc2b66696f3fba6d8981ebb02dbff1c9839a125e |
@@ -47,7 +47,7 @@
 | schemas/plugin-extension-v2.schema.json | 相同 | 08e1c7ac3bc5adde5de0922fc24c19cdc4fc576b99fff4bbbf2124dd4fe88bfb5 |
 | schemas/reservation-quote-v1.schema.json | 相同 | 12d053f2044a32a975abaf6889e19e86c5ab0bb535cb086ac10fee7c88ff72f9 |
 
-权威树指纹：CONTRACTS_TREE_SHA256=2115b1723a714ed2b65cd9c4348864a8e96f7605e2e0ec597e610397148473a1。
+权威树指纹（契约审阅修复后）：CONTRACTS_TREE_SHA256=43f31a536ab609b191052be1d06221993b8f7616fa7908e3eb0c4dda461b5028。
 
 ## 4. 哪一侧更新
 
@@ -140,7 +140,15 @@ dc990d6 后，12 个运行时 extension 已由 main 的 exact runtime inventory 
 1. 运行路由与契约：core=97、inventory=97、OpenAPI=97、extension=12、all=109；missingCore=0、contractOnly=0、mismatches=0、extInContracts=0。
 2. AUTO-012 边界：12 个 moments extension 的 method+path+operationId+auth 与 main 的 exact runtime inventory 一致，但在 contracts/** 中仍为 0 命中；本卡仍未把 moments 契约化。
 3. secrets allowlist：合并后只读扫描 SECRET_SCAN_PASS，files=149、tracked=150、findings=0、allowlistEntries=113、allowlistUsed=113、warnings=0；W0-08 更新的行号在当前合并树上仍准确。
-4. 契约树内容未因 W0-08 合并改变，CONTRACTS_TREE_SHA256 仍为 2115b1723a714ed2b65cd9c4348864a8e96f7605e2e0ec597e610397148473a1。
+4. W0-08 合入本身未改变契约树；随后的契约审阅修复把权威树更新为 43f31a536ab609b191052be1d06221993b8f7616fa7908e3eb0c4dda461b5028。
+
+## 9.3 契约审阅四项阻断修复
+
+1. path template：quickRefundAdminOrder/orderId、executeReservationJobNow/jobId、cancelConfirmedReservationSeat/jobId、deleteAdminCampusChannel/channelId、deleteAdminCampusClub/clubId、deleteAdminCampusCompetition/competitionId 均已补 in: path + required: true 声明；validate-contracts.mjs 新增严格 path template 正反向校验。用修复前 OpenAPI 做负例，校验器 exit 1 并点名 quickRefundAdminOrder；修复后 PASS。
+2. refundAdminOrder：契约改为运行事实 202 + RefundRequestEnvelope，不再宣称 200 Order refunded/OrderEnvelope；新增 RefundRequest、RefundRequestEnvelope、RefundRequestListEnvelope、RefundExecutionEnvelope 等 schema，并把 quick-refund/refund-requests/approve/execute/list 对齐到同一运行 envelope。AdminRefundRequest 移除无运行语义的 second_approver_ref，amount_micropeach 必需、reason 可选；examples 增加双人审批退款三步示例。
+3. fetch  freshness：sync 默认改为显式 git fetch origin +refs/heads/main:refs/remotes/origin/main。受控负例中云端 clone 的 remote.origin.fetch 被刻意指向 not-main 且远端 main 已推进，sync 仍取到 v2 而不是 stale v1。
+4. alias/file-type 防护：sync 在计划/执行前检测云端或 Android 内仅大小写/Unicode 规范化不同的 alias、跨仓 case-only rename、file↔directory 冲突并 fail-closed；sparse checkout 明确拒绝。受控负例证明 Foo/foo case-only rename 在写入前失败且旧文件不变，file↔dir 与 parent file↔dir 均写前失败。
+5. 事务回归：删除中点失败仍逆序回滚；用只读子目录注入 rename 失败的写入中点负例也已恢复全部旧内容，无半同步。
 
 ## 10. 残留风险与待决
 
