@@ -34,7 +34,8 @@ class RoomVaultJournal(
     private val outbox: EventOutbox,
     snapshotStores: Map<EntityType, EntitySnapshotStore>,
     private val clock: () -> Instant = Instant::now,
-    private val idGenerator: () -> String = { UUID.randomUUID().toString() }
+    private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val searchIndex: RoomSearchIndex? = null
 ) : EntityWriter, ChangeJournal, AcademicEntityWritePort {
     private val dao = database.vaultDao()
     private val snapshotStores = snapshotStores.toMap()
@@ -44,13 +45,15 @@ class RoomVaultJournal(
         outbox: EventOutbox,
         snapshotStores: List<EntitySnapshotStore>,
         clock: () -> Instant = Instant::now,
-        idGenerator: () -> String = { UUID.randomUUID().toString() }
+        idGenerator: () -> String = { UUID.randomUUID().toString() },
+        searchIndex: RoomSearchIndex? = null
     ) : this(
         database = database,
         outbox = outbox,
         snapshotStores = snapshotStores.associateBy { it.type },
         clock = clock,
-        idGenerator = idGenerator
+        idGenerator = idGenerator,
+        searchIndex = searchIndex
     )
 
     override suspend fun <T> write(
@@ -110,6 +113,7 @@ class RoomVaultJournal(
                         source = source,
                         writeGroupId = groupId
                     )
+                    updateSearchProjection(ref, store)
                 }
             }
             result
@@ -170,6 +174,7 @@ class RoomVaultJournal(
             source = null,
             writeGroupId = original.writeGroupId
         )
+        updateSearchProjection(ref, store)
         val marked = dao.markJournalReverted(changeId, reversal.changeId)
         if (marked != 1) {
             throw JournalRevertInvariantException("撤销标记写入失败: changeId=" + changeId)
@@ -232,6 +237,17 @@ class RoomVaultJournal(
         )
         outbox.append(toEventEnvelope(change))
         return change
+    }
+
+    private suspend fun updateSearchProjection(ref: EntityRef, store: EntitySnapshotStore) {
+        val index = searchIndex ?: return
+        if (store !is SearchIndexedEntitySnapshotStore) return
+        val document = store.projectSearchDocument(ref)
+        if (document == null) {
+            index.delete(ref)
+        } else {
+            index.upsert(document)
+        }
     }
 
     private fun inferChangeKind(before: CanonicalJson?, after: CanonicalJson?): ChangeKind? = when {

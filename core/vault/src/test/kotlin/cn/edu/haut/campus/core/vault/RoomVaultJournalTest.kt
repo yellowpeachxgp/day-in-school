@@ -64,11 +64,13 @@ class RoomVaultJournalTest {
     fun writerCapturesCreateUpdateDeleteAndPublishesSmallReferenceEvent() = runBlocking {
         val outbox = InMemoryEventOutbox()
         val journal = newJournal(outbox)
+        val search = RoomSearchIndex(database)
         val course = courseRow()
 
         journal.write(courseRef, Actor.USER, actorDetail = "test-create") {
             database.campusDao().upsertCourse(course)
         }
+        assertEquals(1, search.query(scope, SearchQuery(scope, "高数")).totalCount)
         journal.write(courseRef, Actor.USER) {
             database.campusDao().upsertCourse(course)
         }
@@ -78,6 +80,7 @@ class RoomVaultJournalTest {
         journal.write(courseRef, Actor.USER) {
             database.campusDao().deleteCourseById(course.id)
         }
+        assertEquals(0, search.query(scope, SearchQuery(scope, "高数")).totalCount)
 
         val history = journal.history(courseRef).first()
         assertEquals(listOf(ChangeKind.CREATED, ChangeKind.UPDATED, ChangeKind.DELETED), history.map { it.op })
@@ -108,6 +111,7 @@ class RoomVaultJournalTest {
 
         assertNotNull(error)
         assertNull(database.campusDao().getCourseById(courseRef.id))
+        assertEquals(0, RoomSearchIndex(database).query(scope, SearchQuery(scope, "高数")).totalCount)
         assertEquals(0, database.vaultDao().countEntityJournal())
         assertEquals(0, outbox.unackedCount("automation"))
     }
@@ -123,9 +127,11 @@ class RoomVaultJournalTest {
         }
         val update = journal.history(courseRef).first().first { it.op == ChangeKind.UPDATED }
 
+        assertEquals(0, RoomSearchIndex(database).query(scope, SearchQuery(scope, "高数")).totalCount)
         val result = journal.revert(update.changeId, Actor.USER)
 
         assertEquals(RevertStatus.APPLIED, result.status)
+        assertEquals(1, RoomSearchIndex(database).query(scope, SearchQuery(scope, "高数")).totalCount)
         val restored = database.campusDao().getCourseById(courseRef.id)
         assertEquals(original.name, restored?.name)
         assertEquals(original.teacher, restored?.teacher)
@@ -271,7 +277,8 @@ class RoomVaultJournalTest {
                 ExamScheduleSnapshotStore(database)
             ),
             clock = { Instant.parse("2026-01-02T03:04:05Z") },
-            idGenerator = { "test-" + (++id) }
+            idGenerator = { "test-" + (++id) },
+            searchIndex = RoomSearchIndex(database)
         )
     }
 

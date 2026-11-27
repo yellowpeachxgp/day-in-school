@@ -16,7 +16,7 @@ import cn.edu.haut.campus.core.model.json.JsonValue
 class PersonalEventSnapshotStore(
     database: HautDatabase,
     private val searchIndex: RoomSearchIndex
-) : EntitySnapshotStore {
+) : SearchIndexedEntitySnapshotStore {
     private val dao = database.vaultDao()
     override val type: EntityType = EntityType.PERSONAL_EVENT
 
@@ -31,6 +31,11 @@ class PersonalEventSnapshotStore(
             )
         )
     }
+
+    override suspend fun projectSearchDocument(ref: EntityRef): SearchDocument? =
+        dao.getPersonalEvent(ref.id)
+            ?.takeIf { it.inScope(ref.scope) }
+            ?.let { personalEventSearchDocument(it, ref.scope) }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
         require(ref.type == type) { "PersonalEventSnapshotStore 只能恢复 PERSONAL_EVENT" }

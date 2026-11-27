@@ -37,7 +37,8 @@ object VaultRuntimeInstaller {
                 GradeAttemptSnapshotStore(database),
                 ExamScheduleSnapshotStore(database),
                 PersonalEventSnapshotStore(database, searchIndex)
-            )
+            ),
+            searchIndex = searchIndex
         )
     }
 

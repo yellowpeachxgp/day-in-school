@@ -1,5 +1,8 @@
 package cn.edu.haut.campus.core.vault
 
+import cn.edu.haut.campus.core.database.CourseEntity
+import cn.edu.haut.campus.core.database.ExamScheduleEntity
+import cn.edu.haut.campus.core.database.GradeAttemptEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
@@ -15,16 +18,7 @@ class CourseSearchIndexContributor(
 
     override suspend fun fullRebuild(scope: SchoolAccountScope): Sequence<SearchDocument> =
         dao.getCoursesSnapshot().sortedBy { it.id }.asSequence().map { row ->
-            SearchDocument(
-                ref = EntityRef(EntityType.COURSE, row.id, scope),
-                type = EntityType.COURSE,
-                title = row.name,
-                body = listOfNotNull(row.teacher, row.creditPlain?.let { it + " 学分" }).joinToString(" "),
-                code = row.externalId,
-                aliases = CourseAliasRules.aliasesFor(row.name),
-                deeplink = "dayinschool://course/" + row.id,
-                facets = mapOf("source" to row.source)
-            )
+            courseSearchDocument(row, scope)
         }
 }
 
@@ -37,18 +31,7 @@ class GradeAttemptSearchIndexContributor(
 
     override suspend fun fullRebuild(scope: SchoolAccountScope): Sequence<SearchDocument> =
         dao.getGradeAttemptsSnapshot().sortedBy { it.id }.asSequence().map { row ->
-            SearchDocument(
-                ref = EntityRef(EntityType.GRADE_ATTEMPT, row.id, scope),
-                type = EntityType.GRADE_ATTEMPT,
-                title = row.name,
-                body = listOf(row.category, row.rawGrade, row.attemptType).joinToString(" "),
-                code = row.courseKey,
-                aliases = CourseAliasRules.aliasesFor(row.name),
-                termId = row.termId,
-                at = Instant.ofEpochMilli(row.syncedAtEpochMilli),
-                deeplink = "dayinschool://grade/" + row.id,
-                facets = mapOf("termId" to row.termId, "source" to row.source)
-            )
+            gradeAttemptSearchDocument(row, scope)
         }
 }
 
@@ -61,27 +44,53 @@ class ExamScheduleSearchIndexContributor(
 
     override suspend fun fullRebuild(scope: SchoolAccountScope): Sequence<SearchDocument> =
         dao.getExamSchedulesSnapshot().sortedBy { it.id }.asSequence().map { row ->
-            SearchDocument(
-                ref = EntityRef(EntityType.EXAM, row.id, scope),
-                type = EntityType.EXAM,
-                title = row.courseName,
-                body = listOf(
-                    row.examBatchName,
-                    row.examStageLabel,
-                    row.examFormat,
-                    row.rawTimeText,
-                    row.rawRoom,
-                    row.campusName
-                ).joinToString(" "),
-                code = row.courseCode,
-                aliases = CourseAliasRules.aliasesFor(row.courseName),
-                termId = row.termId,
-                at = Instant.ofEpochMilli(row.syncedAtEpochMilli),
-                deeplink = "dayinschool://exam/" + row.id,
-                facets = mapOf("termId" to row.termId, "campusName" to row.campusName)
-            )
+            examScheduleSearchDocument(row, scope)
         }
 }
+
+internal fun courseSearchDocument(row: CourseEntity, scope: SchoolAccountScope): SearchDocument = SearchDocument(
+    ref = EntityRef(EntityType.COURSE, row.id, scope),
+    type = EntityType.COURSE,
+    title = row.name,
+    body = listOfNotNull(row.teacher, row.creditPlain?.let { it + " 学分" }).joinToString(" "),
+    code = row.externalId,
+    aliases = CourseAliasRules.aliasesFor(row.name),
+    deeplink = "dayinschool://course/" + row.id,
+    facets = mapOf("source" to row.source)
+)
+
+internal fun gradeAttemptSearchDocument(row: GradeAttemptEntity, scope: SchoolAccountScope): SearchDocument = SearchDocument(
+    ref = EntityRef(EntityType.GRADE_ATTEMPT, row.id, scope),
+    type = EntityType.GRADE_ATTEMPT,
+    title = row.name,
+    body = listOf(row.category, row.rawGrade, row.attemptType).joinToString(" "),
+    code = row.courseKey,
+    aliases = CourseAliasRules.aliasesFor(row.name),
+    termId = row.termId,
+    at = Instant.ofEpochMilli(row.syncedAtEpochMilli),
+    deeplink = "dayinschool://grade/" + row.id,
+    facets = mapOf("termId" to row.termId, "source" to row.source)
+)
+
+internal fun examScheduleSearchDocument(row: ExamScheduleEntity, scope: SchoolAccountScope): SearchDocument = SearchDocument(
+    ref = EntityRef(EntityType.EXAM, row.id, scope),
+    type = EntityType.EXAM,
+    title = row.courseName,
+    body = listOf(
+        row.examBatchName,
+        row.examStageLabel,
+        row.examFormat,
+        row.rawTimeText,
+        row.rawRoom,
+        row.campusName
+    ).joinToString(" "),
+    code = row.courseCode,
+    aliases = CourseAliasRules.aliasesFor(row.courseName),
+    termId = row.termId,
+    at = Instant.ofEpochMilli(row.syncedAtEpochMilli),
+    deeplink = "dayinschool://exam/" + row.id,
+    facets = mapOf("termId" to row.termId, "campusName" to row.campusName)
+)
 
 /** personal_events 搜索贡献者；行 ID 即 TimelineEventId 的稳定字符串。 */
 class PersonalEventSearchIndexContributor(

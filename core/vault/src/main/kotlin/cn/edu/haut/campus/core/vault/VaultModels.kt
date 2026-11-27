@@ -74,6 +74,11 @@ interface EntityWriter {
     ): T
 }
 
+/** 能把当前业务行投影为搜索文档的 snapshot store；projection 在写入/撤销事务内读取，保证无幽灵结果。 */
+interface SearchIndexedEntitySnapshotStore : EntitySnapshotStore {
+    suspend fun projectSearchDocument(ref: EntityRef): SearchDocument?
+}
+
 interface ChangeJournal {
     fun history(ref: EntityRef): Flow<List<EntityChange>>
     fun recent(scope: SchoolAccountScope, types: Set<EntityType>, limit: Int): Flow<List<EntityChange>>

@@ -15,7 +15,7 @@ import java.util.UUID
 /** 课程聚合快照：课程行只是入口，排课规则与单次覆盖同属该课程可撤销聚合。 */
 class CourseEntitySnapshotStore(
     database: HautDatabase
-) : EntitySnapshotStore {
+) : SearchIndexedEntitySnapshotStore {
     private val dao = database.campusDao()
     override val type: EntityType = EntityType.COURSE
 
@@ -37,6 +37,9 @@ class CourseEntitySnapshotStore(
             )
         )
     }
+
+    override suspend fun projectSearchDocument(ref: EntityRef): SearchDocument? =
+        dao.getCourseById(ref.id)?.let { courseSearchDocument(it, ref.scope) }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
         require(ref.type == type) { "CourseSnapshotStore 只能恢复 COURSE" }
@@ -91,7 +94,7 @@ class CourseEntitySnapshotStore(
 /** 成绩 attempt 行级快照。 */
 class GradeAttemptSnapshotStore(
     database: HautDatabase
-) : EntitySnapshotStore {
+) : SearchIndexedEntitySnapshotStore {
     private val dao = database.campusDao()
     override val type: EntityType = EntityType.GRADE_ATTEMPT
 
@@ -105,6 +108,9 @@ class GradeAttemptSnapshotStore(
             )
         )
     }
+
+    override suspend fun projectSearchDocument(ref: EntityRef): SearchDocument? =
+        dao.getGradeAttemptById(ref.id)?.let { gradeAttemptSearchDocument(it, ref.scope) }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
         require(ref.type == type) { "GradeSnapshotStore 只能恢复 GRADE_ATTEMPT" }
@@ -127,7 +133,7 @@ class GradeAttemptSnapshotStore(
 /** 考试安排行级快照。 */
 class ExamScheduleSnapshotStore(
     database: HautDatabase
-) : EntitySnapshotStore {
+) : SearchIndexedEntitySnapshotStore {
     private val dao = database.campusDao()
     override val type: EntityType = EntityType.EXAM
 
@@ -141,6 +147,9 @@ class ExamScheduleSnapshotStore(
             )
         )
     }
+
+    override suspend fun projectSearchDocument(ref: EntityRef): SearchDocument? =
+        dao.getExamScheduleById(ref.id)?.let { examScheduleSearchDocument(it, ref.scope) }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
         require(ref.type == type) { "ExamSnapshotStore 只能恢复 EXAM" }
