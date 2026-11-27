@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -24,6 +25,22 @@ android {
     kotlinOptions {
         jvmTarget = "21"
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+            it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+        }
+    }
+}
+
+roborazzi {
+    // 与 app 模块保持同一套版本化基线布局；本模块只记录 map preview fixtures。
+    outputDir.set(file("src/test/roborazzi/debug"))
+    compare {
+        outputDir.set(file("build/outputs/roborazzi-compare/debug"))
+    }
 }
 
 dependencies {
@@ -36,4 +53,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi.core)
+    testImplementation(libs.roborazzi.compose)
 }

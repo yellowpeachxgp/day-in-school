@@ -397,7 +397,7 @@ internal fun CampusMapScreenContent(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "坐标：${"%.5f".format(pt.latitude)}, ${"%.5f".format(pt.longitude)}",
+                        text = formatMapPinCoordinate(pt),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -716,23 +716,12 @@ internal fun CampusMapScreenContent(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = buildString {
-                                    if (targetBuilding != null && navigationPlan != null) {
-                                        append("步行约 ${navigationPlan.estimatedWalkMinutes} 分钟 (${navigationPlan.estimatedWalkDistanceMeters}m)")
-                                        if (selectedIndoorRoom != null) {
-                                            append(" · ${selectedIndoorRoom!!.floorLabel} ${selectedIndoorRoom!!.name}")
-                                        } else if (!resolution?.roomNumberHint.isNullOrBlank()) {
-                                            val precisionNote = if (resolution?.status == BuildingMatchStatus.EXACT_VERIFIED) {
-                                                "已定位至楼栋"
-                                            } else {
-                                                "片区近似待确认，非单栋/房间精确坐标"
-                                            }
-                                            append(" · 房间 ${resolution!!.roomNumberHint}（$precisionNote）")
-                                        }
-                                    } else {
-                                        append("双指缩放/拖拽或点击右侧按钮调整视野")
-                                    }
-                                },
+                                text = formatMapNavigationSummary(
+                                    targetBuildingName = targetBuilding?.name,
+                                    navigationPlan = navigationPlan,
+                                    selectedIndoorRoom = selectedIndoorRoom,
+                                    resolution = resolution
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
