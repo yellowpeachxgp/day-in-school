@@ -55,7 +55,7 @@ class CampusServicesW005c1CharacterizationTest {
         repo.updateWallpaperVisualParams(alpha = 2f, blurDp = -1f, cardAlpha = 2f)
         repo.resetWallpaperVisualParams()
         repo.updateHomeCardLayout(
-            order = listOf("TIMETABLE", "TODAY"),
+            order = listOf("LIBRARY_SEAT", "EXAM_SUMMARY"),
             hidden = setOf("PARCEL_HUB"),
             fullWidth = emptySet()
         )
@@ -83,7 +83,7 @@ class CampusServicesW005c1CharacterizationTest {
         assertEquals(ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA, state.wallpaperAlpha, 0.0001f)
         assertEquals(ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP, state.wallpaperBlurDp, 0.0001f)
         assertEquals(ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA, state.wallpaperCardAlpha, 0.0001f)
-        assertEquals(listOf("TIMETABLE", "TODAY"), state.homeCardOrder.take(2))
+        assertEquals(listOf("LIBRARY_SEAT", "EXAM_SUMMARY"), state.homeCardOrder.take(2))
         assertEquals(setOf("PARCEL_HUB"), state.hiddenHomeCards)
         assertTrue(state.fullWidthHomeCards.isEmpty())
         assertEquals(ThemeVisualDefaults.clampTimelineZoomScale(99f), state.timelineZoomScale, 0.0001f)
