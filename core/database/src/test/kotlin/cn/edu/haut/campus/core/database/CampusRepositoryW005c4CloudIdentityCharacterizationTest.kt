@@ -120,7 +120,7 @@ class CampusRepositoryW005c4CloudIdentityCharacterizationTest {
         peachBalanceMicropeach = peach,
         holdSupported = false,
         accessToken = jwt,
-        refreshToken = "ctseal1:ref_$cloudUserId",
+        refreshToken = "ctseal1:ref_" + cloudUserId,
         linkedAtEpochMillis = 3_000L
     )
 
