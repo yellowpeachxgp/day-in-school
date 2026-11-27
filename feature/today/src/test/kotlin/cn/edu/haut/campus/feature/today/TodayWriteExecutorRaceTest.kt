@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.domain.SchoolDirectory
+import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.async
@@ -27,6 +28,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+
+
+private fun raceMarker(message: String) {
+    File("/tmp/dis_session_race_today.log").appendText(System.currentTimeMillis().toString() + " " + message + "\n")
+}
 
 /** PR#104 B1 竞态回归：保存已受理后立刻离场清空 owner，写入仍必须完成。 */
 @RunWith(RobolectricTestRunner::class)
@@ -155,15 +161,20 @@ class TodayWriteExecutorRaceTest {
 
     @Test
     fun realAccountSessionSwitchIsMutexedWithWritesAndStaleWriteFailsClosed() = runBlocking {
+        raceMarker("start")
         val context = RuntimeEnvironment.getApplication()
         val sessions = AccountSessionCoordinator.getInstance(context)
+        raceMarker("before initialize")
         val first = withTimeout(10_000) { sessions.initialize() }
+        raceMarker("after initialize")
+        raceMarker("before createOfflineProfile")
         val secondProfile = withTimeout(10_000) {
             sessions.createOfflineProfile(
                 SchoolDirectory.hautProfile(),
                 "并发回归身份 " + System.nanoTime()
             )
         }
+        raceMarker("after createOfflineProfile")
         val events = CopyOnWriteArrayList<String>()
         val hookKey = "today-session-race-" + System.nanoTime()
         val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -197,6 +208,7 @@ class TodayWriteExecutorRaceTest {
                     profileId = first.profileId,
                     sessionGeneration = first.generation,
                     write = {
+                        raceMarker("write start")
                         events.add("write-start")
                         writeStarted.complete(Unit)
                         releaseWrite.await()
@@ -206,14 +218,18 @@ class TodayWriteExecutorRaceTest {
                     onComplete = { result -> firstCompletion.set(result) }
                 )
             )
+            raceMarker("enqueue returned")
             withTimeout(2_000) { writeStarted.await() }
+            raceMarker("write started observed")
 
             val switchToSecond = async(Dispatchers.Default) { sessions.switchProfile(secondProfile.id) }
             yield()
             delay(50)
             assertFalse("真实 switchProfile 不得越过已经开始的 withActiveSession 写", events.contains("switch-before"))
+            raceMarker("release first write")
             releaseWrite.complete(Unit)
             withTimeout(5_000) { switchToSecond.await() }
+            raceMarker("switch to second done")
             withTimeout(2_000) { firstWriteJob.join() }
             assertTrue(firstCompletion.get()?.isSuccess == true)
             assertTrue(
@@ -233,6 +249,7 @@ class TodayWriteExecutorRaceTest {
             )
             val switchBack = async(Dispatchers.Default) { sessions.switchProfile(first.profileId) }
             withTimeout(5_000) { switchHookEntered.await() }
+            raceMarker("switchback hook entered")
 
             val staleWriteCalled = AtomicBoolean(false)
             val staleCompletion = AtomicReference<Result<Unit>?>(null)
@@ -251,8 +268,10 @@ class TodayWriteExecutorRaceTest {
             assertFalse("切换持锁期间旧会话写不得进入", staleWriteCalled.get())
             assertFalse(staleJob.isCompleted)
 
+            raceMarker("release switchback hook")
             releaseSwitchHook.complete(Unit)
             withTimeout(5_000) { switchBack.await() }
+            raceMarker("switchback done")
             withTimeout(2_000) { staleJob.join() }
             assertFalse("切换完成后旧 generation 必须 fail-closed", staleWriteCalled.get())
             assertTrue(staleCompletion.get()?.exceptionOrNull() is TodaySessionMismatchWriteException)
