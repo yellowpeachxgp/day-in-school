@@ -164,8 +164,9 @@ class PdfBoxTextExtractorTest {
             PdfExtractionRequest(articleBoundaryVerticalLabelsPdf(), TextExtractionContext.synthetic())
         )
 
-        assertTrue(result.lines.any { it.text.contains("AAA") })
-        assertTrue(result.lines.any { it.text.contains("BBB") })
+        val articleLines = result.lines.map { it.text }
+        assertTrue("缺少 AAA: " + articleLines, result.lines.any { it.text.contains("AAA") })
+        assertTrue("缺少 BBB: " + articleLines, result.lines.any { it.text.contains("BBB") })
         assertTrue("文章边界内文本不应跨 bead 融合: " + result.lines.map { it.text }, result.lines.none { it.text.contains("AAA") && it.text.contains("BBB") })
     }
 
@@ -186,8 +187,9 @@ class PdfBoxTextExtractorTest {
             PdfExtractionRequest(rotatedSeparateLabelsPdf(), TextExtractionContext.synthetic())
         )
 
-        assertTrue(result.lines.any { it.text == "FIRST" })
-        assertTrue(result.lines.any { it.text == "SECOND" })
+        val rotatedLines = result.lines.map { it.text }
+        assertTrue("缺少 FIRST: " + rotatedLines, result.lines.any { it.text == "FIRST" })
+        assertTrue("缺少 SECOND: " + rotatedLines, result.lines.any { it.text == "SECOND" })
         assertTrue(result.lines.none { it.text.contains("FIRST") && it.text.contains("SECOND") })
     }
 
@@ -198,7 +200,7 @@ class PdfBoxTextExtractorTest {
         )
 
         val line = result.lines.single { it.text.contains("Report") }
-        assertTrue(line.text.contains("[1]"))
+        assertTrue("raised reference 行不匹配，全部行: " + result.lines.map { it.text }, line.text.contains("[1]"))
         assertTrue(line.text.indexOf("Report") < line.text.indexOf("[1]"))
     }
 
@@ -271,7 +273,7 @@ class PdfBoxTextExtractorTest {
     private fun raisedReferencePdf(): ByteArray {
         return singlePagePdf { contentStream ->
             writeText(contentStream, "Report", 72f, 720f, 12f)
-            writeText(contentStream, "[1]", 110f, 727f, 7f)
+            writeText(contentStream, "[1]", 110f, 723f, 7f)
         }
     }
 

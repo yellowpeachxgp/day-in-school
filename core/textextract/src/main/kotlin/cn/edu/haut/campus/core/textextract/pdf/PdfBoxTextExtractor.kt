@@ -347,10 +347,17 @@ class PdfBoxTextExtractor(
                 mergeDecision(current, draft, geometry)
             }
             if (decision.merge && current != null) {
-                if (decision.inferSpace && draft.pieces.firstOrNull()?.separatorBefore != true) {
-                    current.pieces.add(PdfLinePiece(" ", separatorBefore = false, glyphs = emptyList()))
+                val piecesToAdd = draft.pieces.toMutableList()
+                val first = piecesToAdd.firstOrNull()
+                if (decision.inferSpace) {
+                    if (first?.separatorBefore != true) {
+                        current.pieces.add(PdfLinePiece(" ", separatorBefore = false, glyphs = emptyList()))
+                    }
+                } else if (first?.separatorBefore == true) {
+                    // PDFBox 在旋转碎片之间可能误判 word separator；是否空格只能由投影 gap 决定。
+                    piecesToAdd[0] = first.copy(separatorBefore = false)
                 }
-                current.pieces.addAll(draft.pieces)
+                current.pieces.addAll(piecesToAdd)
                 current.geometry = lineGeometry(current.pieces.flatMap { it.glyphs })
             } else {
                 mergedLines.add(
@@ -476,13 +483,48 @@ class PdfBoxTextExtractor(
 
     private fun buildLineText(pieces: List<PdfLinePiece>): String {
         val output = StringBuilder()
+        var previousMeaningful: PdfLinePiece? = null
         for (piece in pieces) {
-            if (piece.separatorBefore && output.isNotEmpty() && output.lastOrNull()?.isWhitespace() != true) {
-                output.append(' ')
+            val syntheticWhitespace = piece.glyphs.isEmpty() && piece.text.isBlank()
+            if (!syntheticWhitespace) {
+                val previous = previousMeaningful
+                val needsSpace = previous != null && inferSpaceBetweenPieces(previous, piece)
+                if (needsSpace && output.isNotEmpty() && output.lastOrNull()?.isWhitespace() != true) {
+                    output.append(' ')
+                }
+                previousMeaningful = piece
             }
             output.append(piece.text)
         }
         return output.toString()
+    }
+
+    /** 横排信任 PDFBox；非横排用同方向基线上的投影 gap 判断是否真的是词间空格。 */
+    private fun inferSpaceBetweenPieces(previous: PdfLinePiece, next: PdfLinePiece): Boolean {
+        val before = lineGeometry(previous.glyphs) ?: return next.separatorBefore
+        val after = lineGeometry(next.glyphs) ?: return next.separatorBefore
+        if (kotlin.math.abs(before.unitY) < 0.35f && kotlin.math.abs(after.unitY) < 0.35f) {
+            return next.separatorBefore
+        }
+        val directionDot = before.unitX * after.unitX + before.unitY * after.unitY
+        if (directionDot < 0.96f) return next.separatorBefore
+        val maxHeight = maxOf(before.maxHeight, after.maxHeight).coerceAtLeast(1f)
+        if (kotlin.math.abs(before.centerV - after.centerV) > maxOf(2.0f, maxHeight * 0.5f)) {
+            return next.separatorBefore
+        }
+        val left: PdfLineGeometry
+        val right: PdfLineGeometry
+        if (before.minU <= after.minU) {
+            left = before
+            right = after
+        } else {
+            left = after
+            right = before
+        }
+        val gap = right.minU - left.maxU
+        val spaceWidth = maxOf(before.maxSpaceWidth, after.maxSpaceWidth).coerceAtLeast(2.0f)
+        val directJoinGap = maxOf(1.0f, spaceWidth * 0.6f)
+        return gap > directJoinGap
     }
 
     /** 用规范化 positions 的基线端点构造显示页面坐标系中的旋转四边形。 */
