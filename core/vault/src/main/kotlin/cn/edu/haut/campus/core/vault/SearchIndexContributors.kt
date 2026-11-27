@@ -91,18 +91,30 @@ class PersonalEventSearchIndexContributor(
     override val type: EntityType = EntityType.PERSONAL_EVENT
 
     override suspend fun fullRebuild(scope: SchoolAccountScope): Sequence<SearchDocument> =
-        dao.getPersonalEventsSnapshot().sortedBy { it.id }.asSequence().map { row ->
-            SearchDocument(
-                ref = EntityRef(EntityType.PERSONAL_EVENT, row.id, scope),
-                type = EntityType.PERSONAL_EVENT,
-                title = row.title,
-                body = listOfNotNull(row.note, row.placeText).joinToString(" "),
-                code = null,
-                aliases = emptyList(),
-                termId = row.termId,
-                at = Instant.ofEpochMilli(row.startAtEpochMs),
-                deeplink = "dayinschool://personal-event/" + row.id,
-                facets = mapOf("kind" to row.kind, "status" to row.status)
-            )
-        }
+        dao.getPersonalEventsSnapshot()
+            .filter { row ->
+                row.scopeSchoolId == scope.schoolId.value &&
+                    row.scopeAccountId == scope.accountId.value &&
+                    row.scopeProfileId == scope.profileId.value &&
+                    (scope.campusId == null || row.scopeCampusId == scope.campusId.value)
+            }
+            .sortedBy { it.id }
+            .asSequence()
+            .map { row -> personalEventSearchDocument(row, scope) }
 }
+
+internal fun personalEventSearchDocument(
+    row: cn.edu.haut.campus.core.database.PersonalEventEntity,
+    scope: SchoolAccountScope
+): SearchDocument = SearchDocument(
+    ref = EntityRef(EntityType.PERSONAL_EVENT, row.id, scope),
+    type = EntityType.PERSONAL_EVENT,
+    title = row.title,
+    body = listOfNotNull(row.note, row.placeText).joinToString(" "),
+    code = null,
+    aliases = emptyList(),
+    termId = row.termId,
+    at = Instant.ofEpochMilli(row.startAtEpochMs),
+    deeplink = "dayinschool://personal-event/" + row.id,
+    facets = mapOf("kind" to row.kind, "status" to row.status)
+)

@@ -23,11 +23,16 @@ import kotlinx.coroutines.flow.Flow
     indices = [
         Index(value = ["startAtEpochMs"]),
         Index(value = ["updatedAtEpochMs"]),
-        Index(value = ["termId"])
+        Index(value = ["termId"]),
+        Index(value = ["scopeSchoolId", "scopeAccountId", "scopeProfileId", "scopeCampusId"])
     ]
 )
 data class PersonalEventEntity(
     @PrimaryKey val id: String,
+    val scopeSchoolId: String,
+    val scopeAccountId: String,
+    val scopeProfileId: String,
+    val scopeCampusId: String?,
     val kind: String,
     val title: String,
     val note: String?,
@@ -146,6 +151,10 @@ data class SearchFtsEntity(
 @Entity(tableName = "blob_store")
 data class BlobStoreEntity(
     @PrimaryKey val blobId: String,
+    val scopeSchoolId: String,
+    val scopeAccountId: String,
+    val scopeProfileId: String,
+    val scopeCampusId: String?,
     val sha256: String,
     val mimeType: String,
     val byteCount: Long,
@@ -291,6 +300,10 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
             """
             CREATE TABLE IF NOT EXISTS personal_events (
                 id TEXT NOT NULL,
+                scopeSchoolId TEXT NOT NULL,
+                scopeAccountId TEXT NOT NULL,
+                scopeProfileId TEXT NOT NULL,
+                scopeCampusId TEXT,
                 kind TEXT NOT NULL,
                 title TEXT NOT NULL,
                 note TEXT,
@@ -316,6 +329,7 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_personal_events_startAtEpochMs ON personal_events (startAtEpochMs)")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_personal_events_updatedAtEpochMs ON personal_events (updatedAtEpochMs)")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_personal_events_termId ON personal_events (termId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_personal_events_scopeSchoolId_scopeAccountId_scopeProfileId_scopeCampusId ON personal_events (scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId)")
 
         db.execSQL(
             """
@@ -405,6 +419,10 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
             """
             CREATE TABLE IF NOT EXISTS blob_store (
                 blobId TEXT NOT NULL,
+                scopeSchoolId TEXT NOT NULL,
+                scopeAccountId TEXT NOT NULL,
+                scopeProfileId TEXT NOT NULL,
+                scopeCampusId TEXT,
                 sha256 TEXT NOT NULL,
                 mimeType TEXT NOT NULL,
                 byteCount INTEGER NOT NULL,
