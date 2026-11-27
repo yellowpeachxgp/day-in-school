@@ -10,9 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,27 +32,19 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachEmptyState
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
@@ -83,29 +73,8 @@ import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
-import cn.edu.haut.campus.core.model.TermGpaTrendPoint
-import cn.edu.haut.campus.core.plan.AttemptAggregator
-import cn.edu.haut.campus.core.plan.CompletedCourse
-import cn.edu.haut.campus.core.plan.DegreeProgressCalculator
-import cn.edu.haut.campus.core.plan.PlanCourseRef
-import cn.edu.haut.campus.core.plan.PlanSource
-import cn.edu.haut.campus.core.plan.Provenance
-import cn.edu.haut.campus.core.plan.RequirementGroup
-import cn.edu.haut.campus.core.plan.RequirementKind
-import cn.edu.haut.campus.core.plan.TrainingPlan
-import cn.edu.haut.campus.core.selection.ClassSlot
-import cn.edu.haut.campus.core.selection.DraftEntry
-import cn.edu.haut.campus.core.selection.SelectionCandidate
-import cn.edu.haut.campus.core.selection.SelectionConflictAnalyzer
 import cn.edu.haut.campus.core.selection.SelectionDraft
-import cn.edu.haut.campus.core.selection.SelectionRequest
-import cn.edu.haut.campus.core.selection.SelectionRound
 import cn.edu.haut.campus.core.selection.SelectionScope
-import cn.edu.haut.campus.core.selection.SelectionSubmission
-import cn.edu.haut.campus.core.selection.SelectionTransition
-import cn.edu.haut.campus.core.selection.TeachingWeeks
-import cn.edu.haut.campus.core.selection.TimetableOccupancy
-import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZonedDateTime
 
@@ -113,7 +82,8 @@ import java.time.ZonedDateTime
 fun GradesScreen(
     state: GradesUiState,
     onAction: (GradesUiAction) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    resetTrigger: Int = 0
 ) {
     when (state.status) {
         GradesScreenStatus.LOADING,
@@ -129,7 +99,8 @@ fun GradesScreen(
         else -> GradesLegacyContent(
             state = state,
             onAction = onAction,
-            modifier = modifier
+            modifier = modifier,
+            resetTrigger = resetTrigger
         )
     }
 }
@@ -138,7 +109,8 @@ fun GradesScreen(
 private fun GradesLegacyContent(
     state: GradesUiState,
     onAction: (GradesUiAction) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    resetTrigger: Int = 0
 ) {
     val scrollState = rememberScrollState()
     val navigateToImporter: () -> Unit = { onAction(GradesUiAction.OpenImporter) }
@@ -164,18 +136,21 @@ private fun GradesLegacyContent(
         currentTerm?.id?.takeIf { it.isNotBlank() } ?: AcademicTermResolver.defaultTermId()
     }
 
-    val selectedTermFilter = state.selectedTermFilter
-    val selectedCategoryFilter = state.selectedCategoryFilter
-    val activeSubTab = state.activeSubTab
-    val trendMetricIndex = state.trendMetricIndex
-    val showTrendSection = state.showTrendSection
-    val showSimulatorSection = state.showSimulatorSection
-    val simulatedNewCredits = state.simulatedNewCredits
-    val simulatedNewGpa = state.simulatedNewGpa
+    // 纯界面交互状态随组合存活：底栏切换/账号切换离开组合即重置，与拆分前一致
+    val interactionState = rememberGradesInteractionState()
+    var selectedTermFilter by interactionState.selectedTermFilter
+    var selectedCategoryFilter by interactionState.selectedCategoryFilter
+    var activeSubTab by interactionState.activeSubTab
+    var trendMetricIndex by interactionState.trendMetricIndex
+    var showTrendSection by interactionState.showTrendSection
+    var showSimulatorSection by interactionState.showSimulatorSection
+    var simulatedNewCredits by interactionState.simulatedNewCredits
+    var simulatedNewGpa by interactionState.simulatedNewGpa
 
-    LaunchedEffect(state.resetScrollSignal) {
-        if (state.resetScrollSignal > 0) {
+    LaunchedEffect(resetTrigger) {
+        if (resetTrigger > 0) {
             scrollState.animateScrollTo(0)
+            interactionState.resetFilters()
         }
     }
 
@@ -532,14 +507,14 @@ private fun GradesLegacyContent(
                             label = if (showSimulatorSection) "收起测算" else "绩点测算",
                             selected = showSimulatorSection,
                             compact = true,
-                            onClick = { onAction(GradesUiAction.ToggleSimulatorSection) }
+                            onClick = { showSimulatorSection = !showSimulatorSection }
                         )
                         if (gpaReport.termTrends.isNotEmpty()) {
                             XPeachFilterPill(
                                 label = if (showTrendSection) "收起趋势" else "学期趋势",
                                 selected = showTrendSection,
                                 compact = true,
-                                onClick = { onAction(GradesUiAction.ToggleTrendSection) }
+                                onClick = { showTrendSection = !showTrendSection }
                             )
                         }
                     }
@@ -618,7 +593,7 @@ private fun GradesLegacyContent(
                         )
                         Slider(
                             value = simulatedNewCredits,
-                            onValueChange = { onAction(GradesUiAction.UpdateSimulatedNewCredits(it)) },
+                            onValueChange = { simulatedNewCredits = it },
                             valueRange = 2f..60f
                         )
                         Text(
@@ -628,7 +603,7 @@ private fun GradesLegacyContent(
                         )
                         Slider(
                             value = simulatedNewGpa,
-                            onValueChange = { onAction(GradesUiAction.UpdateSimulatedNewGpa(it)) },
+                            onValueChange = { simulatedNewGpa = it },
                             valueRange = 2.0f..4.5f
                         )
                     }
@@ -651,7 +626,7 @@ private fun GradesLegacyContent(
                             XPeachSegmentedTabs(
                                 items = listOf("GPA", "均分", "学分"),
                                 selectedIndex = trendMetricIndex,
-                                onSelect = { onAction(GradesUiAction.SelectTrendMetric(it)) },
+                                onSelect = { trendMetricIndex = it },
                                 modifier = Modifier.width(184.dp)
                             )
                         }
@@ -678,7 +653,7 @@ private fun GradesLegacyContent(
                     "选课草稿"
                 ),
                 selectedIndex = activeSubTab,
-                onSelect = { onAction(GradesUiAction.SelectSubTab(it)) }
+                onSelect = { activeSubTab = it }
             )
 
             AnimatedVisibility(
@@ -695,13 +670,13 @@ private fun GradesLegacyContent(
                     XPeachFilterPill(
                         label = "全部学期",
                         selected = selectedTermFilter == null,
-                        onClick = { onAction(GradesUiAction.SelectTermFilter(null)) }
+                        onClick = { selectedTermFilter = null }
                     )
                     for (termId in availableTerms) {
                         XPeachFilterPill(
                             label = termId,
                             selected = selectedTermFilter == termId,
-                            onClick = { onAction(GradesUiAction.SelectTermFilter(termId)) }
+                            onClick = { selectedTermFilter = termId }
                         )
                     }
                 }
@@ -755,14 +730,14 @@ private fun GradesLegacyContent(
                                     label = "全部性质",
                                     selected = selectedCategoryFilter == null,
                                     compact = true,
-                                    onClick = { onAction(GradesUiAction.SelectCategoryFilter(null)) }
+                                    onClick = { selectedCategoryFilter = null }
                                 )
                                 for (cat in CourseCategory.entries) {
                                     XPeachFilterPill(
                                         label = cat.label,
                                         selected = selectedCategoryFilter == cat,
                                         compact = true,
-                                        onClick = { onAction(GradesUiAction.SelectCategoryFilter(cat)) }
+                                        onClick = { selectedCategoryFilter = cat }
                                     )
                                 }
                             }
@@ -1016,4 +991,3 @@ private fun GradesLegacyContent(
         }
     }
 }
-

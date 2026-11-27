@@ -4,7 +4,6 @@ import androidx.compose.runtime.Immutable
 import cn.edu.haut.campus.core.database.AppPreferencesState
 import cn.edu.haut.campus.core.database.ExamTermRepairAuditEntity
 import cn.edu.haut.campus.core.model.Course
-import cn.edu.haut.campus.core.model.CourseCategory
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.FocusSessionDomain
@@ -27,7 +26,7 @@ enum class GradesScreenStatus {
     UNSUPPORTED
 }
 
-/** 学业页不可变渲染快照；只包含 UI 渲染与高层交互状态，不包含 Repository、Context 或协程。 */
+/** 学业页不可变渲染快照；只包含数据驱动的渲染状态，不包含 Repository、Context 或协程；筛选/展开等纯界面状态留在组合内。 */
 @Immutable
 data class GradesUiState(
     val status: GradesScreenStatus = GradesScreenStatus.CONTENT,
@@ -40,14 +39,5 @@ data class GradesUiState(
     val prefs: AppPreferencesState = AppPreferencesState(),
     val studentProfile: StudentProfile? = null,
     val activeFocusSession: FocusSessionDomain? = null,
-    val completedFocusSessions: List<FocusSessionDomain> = emptyList(),
-    val selectedTermFilter: String? = null,
-    val selectedCategoryFilter: CourseCategory? = null,
-    val activeSubTab: Int = 0,
-    val trendMetricIndex: Int = 0,
-    val showTrendSection: Boolean = false,
-    val showSimulatorSection: Boolean = false,
-    val simulatedNewCredits: Float = 22f,
-    val simulatedNewGpa: Float = 3.8f,
-    val resetScrollSignal: Int = 0
+    val completedFocusSessions: List<FocusSessionDomain> = emptyList()
 )

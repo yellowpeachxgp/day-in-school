@@ -44,21 +44,6 @@ class GradesViewModel(
 
     fun onAction(action: GradesUiAction) {
         when (action) {
-            GradesUiAction.ResetToTop -> _uiState.update {
-                it.copy(
-                    selectedTermFilter = null,
-                    selectedCategoryFilter = null,
-                    resetScrollSignal = it.resetScrollSignal + 1
-                )
-            }
-            is GradesUiAction.SelectTermFilter -> _uiState.update { it.copy(selectedTermFilter = action.termId) }
-            is GradesUiAction.SelectCategoryFilter -> _uiState.update { it.copy(selectedCategoryFilter = action.category) }
-            is GradesUiAction.SelectSubTab -> _uiState.update { it.copy(activeSubTab = action.index) }
-            is GradesUiAction.SelectTrendMetric -> _uiState.update { it.copy(trendMetricIndex = action.index) }
-            GradesUiAction.ToggleTrendSection -> _uiState.update { it.copy(showTrendSection = !it.showTrendSection) }
-            GradesUiAction.ToggleSimulatorSection -> _uiState.update { it.copy(showSimulatorSection = !it.showSimulatorSection) }
-            is GradesUiAction.UpdateSimulatedNewCredits -> _uiState.update { it.copy(simulatedNewCredits = action.value) }
-            is GradesUiAction.UpdateSimulatedNewGpa -> _uiState.update { it.copy(simulatedNewGpa = action.value) }
             GradesUiAction.ToggleGpaPrivacyShield -> {
                 val next = !_uiState.value.prefs.gpaPrivacyShieldEnabled
                 scope.launch { repository.setGpaPrivacyShield(next) }

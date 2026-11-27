@@ -11,7 +11,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.CampusRepository
-import cn.edu.haut.campus.feature.grades.state.GradesUiAction
 import cn.edu.haut.campus.feature.grades.state.GradesUiEffect
 import cn.edu.haut.campus.feature.grades.ui.GradesScreen as GradesUiScreen
 
@@ -39,15 +38,19 @@ fun GradesRoute(
     resetTrigger: Int = 0
 ) {
     val context = LocalContext.current
+    // 会话级 ViewModel：以 profileId+sessionGeneration 为 key，存放在组合作用域的
+    // ViewModelStoreOwner 中。Profile 切换产生新 VM；组合销毁（含切走底栏、切换账号）
+    // 即清空旧 VM，杜绝旧 VM 继续收集旧 Repository 数据的跨 Profile 串扰。
+    val sessionKey = gradesSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberGradesViewModelStoreOwner(sessionKey)
     val factory = remember(repository) { GradesViewModelFactory(repository) }
-    val viewModel: GradesViewModel = viewModel(factory = factory)
+    val viewModel: GradesViewModel = viewModel(
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
+        factory = factory
+    )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    LaunchedEffect(resetTrigger) {
-        if (resetTrigger > 0) {
-            viewModel.onAction(GradesUiAction.ResetToTop)
-        }
-    }
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
@@ -70,5 +73,5 @@ fun GradesRoute(
         }
     }
 
-    GradesUiScreen(state = state, onAction = viewModel::onAction)
+    GradesUiScreen(state = state, onAction = viewModel::onAction, resetTrigger = resetTrigger)
 }
