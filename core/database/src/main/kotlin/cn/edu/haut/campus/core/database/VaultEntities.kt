@@ -409,11 +409,11 @@ val MIGRATION_11_12 = object : Migration(11, 12) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_search_docs_atEpochMs ON search_docs (atEpochMs)")
         db.execSQL("CREATE INDEX IF NOT EXISTS index_search_docs_updatedAtEpochMs ON search_docs (updatedAtEpochMs)")
 
-        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING FTS4(tokenStream, tokenize=unicode61 tokenchars=_, content=search_docs)")
-        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_BEFORE_UPDATE BEFORE UPDATE ON search_docs BEGIN INSERT INTO search_fts(search_fts, docid, tokenStream) VALUES('delete', OLD.rowid, OLD.tokenStream); END")
-        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_BEFORE_DELETE BEFORE DELETE ON search_docs BEGIN INSERT INTO search_fts(search_fts, docid, tokenStream) VALUES('delete', OLD.rowid, OLD.tokenStream); END")
-        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_AFTER_UPDATE AFTER UPDATE ON search_docs BEGIN INSERT INTO search_fts(docid, tokenStream) VALUES(NEW.rowid, NEW.tokenStream); END")
-        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_AFTER_INSERT AFTER INSERT ON search_docs BEGIN INSERT INTO search_fts(docid, tokenStream) VALUES(NEW.rowid, NEW.tokenStream); END")
+        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS `search_fts` USING FTS4(`tokenStream` TEXT NOT NULL, tokenize=unicode61 `tokenchars=_`, content=`search_docs`)")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_BEFORE_UPDATE BEFORE UPDATE ON `search_docs` BEGIN DELETE FROM `search_fts` WHERE `docid`=OLD.`rowid`; END")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_BEFORE_DELETE BEFORE DELETE ON `search_docs` BEGIN DELETE FROM `search_fts` WHERE `docid`=OLD.`rowid`; END")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_AFTER_UPDATE AFTER UPDATE ON `search_docs` BEGIN INSERT INTO `search_fts`(`docid`, `tokenStream`) VALUES (NEW.`rowid`, NEW.`tokenStream`); END")
+        db.execSQL("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_search_fts_AFTER_INSERT AFTER INSERT ON `search_docs` BEGIN INSERT INTO `search_fts`(`docid`, `tokenStream`) VALUES (NEW.`rowid`, NEW.`tokenStream`); END")
 
         db.execSQL(
             """
