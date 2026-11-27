@@ -273,7 +273,7 @@ class RoomSearchIndex(
             document.code != null -> document.title + " " + document.code
             else -> document.title
         }
-        return source.replace(Regex("\s+"), " ").take(160)
+        return source.replace(Regex("\\s+"), " ").take(160)
     }
 
     private fun encodeStringList(values: List<String>): String =
