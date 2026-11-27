@@ -97,5 +97,5 @@ data class TodayUiState(
     val courseReminderFeedbackEventKey: String? = null,
     val courseReminderFeedback: String? = null,
     val pendingWrites: List<TodayWriteOperation> = emptyList(),
-    val latestWriteCompletion: TodayWriteCompletion? = null
+    val writeCompletions: Map<TodayWriteKind, TodayWriteCompletion> = emptyMap()
 )

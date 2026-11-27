@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** 聚合课表页 Repository Flow，并把全部仓库写操作集中在一个可测试边界。 */
-class TimetableViewModel(
+class TimetableViewModel internal constructor(
     private val repository: CampusRepository,
     private val writeExecutor: TimetableWriteExecutor
 ) : ViewModel() {
@@ -276,7 +276,10 @@ class TimetableViewModel(
             kind = kind
         )
         _uiState.update { state ->
-            state.copy(pendingWrites = state.pendingWrites + operation)
+            state.copy(
+                pendingWrites = state.pendingWrites + operation,
+                writeCompletions = state.writeCompletions - kind
+            )
         }
         val job = writeExecutor.enqueue(
             profileId = expectedProfileId,
@@ -293,7 +296,7 @@ class TimetableViewModel(
                 _uiState.update { state ->
                     state.copy(
                         pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                        latestWriteCompletion = completion
+                        writeCompletions = state.writeCompletions + (kind to completion)
                     )
                 }
                 result.onSuccess { value -> onSuccess(value) }
@@ -308,7 +311,7 @@ class TimetableViewModel(
             _uiState.update { state ->
                 state.copy(
                     pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                    latestWriteCompletion = completion
+                    writeCompletions = state.writeCompletions + (kind to completion)
                 )
             }
         }

@@ -827,6 +827,7 @@ private fun TodayLegacyContent(
             globalConfig = prefs.reminderConfig,
             activeTask = tasksByEventKey[detailEventKey],
             overridesByScope = overridesByScope,
+            writeCompletions = state.writeCompletions,
             onAction = onAction,
             onNavigateToMapWithRoom = { room ->
                 selectedOccurrenceForDetail = null

@@ -1071,6 +1071,7 @@ private fun TimetableLegacyContent(
         courses = courses,
         rules = rules,
         today = today,
+        writeCompletions = state.writeCompletions,
         onAction = onAction,
         onNavigateToImporter = onNavigateToImporter,
         onNavigateToMapWithRoom = onNavigateToMapWithRoom

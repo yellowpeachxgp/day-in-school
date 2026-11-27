@@ -11,7 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /** 在账号会话锁内执行写入；返回 null 表示 profileId/generation 已不是当前会话。 */
-internal fun interface TodaySessionWriteRunner {
+internal interface TodaySessionWriteRunner {
     suspend fun <T : Any> withActiveSessionWrite(
         profileId: String,
         sessionGeneration: Long,

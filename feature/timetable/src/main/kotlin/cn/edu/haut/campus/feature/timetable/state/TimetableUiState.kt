@@ -76,5 +76,5 @@ data class TimetableUiState(
     val restoreNotice: String? = null,
     val pendingLegacyReviewTargets: List<OccurrenceOverride> = emptyList(),
     val pendingWrites: List<TimetableWriteOperation> = emptyList(),
-    val latestWriteCompletion: TimetableWriteCompletion? = null
+    val writeCompletions: Map<TimetableWriteKind, TimetableWriteCompletion> = emptyMap()
 )

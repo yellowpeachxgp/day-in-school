@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
@@ -54,6 +55,8 @@ import cn.edu.haut.campus.core.model.SnoozeOptionEvaluation
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import java.time.Instant
 import cn.edu.haut.campus.feature.today.state.TodayUiAction
+import cn.edu.haut.campus.feature.today.state.TodayWriteCompletion
+import cn.edu.haut.campus.feature.today.state.TodayWriteKind
 
 @Composable
 internal fun CourseDetailAndSnoozeDialog(
@@ -64,6 +67,7 @@ internal fun CourseDetailAndSnoozeDialog(
     globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig,
     activeTask: ReminderTaskDomain?,
     overridesByScope: Map<String, ReminderEventOverride>,
+    writeCompletions: Map<TodayWriteKind, TodayWriteCompletion>,
     onAction: (TodayUiAction) -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit,
     onNavigateToTimetable: () -> Unit = {},
@@ -79,6 +83,26 @@ internal fun CourseDetailAndSnoozeDialog(
         ReminderPolicyEngine.resolveEffectivePolicy(event, globalConfig, overridesByScope)
     }
 
+    var cancelWriteActive by remember(detailState) { mutableStateOf(false) }
+    var cancelWriteError by remember(detailState) { mutableStateOf<String?>(null) }
+    val cancelWriteCompletion = if (cancelWriteActive) {
+        writeCompletions[TodayWriteKind.CancelClassOccurrence]
+    } else {
+        null
+    }
+    LaunchedEffect(cancelWriteCompletion?.id, detailState) {
+        val completion = cancelWriteCompletion
+        if (cancelWriteActive && completion != null) {
+            cancelWriteActive = false
+            if (completion.isSuccess) {
+                onDismiss()
+            } else {
+                cancelWriteError = completion.errorMessage ?: "写入失败，请重试"
+            }
+        }
+    }
+    val cancelWritePending = cancelWriteActive
+
     var hasLoadedSnoozeOptions by remember(detailState) { mutableStateOf(false) }
     LaunchedEffect(event, activeTask, effectivePolicy) {
         onAction(
@@ -92,7 +116,11 @@ internal fun CourseDetailAndSnoozeDialog(
     }
 
     XPeachAlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!cancelWritePending) onDismiss() },
+        properties = DialogProperties(
+            dismissOnBackPress = !cancelWritePending,
+            dismissOnClickOutside = !cancelWritePending
+        ),
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(occ.courseName, style = MaterialTheme.typography.titleLarge)
@@ -333,6 +361,14 @@ internal fun CourseDetailAndSnoozeDialog(
                                 fontWeight = FontWeight.Medium
                             )
                         }
+                        cancelWriteError?.let { message ->
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
 
@@ -347,13 +383,25 @@ internal fun CourseDetailAndSnoozeDialog(
                     }
                     OutlinedButton(
                         onClick = {
+                            cancelWriteActive = true
+                            cancelWriteError = null
                             onAction(TodayUiAction.CancelClassOccurrence(detailState, termId))
-                            onDismiss()
                         },
+                        enabled = !cancelWritePending,
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         val isTodayOcc = occ.date == LocalTodayClock.current.now().toLocalDate()
-                        Text(if (isTodayOcc) "今日停课" else "本节停课", maxLines = 1, softWrap = false)
+                        Text(
+                            text = if (cancelWritePending) {
+                                "停课写入中…"
+                            } else if (isTodayOcc) {
+                                "今日停课"
+                            } else {
+                                "本节停课"
+                            },
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                     OutlinedButton(
                         onClick = onNavigateToTimetable,
@@ -365,7 +413,10 @@ internal fun CourseDetailAndSnoozeDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !cancelWritePending
+            ) {
                 Text("关闭")
             }
         }

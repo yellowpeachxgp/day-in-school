@@ -29,11 +29,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCoursePalette
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
@@ -56,6 +59,49 @@ import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import java.time.LocalDate
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+
+/** 单个对话框实例的写入等待状态；只响应发起后收到的同 kind 完成结果。 */
+private class TimetableDialogWriteLifecycle {
+    var activeKind by mutableStateOf<TimetableWriteKind?>(null)
+    var errorMessage by mutableStateOf<String?>(null)
+
+    val pending: Boolean get() = activeKind != null
+
+    fun begin(kind: TimetableWriteKind) {
+        activeKind = kind
+        errorMessage = null
+    }
+}
+
+@Composable
+private fun rememberTimetableDialogWriteLifecycle(
+    key: Any?,
+    writeCompletions: Map<TimetableWriteKind, TimetableWriteCompletion>,
+    onWriteSuccess: () -> Unit
+): TimetableDialogWriteLifecycle {
+    val lifecycle = remember(key) { TimetableDialogWriteLifecycle() }
+    val currentOnWriteSuccess by rememberUpdatedState(onWriteSuccess)
+    val activeCompletion = lifecycle.activeKind?.let { writeCompletions[it] }
+    LaunchedEffect(activeCompletion?.id, key) {
+        val completion = activeCompletion
+        if (completion != null) {
+            lifecycle.activeKind = null
+            if (completion.isSuccess) {
+                currentOnWriteSuccess()
+            } else {
+                lifecycle.errorMessage = completion.errorMessage ?: "写入失败，请重试"
+            }
+        }
+    }
+    return lifecycle
+}
+
+private fun writeAwareDialogProperties(pending: Boolean): DialogProperties = DialogProperties(
+    dismissOnBackPress = !pending,
+    dismissOnClickOutside = !pending
+)
 
 @Composable
 internal fun TimetableEditingDialogs(
@@ -76,6 +122,7 @@ internal fun TimetableEditingDialogs(
     courses: List<Course>,
     rules: List<CourseScheduleRule>,
     today: LocalDate,
+    writeCompletions: Map<TimetableWriteKind, TimetableWriteCompletion>,
     onAction: (TimetableUiAction) -> Unit,
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
@@ -102,11 +149,18 @@ internal fun TimetableEditingDialogs(
         var targetDateText by remember(occToEdit) { mutableStateOf(occToEdit.date.toString()) }
         var singleDateError by remember(occToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = occToEdit,
+            writeCompletions = writeCompletions,
+            onWriteSuccess = onEditingOccurrenceDismiss
+        )
+        val writePending = writeLifecycle.pending
 
         val palette = XPeachCoursePalette.SwatchesArgb
 
         XPeachAlertDialog(
-            onDismissRequest = { onEditingOccurrenceDismiss() },
+            onDismissRequest = { if (!writePending) onEditingOccurrenceDismiss() },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("课程调整") },
             text = {
                 Column(
@@ -118,6 +172,13 @@ internal fun TimetableEditingDialogs(
                         style = MaterialTheme.typography.bodyMedium,
                         color = XPeachTheme.readablePrimary
                     )
+                    writeLifecycle.errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     if (targetRule != null) {
                         XPeachSegmentedTabs(
                             items = listOf("修改全学期规则", "仅改本次 (${occToEdit.date.format(SHORT_DATE_FMT)})"),
@@ -311,9 +372,10 @@ internal fun TimetableEditingDialogs(
                         if (!occToEdit.overrideId.isNullOrBlank() && occToEdit.ruleId != null) {
                             TextButton(
                                 onClick = {
+                                    writeLifecycle.begin(TimetableWriteKind.ResetSingleDayOccurrenceEdit)
                                     onAction(TimetableUiAction.ResetSingleDayOccurrenceEdit(occToEdit))
-                                    onEditingOccurrenceDismiss()
                                 },
+                                enabled = !writePending,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
@@ -334,6 +396,7 @@ internal fun TimetableEditingDialogs(
                                 onEditingOccurrenceDismiss()
                                 onNavigateToMapWithRoom(editedRoom)
                             },
+                            enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
@@ -344,9 +407,10 @@ internal fun TimetableEditingDialogs(
                         OutlinedButton(
                             onClick = {
                                 val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
-                            onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, activeTermId))
-                            onEditingOccurrenceDismiss()
+                                writeLifecycle.begin(TimetableWriteKind.CancelClassOccurrence)
+                                onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, activeTermId))
                             },
+                            enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
@@ -356,14 +420,15 @@ internal fun TimetableEditingDialogs(
                     if (targetRule != null && editScopeMode == 0) {
                         TextButton(
                             onClick = {
-                            onAction(
-                                TimetableUiAction.DeleteCourseScheduleRules(
-                                    ruleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) },
-                                    contextDate = occToEdit.date
+                                writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRules)
+                                onAction(
+                                    TimetableUiAction.DeleteCourseScheduleRules(
+                                        ruleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) },
+                                        contextDate = occToEdit.date
+                                    )
                                 )
-                            )
-                            onEditingOccurrenceDismiss()
                             },
+                            enabled = !writePending,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
@@ -399,6 +464,7 @@ internal fun TimetableEditingDialogs(
                             }
                             val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                             val cleanRoom = editedRoom.trim().ifEmpty { occToEdit.rawRoom }
+                            writeLifecycle.begin(TimetableWriteKind.SaveSingleDayOccurrenceEdit)
                             onAction(
                                 TimetableUiAction.SaveSingleDayOccurrenceEdit(
                                     occurrence = occToEdit,
@@ -409,7 +475,6 @@ internal fun TimetableEditingDialogs(
                                     newRoom = cleanRoom
                                 )
                             )
-                            onEditingOccurrenceDismiss()
                         } else {
                             val parsedWeeks = WeeksSetParser.parse(editedWeeksText)
                             if (parsedWeeks.isEmpty()) {
@@ -421,6 +486,7 @@ internal fun TimetableEditingDialogs(
                                 return@Button
                             }
                             if (targetCourse != null) {
+                                writeLifecycle.begin(TimetableWriteKind.SaveMergedCourseRuleEdit)
                                 onAction(
                                     TimetableUiAction.SaveMergedCourseRuleEdit(
                                         course = targetCourse,
@@ -437,17 +503,22 @@ internal fun TimetableEditingDialogs(
                                         colorArgb = selectedColor
                                     )
                                 )
+                            } else {
+                                onEditingOccurrenceDismiss()
                             }
-                            onEditingOccurrenceDismiss()
                         }
                     },
+                    enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("保存")
+                    Text(if (writePending) "写入中…" else "保存")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { onEditingOccurrenceDismiss() }) {
+                TextButton(
+                    onClick = { onEditingOccurrenceDismiss() },
+                    enabled = !writePending
+                ) {
                     Text("取消")
                 }
             }
@@ -468,10 +539,17 @@ internal fun TimetableEditingDialogs(
         }
         var masterEditError by remember(masterRuleToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(targetCourse) { mutableLongStateOf(targetCourse?.colorArgb ?: 0xFF0072BC) }
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = masterRuleToEdit,
+            writeCompletions = writeCompletions,
+            onWriteSuccess = onEditingMasterRuleDismiss
+        )
+        val writePending = writeLifecycle.pending
         val palette = XPeachCoursePalette.SwatchesArgb
 
         XPeachAlertDialog(
-            onDismissRequest = { onEditingMasterRuleDismiss() },
+            onDismissRequest = { if (!writePending) onEditingMasterRuleDismiss() },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("编辑排课规则") },
             text = {
                 Column(
@@ -573,7 +651,7 @@ internal fun TimetableEditingDialogs(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    masterEditError?.let {
+                    (masterEditError ?: writeLifecycle.errorMessage)?.let {
                         Text(
                             text = it,
                             style = MaterialTheme.typography.labelSmall,
@@ -603,6 +681,7 @@ internal fun TimetableEditingDialogs(
                     }
                     TextButton(
                         onClick = { onConfirmDeleteMasterRuleChange(masterRuleToEdit) },
+                        enabled = !writePending,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -630,6 +709,7 @@ internal fun TimetableEditingDialogs(
                         }
                         if (masterEditError != null) return@Button
                         if (targetCourse != null) {
+                            writeLifecycle.begin(TimetableWriteKind.SaveMasterCourseRuleEdit)
                             onAction(
                                 TimetableUiAction.SaveMasterCourseRuleEdit(
                                     course = targetCourse,
@@ -644,16 +724,21 @@ internal fun TimetableEditingDialogs(
                                     colorArgb = selectedColor
                                 )
                             )
+                        } else {
+                            onEditingMasterRuleDismiss()
                         }
-                        onEditingMasterRuleDismiss()
                     },
+                    enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("保存")
+                    Text(if (writePending) "写入中…" else "保存")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { onEditingMasterRuleDismiss() }) {
+                TextButton(
+                    onClick = { onEditingMasterRuleDismiss() },
+                    enabled = !writePending
+                ) {
                     Text("取消")
                 }
             }
@@ -664,33 +749,55 @@ internal fun TimetableEditingDialogs(
     if (pendingDeleteMaster != null) {
         val pendingCourse = courses.firstOrNull { it.id == pendingDeleteMaster.courseId }
         val isPractical = pendingCourse?.externalId?.startsWith("sjk:") == true
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = pendingDeleteMaster,
+            writeCompletions = writeCompletions,
+            onWriteSuccess = {
+                onConfirmDeleteMasterRuleChange(null)
+                onEditingMasterRuleDismiss()
+            }
+        )
+        val writePending = writeLifecycle.pending
         XPeachAlertDialog(
-            onDismissRequest = { onConfirmDeleteMasterRuleChange(null) },
+            onDismissRequest = { if (!writePending) onConfirmDeleteMasterRuleChange(null) },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("确认删除排课时段？") },
             text = {
-                Text(
-                    text = if (isPractical) {
-                        "确认删除「${pendingCourse?.name ?: "实践课"}」的该自定义时段吗？删除全部时段后，课程将安全退回「时间待定实践课」列表，可随时重新设置时间。"
-                    } else {
-                        "确认删除「${pendingCourse?.name ?: "课程"}」（${pendingDeleteMaster.weekday.ChineseLabel} 第${pendingDeleteMaster.startPeriod}-${pendingDeleteMaster.endPeriod}节）的全学期排课时段吗？若仅需某一天停课，请在周课表点击对应卡片选择「单次停课」。"
-                    },
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (isPractical) {
+                            "确认删除「${pendingCourse?.name ?: "实践课"}」的该自定义时段吗？删除全部时段后，课程将安全退回「时间待定实践课」列表，可随时重新设置时间。"
+                        } else {
+                            "确认删除「${pendingCourse?.name ?: "课程"}」（${pendingDeleteMaster.weekday.ChineseLabel} 第${pendingDeleteMaster.startPeriod}-${pendingDeleteMaster.endPeriod}节）的全学期排课时段吗？若仅需某一天停课，请在周课表点击对应卡片选择「单次停课」。"
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    writeLifecycle.errorMessage?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRule)
                         onAction(TimetableUiAction.DeleteCourseScheduleRule(pendingDeleteMaster.id))
-                        onConfirmDeleteMasterRuleChange(null)
-                        onEditingMasterRuleDismiss()
                     },
+                    enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("确认删除")
+                    Text(if (writePending) "删除中…" else "确认删除")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { onConfirmDeleteMasterRuleChange(null) }) {
+                TextButton(
+                    onClick = { onConfirmDeleteMasterRuleChange(null) },
+                    enabled = !writePending
+                ) {
                     Text("取消")
                 }
             }
@@ -710,8 +817,15 @@ internal fun TimetableEditingDialogs(
                     ?: "1-16周"
             )
         }
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = pracToSchedule,
+            writeCompletions = writeCompletions,
+            onWriteSuccess = onSchedulingPracticalCourseDismiss
+        )
+        val writePending = writeLifecycle.pending
         XPeachAlertDialog(
-            onDismissRequest = { onSchedulingPracticalCourseDismiss() },
+            onDismissRequest = { if (!writePending) onSchedulingPracticalCourseDismiss() },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("设置实践课时间") },
             text = {
                 Column(
@@ -837,7 +951,7 @@ internal fun TimetableEditingDialogs(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    pracError?.let {
+                    (pracError ?: writeLifecycle.errorMessage)?.let {
                         Text(
                             text = it,
                             style = MaterialTheme.typography.labelSmall,
@@ -862,6 +976,7 @@ internal fun TimetableEditingDialogs(
                             else -> null
                         }
                         if (pracError != null) return@Button
+                        writeLifecycle.begin(TimetableWriteKind.SchedulePracticalCourse)
                         onAction(
                             TimetableUiAction.SchedulePracticalCourse(
                                 unscheduled = pracToSchedule,
@@ -872,15 +987,18 @@ internal fun TimetableEditingDialogs(
                                 weeks = parsedWeeks
                             )
                         )
-                        onSchedulingPracticalCourseDismiss()
                     },
+                    enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("排入课表")
+                    Text(if (writePending) "写入中…" else "排入课表")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { onSchedulingPracticalCourseDismiss() }) {
+                TextButton(
+                    onClick = { onSchedulingPracticalCourseDismiss() },
+                    enabled = !writePending
+                ) {
                     Text("取消")
                 }
             }
@@ -896,9 +1014,16 @@ internal fun TimetableEditingDialogs(
         var newEndPeriod by remember { mutableStateOf("2") }
         var newWeeks by remember { mutableStateOf("1-16周") }
         var addError by remember { mutableStateOf<String?>(null) }
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = "add-course",
+            writeCompletions = writeCompletions,
+            onWriteSuccess = onAddCourseDialogDismiss
+        )
+        val writePending = writeLifecycle.pending
 
         XPeachAlertDialog(
-            onDismissRequest = { onAddCourseDialogDismiss() },
+            onDismissRequest = { if (!writePending) onAddCourseDialogDismiss() },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("添加课程") },
             text = {
                 Column(
@@ -1025,7 +1150,7 @@ internal fun TimetableEditingDialogs(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    addError?.let {
+                    (addError ?: writeLifecycle.errorMessage)?.let {
                         Text(
                             text = it,
                             style = MaterialTheme.typography.labelSmall,
@@ -1052,6 +1177,7 @@ internal fun TimetableEditingDialogs(
                             else -> null
                         }
                         if (addError != null) return@Button
+                        writeLifecycle.begin(TimetableWriteKind.AddManualCourse)
                         onAction(
                             TimetableUiAction.AddManualCourse(
                                 termId = activeTermId,
@@ -1065,15 +1191,18 @@ internal fun TimetableEditingDialogs(
                                 colorArgb = 0xFF0072BC
                             )
                         )
-                        onAddCourseDialogDismiss()
                     },
+                    enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("添加")
+                    Text(if (writePending) "写入中…" else "添加")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { onAddCourseDialogDismiss() }) {
+                TextButton(
+                    onClick = { onAddCourseDialogDismiss() },
+                    enabled = !writePending
+                ) {
                     Text("取消")
                 }
             }
@@ -1085,9 +1214,16 @@ internal fun TimetableEditingDialogs(
             mutableStateOf(term?.startDate?.toString() ?: "2026-08-31")
         }
         var dateError by remember { mutableStateOf<String?>(null) }
+        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+            key = "term-switcher",
+            writeCompletions = writeCompletions,
+            onWriteSuccess = onTermSwitcherDialogDismiss
+        )
+        val writePending = writeLifecycle.pending
 
         XPeachAlertDialog(
-            onDismissRequest = { onTermSwitcherDialogDismiss() },
+            onDismissRequest = { if (!writePending) onTermSwitcherDialogDismiss() },
+            properties = writeAwareDialogProperties(writePending),
             title = { Text("学期与校历") },
             text = {
                 Column(
@@ -1110,9 +1246,9 @@ internal fun TimetableEditingDialogs(
                                     if (isCurrent) XPeachTheme.primaryAccentCardColor
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 )
-                                .clickable {
+                                .clickable(enabled = !writePending) {
+                                    writeLifecycle.begin(TimetableWriteKind.SelectCurrentTerm)
                                     onAction(TimetableUiAction.SelectCurrentTerm(t.id))
-                                    onTermSwitcherDialogDismiss()
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1158,9 +1294,9 @@ internal fun TimetableEditingDialogs(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    if (dateError != null) {
+                    (dateError ?: writeLifecycle.errorMessage)?.let { message ->
                         Text(
-                            text = dateError!!,
+                            text = message,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -1176,20 +1312,22 @@ internal fun TimetableEditingDialogs(
                                 if (parsedDate == null || activeTermId == null) {
                                     dateError = "日期格式无效 (YYYY-MM-DD)"
                                 } else {
+                                    writeLifecycle.begin(TimetableWriteKind.UpdateTermStartDate)
                                     onAction(TimetableUiAction.UpdateTermStartDate(activeTermId, parsedDate))
-                                    onTermSwitcherDialogDismiss()
                                 }
                             },
+                            enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("保存日期", maxLines = 1, softWrap = false)
+                            Text(if (writePending) "写入中…" else "保存日期", maxLines = 1, softWrap = false)
                         }
                         FilledTonalButton(
                             onClick = {
                                 onTermSwitcherDialogDismiss()
                                 onNavigateToImporter()
                             },
+                            enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
@@ -1199,7 +1337,10 @@ internal fun TimetableEditingDialogs(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onTermSwitcherDialogDismiss() }) {
+                TextButton(
+                    onClick = { onTermSwitcherDialogDismiss() },
+                    enabled = !writePending
+                ) {
                     Text("关闭")
                 }
             }

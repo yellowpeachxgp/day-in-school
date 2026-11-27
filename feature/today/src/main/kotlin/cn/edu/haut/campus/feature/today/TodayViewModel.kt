@@ -38,7 +38,7 @@ internal fun todayClassEventKey(termId: String, occurrenceId: String): String =
     "CLASS:" + termId + ":" + occurrenceId
 
 /** 聚合今日页 Repository Flow，并把仓库/提醒写操作集中在一个可测试边界。 */
-class TodayViewModel(
+class TodayViewModel internal constructor(
     private val repository: CampusRepository,
     private val reminderCoordinator: ReminderCoordinator,
     private val writeExecutor: TodayWriteExecutor
@@ -459,7 +459,10 @@ class TodayViewModel(
             kind = kind
         )
         _uiState.update { state ->
-            state.copy(pendingWrites = state.pendingWrites + operation)
+            state.copy(
+                pendingWrites = state.pendingWrites + operation,
+                writeCompletions = state.writeCompletions - kind
+            )
         }
         val job = writeExecutor.enqueue(
             profileId = expectedProfileId,
@@ -476,7 +479,7 @@ class TodayViewModel(
                 _uiState.update { state ->
                     state.copy(
                         pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                        latestWriteCompletion = completion
+                        writeCompletions = state.writeCompletions + (kind to completion)
                     )
                 }
                 result.onSuccess { value -> onSuccess(value) }
@@ -491,7 +494,7 @@ class TodayViewModel(
             _uiState.update { state ->
                 state.copy(
                     pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                    latestWriteCompletion = completion
+                    writeCompletions = state.writeCompletions + (kind to completion)
                 )
             }
         }
