@@ -24,6 +24,17 @@ fun EmptyClassroomScreen(
 }
 
 @Composable
+fun CampusHospitalPharmacyDialog(
+    onDismiss: () -> Unit,
+    onOpenUrl: (String, String) -> Unit
+) {
+    cn.edu.haut.campus.feature.settings.hub.ui.CampusHospitalPharmacyDialog(
+        onDismiss = onDismiss,
+        onOpenUrl = onOpenUrl
+    )
+}
+
+@Composable
 fun CampusCommunityScreen(
     repository: CampusRepository,
     initialTab: Int = 0,
