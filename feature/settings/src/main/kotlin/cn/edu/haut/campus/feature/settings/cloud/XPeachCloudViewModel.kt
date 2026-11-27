@@ -40,9 +40,12 @@ class XPeachCloudViewModel(
         repository.unlinkXpeachCloudAccountAndRevokeCloudPlans()
     override suspend fun reconfirmAndRestoreCloudBookingPlans(): Result<CloudSyncSnapshotResult> =
         repository.reconfirmAndRestoreCloudBookingPlans()
-    override suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean) =
+    override suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean) {
         repository.setExtensionPluginEnabled(pluginId, enabled)
-    override suspend fun removeExtensionPlugin(pluginId: String) = repository.removeExtensionPlugin(pluginId)
+    }
+    override suspend fun removeExtensionPlugin(pluginId: String) {
+        repository.removeExtensionPlugin(pluginId)
+    }
 
     override fun resetStateForInvalidSession() {
         mutableUiState.value = XPeachCloudUiState()
