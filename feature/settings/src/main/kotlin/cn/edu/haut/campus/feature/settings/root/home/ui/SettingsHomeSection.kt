@@ -152,8 +152,11 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiAction
 import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiState
+
+private val AUDIT_TIME_FMT = DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"))
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SettingsHomeSectionContent(
