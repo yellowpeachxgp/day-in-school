@@ -12,7 +12,6 @@ import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiAction
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

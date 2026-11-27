@@ -10,7 +10,6 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.dorm.state.DormElectricityUiAction
 import cn.edu.haut.campus.feature.settings.dorm.state.DormElectricityUiState
 import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
