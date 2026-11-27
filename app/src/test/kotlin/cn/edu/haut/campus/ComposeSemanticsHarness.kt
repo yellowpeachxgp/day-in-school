@@ -66,16 +66,14 @@ class ComposeSemanticsHarness private constructor(
 
     fun requireText(fragment: String, timeoutMs: Long = 3_000L) {
         if (!awaitText(fragment, timeoutMs)) {
-            throw AssertionError("未在 Compose 语义树中找到文本「$fragment」。当前文本：
-" + dumpText())
+            throw AssertionError("未在 Compose 语义树中找到文本「" + fragment + "」。当前文本：\n" + dumpText())
         }
     }
 
     fun requireNoText(fragment: String) {
         pump()
         if (hasText(fragment)) {
-            throw AssertionError("Compose 语义树中不应再出现文本「$fragment」。当前文本：
-" + dumpText())
+            throw AssertionError("Compose 语义树中不应再出现文本「" + fragment + "」。当前文本：\n" + dumpText())
         }
     }
 
@@ -97,23 +95,16 @@ class ComposeSemanticsHarness private constructor(
             )
         val node = matches.getOrNull(occurrence - 1)
             ?: throw AssertionError(
-                "未找到可点击文本「$fragment」（occurrence=$occurrence）。
-" +
-                    "可点击节点：
-" + clickable.joinToString("
-") { "- " + subtreeText(it).replace('
-', ' ') } +
-                    "
-全部文本：
-" + dumpText()
+                "未找到可点击文本「" + fragment + "」（occurrence=" + occurrence + "）。\n" +
+                    "可点击节点：\n" + clickable.joinToString("\n") { "- " + subtreeText(it).replace('\n', ' ') } +
+                    "\n全部文本：\n" + dumpText()
             )
         val handled = node.config[SemanticsActions.OnClick].action!!.invoke()
         pump()
         return handled
     }
 
-    fun dumpText(): String = allTexts().distinct().joinToString("
-") { "- $it" }
+    fun dumpText(): String = allTexts().distinct().joinToString("\n") { "- " + it }
 
     private fun directTexts(node: SemanticsNode): List<String> {
         val config = node.config
@@ -152,7 +143,7 @@ class ComposeSemanticsHarness private constructor(
             val scenario = ActivityScenario.launch(ComposeSemanticsHarnessActivity::class.java)
             var root: RootForTest? = null
             scenario.onActivity { activity ->
-                activity.setContent(content)
+                activity.setContent { content() }
                 root = findViewRootForTest(activity.window.decorView)
             }
             val resolved = root ?: throw AssertionError("Compose ViewRootForTest 未创建")
