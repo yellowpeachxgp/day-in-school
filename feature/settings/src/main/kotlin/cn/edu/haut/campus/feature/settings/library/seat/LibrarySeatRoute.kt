@@ -43,7 +43,9 @@ fun LibrarySeatRoute(
         val state by viewModel.uiState.collectAsStateWithLifecycle()
         val extensionSlotContent: @Composable () -> Unit = {
             ExtensionPluginSlot(
-                repository = repository,
+                profileId = repository.profileId,
+                schoolId = repository.schoolId,
+                sessionGeneration = repository.sessionGeneration,
                 slotId = "library.actions",
                 onOpenHostRoute = { route ->
                     if (route == "settings.extensions") onNavigateToXpeachCloud?.invoke()

@@ -67,7 +67,9 @@ fun SchoolCenterRoute(
 
     val extensionSlotContent: @Composable () -> Unit = {
         ExtensionPluginSlot(
-            repository = activeSession?.repository,
+            profileId = activeSession?.repository?.profileId.orEmpty(),
+            schoolId = activeSession?.repository?.schoolId.orEmpty(),
+            sessionGeneration = activeSession?.repository?.sessionGeneration,
             slotId = "campus.services"
         )
     }

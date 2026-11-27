@@ -36,7 +36,14 @@ fun XPeachCloudRoute(
     val pluginViewModel: PluginManagementViewModel = viewModel(
         viewModelStoreOwner = viewModelStoreOwner,
         key = "plugin-management-" + sessionKey,
-        factory = PluginManagementViewModel.factory(repository, extensionInstaller, sessionStates)
+        factory = PluginManagementViewModel.factory(
+            profileId = repository.profileId,
+            schoolId = repository.schoolId,
+            sessionGeneration = repository.sessionGeneration,
+            isSessionActive = { repository.isSessionActive },
+            installer = extensionInstaller,
+            sessionStates = sessionStates
+        )
     )
     val pluginManagementState by pluginViewModel.uiState.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()

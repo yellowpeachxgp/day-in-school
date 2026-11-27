@@ -5,7 +5,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
-import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ExtensionPluginRuntimeRegistry
 import cn.edu.haut.campus.core.uiruntime.ExtensionSlotHost
 import cn.edu.haut.campus.core.uiruntime.androidDeclarativeCommandHandler
@@ -18,24 +17,27 @@ import kotlinx.coroutines.withContext
 /** home.cards 宿主槽位绑定；只读取 W6-01a 验签安装状态，不走 CampusRepository 生命周期兼容外观。 */
 @Composable
 fun TodayExtensionSlot(
-    repository: CampusRepository,
+    profileId: String,
+    schoolId: String,
+    sessionGeneration: Long?,
     onNavigateToParcelHub: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToLibrarySeats: () -> Unit,
     onNavigateToLibraryCatalog: () -> Unit
 ) {
+    if (profileId.isBlank() || schoolId.isBlank() || sessionGeneration == null) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val installer = remember(context, repository.profileId) {
-        ExtensionPluginRuntimeRegistry.installerForContext(context, repository.profileId)
+    val installer = remember(context, profileId) {
+        ExtensionPluginRuntimeRegistry.installerForContext(context, profileId)
     }
-    val contributions = rememberExtensionUiContributions(installer, repository.schoolId)
-    val showData: (String, String) -> Unit = remember(installer, repository.profileId, repository.schoolId, repository.sessionGeneration) {
+    val contributions = rememberExtensionUiContributions(installer, schoolId)
+    val showData: (String, String) -> Unit = remember(installer, profileId, schoolId, sessionGeneration) {
         { pluginId, artifactPath ->
             scope.launch {
                 val text = withContext(Dispatchers.IO) {
                     runCatching {
-                        installer.verifiedStoredPackage(repository.schoolId, pluginId).artifactMap[artifactPath]
+                        installer.verifiedStoredPackage(schoolId, pluginId).artifactMap[artifactPath]
                             ?.let { String(it, StandardCharsets.UTF_8) }
                     }.getOrNull()
                 }

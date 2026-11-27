@@ -30,10 +30,10 @@ fun ParcelHubRoute(
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val parcelCardsContent: @Composable () -> Unit = {
-        ExtensionPluginSlot(repository = repository, slotId = "parcel.cards")
+        ExtensionPluginSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, "parcel.cards")
     }
     val parcelProvidersContent: @Composable () -> Unit = {
-        ExtensionPluginSlot(repository = repository, slotId = "parcel.providers")
+        ExtensionPluginSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, "parcel.providers")
     }
     ParcelHubScreenContent(
         state = state,

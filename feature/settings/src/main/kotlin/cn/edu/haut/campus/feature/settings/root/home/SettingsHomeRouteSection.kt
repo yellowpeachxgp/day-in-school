@@ -68,7 +68,9 @@ fun SettingsHomeRouteSection(
     }
     val settingsEntriesContent: @Composable () -> Unit = {
         ExtensionPluginSlot(
-            repository = repository,
+            profileId = repository.profileId,
+            schoolId = repository.schoolId,
+            sessionGeneration = repository.sessionGeneration,
             slotId = "settings.entries",
             onOpenHostRoute = { route ->
                 when (route) {
