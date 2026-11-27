@@ -44,7 +44,7 @@ class SearchTextNormalizerTest {
     fun mixedQueryUsesScriptRunAndTailAsciiPrefix() {
         val rewrite = SearchTextNormalizer.rewriteQuery("莲花街 W11")
 
-        assertEquals(ftsQuoted("莲花 花街") + " AND " + ftsQuoted("w11"), rewrite.ftsQuery)
+        assertEquals(ftsQuoted("莲花 花街") + " AND w11*", rewrite.ftsQuery)
 
         val prefix = SearchTextNormalizer.rewriteQuery("莲花街 W111")
         assertEquals(ftsQuoted("莲花 花街") + " AND w111*", prefix.ftsQuery)
@@ -73,7 +73,7 @@ class SearchTextNormalizerTest {
 
         assertEquals("or and not near", rewrite.normalizedQuery)
         assertEquals(
-            ftsQuoted("or") + " AND " + ftsQuoted("and") + " AND " + ftsQuoted("not") + " AND nea*",
+            ftsQuoted("or") + " AND " + ftsQuoted("and") + " AND " + ftsQuoted("not") + " AND near*",
             rewrite.ftsQuery
         )
     }
