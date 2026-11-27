@@ -16,19 +16,39 @@ sealed interface TimetableUiAction {
     data class RestoreCanceledGroup(
         val termId: String?,
         val groupRows: List<OccurrenceOverride>,
-        val occurrenceOverrides: List<OccurrenceOverride>
+        val occurrenceOverrides: List<OccurrenceOverride>,
+        val writeToken: String? = null
     ) : TimetableUiAction
-    data class DeleteLegacyOccurrenceOverride(val overrideId: String) : TimetableUiAction
+    data class DeleteLegacyOccurrenceOverride(
+        val overrideId: String,
+        val writeToken: String? = null
+    ) : TimetableUiAction
     data object ClearLegacyReviewTargets : TimetableUiAction
+    data class ConsumeWriteCompletion(val token: String) : TimetableUiAction
 
-    data class SelectCurrentTerm(val termId: String) : TimetableUiAction
-    data class UpdateTermStartDate(val termId: String, val startDate: LocalDate) : TimetableUiAction
+    data class SelectCurrentTerm(
+        val termId: String,
+        val writeToken: String? = null
+    ) : TimetableUiAction
+    data class UpdateTermStartDate(
+        val termId: String,
+        val startDate: LocalDate,
+        val writeToken: String? = null
+    ) : TimetableUiAction
 
-    data class ResetSingleDayOccurrenceEdit(val occurrence: ClassOccurrence) : TimetableUiAction
-    data class CancelClassOccurrence(val occurrence: ClassOccurrence, val termId: String) : TimetableUiAction
+    data class ResetSingleDayOccurrenceEdit(
+        val occurrence: ClassOccurrence,
+        val writeToken: String? = null
+    ) : TimetableUiAction
+    data class CancelClassOccurrence(
+        val occurrence: ClassOccurrence,
+        val termId: String,
+        val writeToken: String? = null
+    ) : TimetableUiAction
     data class DeleteCourseScheduleRules(
         val ruleIds: List<String>,
-        val contextDate: LocalDate
+        val contextDate: LocalDate,
+        val writeToken: String? = null
     ) : TimetableUiAction
     data class SaveSingleDayOccurrenceEdit(
         val occurrence: ClassOccurrence,
@@ -36,7 +56,8 @@ sealed interface TimetableUiAction {
         val targetDate: LocalDate,
         val newStartPeriod: Int,
         val newEndPeriod: Int,
-        val newRoom: String
+        val newRoom: String,
+        val writeToken: String? = null
     ) : TimetableUiAction
     data class SaveMergedCourseRuleEdit(
         val course: Course,
@@ -50,7 +71,8 @@ sealed interface TimetableUiAction {
         val startPeriod: Int,
         val endPeriod: Int,
         val weeks: Set<Int>,
-        val colorArgb: Long
+        val colorArgb: Long,
+        val writeToken: String? = null
     ) : TimetableUiAction
 
     data class SaveMasterCourseRuleEdit(
@@ -63,9 +85,13 @@ sealed interface TimetableUiAction {
         val startPeriod: Int,
         val endPeriod: Int,
         val weeks: Set<Int>,
-        val colorArgb: Long
+        val colorArgb: Long,
+        val writeToken: String? = null
     ) : TimetableUiAction
-    data class DeleteCourseScheduleRule(val ruleId: String) : TimetableUiAction
+    data class DeleteCourseScheduleRule(
+        val ruleId: String,
+        val writeToken: String? = null
+    ) : TimetableUiAction
 
     data class SchedulePracticalCourse(
         val unscheduled: UnscheduledAcademicCourseEntity,
@@ -73,7 +99,8 @@ sealed interface TimetableUiAction {
         val weekday: Int,
         val startPeriod: Int,
         val endPeriod: Int,
-        val weeks: Set<Int>
+        val weeks: Set<Int>,
+        val writeToken: String? = null
     ) : TimetableUiAction
     data class AddManualCourse(
         val termId: String,
@@ -84,6 +111,7 @@ sealed interface TimetableUiAction {
         val startPeriod: Int,
         val endPeriod: Int,
         val weeks: Set<Int>,
-        val colorArgb: Long
+        val colorArgb: Long,
+        val writeToken: String? = null
     ) : TimetableUiAction
 }

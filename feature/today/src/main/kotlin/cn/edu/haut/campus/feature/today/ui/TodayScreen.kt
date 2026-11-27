@@ -69,6 +69,7 @@ import kotlinx.coroutines.delay
 import cn.edu.haut.campus.feature.today.state.TodayScreenStatus
 import cn.edu.haut.campus.feature.today.state.TodayUiAction
 import cn.edu.haut.campus.feature.today.state.TodayUiState
+import cn.edu.haut.campus.feature.today.state.TodayWriteKind
 
 @Composable
 fun TodayScreen(
@@ -130,6 +131,7 @@ private fun TodayLegacyContent(
     val isDynamicSyncing = state.isDynamicSyncing
     val dynamicSyncBanner = state.dynamicSyncBanner
     val pendingLegacyRestoreTargets = state.pendingLegacyRestoreTargets
+    val legacyDeletePending = state.pendingWrites.any { it.kind == TodayWriteKind.DeleteLegacyOccurrenceOverride }
 
     val onNavigateToMapWithRoom: (String) -> Unit = { room -> onAction(TodayUiAction.OpenMapRoom(room)) }
     val onNavigateToImporter: () -> Unit = { onAction(TodayUiAction.OpenImporter) }
@@ -660,52 +662,72 @@ private fun TodayLegacyContent(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     for (canceledOcc in canceledOnDate) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .padding(end = 8.dp),
-                                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                                            ) {
-                                                Text(
-                                                    text = canceledOcc.courseName,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = FontWeight.Medium,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = "${canceledOcc.periodRangeText} · ${canceledOcc.startTime.format(TIME_FMT)}–${canceledOcc.endTime.format(TIME_FMT)} · ${canceledOcc.rawRoom}",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
+                                        val restoreWriteLifecycle = rememberTodayWriteLifecycle(
+                                            key = "restore-" + canceledOcc.occurrenceId,
+                                            writeCompletions = state.writeCompletions,
+                                            onConsumeCompletion = { token ->
+                                                onAction(TodayUiAction.ConsumeWriteCompletion(token))
                                             }
-                                            XPeachFilterPill(
-                                                label = "恢复上课",
-                                                selected = true,
-                                                compact = true,
-                                                onClick = {
-                                                    // 点击瞬间冻结全部恢复输入（行 ID、规则集合、日期与覆盖快照）；
-                                                    // ViewModel 构造结构化命令并提交，UI 不引用 Repository。
-                                                    onAction(
-                                                        TodayUiAction.RestoreCanceledOccurrence(
-                                                            termId = term?.id,
-                                                            date = canceledOcc.date,
-                                                            courseName = canceledOcc.courseName,
-                                                            overrideId = canceledOcc.overrideId,
-                                                            mergedRuleIds = canceledOcc.mergedRuleIds,
-                                                            occurrenceOverrides = occurrenceOverrides
-                                                        )
+                                        )
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(end = 8.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = canceledOcc.courseName,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "${canceledOcc.periodRangeText} · ${canceledOcc.startTime.format(TIME_FMT)}–${canceledOcc.endTime.format(TIME_FMT)} · ${canceledOcc.rawRoom}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 }
-                                            )
+                                                XPeachFilterPill(
+                                                    label = if (restoreWriteLifecycle.pending) "恢复中…" else "恢复上课",
+                                                    selected = true,
+                                                    compact = true,
+                                                    modifier = Modifier.alpha(if (restoreWriteLifecycle.pending) 0.58f else 1f),
+                                                    onClick = {
+                                                        if (!restoreWriteLifecycle.pending) {
+                                                            // 点击瞬间冻结全部恢复输入；token 只关联本次恢复，同 kind 并发/旧结果不会错位。
+                                                            val writeToken = restoreWriteLifecycle.begin(TodayWriteKind.RestoreCanceledOccurrence)
+                                                            onAction(
+                                                                TodayUiAction.RestoreCanceledOccurrence(
+                                                                    termId = term?.id,
+                                                                    date = canceledOcc.date,
+                                                                    courseName = canceledOcc.courseName,
+                                                                    overrideId = canceledOcc.overrideId,
+                                                                    mergedRuleIds = canceledOcc.mergedRuleIds,
+                                                                    occurrenceOverrides = occurrenceOverrides,
+                                                                    writeToken = writeToken
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                            restoreWriteLifecycle.errorMessage?.let { message ->
+                                                Text(
+                                                    text = message,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -844,7 +866,7 @@ private fun TodayLegacyContent(
     // 旧版模糊调课恢复后的待核对目标：逐项由用户决定删除或保留
     if (pendingLegacyRestoreTargets.isNotEmpty()) {
         XPeachAlertDialog(
-            onDismissRequest = { onAction(TodayUiAction.ClearLegacyRestoreTargets) },
+            onDismissRequest = { if (!legacyDeletePending) onAction(TodayUiAction.ClearLegacyRestoreTargets) },
             title = { Text("核对旧版调课调入记录") },
             text = {
                 Column(
@@ -858,48 +880,76 @@ private fun TodayLegacyContent(
                     )
                     for (target in pendingLegacyRestoreTargets) {
                         val targetCourse = target.courseId?.let { cid -> courses.firstOrNull { it.id == cid } }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                        val deleteWriteLifecycle = rememberTodayWriteLifecycle(
+                            key = "legacy-delete-" + target.id,
+                            writeCompletions = state.writeCompletions,
+                            onConsumeCompletion = { token ->
+                                onAction(TodayUiAction.ConsumeWriteCompletion(token))
+                            }
+                        )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = targetCourse?.name ?: "课程记录",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = buildString {
-                                        append("调入 ${target.date}")
-                                        if (target.startPeriod != null && target.endPeriod != null) {
-                                            append(" · 第${target.startPeriod}-${target.endPeriod}节")
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = targetCourse?.name ?: "课程记录",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = buildString {
+                                            append("调入 ${target.date}")
+                                            if (target.startPeriod != null && target.endPeriod != null) {
+                                                append(" · 第${target.startPeriod}-${target.endPeriod}节")
+                                            }
+                                            target.room?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                XPeachFilterPill(
+                                    label = if (deleteWriteLifecycle.pending) "删除中…" else "删除",
+                                    selected = false,
+                                    compact = true,
+                                    modifier = Modifier.alpha(if (deleteWriteLifecycle.pending) 0.58f else 1f),
+                                    onClick = {
+                                        if (!deleteWriteLifecycle.pending) {
+                                            val writeToken = deleteWriteLifecycle.begin(TodayWriteKind.DeleteLegacyOccurrenceOverride)
+                                            onAction(
+                                                TodayUiAction.DeleteLegacyOccurrenceOverride(
+                                                    overrideId = target.id,
+                                                    writeToken = writeToken
+                                                )
+                                            )
                                         }
-                                        target.room?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
                                 )
                             }
-                            XPeachFilterPill(
-                                label = "删除",
-                                selected = false,
-                                compact = true,
-                                onClick = {
-                                    onAction(TodayUiAction.DeleteLegacyOccurrenceOverride(target.id))
-                                }
-                            )
+                            deleteWriteLifecycle.errorMessage?.let { message ->
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onAction(TodayUiAction.ClearLegacyRestoreTargets) }) {
+                TextButton(
+                    onClick = { onAction(TodayUiAction.ClearLegacyRestoreTargets) },
+                    enabled = !legacyDeletePending
+                ) {
                     Text("保留待核对")
                 }
             }
@@ -907,8 +957,17 @@ private fun TodayLegacyContent(
     }
 
     if (showTermSwitcherDialog) {
+        val termWriteLifecycle = rememberTodayWriteLifecycle(
+            key = "term-switcher",
+            writeCompletions = state.writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TodayUiAction.ConsumeWriteCompletion(token))
+            },
+            onWriteSuccess = { showTermSwitcherDialog = false }
+        )
+        val termWritePending = termWriteLifecycle.pending
         XPeachAlertDialog(
-            onDismissRequest = { showTermSwitcherDialog = false },
+            onDismissRequest = { if (!termWritePending) showTermSwitcherDialog = false },
             title = { Text("切换学期") },
             text = {
                 Column(
@@ -926,9 +985,9 @@ private fun TodayLegacyContent(
                                     if (isCurrent) XPeachTheme.primaryAccentCardColor
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 )
-                                .clickable {
-                                    onAction(TodayUiAction.SelectCurrentTerm(t.id))
-                                    showTermSwitcherDialog = false
+                                .clickable(enabled = !termWritePending) {
+                                    val writeToken = termWriteLifecycle.begin(TodayWriteKind.SelectCurrentTerm)
+                                    onAction(TodayUiAction.SelectCurrentTerm(t.id, writeToken = writeToken))
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -955,11 +1014,19 @@ private fun TodayLegacyContent(
                             )
                         }
                     }
+                    termWriteLifecycle.errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     FilledTonalButton(
                         onClick = {
                             showTermSwitcherDialog = false
                             onNavigateToImporter()
                         },
+                        enabled = !termWritePending,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -968,7 +1035,10 @@ private fun TodayLegacyContent(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showTermSwitcherDialog = false }) {
+                TextButton(
+                    onClick = { showTermSwitcherDialog = false },
+                    enabled = !termWritePending
+                ) {
                     Text("关闭")
                 }
             }

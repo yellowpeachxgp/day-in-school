@@ -57,11 +57,19 @@ sealed interface TodayUiAction {
         val courseName: String,
         val overrideId: String?,
         val mergedRuleIds: List<String>,
-        val occurrenceOverrides: List<OccurrenceOverride>
+        val occurrenceOverrides: List<OccurrenceOverride>,
+        val writeToken: String? = null
     ) : TodayUiAction
-    data class DeleteLegacyOccurrenceOverride(val overrideId: String) : TodayUiAction
+    data class DeleteLegacyOccurrenceOverride(
+        val overrideId: String,
+        val writeToken: String? = null
+    ) : TodayUiAction
     data object ClearLegacyRestoreTargets : TodayUiAction
-    data class SelectCurrentTerm(val termId: String) : TodayUiAction
+    data class SelectCurrentTerm(
+        val termId: String,
+        val writeToken: String? = null
+    ) : TodayUiAction
+    data class ConsumeWriteCompletion(val token: String) : TodayUiAction
 
     data class LoadSnoozeOptions(
         val detailState: TimelineOccurrenceState,
@@ -88,6 +96,7 @@ sealed interface TodayUiAction {
     ) : TodayUiAction
     data class CancelClassOccurrence(
         val detailState: TimelineOccurrenceState,
-        val termId: String
+        val termId: String,
+        val writeToken: String? = null
     ) : TodayUiAction
 }

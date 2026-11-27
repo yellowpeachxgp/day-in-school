@@ -66,7 +66,7 @@ internal fun CourseDetailAndSnoozeDialog(
     globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig,
     activeTask: ReminderTaskDomain?,
     overridesByScope: Map<String, ReminderEventOverride>,
-    writeCompletions: Map<TodayWriteKind, TodayWriteCompletion>,
+    writeCompletions: Map<String, TodayWriteCompletion>,
     onAction: (TodayUiAction) -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit,
     onNavigateToTimetable: () -> Unit = {},
@@ -82,25 +82,15 @@ internal fun CourseDetailAndSnoozeDialog(
         ReminderPolicyEngine.resolveEffectivePolicy(event, globalConfig, overridesByScope)
     }
 
-    var cancelWriteActive by remember(detailState) { mutableStateOf(false) }
-    var cancelWriteError by remember(detailState) { mutableStateOf<String?>(null) }
-    val cancelWriteCompletion = if (cancelWriteActive) {
-        writeCompletions[TodayWriteKind.CancelClassOccurrence]
-    } else {
-        null
-    }
-    LaunchedEffect(cancelWriteCompletion?.id, detailState) {
-        val completion = cancelWriteCompletion
-        if (cancelWriteActive && completion != null) {
-            cancelWriteActive = false
-            if (completion.isSuccess) {
-                onDismiss()
-            } else {
-                cancelWriteError = completion.errorMessage ?: "写入失败，请重试"
-            }
-        }
-    }
-    val cancelWritePending = cancelWriteActive
+    val cancelWriteLifecycle = rememberTodayWriteLifecycle(
+        key = detailState,
+        writeCompletions = writeCompletions,
+        onConsumeCompletion = { token ->
+            onAction(TodayUiAction.ConsumeWriteCompletion(token))
+        },
+        onWriteSuccess = onDismiss
+    )
+    val cancelWritePending = cancelWriteLifecycle.pending
 
     var hasLoadedSnoozeOptions by remember(detailState) { mutableStateOf(false) }
     LaunchedEffect(event, activeTask, effectivePolicy) {
@@ -356,7 +346,7 @@ internal fun CourseDetailAndSnoozeDialog(
                                 fontWeight = FontWeight.Medium
                             )
                         }
-                        cancelWriteError?.let { message ->
+                        cancelWriteLifecycle.errorMessage?.let { message ->
                             Text(
                                 text = message,
                                 style = MaterialTheme.typography.labelMedium,
@@ -378,9 +368,8 @@ internal fun CourseDetailAndSnoozeDialog(
                     }
                     OutlinedButton(
                         onClick = {
-                            cancelWriteActive = true
-                            cancelWriteError = null
-                            onAction(TodayUiAction.CancelClassOccurrence(detailState, termId))
+                            val writeToken = cancelWriteLifecycle.begin(TodayWriteKind.CancelClassOccurrence)
+                            onAction(TodayUiAction.CancelClassOccurrence(detailState, termId, writeToken = writeToken))
                         },
                         enabled = !cancelWritePending,
                         shape = RoundedCornerShape(12.dp)

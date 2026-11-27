@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.feature.today
 
 import android.content.Context
+import android.util.Log
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.CancellationException
@@ -33,7 +34,10 @@ internal class TodaySessionMismatchWriteException : IllegalStateException(
 internal class TodayWriteExecutor(
     private val writeScope: CoroutineScope,
     private val runner: TodaySessionWriteRunner,
-    private val afterSuccessfulWrite: () -> Unit = {}
+    private val afterSuccessfulWrite: () -> Unit = {},
+    private val callbackErrorReporter: (Throwable) -> Unit = { error ->
+        Log.e("TodayWriteExecutor", "写入完成回调失败", error)
+    }
 ) {
     fun <T : Any> enqueue(
         profileId: String,
@@ -58,7 +62,14 @@ internal class TodayWriteExecutor(
             if (result.isSuccess) {
                 runCatching { afterSuccessfulWrite() }
             }
-            onComplete(result)
+            try {
+                onComplete(result)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                // 回调属于 UI/ViewModel 边界；异常不能让耐用写 job 以未处理异常结束，但必须显式上报。
+                callbackErrorReporter(error)
+            }
         }
     }
 

@@ -161,6 +161,7 @@ class TodayViewModel internal constructor(
             is TodayUiAction.RestoreCanceledOccurrence -> restoreCanceledOccurrence(action)
             is TodayUiAction.DeleteLegacyOccurrenceOverride -> launchDurableOperation(
                 kind = TodayWriteKind.DeleteLegacyOccurrenceOverride,
+                operationToken = action.writeToken,
                 write = { repository.deleteOccurrenceOverride(action.overrideId) },
                 onSuccess = {
                     _uiState.update { state ->
@@ -171,8 +172,12 @@ class TodayViewModel internal constructor(
                 }
             )
             TodayUiAction.ClearLegacyRestoreTargets -> _uiState.update { it.copy(pendingLegacyRestoreTargets = emptyList()) }
+            is TodayUiAction.ConsumeWriteCompletion -> _uiState.update { state ->
+                state.copy(writeCompletions = state.writeCompletions - action.token)
+            }
             is TodayUiAction.SelectCurrentTerm -> launchDurableOperation(
                 kind = TodayWriteKind.SelectCurrentTerm,
+                operationToken = action.writeToken,
                 write = { repository.selectCurrentTerm(action.termId) }
             )
             is TodayUiAction.LoadSnoozeOptions -> launchOperation {
@@ -246,6 +251,7 @@ class TodayViewModel internal constructor(
             }
             is TodayUiAction.CancelClassOccurrence -> launchDurableOperation(
                 kind = TodayWriteKind.CancelClassOccurrence,
+                operationToken = action.writeToken,
                 write = {
                     repository.cancelClassOccurrenceOnDate(
                         occ = action.detailState.occurrence,
@@ -293,7 +299,15 @@ class TodayViewModel internal constructor(
     }
 
     private fun restoreCanceledOccurrence(action: TodayUiAction.RestoreCanceledOccurrence) {
-        val clickTermId = action.termId ?: return
+        val clickTermId = action.termId
+        if (clickTermId == null) {
+            rejectDurableOperation(
+                kind = TodayWriteKind.RestoreCanceledOccurrence,
+                operationToken = action.writeToken,
+                message = "当前学期尚未就绪，恢复未执行"
+            )
+            return
+        }
         val snapshotOverrides = action.occurrenceOverrides
         val clickedRow = action.overrideId?.let { oid ->
             snapshotOverrides.firstOrNull { it.id == oid }
@@ -364,6 +378,7 @@ class TodayViewModel internal constructor(
         }
         launchDurableOperation(
             kind = TodayWriteKind.RestoreCanceledOccurrence,
+            operationToken = action.writeToken,
             write = { repository.executeRestoreCommand(command) },
             onSuccess = { restoreResult ->
                 if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED &&
@@ -449,19 +464,25 @@ class TodayViewModel internal constructor(
      */
     private fun <T : Any> launchDurableOperation(
         kind: TodayWriteKind,
+        operationToken: String?,
         write: suspend () -> T,
         onSuccess: (T) -> Unit = {}
     ) {
         val generation = expectedSessionGeneration
         if (generation == null || !isCurrentSession()) return
+        val id = writeSequence.incrementAndGet()
         val operation = TodayWriteOperation(
-            id = writeSequence.incrementAndGet(),
-            kind = kind
+            id = id,
+            kind = kind,
+            token = operationToken?.takeIf { it.isNotBlank() } ?: "viewmodel-write-" + id
         )
+        val alreadyKnown = _uiState.value.pendingWrites.any { it.token == operation.token } ||
+            _uiState.value.writeCompletions.containsKey(operation.token)
+        if (alreadyKnown) return
         _uiState.update { state ->
             state.copy(
                 pendingWrites = state.pendingWrites + operation,
-                writeCompletions = state.writeCompletions - kind
+                writeCompletions = state.writeCompletions - operation.token
             )
         }
         val job = writeExecutor.enqueue(
@@ -474,29 +495,55 @@ class TodayViewModel internal constructor(
                 val completion = TodayWriteCompletion(
                     id = operation.id,
                     kind = kind,
+                    token = operation.token,
                     errorMessage = failure?.let { writeErrorMessage(it) }
                 )
                 _uiState.update { state ->
                     state.copy(
                         pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                        writeCompletions = state.writeCompletions + (kind to completion)
+                        writeCompletions = state.writeCompletions + (operation.token to completion)
                     )
                 }
                 result.onSuccess { value -> onSuccess(value) }
             }
         )
         if (job == null) {
-            val completion = TodayWriteCompletion(
-                id = operation.id,
-                kind = kind,
-                errorMessage = "账号会话尚未就绪，写入未执行"
+            publishDurableFailure(
+                operation = operation,
+                message = "账号会话尚未就绪，写入未执行"
             )
-            _uiState.update { state ->
-                state.copy(
-                    pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                    writeCompletions = state.writeCompletions + (kind to completion)
-                )
-            }
+        }
+    }
+
+    private fun rejectDurableOperation(
+        kind: TodayWriteKind,
+        operationToken: String?,
+        message: String
+    ) {
+        val id = writeSequence.incrementAndGet()
+        val operation = TodayWriteOperation(
+            id = id,
+            kind = kind,
+            token = operationToken?.takeIf { it.isNotBlank() } ?: "viewmodel-write-" + id
+        )
+        publishDurableFailure(operation, message)
+    }
+
+    private fun publishDurableFailure(
+        operation: TodayWriteOperation,
+        message: String
+    ) {
+        val completion = TodayWriteCompletion(
+            id = operation.id,
+            kind = operation.kind,
+            token = operation.token,
+            errorMessage = message
+        )
+        _uiState.update { state ->
+            state.copy(
+                pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                writeCompletions = state.writeCompletions + (operation.token to completion)
+            )
         }
     }
 

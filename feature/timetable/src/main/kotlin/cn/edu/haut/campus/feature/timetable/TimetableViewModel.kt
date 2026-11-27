@@ -63,6 +63,7 @@ class TimetableViewModel internal constructor(
             is TimetableUiAction.RestoreCanceledGroup -> restoreCanceledGroup(action)
             is TimetableUiAction.DeleteLegacyOccurrenceOverride -> launchDurableOperation(
                 kind = TimetableWriteKind.DeleteLegacyOccurrenceOverride,
+                operationToken = action.writeToken,
                 write = {
                     repository.deleteOccurrenceOverride(action.overrideId)
                 },
@@ -75,20 +76,27 @@ class TimetableViewModel internal constructor(
                 }
             )
             TimetableUiAction.ClearLegacyReviewTargets -> _uiState.update { it.copy(pendingLegacyReviewTargets = emptyList()) }
+            is TimetableUiAction.ConsumeWriteCompletion -> _uiState.update { state ->
+                state.copy(writeCompletions = state.writeCompletions - action.token)
+            }
             is TimetableUiAction.SelectCurrentTerm -> launchDurableOperation(
                 kind = TimetableWriteKind.SelectCurrentTerm,
+                operationToken = action.writeToken,
                 write = { repository.selectCurrentTerm(action.termId) }
             )
             is TimetableUiAction.UpdateTermStartDate -> launchDurableOperation(
                 kind = TimetableWriteKind.UpdateTermStartDate,
+                operationToken = action.writeToken,
                 write = { repository.updateTermStartDate(action.termId, action.startDate) }
             )
             is TimetableUiAction.ResetSingleDayOccurrenceEdit -> launchDurableOperation(
                 kind = TimetableWriteKind.ResetSingleDayOccurrenceEdit,
+                operationToken = action.writeToken,
                 write = { repository.resetSingleDayOccurrenceEdit(action.occurrence) }
             )
             is TimetableUiAction.CancelClassOccurrence -> launchDurableOperation(
                 kind = TimetableWriteKind.CancelClassOccurrence,
+                operationToken = action.writeToken,
                 write = {
                     repository.cancelClassOccurrenceOnDate(
                         occ = action.occurrence,
@@ -99,6 +107,7 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.DeleteCourseScheduleRules -> launchDurableOperation(
                 kind = TimetableWriteKind.DeleteCourseScheduleRules,
+                operationToken = action.writeToken,
                 write = {
                     repository.deleteCourseScheduleRules(
                         ruleIds = action.ruleIds,
@@ -108,6 +117,7 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.SaveSingleDayOccurrenceEdit -> launchDurableOperation(
                 kind = TimetableWriteKind.SaveSingleDayOccurrenceEdit,
+                operationToken = action.writeToken,
                 write = {
                     if (action.targetDate != action.occurrence.date) {
                         repository.rescheduleSingleOccurrenceCrossDate(
@@ -131,6 +141,7 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.SaveMergedCourseRuleEdit -> launchDurableOperation(
                 kind = TimetableWriteKind.SaveMergedCourseRuleEdit,
+                operationToken = action.writeToken,
                 write = {
                     repository.saveUserMergedCourseRuleEdit(
                         course = action.course.copy(
@@ -152,6 +163,7 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.SaveMasterCourseRuleEdit -> launchDurableOperation(
                 kind = TimetableWriteKind.SaveMasterCourseRuleEdit,
+                operationToken = action.writeToken,
                 write = {
                     repository.saveUserCourseEdit(
                         course = action.course.copy(
@@ -171,10 +183,12 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.DeleteCourseScheduleRule -> launchDurableOperation(
                 kind = TimetableWriteKind.DeleteCourseScheduleRule,
+                operationToken = action.writeToken,
                 write = { repository.deleteCourseScheduleRule(action.ruleId) }
             )
             is TimetableUiAction.SchedulePracticalCourse -> launchDurableOperation(
                 kind = TimetableWriteKind.SchedulePracticalCourse,
+                operationToken = action.writeToken,
                 write = {
                     repository.scheduleUnscheduledPracticalCourse(
                         unscheduled = action.unscheduled,
@@ -188,6 +202,7 @@ class TimetableViewModel internal constructor(
             )
             is TimetableUiAction.AddManualCourse -> launchDurableOperation(
                 kind = TimetableWriteKind.AddManualCourse,
+                operationToken = action.writeToken,
                 write = {
                     repository.addManualCourseWithRule(
                         termId = action.termId,
@@ -206,7 +221,15 @@ class TimetableViewModel internal constructor(
     }
 
     private fun restoreCanceledGroup(action: TimetableUiAction.RestoreCanceledGroup) {
-        val clickTermId = action.termId ?: return
+        val clickTermId = action.termId
+        if (clickTermId == null) {
+            rejectDurableOperation(
+                kind = TimetableWriteKind.RestoreCanceledGroup,
+                operationToken = action.writeToken,
+                message = "当前学期尚未就绪，恢复未执行"
+            )
+            return
+        }
         val snapshotOverrides = action.occurrenceOverrides
         val groupRows = action.groupRows
         val groupMoveIds = groupRows.mapNotNull { it.moveId }.distinct()
@@ -242,6 +265,7 @@ class TimetableViewModel internal constructor(
         )
         launchDurableOperation(
             kind = TimetableWriteKind.RestoreCanceledGroup,
+            operationToken = action.writeToken,
             write = { repository.executeRestoreCommand(command) },
             onSuccess = { result ->
                 when (result.status) {
@@ -266,19 +290,25 @@ class TimetableViewModel internal constructor(
      */
     private fun <T : Any> launchDurableOperation(
         kind: TimetableWriteKind,
+        operationToken: String?,
         write: suspend () -> T,
         onSuccess: (T) -> Unit = {}
     ) {
         val generation = expectedSessionGeneration
         if (generation == null || !isCurrentSession()) return
+        val id = writeSequence.incrementAndGet()
         val operation = TimetableWriteOperation(
-            id = writeSequence.incrementAndGet(),
-            kind = kind
+            id = id,
+            kind = kind,
+            token = operationToken?.takeIf { it.isNotBlank() } ?: "viewmodel-write-" + id
         )
+        val alreadyKnown = _uiState.value.pendingWrites.any { it.token == operation.token } ||
+            _uiState.value.writeCompletions.containsKey(operation.token)
+        if (alreadyKnown) return
         _uiState.update { state ->
             state.copy(
                 pendingWrites = state.pendingWrites + operation,
-                writeCompletions = state.writeCompletions - kind
+                writeCompletions = state.writeCompletions - operation.token
             )
         }
         val job = writeExecutor.enqueue(
@@ -291,29 +321,55 @@ class TimetableViewModel internal constructor(
                 val completion = TimetableWriteCompletion(
                     id = operation.id,
                     kind = kind,
+                    token = operation.token,
                     errorMessage = failure?.let { writeErrorMessage(it) }
                 )
                 _uiState.update { state ->
                     state.copy(
                         pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                        writeCompletions = state.writeCompletions + (kind to completion)
+                        writeCompletions = state.writeCompletions + (operation.token to completion)
                     )
                 }
                 result.onSuccess { value -> onSuccess(value) }
             }
         )
         if (job == null) {
-            val completion = TimetableWriteCompletion(
-                id = operation.id,
-                kind = kind,
-                errorMessage = "账号会话尚未就绪，写入未执行"
+            publishDurableFailure(
+                operation = operation,
+                message = "账号会话尚未就绪，写入未执行"
             )
-            _uiState.update { state ->
-                state.copy(
-                    pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
-                    writeCompletions = state.writeCompletions + (kind to completion)
-                )
-            }
+        }
+    }
+
+    private fun rejectDurableOperation(
+        kind: TimetableWriteKind,
+        operationToken: String?,
+        message: String
+    ) {
+        val id = writeSequence.incrementAndGet()
+        val operation = TimetableWriteOperation(
+            id = id,
+            kind = kind,
+            token = operationToken?.takeIf { it.isNotBlank() } ?: "viewmodel-write-" + id
+        )
+        publishDurableFailure(operation, message)
+    }
+
+    private fun publishDurableFailure(
+        operation: TimetableWriteOperation,
+        message: String
+    ) {
+        val completion = TimetableWriteCompletion(
+            id = operation.id,
+            kind = operation.kind,
+            token = operation.token,
+            errorMessage = message
+        )
+        _uiState.update { state ->
+            state.copy(
+                pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                writeCompletions = state.writeCompletions + (operation.token to completion)
+            )
         }
     }
 

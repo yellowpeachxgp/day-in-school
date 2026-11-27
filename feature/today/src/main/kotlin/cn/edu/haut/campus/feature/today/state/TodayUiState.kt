@@ -36,7 +36,7 @@ enum class TodayScreenStatus {
     UNSUPPORTED
 }
 
-/** 今日页本地写操作种类；用于把耐用写入的完成结果回接到仍存在的对话框。 */
+/** 今日页本地写操作种类；kind 只用于展示/诊断，不能作为完成结果关联键。 */
 enum class TodayWriteKind {
     RestoreCanceledOccurrence,
     DeleteLegacyOccurrenceOverride,
@@ -47,14 +47,16 @@ enum class TodayWriteKind {
 @Immutable
 data class TodayWriteOperation(
     val id: Long,
-    val kind: TodayWriteKind
+    val kind: TodayWriteKind,
+    val token: String
 )
 
-/** id 单调递增；UI 只在已发起同 kind 写入后响应最新完成结果，避免旧结果误关新对话框。 */
+/** token 与一次用户发起的写入一一对应；UI 只消费自己发起的那次完成结果。 */
 @Immutable
 data class TodayWriteCompletion(
     val id: Long,
     val kind: TodayWriteKind,
+    val token: String,
     val errorMessage: String? = null
 ) {
     val isSuccess: Boolean get() = errorMessage == null
@@ -97,5 +99,5 @@ data class TodayUiState(
     val courseReminderFeedbackEventKey: String? = null,
     val courseReminderFeedback: String? = null,
     val pendingWrites: List<TodayWriteOperation> = emptyList(),
-    val writeCompletions: Map<TodayWriteKind, TodayWriteCompletion> = emptyMap()
+    val writeCompletions: Map<String, TodayWriteCompletion> = emptyMap()
 )

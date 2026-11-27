@@ -45,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +69,7 @@ import java.time.LocalDate
 import cn.edu.haut.campus.feature.timetable.state.TimetableScreenStatus
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
 
 @Composable
 fun TimetableScreen(
@@ -114,6 +116,8 @@ private fun TimetableLegacyContent(
     val unscheduledCourses = state.unscheduledCourses
     val pendingLegacyReviewTargets = state.pendingLegacyReviewTargets
     val restoreNotice = state.restoreNotice
+    val restoreWritePending = state.pendingWrites.any { it.kind == TimetableWriteKind.RestoreCanceledGroup }
+    val legacyDeletePending = state.pendingWrites.any { it.kind == TimetableWriteKind.DeleteLegacyOccurrenceOverride }
 
     val onNavigateToImporter: () -> Unit = { onAction(TimetableUiAction.OpenImporter) }
     val onNavigateToMapWithRoom: (String) -> Unit = { room -> onAction(TimetableUiAction.OpenMapRoom(room)) }
@@ -410,7 +414,7 @@ private fun TimetableLegacyContent(
             val courseById = remember(courses) { courses.associateBy { it.id } }
             val ruleById = remember(rules) { rules.associateBy { it.id } }
             XPeachAlertDialog(
-                onDismissRequest = { showCanceledCoursesDialog = false },
+                onDismissRequest = { if (!restoreWritePending) showCanceledCoursesDialog = false },
                 title = {
                     Text(
                         text = "单日停课记录 (${termCanceledOverrides.size})",
@@ -443,6 +447,13 @@ private fun TimetableLegacyContent(
                             }
                             for (group in termCanceledGroups) {
                                 val ov = group.first()
+                                val restoreWriteLifecycle = rememberTimetableWriteLifecycle(
+                                    key = "restore-group-" + (ov.moveId ?: group.joinToString("+") { it.id }),
+                                    writeCompletions = state.writeCompletions,
+                                    onConsumeCompletion = { token ->
+                                        onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+                                    }
+                                )
                                 val groupRules = group.mapNotNull { g -> g.courseRuleId?.let { ruleById[it] } }
                                 val r = groupRules.firstOrNull()
                                 val minSp = groupRules.minOfOrNull { it.startPeriod } ?: ov.startPeriod
@@ -493,19 +504,31 @@ private fun TimetableLegacyContent(
                                             )
                                         }
                                         XPeachFilterPill(
-                                            label = "恢复上课",
+                                            label = if (restoreWriteLifecycle.pending) "恢复中…" else "恢复上课",
                                             selected = true,
                                             compact = true,
+                                            modifier = Modifier.alpha(if (restoreWriteLifecycle.pending) 0.58f else 1f),
                                             onClick = {
-                                                // 点击瞬间冻结组内行与学期内覆盖快照；ViewModel 构造结构化命令并提交。
-                                                onAction(
-                                                    TimetableUiAction.RestoreCanceledGroup(
-                                                        termId = term?.id,
-                                                        groupRows = group.toList(),
-                                                        occurrenceOverrides = occurrenceOverrides
+                                                if (!restoreWriteLifecycle.pending) {
+                                                    // 点击瞬间冻结组内行与覆盖快照；token 只关联本次恢复，同 kind 结果不错位。
+                                                    val writeToken = restoreWriteLifecycle.begin(TimetableWriteKind.RestoreCanceledGroup)
+                                                    onAction(
+                                                        TimetableUiAction.RestoreCanceledGroup(
+                                                            termId = term?.id,
+                                                            groupRows = group.toList(),
+                                                            occurrenceOverrides = occurrenceOverrides,
+                                                            writeToken = writeToken
+                                                        )
                                                     )
-                                                )
+                                                }
                                             }
+                                        )
+                                    }
+                                    restoreWriteLifecycle.errorMessage?.let { message ->
+                                        Text(
+                                            text = message,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
                                         )
                                     }
                                 }
@@ -514,7 +537,10 @@ private fun TimetableLegacyContent(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showCanceledCoursesDialog = false }) {
+                    TextButton(
+                        onClick = { showCanceledCoursesDialog = false },
+                        enabled = !restoreWritePending
+                    ) {
                         Text("关闭")
                     }
                 }
@@ -524,7 +550,7 @@ private fun TimetableLegacyContent(
         // 旧版模糊调课恢复后的待核对目标：源停课已恢复，列出疑似调入目标由用户逐项决定删除或保留
         if (pendingLegacyReviewTargets.isNotEmpty()) {
             XPeachAlertDialog(
-                onDismissRequest = { onAction(TimetableUiAction.ClearLegacyReviewTargets) },
+                onDismissRequest = { if (!legacyDeletePending) onAction(TimetableUiAction.ClearLegacyReviewTargets) },
                 title = { Text("核对旧版调课调入记录") },
                 text = {
                     Column(
@@ -538,6 +564,13 @@ private fun TimetableLegacyContent(
                         )
                         for (target in pendingLegacyReviewTargets) {
                             val targetCourse = target.courseId?.let { cid -> courses.firstOrNull { it.id == cid } }
+                            val deleteWriteLifecycle = rememberTimetableWriteLifecycle(
+                                key = "legacy-delete-" + target.id,
+                                writeCompletions = state.writeCompletions,
+                                onConsumeCompletion = { token ->
+                                    onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+                                }
+                            )
                             XPeachWell(modifier = Modifier.fillMaxWidth()) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -568,12 +601,28 @@ private fun TimetableLegacyContent(
                                         )
                                     }
                                     XPeachFilterPill(
-                                        label = "删除",
+                                        label = if (deleteWriteLifecycle.pending) "删除中…" else "删除",
                                         selected = false,
                                         compact = true,
+                                        modifier = Modifier.alpha(if (deleteWriteLifecycle.pending) 0.58f else 1f),
                                         onClick = {
-                                        onAction(TimetableUiAction.DeleteLegacyOccurrenceOverride(target.id))
+                                            if (!deleteWriteLifecycle.pending) {
+                                                val writeToken = deleteWriteLifecycle.begin(TimetableWriteKind.DeleteLegacyOccurrenceOverride)
+                                                onAction(
+                                                    TimetableUiAction.DeleteLegacyOccurrenceOverride(
+                                                        overrideId = target.id,
+                                                        writeToken = writeToken
+                                                    )
+                                                )
+                                            }
                                         }
+                                    )
+                                }
+                                deleteWriteLifecycle.errorMessage?.let { message ->
+                                    Text(
+                                        text = message,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
                                     )
                                 }
                             }
@@ -581,7 +630,10 @@ private fun TimetableLegacyContent(
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { onAction(TimetableUiAction.ClearLegacyReviewTargets) }) {
+                    TextButton(
+                        onClick = { onAction(TimetableUiAction.ClearLegacyReviewTargets) },
+                        enabled = !legacyDeletePending
+                    ) {
                         Text("保留待核对")
                     }
                 }
@@ -602,6 +654,13 @@ private fun TimetableLegacyContent(
         ) {
             val targetOtherTerm = otherTermsWithCourses.firstOrNull()
             if (targetOtherTerm != null) {
+                val quickTermWriteLifecycle = rememberTimetableWriteLifecycle(
+                    key = "quick-term-switch-" + targetOtherTerm.id,
+                    writeCompletions = state.writeCompletions,
+                    onConsumeCompletion = { token ->
+                        onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+                    }
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -615,9 +674,10 @@ private fun TimetableLegacyContent(
                                 Modifier
                             }
                         )
-                        .clickable {
+                        .clickable(enabled = !quickTermWriteLifecycle.pending) {
                             if (otherTermsWithCourses.size == 1) {
-                                onAction(TimetableUiAction.SelectCurrentTerm(targetOtherTerm.id))
+                                val writeToken = quickTermWriteLifecycle.begin(TimetableWriteKind.SelectCurrentTerm)
+                                onAction(TimetableUiAction.SelectCurrentTerm(targetOtherTerm.id, writeToken = writeToken))
                             } else {
                                 showTermSwitcherDialog = true
                             }
@@ -627,13 +687,18 @@ private fun TimetableLegacyContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "当前学期无课，可切至 ${targetOtherTerm.displayName}",
+                        text = quickTermWriteLifecycle.errorMessage
+                            ?: "当前学期无课，可切至 ${targetOtherTerm.displayName}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = if (quickTermWriteLifecycle.errorMessage != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = "切换 ▸",
+                        text = if (quickTermWriteLifecycle.pending) "写入中…" else "切换 ▸",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = XPeachTheme.readablePrimary

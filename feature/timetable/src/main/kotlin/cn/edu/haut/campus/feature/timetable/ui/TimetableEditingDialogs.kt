@@ -61,42 +61,6 @@ import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
 
-/** 单个对话框实例的写入等待状态；只响应发起后收到的同 kind 完成结果。 */
-private class TimetableDialogWriteLifecycle {
-    var activeKind by mutableStateOf<TimetableWriteKind?>(null)
-    var errorMessage by mutableStateOf<String?>(null)
-
-    val pending: Boolean get() = activeKind != null
-
-    fun begin(kind: TimetableWriteKind) {
-        activeKind = kind
-        errorMessage = null
-    }
-}
-
-@Composable
-private fun rememberTimetableDialogWriteLifecycle(
-    key: Any?,
-    writeCompletions: Map<TimetableWriteKind, TimetableWriteCompletion>,
-    onWriteSuccess: () -> Unit
-): TimetableDialogWriteLifecycle {
-    val lifecycle = remember(key) { TimetableDialogWriteLifecycle() }
-    val currentOnWriteSuccess by rememberUpdatedState(onWriteSuccess)
-    val activeCompletion = lifecycle.activeKind?.let { writeCompletions[it] }
-    LaunchedEffect(activeCompletion?.id, key) {
-        val completion = activeCompletion
-        if (completion != null) {
-            lifecycle.activeKind = null
-            if (completion.isSuccess) {
-                currentOnWriteSuccess()
-            } else {
-                lifecycle.errorMessage = completion.errorMessage ?: "写入失败，请重试"
-            }
-        }
-    }
-    return lifecycle
-}
-
 @Composable
 internal fun TimetableEditingDialogs(
     editingOccurrence: ClassOccurrence?,
@@ -116,7 +80,7 @@ internal fun TimetableEditingDialogs(
     courses: List<Course>,
     rules: List<CourseScheduleRule>,
     today: LocalDate,
-    writeCompletions: Map<TimetableWriteKind, TimetableWriteCompletion>,
+    writeCompletions: Map<String, TimetableWriteCompletion>,
     onAction: (TimetableUiAction) -> Unit,
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
@@ -143,9 +107,12 @@ internal fun TimetableEditingDialogs(
         var targetDateText by remember(occToEdit) { mutableStateOf(occToEdit.date.toString()) }
         var singleDateError by remember(occToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(occToEdit) { mutableLongStateOf(occToEdit.colorArgb) }
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = occToEdit,
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = onEditingOccurrenceDismiss
         )
         val writePending = writeLifecycle.pending
@@ -365,8 +332,8 @@ internal fun TimetableEditingDialogs(
                         if (!occToEdit.overrideId.isNullOrBlank() && occToEdit.ruleId != null) {
                             TextButton(
                                 onClick = {
-                                    writeLifecycle.begin(TimetableWriteKind.ResetSingleDayOccurrenceEdit)
-                                    onAction(TimetableUiAction.ResetSingleDayOccurrenceEdit(occToEdit))
+                                    val writeToken = writeLifecycle.begin(TimetableWriteKind.ResetSingleDayOccurrenceEdit)
+                                    onAction(TimetableUiAction.ResetSingleDayOccurrenceEdit(occToEdit, writeToken = writeToken))
                                 },
                                 enabled = !writePending,
                                 modifier = Modifier.fillMaxWidth()
@@ -400,8 +367,8 @@ internal fun TimetableEditingDialogs(
                         OutlinedButton(
                             onClick = {
                                 val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
-                                writeLifecycle.begin(TimetableWriteKind.CancelClassOccurrence)
-                                onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, activeTermId))
+                                val writeToken = writeLifecycle.begin(TimetableWriteKind.CancelClassOccurrence)
+                                onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, activeTermId, writeToken = writeToken))
                             },
                             enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
@@ -413,11 +380,12 @@ internal fun TimetableEditingDialogs(
                     if (targetRule != null && editScopeMode == 0) {
                         TextButton(
                             onClick = {
-                                writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRules)
+                                val writeToken = writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRules)
                                 onAction(
                                     TimetableUiAction.DeleteCourseScheduleRules(
                                         ruleIds = occToEdit.mergedRuleIds.ifEmpty { listOf(targetRule.id) },
-                                        contextDate = occToEdit.date
+                                        contextDate = occToEdit.date,
+                                        writeToken = writeToken
                                     )
                                 )
                             },
@@ -457,7 +425,7 @@ internal fun TimetableEditingDialogs(
                             }
                             val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                             val cleanRoom = editedRoom.trim().ifEmpty { occToEdit.rawRoom }
-                            writeLifecycle.begin(TimetableWriteKind.SaveSingleDayOccurrenceEdit)
+                            val writeToken = writeLifecycle.begin(TimetableWriteKind.SaveSingleDayOccurrenceEdit)
                             onAction(
                                 TimetableUiAction.SaveSingleDayOccurrenceEdit(
                                     occurrence = occToEdit,
@@ -465,7 +433,8 @@ internal fun TimetableEditingDialogs(
                                     targetDate = parsedTargetDate,
                                     newStartPeriod = sp,
                                     newEndPeriod = ep,
-                                    newRoom = cleanRoom
+                                    newRoom = cleanRoom,
+                                    writeToken = writeToken
                                 )
                             )
                         } else {
@@ -479,7 +448,7 @@ internal fun TimetableEditingDialogs(
                                 return@Button
                             }
                             if (targetCourse != null) {
-                                writeLifecycle.begin(TimetableWriteKind.SaveMergedCourseRuleEdit)
+                                val writeToken = writeLifecycle.begin(TimetableWriteKind.SaveMergedCourseRuleEdit)
                                 onAction(
                                     TimetableUiAction.SaveMergedCourseRuleEdit(
                                         course = targetCourse,
@@ -493,7 +462,8 @@ internal fun TimetableEditingDialogs(
                                         startPeriod = sp,
                                         endPeriod = ep,
                                         weeks = parsedWeeks,
-                                        colorArgb = selectedColor
+                                        colorArgb = selectedColor,
+                                        writeToken = writeToken
                                     )
                                 )
                             } else {
@@ -532,9 +502,12 @@ internal fun TimetableEditingDialogs(
         }
         var masterEditError by remember(masterRuleToEdit) { mutableStateOf<String?>(null) }
         var selectedColor by remember(targetCourse) { mutableLongStateOf(targetCourse?.colorArgb ?: 0xFF0072BC) }
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = masterRuleToEdit,
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = onEditingMasterRuleDismiss
         )
         val writePending = writeLifecycle.pending
@@ -701,7 +674,7 @@ internal fun TimetableEditingDialogs(
                         }
                         if (masterEditError != null) return@Button
                         if (targetCourse != null) {
-                            writeLifecycle.begin(TimetableWriteKind.SaveMasterCourseRuleEdit)
+                            val writeToken = writeLifecycle.begin(TimetableWriteKind.SaveMasterCourseRuleEdit)
                             onAction(
                                 TimetableUiAction.SaveMasterCourseRuleEdit(
                                     course = targetCourse,
@@ -713,7 +686,8 @@ internal fun TimetableEditingDialogs(
                                     startPeriod = checkNotNull(spRaw),
                                     endPeriod = checkNotNull(epRaw),
                                     weeks = parsedWeeks,
-                                    colorArgb = selectedColor
+                                    colorArgb = selectedColor,
+                                    writeToken = writeToken
                                 )
                             )
                         } else {
@@ -741,9 +715,12 @@ internal fun TimetableEditingDialogs(
     if (pendingDeleteMaster != null) {
         val pendingCourse = courses.firstOrNull { it.id == pendingDeleteMaster.courseId }
         val isPractical = pendingCourse?.externalId?.startsWith("sjk:") == true
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = pendingDeleteMaster,
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = {
                 onConfirmDeleteMasterRuleChange(null)
                 onEditingMasterRuleDismiss()
@@ -775,8 +752,8 @@ internal fun TimetableEditingDialogs(
             confirmButton = {
                 Button(
                     onClick = {
-                        writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRule)
-                        onAction(TimetableUiAction.DeleteCourseScheduleRule(pendingDeleteMaster.id))
+                        val writeToken = writeLifecycle.begin(TimetableWriteKind.DeleteCourseScheduleRule)
+                        onAction(TimetableUiAction.DeleteCourseScheduleRule(pendingDeleteMaster.id, writeToken = writeToken))
                     },
                     enabled = !writePending,
                     shape = RoundedCornerShape(12.dp)
@@ -808,9 +785,12 @@ internal fun TimetableEditingDialogs(
                     ?: "1-16周"
             )
         }
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = pracToSchedule,
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = onSchedulingPracticalCourseDismiss
         )
         val writePending = writeLifecycle.pending
@@ -966,7 +946,7 @@ internal fun TimetableEditingDialogs(
                             else -> null
                         }
                         if (pracError != null) return@Button
-                        writeLifecycle.begin(TimetableWriteKind.SchedulePracticalCourse)
+                        val writeToken = writeLifecycle.begin(TimetableWriteKind.SchedulePracticalCourse)
                         onAction(
                             TimetableUiAction.SchedulePracticalCourse(
                                 unscheduled = pracToSchedule,
@@ -974,7 +954,8 @@ internal fun TimetableEditingDialogs(
                                 weekday = pracWeekday,
                                 startPeriod = checkNotNull(spRaw),
                                 endPeriod = checkNotNull(epRaw),
-                                weeks = parsedWeeks
+                                weeks = parsedWeeks,
+                                writeToken = writeToken
                             )
                         )
                     },
@@ -1004,9 +985,12 @@ internal fun TimetableEditingDialogs(
         var newEndPeriod by remember { mutableStateOf("2") }
         var newWeeks by remember { mutableStateOf("1-16周") }
         var addError by remember { mutableStateOf<String?>(null) }
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = "add-course",
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = onAddCourseDialogDismiss
         )
         val writePending = writeLifecycle.pending
@@ -1166,7 +1150,7 @@ internal fun TimetableEditingDialogs(
                             else -> null
                         }
                         if (addError != null) return@Button
-                        writeLifecycle.begin(TimetableWriteKind.AddManualCourse)
+                        val writeToken = writeLifecycle.begin(TimetableWriteKind.AddManualCourse)
                         onAction(
                             TimetableUiAction.AddManualCourse(
                                 termId = activeTermId,
@@ -1177,7 +1161,8 @@ internal fun TimetableEditingDialogs(
                                 startPeriod = checkNotNull(spRaw),
                                 endPeriod = checkNotNull(epRaw),
                                 weeks = parsedWeeks,
-                                colorArgb = 0xFF0072BC
+                                colorArgb = 0xFF0072BC,
+                                writeToken = writeToken
                             )
                         )
                     },
@@ -1203,9 +1188,12 @@ internal fun TimetableEditingDialogs(
             mutableStateOf(term?.startDate?.toString() ?: "2026-08-31")
         }
         var dateError by remember { mutableStateOf<String?>(null) }
-        val writeLifecycle = rememberTimetableDialogWriteLifecycle(
+        val writeLifecycle = rememberTimetableWriteLifecycle(
             key = "term-switcher",
             writeCompletions = writeCompletions,
+            onConsumeCompletion = { token ->
+                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
+            },
             onWriteSuccess = onTermSwitcherDialogDismiss
         )
         val writePending = writeLifecycle.pending
@@ -1235,8 +1223,8 @@ internal fun TimetableEditingDialogs(
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                                 )
                                 .clickable(enabled = !writePending) {
-                                    writeLifecycle.begin(TimetableWriteKind.SelectCurrentTerm)
-                                    onAction(TimetableUiAction.SelectCurrentTerm(t.id))
+                                    val writeToken = writeLifecycle.begin(TimetableWriteKind.SelectCurrentTerm)
+                                    onAction(TimetableUiAction.SelectCurrentTerm(t.id, writeToken = writeToken))
                                 }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1300,8 +1288,8 @@ internal fun TimetableEditingDialogs(
                                 if (parsedDate == null || activeTermId == null) {
                                     dateError = "日期格式无效 (YYYY-MM-DD)"
                                 } else {
-                                    writeLifecycle.begin(TimetableWriteKind.UpdateTermStartDate)
-                                    onAction(TimetableUiAction.UpdateTermStartDate(activeTermId, parsedDate))
+                                    val writeToken = writeLifecycle.begin(TimetableWriteKind.UpdateTermStartDate)
+                                    onAction(TimetableUiAction.UpdateTermStartDate(activeTermId, parsedDate, writeToken = writeToken))
                                 }
                             },
                             enabled = !writePending,
