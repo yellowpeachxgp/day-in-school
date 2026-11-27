@@ -450,6 +450,7 @@ class DomainEventCodecTest {
             inboxItemId = "inbox-item-created-refs",
             createdRefs = hostile
         )
+        assertEquals(0, hostile.toArrayCalls)
         val foreignScopeRef = DomainEventTestFixtures.ref(
             EntityType.PERSONAL_EVENT,
             "personal-event-foreign",
@@ -477,12 +478,16 @@ class DomainEventCodecTest {
 /**
  * toArray() 违反约定返回自有 backing array 的自定义 Collection 探针。
  *
- * 主流 JDK/Android 运行时的 ArrayList(Collection) 构造直接采用该数组而不复制，
- * 因此若快照边界退回使用 ArrayList(Collection)，构造后 overwrite 即可改写快照；
- * 逐元素复制的快照边界不消费 toArray() 结果，与运行时版本实现细节无关。
+ * 快照边界若退回 ArrayList(Collection)（或经 toMutableList/toList 等间接使用同一构造），
+ * 构造过程必然会调用 source.toArray()：在仍共享数组的运行时（如 Android 12/13）上，
+ * 构造后 overwrite 即可改写快照。逐元素复制的快照边界完全不消费 toArray() 结果，
+ * toArrayCalls 保持为 0，该断言不依赖任何 JDK/Android 版本实现细节。
  */
 private class HostileBackingArrayList<T>(elements: List<T>) : AbstractList<T>() {
     private val backing: Array<Any?> = arrayOfNulls(elements.size)
+
+    var toArrayCalls: Int = 0
+        private set
 
     init {
         elements.forEachIndexed { index, element -> backing[index] = element }
@@ -496,7 +501,10 @@ private class HostileBackingArrayList<T>(elements: List<T>) : AbstractList<T>() 
         return backing[index] as T
     }
 
-    override fun toArray(): Array<Any?> = backing
+    override fun toArray(): Array<Any?> {
+        toArrayCalls++
+        return backing
+    }
 
     fun overwrite(index: Int, value: T) {
         backing[index] = value
