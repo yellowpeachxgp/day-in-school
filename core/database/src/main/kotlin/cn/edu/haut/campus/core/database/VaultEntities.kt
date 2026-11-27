@@ -235,6 +235,12 @@ interface VaultDao {
     @Query("DELETE FROM search_docs WHERE entityType = :entityType AND entityId = :entityId AND scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId")
     suspend fun deleteSearchDoc(entityType: String, entityId: String, schoolId: String, accountId: String, profileId: String): Int
 
+    @Query("DELETE FROM search_docs WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId")
+    suspend fun deleteSearchDocsForScope(schoolId: String, accountId: String, profileId: String): Int
+
+    @Query("SELECT COUNT(*) FROM search_docs WHERE deleted = 0")
+    suspend fun countActiveSearchDocs(): Int
+
     @RawQuery
     suspend fun searchDocsRaw(query: SupportSQLiteQuery): List<SearchDocEntity>
 
