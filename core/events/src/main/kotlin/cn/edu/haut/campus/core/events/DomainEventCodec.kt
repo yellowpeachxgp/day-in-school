@@ -176,7 +176,7 @@ internal object SchoolAccountScopeKeyCodec {
     }
 }
 
-private fun defaultDomainEventCodecs(): List<DomainEventCodec<out DomainEvent>> = listOf(
+private fun defaultDomainEventCodecs(): List<DomainEventCodec<out DomainEvent>> = listOf<DomainEventCodec<out DomainEvent>>(
     CourseChangedCodec,
     ExamPublishedCodec,
     GradeReleasedCodec,
