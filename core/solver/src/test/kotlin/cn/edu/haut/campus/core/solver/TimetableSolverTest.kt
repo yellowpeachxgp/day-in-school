@@ -353,7 +353,7 @@ class TimetableSolverTest {
         result as SolveResult.Solutions
         assertEquals(2, result.ranked.size)
         assertEquals(listOf("req1"), result.ranked[0].selections.map { it.option.id })
-        assertEquals(listOf("req1", "opt1"), result.ranked[1].selections.map { it.option.id }.sorted())
+        assertEquals(setOf("req1", "opt1"), result.ranked[1].selections.map { it.option.id }.toSet())
         assertTrue(result.ranked[1].totalCostMilli > result.ranked[0].totalCostMilli)
     }
 
