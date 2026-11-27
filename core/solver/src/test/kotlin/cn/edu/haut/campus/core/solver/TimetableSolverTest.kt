@@ -208,4 +208,92 @@ class TimetableSolverTest {
         assertEquals(SolveCompletion.BEST_FOUND_BUDGET_EXHAUSTED, result.completion)
         assertTrue(result.ranked.isEmpty())
     }
+    @Test
+    fun campusRestrictionAndTimeExclusionAreEnforcedConservatively() {
+        val southOnly = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option(
+                    "s1", "S",
+                    slots = listOf(SolverTestFixtures.slot(1, 1, 2, location = SolverTestFixtures.location(SolverTestFixtures.south, "B01")))
+                )
+            ),
+            hard = listOf(
+                HardConstraint.RequireOffering("S"),
+                HardConstraint.CampusRestriction(setOf(SolverTestFixtures.north))
+            )
+        )
+        assertTrue(solver.solve(southOnly, budget = Duration.ofSeconds(2)) is SolveResult.Infeasible)
+
+        val excludedMonday = SolverTestFixtures.slot(1, 1, 2)
+        val filtered = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option("m1", "M", slots = listOf(excludedMonday)),
+                SolverTestFixtures.option("m2", "M", slots = listOf(SolverTestFixtures.slot(2, 1, 2)))
+            ),
+            hard = listOf(
+                HardConstraint.RequireOffering("M"),
+                HardConstraint.TimeExclusion(listOf(excludedMonday), ConstraintRef("no-monday-first", ConstraintKind.TIME_EXCLUSION, "排除周一一二节"))
+            )
+        )
+        val result = solver.solve(filtered, budget = Duration.ofSeconds(2))
+        assertTrue(result is SolveResult.Solutions)
+        result as SolveResult.Solutions
+        assertEquals(listOf("m2"), result.ranked.single().selections.map { it.option.id })
+    }
+
+    @Test
+    fun allowedUnknownCapacityProducesSolutionWithUncertainty() {
+        val problem = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option("u1", "U", capacity = ClassCapacity.Unknown)
+            ),
+            hard = listOf(
+                HardConstraint.RequireOffering("U"),
+                HardConstraint.CapacityPolicy(excludeFull = true, allowUnknown = true)
+            )
+        )
+        val result = solver.solve(problem, budget = Duration.ofSeconds(2))
+        assertTrue(result is SolveResult.Solutions)
+        result as SolveResult.Solutions
+        assertTrue(result.ranked.single().uncertainties.any { it.kind == UncertaintyKind.CAPACITY })
+    }
+
+    @Test
+    fun timelineEventsAreProjectedIntoFixedOccupancy() {
+        val grid = SolverTestFixtures.grid()
+        val window = grid.windowFor(week = 1, weekday = 1, section = 1)
+        val entity = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.PERSONAL_EVENT,
+            "event-1",
+            SolverTestFixtures.scope
+        )
+        val provenance = SolverTestFixtures.provenance("event-1")
+        val event = cn.edu.haut.campus.core.timeline.TimelineEvent(
+            id = cn.edu.haut.campus.core.timeline.TimelineEventId("test:event-1"),
+            scope = SolverTestFixtures.scope,
+            kind = cn.edu.haut.campus.core.timeline.TimelineKind.PERSONAL,
+            title = "个人安排",
+            start = window.start,
+            end = window.end,
+            zone = grid.zone,
+            place = null,
+            source = cn.edu.haut.campus.core.model.SourceRef(entity, provenance),
+            provenance = provenance,
+            status = cn.edu.haut.campus.core.timeline.EventStatus.SCHEDULED,
+            busy = cn.edu.haut.campus.core.timeline.BusyLevel.BUSY,
+            revision = 0
+        )
+        val problem = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option("m1", "M", slots = listOf(SolverTestFixtures.slot(1, 1, 2))),
+                SolverTestFixtures.option("m2", "M", slots = listOf(SolverTestFixtures.slot(2, 1, 2)))
+            ),
+            hard = listOf(HardConstraint.RequireOffering("M"))
+        ).copy(fixedEvents = listOf(event))
+        val result = solver.solve(problem, budget = Duration.ofSeconds(2))
+        assertTrue(result is SolveResult.Solutions)
+        result as SolveResult.Solutions
+        assertEquals(listOf("m2"), result.ranked.single().selections.map { it.option.id })
+    }
+
 }
