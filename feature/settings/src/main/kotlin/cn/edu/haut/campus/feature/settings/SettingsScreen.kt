@@ -142,6 +142,7 @@ import cn.edu.haut.campus.feature.settings.root.ui.ProfileMetricItem
 import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
+import cn.edu.haut.campus.feature.settings.root.network.SettingsNetworkRouteSection
 import kotlinx.coroutines.launch
 import java.io.File
 import java.math.BigDecimal
@@ -2342,20 +2343,9 @@ fun SettingsScreen(
             }
 
             // 8.5 网络代理与云服务加速配置
-            NetworkProxyAndCloudConfigSection(
-                proxyConfig = prefs.networkProxyConfig,
-                onSaveProxyConfig = { updatedConfig ->
-                    scope.launch {
-                        repository.updateNetworkProxyConfig(updatedConfig)
-                        feedbackText = "已更新代理与云服务配置：${updatedConfig.statusSummaryLabel()}"
-                    }
-                },
-                onResetProxyConfig = {
-                    scope.launch {
-                        repository.resetNetworkProxyConfig()
-                        feedbackText = "已恢复默认加速镜像配置"
-                    }
-                }
+            SettingsNetworkRouteSection(
+                repository = repository,
+                onFeedback = { feedbackText = it }
             )
 
             SettingsUpdateRouteSection(
