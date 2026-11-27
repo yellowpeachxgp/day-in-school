@@ -1974,8 +1974,6 @@ class CampusRepository internal constructor(
     suspend fun isCloudIdentitySnapshotCurrent(snapshot: CloudIdentitySessionSnapshot): Boolean =
         cloudIdentityRepository.isCloudIdentitySnapshotCurrent(snapshot)
 
-
-
     private val activeInProcessFireAttempts = ConcurrentHashMap<String, String>()
     private val activeDispatchedFireAttempts = ConcurrentHashMap<String, Boolean>()
 
@@ -1997,8 +1995,6 @@ class CampusRepository internal constructor(
      */
     @Volatile
     internal var cloudSubmitRetryBarrierHookForTest: (suspend () -> Unit)? = null
-
-
 
     suspend fun saveVerifiedXpeachCloudAccount(
         profile: cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
@@ -2668,8 +2664,6 @@ class CampusRepository internal constructor(
     // --- Dual-Engine Library Reservation Plans (ADR-005 Dynamic Target T: T-30m / T-5m / T) ---
     val allLibraryBookingPlansForAuditFlow: Flow<List<LibraryBookingPlanEntity>> =
         cloudAndParcelDao.observeLibraryBookingPlans()
-
-
 
     /** 无法证明唯一归属的升级遗留记录（待认领/本地审计专用，普通登录账号页面与同步不可见） */
     val unattributedLegacyBookingPlansFlow: Flow<List<LibraryBookingPlanEntity>> =
