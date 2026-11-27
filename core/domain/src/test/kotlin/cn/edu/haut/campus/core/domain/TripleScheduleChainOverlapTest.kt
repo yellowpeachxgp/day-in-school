@@ -212,11 +212,15 @@ class TripleScheduleChainOverlapTest {
 
     @Test
     fun adjacentSameCourseMerge_participatesInChainAsSingleBlock() {
-        // 同课同教室相邻两节（r_a1=1 节、r_a2=2 节）先纵向合并为 1-2 整块，再与 B=2-3 并列
+        // 同课同教室相邻两节（r_a1=1 节 08:00 起、r_a2=2 节 08:55 起）先纵向合并为 1-2 整块；
+        // B 自带自定义时间 09:00-10:30 排在两节之后不打断合并，且与合并块尾部重叠 → 整块并入列簇
         val rules = listOf(
             rule("r_a1", courseA.id, 1, 1),
             rule("r_a2", courseA.id, 2, 2),
-            rule("r_b", courseB.id, 2, 3)
+            rule("r_b", courseB.id, 2, 3).copy(
+                customStartTime = LocalTime.of(9, 0),
+                customEndTime = LocalTime.of(10, 30)
+            )
         )
         val occurrences = resolve(rules)
 
