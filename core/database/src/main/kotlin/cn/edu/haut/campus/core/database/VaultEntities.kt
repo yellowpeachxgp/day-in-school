@@ -241,7 +241,7 @@ interface VaultDao {
     @Query("INSERT INTO search_fts(search_fts) VALUES('rebuild')")
     suspend fun rebuildSearchFts()
 
-    @Query("INSERT INTO search_fts(search_fts) VALUES('delete-all')")
+    @Query("DELETE FROM search_fts")
     suspend fun clearSearchFts()
 
     @Query("SELECT COUNT(*) FROM search_docs")
