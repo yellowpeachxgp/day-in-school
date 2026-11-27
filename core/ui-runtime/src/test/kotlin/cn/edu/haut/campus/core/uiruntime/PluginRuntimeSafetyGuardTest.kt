@@ -34,9 +34,9 @@ class PluginRuntimeSafetyGuardTest {
     @Test
     fun commandGateWhitelistCoversOnlyDeclarativeTypes() {
         val gate = File("src/main/kotlin/cn/edu/haut/campus/core/uiruntime/DeclarativeCommandGate.kt").readText()
-        assertTrue(gate.contains(""open_url""))
-        assertTrue(gate.contains(""open_host_route""))
-        assertTrue(gate.contains(""show_data""))
+        assertTrue(gate.contains("open_url"))
+        assertTrue(gate.contains("open_host_route"))
+        assertTrue(gate.contains("show_data"))
         assertFalse(gate.contains("Runtime.getRuntime"))
         assertFalse(gate.contains("ProcessBuilder"))
     }
