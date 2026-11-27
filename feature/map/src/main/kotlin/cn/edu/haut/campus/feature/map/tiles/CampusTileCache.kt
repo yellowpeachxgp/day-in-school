@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.map.ui.map
+package cn.edu.haut.campus.feature.map.tiles
 
 import android.Manifest
 import android.annotation.SuppressLint
