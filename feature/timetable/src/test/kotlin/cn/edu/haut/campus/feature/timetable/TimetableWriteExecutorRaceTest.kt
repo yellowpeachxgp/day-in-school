@@ -213,6 +213,7 @@ class TimetableWriteExecutorRaceTest {
                         writeStarted.complete(Unit)
                         releaseWrite.await()
                         events.add("write-end")
+                        raceMarker("write end")
                         Unit
                     },
                     onComplete = { result -> firstCompletion.set(result) }
@@ -222,7 +223,12 @@ class TimetableWriteExecutorRaceTest {
             withTimeout(2_000) { writeStarted.await() }
             raceMarker("write started observed")
 
-            val switchToSecond = async(Dispatchers.Default) { sessions.switchProfile(secondProfile.id) }
+            val switchToSecond = async(Dispatchers.Default) {
+                raceMarker("switchToSecond body start")
+                val switched = sessions.switchProfile(secondProfile.id)
+                raceMarker("switchToSecond body end")
+                switched
+            }
             yield()
             delay(50)
             assertFalse("真实 switchProfile 不得越过已经开始的 withActiveSession 写", events.contains("switch-before"))
