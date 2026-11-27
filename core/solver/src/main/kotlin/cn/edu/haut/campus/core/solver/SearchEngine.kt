@@ -79,7 +79,7 @@ internal object SearchEngine {
         private var timedOut = false
 
         fun search(): SearchOutcome {
-            val root = Node.initial(compiled)
+            val root = initialNode()
             if (!propagate(root)) {
                 return SearchOutcome(emptyList(), exhaustive = true)
             }
@@ -103,28 +103,27 @@ internal object SearchEngine {
                 assignedUnaryCostMilli = assignedUnaryCostMilli
             )
 
-            companion object {
-                fun initial(compiled: CompiledProblem): Node {
-                    val domains = Array(compiled.variables.size) { variableIndex ->
-                        val variable = compiled.variables[variableIndex]
-                        val candidates = variable.candidateIndices.sortedWith(
-                            compareBy<Int> { compiled.options[it].unaryCostMilli }.thenBy { compiled.options[it].source.id }
-                        ).toIntArray()
-                        if (variable.required) {
-                            candidates
-                        } else {
-                            intArrayOf(SKIP_VALUE) + candidates
-                        }
-                    }
-                    return Node(
-                        domains = domains,
-                        assignments = IntArray(compiled.variables.size) { Int.MIN_VALUE },
-                        assignedCount = 0,
-                        assignedCreditsMilli = 0L,
-                        assignedUnaryCostMilli = 0L
-                    )
+        }
+
+        private fun initialNode(): Node {
+            val domains = Array(compiled.variables.size) { variableIndex ->
+                val variable = compiled.variables[variableIndex]
+                val candidates = variable.candidateIndices.sortedWith(
+                    compareBy<Int> { compiled.options[it].unaryCostMilli }.thenBy { compiled.options[it].source.id }
+                ).toIntArray()
+                if (variable.required) {
+                    candidates
+                } else {
+                    intArrayOf(SKIP_VALUE) + candidates
                 }
             }
+            return Node(
+                domains = domains,
+                assignments = IntArray(compiled.variables.size) { Int.MIN_VALUE },
+                assignedCount = 0,
+                assignedCreditsMilli = 0L,
+                assignedUnaryCostMilli = 0L
+            )
         }
 
         private fun searchNode(node: Node) {
