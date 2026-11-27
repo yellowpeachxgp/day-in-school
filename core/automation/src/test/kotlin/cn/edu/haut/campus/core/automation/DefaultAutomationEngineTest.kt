@@ -14,6 +14,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -112,6 +113,41 @@ class DefaultAutomationEngineTest {
         assertEquals(1, action.calls.size)
         assertEquals(1, harness.dedupeStore.count())
         assertEquals(1, harness.engine.runs(rule.id).first().size)
+    }
+
+    @Test
+    fun concurrentRedeliveryTerminalRaceDoesNotThrowAndActionExecutesOnlyOnce() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val runStore = AppendPauseRunStore(InMemoryAutomationRunStore())
+        val harness = newHarness(
+            actionExecutor = action,
+            runStore = runStore
+        )
+        val rule = AutomationTestFixtures.rule()
+        harness.ruleStore.upsert(rule)
+        val instance = TriggerInstance(rule.id, "terminal-race-instance", firedAt)
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
+
+        val original = async(Dispatchers.Default) { harness.engine.executeTrigger(instance) }
+        runStore.awaitAppendInserted()
+        val duplicateOutcome = runCatching {
+            harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(3)))
+        }
+        runStore.releaseAppend()
+
+        val originalResult = original.await()
+        val duplicate = duplicateOutcome.getOrThrow()
+
+        assertTrue("append 后重投抢先修复终态不得让原执行体误报异常", originalResult is TriggerExecutionResult.Executed)
+        assertTrue(duplicate is TriggerExecutionResult.Duplicate)
+        val run = (originalResult as TriggerExecutionResult.Executed).run
+        assertEquals(run, (duplicate as TriggerExecutionResult.Duplicate).existingRun)
+        assertEquals("并发重复投递不得再次执行动作", 1, action.calls.size)
+        assertEquals(1, harness.engine.runs(rule.id).first().size)
+        assertEquals(1, harness.dedupeStore.count())
+        val record = harness.dedupeStore.find(dedupeKey) ?: error("终态竞态后 dedupe 应存在")
+        assertEquals(AutomationDedupeState.RUN_RECORDED, record.state)
+        assertEquals(run.runId, record.runId)
     }
 
     @Test
@@ -662,6 +698,34 @@ class DefaultAutomationEngineTest {
             consumeResults.add(result)
             return result
         }
+    }
+
+    private class AppendPauseRunStore(
+        private val delegate: InMemoryAutomationRunStore
+    ) : AutomationRunStore {
+        private val appendInserted = CompletableDeferred<Unit>()
+        private val appendRelease = CompletableDeferred<Unit>()
+
+        override suspend fun append(run: AutomationRun): Boolean {
+            val inserted = delegate.append(run)
+            if (inserted) {
+                appendInserted.complete(Unit)
+                appendRelease.await()
+            }
+            return inserted
+        }
+
+        suspend fun awaitAppendInserted() {
+            appendInserted.await()
+        }
+
+        fun releaseAppend() {
+            appendRelease.complete(Unit)
+        }
+
+        override suspend fun get(runId: String): AutomationRun? = delegate.get(runId)
+
+        override fun runs(ruleId: String) = delegate.runs(ruleId)
     }
 
     private class MutableClock(initial: Instant) : Clock() {

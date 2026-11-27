@@ -143,13 +143,19 @@ class DefaultAutomationEngine(
         val run = executeRule(rule, boundInstance, dryRun = false)
         runStore.append(run)
         val markedTerminal = dedupeStore.markRunRecorded(acquired, clock.instant())
-        if (!markedTerminal) {
+        if (!markedTerminal && !hasRunRecordedTerminalForSameInstance(acquired)) {
             throw AutomationDedupeCompletionException(dedupeKey)
         }
         return TriggerExecutionResult.Executed(run)
     }
 
     override fun runs(ruleId: String): Flow<List<AutomationRun>> = runStore.runs(ruleId)
+
+    /** 严格 CAS 实现上的防御性复核：并发修复方已写入同一触发实例的终态时，完成结果幂等成功。 */
+    private suspend fun hasRunRecordedTerminalForSameInstance(acquired: AutomationDedupeRecord): Boolean {
+        val current = dedupeStore.find(acquired.dedupeKey) ?: return false
+        return current.state == AutomationDedupeState.RUN_RECORDED && current.hasSameRunIdentityAs(acquired)
+    }
 
     /**
      * DomainEvent 触发绑定是 fail-closed 边界，全部校验都在 dedupe/run 写入之前完成：

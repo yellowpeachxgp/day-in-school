@@ -89,6 +89,8 @@ class AutomationDedupeCompletionException(dedupeKey: String) :
  * 去重端口。tryAcquire 必须是原子 check-and-insert/reacquire：
  * RUN_RECORDED 或 lease 未过期的 PENDING 会直接判重；lease 过期的 PENDING 允许崩溃恢复重投原子替换。
  * markRunRecorded 必须按获取到的整条 PENDING 记录做 compare-and-set，避免过期恢复后的旧执行体错误关闭新执行窗口。
+ * 终态转换本身幂等：目标 runId 与触发实例身份相同的 RUN_RECORDED 记录视为已完成并返回 true；
+ * 归属不同实例、运行身份矛盾或所有权已被新 PENDING 窗口取代时返回 false。
  */
 interface AutomationDedupeStore {
     suspend fun tryAcquire(record: AutomationDedupeRecord): DedupeAcquireResult
@@ -96,6 +98,13 @@ interface AutomationDedupeStore {
     suspend fun find(dedupeKey: String): AutomationDedupeRecord?
     suspend fun count(): Int
 }
+
+internal fun AutomationDedupeRecord.hasSameRunIdentityAs(other: AutomationDedupeRecord): Boolean =
+    dedupeKey == other.dedupeKey &&
+        ruleId == other.ruleId &&
+        triggerInstanceKey == other.triggerInstanceKey &&
+        runId == other.runId &&
+        policyFingerprint == other.policyFingerprint
 
 class InMemoryAutomationDedupeStore : AutomationDedupeStore {
     private val mutex = Mutex()
@@ -125,8 +134,11 @@ class InMemoryAutomationDedupeStore : AutomationDedupeStore {
 
     override suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean = mutex.withLock {
         val existing = records[expected.dedupeKey]
+        val alreadyRecordedForSameRun = existing != null &&
+            existing.state == AutomationDedupeState.RUN_RECORDED &&
+            existing.hasSameRunIdentityAs(expected)
         if (existing != expected || existing.state != AutomationDedupeState.PENDING) {
-            false
+            alreadyRecordedForSameRun
         } else {
             records[expected.dedupeKey] = expected.copy(
                 state = AutomationDedupeState.RUN_RECORDED,
