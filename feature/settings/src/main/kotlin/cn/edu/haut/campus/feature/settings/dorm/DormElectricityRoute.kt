@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.dorm.ui.DormElectricityScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 宿舍水电 Route：只装配 ViewModel 与纯渲染 UI。 */
 @Composable
@@ -18,8 +20,11 @@ fun DormElectricityRoute(
 ) {
     val context = LocalContext.current
     val sessionStates = remember(context) { AccountSessionCoordinator.getInstance(context).states }
+    val sessionKey = "dorm-electricity-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: DormElectricityViewModel = viewModel(
-        key = "dorm-electricity-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = DormElectricityViewModel.factory(repository, sessionStates)
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

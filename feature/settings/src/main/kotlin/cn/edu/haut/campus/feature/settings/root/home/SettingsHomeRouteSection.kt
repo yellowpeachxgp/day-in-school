@@ -6,6 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
@@ -14,6 +15,7 @@ import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiEffect
 import cn.edu.haut.campus.feature.settings.root.home.ui.SettingsHomeSectionContent
 import cn.edu.haut.campus.feature.settings.state.SettingsTransientResetRegistry
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 设置一级「我的」页分区 Route；根壳只传入导航与共享反馈回调。 */
 @Composable
@@ -37,12 +39,15 @@ fun SettingsHomeRouteSection(
     onFeedback: (String) -> Unit,
     onRefreshWidgets: () -> Unit,
     onShowImportHistory: () -> Unit,
-    transientResetRegistry: SettingsTransientResetRegistry
+    transientResetRegistry: SettingsTransientResetRegistry,
+    viewModelStoreOwner: ViewModelStoreOwner
 ) {
     val context = LocalContext.current
     val sessionStates = remember(context) { AccountSessionCoordinator.getInstance(context).states }
+    val sessionKey = "settings-home-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
     val viewModel: SettingsHomeViewModel = viewModel(
-        key = "settings-home-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = SettingsHomeViewModel.factory(repository, sessionStates)
     )
     // 拆分前这些 remember 挂在根 SettingsScreen；这里只登记重置，二级页内部切换不触发。

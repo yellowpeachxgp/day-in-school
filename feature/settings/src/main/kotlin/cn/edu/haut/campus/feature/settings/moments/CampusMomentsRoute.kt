@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.moments.ui.CampusMomentsScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** Moments Route。 */
 @Composable
@@ -19,8 +21,11 @@ fun CampusMomentsRoute(
 ) {
     val context = LocalContext.current
     val sessionStates = remember(context) { AccountSessionCoordinator.getInstance(context).states }
+    val sessionKey = "campus-moments-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: CampusMomentsViewModel = viewModel(
-        key = "campus-moments-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = CampusMomentsViewModel.factory(repository, sessionStates)
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

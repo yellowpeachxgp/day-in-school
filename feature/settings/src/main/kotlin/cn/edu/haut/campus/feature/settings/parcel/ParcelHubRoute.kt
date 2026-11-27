@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.parcel.ui.ParcelHubScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 快递聚合页 Route。 */
 @Composable
@@ -18,8 +20,11 @@ fun ParcelHubRoute(
 ) {
     val context = LocalContext.current
     val sessionStates = remember(context) { AccountSessionCoordinator.getInstance(context).states }
+    val sessionKey = "parcel-hub-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: ParcelHubViewModel = viewModel(
-        key = "parcel-hub-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = ParcelHubViewModel.factory(repository, sessionStates)
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

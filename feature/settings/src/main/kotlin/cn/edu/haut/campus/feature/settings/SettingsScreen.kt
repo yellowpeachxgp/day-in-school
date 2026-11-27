@@ -149,6 +149,8 @@ import cn.edu.haut.campus.feature.settings.root.theme.SettingsThemeRouteSection
 import cn.edu.haut.campus.feature.settings.root.data.SettingsDataRouteSection
 import cn.edu.haut.campus.feature.settings.root.network.SettingsNetworkRouteSection
 import cn.edu.haut.campus.feature.settings.state.SettingsTransientResetRegistry
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 import kotlinx.coroutines.launch
 import java.io.File
 import java.math.BigDecimal
@@ -192,6 +194,8 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val rootSessionKey = settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val rootViewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(rootSessionKey)
     val transientResetRegistry = remember { SettingsTransientResetRegistry() }
     // 拆分前同步/资料/更新等 remember 都挂在根 SettingsScreen；底栏切换导致根页退出时才统一重置。
     DisposableEffect(repository, transientResetRegistry) {
@@ -374,7 +378,8 @@ fun SettingsScreen(
                     onFeedback = { feedbackText = it },
                     onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) },
                     onShowImportHistory = { showImportHistoryDialog = true },
-                    transientResetRegistry = transientResetRegistry
+                    transientResetRegistry = transientResetRegistry,
+                    viewModelStoreOwner = rootViewModelStoreOwner
 )
             } else {
                 // =========================================================================
@@ -411,7 +416,8 @@ fun SettingsScreen(
             SettingsUpdateRouteSection(
                 repository = repository,
                 currentInstalledVersion = currentInstalledVersion,
-                transientResetRegistry = transientResetRegistry
+                transientResetRegistry = transientResetRegistry,
+                viewModelStoreOwner = rootViewModelStoreOwner
             )
             }
                 }

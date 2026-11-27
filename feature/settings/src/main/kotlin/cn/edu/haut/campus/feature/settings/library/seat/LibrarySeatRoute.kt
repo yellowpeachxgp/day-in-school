@@ -10,6 +10,8 @@ import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiState
 import cn.edu.haut.campus.feature.settings.library.seat.ui.LibrarySeatBookingScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 图书馆选座 Route。repository 为 null 时保持拆分前纯网页选座降级路径。 */
 @Composable
@@ -30,8 +32,11 @@ fun LibrarySeatRoute(
             onNavigateToXpeachCloud = onNavigateToXpeachCloud
         )
     } else {
+        val sessionKey = "library-seat-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+        val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
         val viewModel: LibrarySeatViewModel = viewModel(
-            key = "library-seat-" + repository.profileId + "-" + repository.sessionGeneration,
+            viewModelStoreOwner = viewModelStoreOwner,
+            key = sessionKey,
             factory = LibrarySeatViewModel.factory(repository, sessionStates)
         )
         val state by viewModel.uiState.collectAsStateWithLifecycle()
