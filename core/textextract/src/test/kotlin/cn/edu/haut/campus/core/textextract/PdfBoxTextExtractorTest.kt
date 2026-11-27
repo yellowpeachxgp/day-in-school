@@ -228,7 +228,15 @@ class PdfBoxTextExtractorTest {
                 "b" + index + "[x" + rect.lowerLeftX + ".." + rect.upperRightX + ",y" + rect.lowerLeftY + ".." + rect.upperRightY + "]"
             }.joinToString(",")
             val drafts = readField(stripper, "lineDrafts") as List<*>
-            return drafts.joinToString(prefix = "beads=" + beadSummary + ";mutated=" + mutatedBeadSummary + ";drafts=", separator = "|") { draft ->
+            val runtimeBeads = (readField(stripper, "beadRectangles") as List<*>).mapIndexed { index, rect ->
+                if (rect == null) {
+                    "b" + index + "[null]"
+                } else {
+                    val pdRect = rect as PDRectangle
+                    "b" + index + "[x" + pdRect.lowerLeftX + ".." + pdRect.upperRightX + ",y" + pdRect.lowerLeftY + ".." + pdRect.upperRightY + "]"
+                }
+            }.joinToString(",")
+            return drafts.joinToString(prefix = "beads=" + beadSummary + ";mutated=" + mutatedBeadSummary + ";runtime=" + runtimeBeads + ";drafts=", separator = "|") { draft ->
                 val pieces = readField(draft!!, "pieces") as List<*>
                 val text = pieces.joinToString("") { piece -> readField(piece!!, "text") as String }
                 val glyphs = pieces.flatMap { piece -> readField(piece!!, "glyphs") as List<*> }
@@ -242,9 +250,17 @@ class PdfBoxTextExtractorTest {
     }
 
     private fun readField(target: Any, name: String): Any? {
-        val field = target.javaClass.getDeclaredField(name)
-        field.isAccessible = true
-        return field.get(target)
+        var type: Class<*>? = target.javaClass
+        while (type != null) {
+            try {
+                val field = type.getDeclaredField(name)
+                field.isAccessible = true
+                return field.get(target)
+            } catch (_: NoSuchFieldException) {
+                type = type.superclass
+            }
+        }
+        throw NoSuchFieldException(name + " on " + target.javaClass.name)
     }
 
     private fun pdfWithPages(vararg pages: Pair<Int, List<String>>): ByteArray {
