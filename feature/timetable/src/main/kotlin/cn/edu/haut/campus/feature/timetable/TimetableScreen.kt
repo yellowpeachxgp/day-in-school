@@ -929,12 +929,20 @@ fun TimetableScreen(
                         val maxOccEndPeriod = remember(activeWeekOccurrencesMap) {
                             activeWeekOccurrencesMap.values.flatten().maxOfOrNull { it.endPeriod } ?: 10
                         }
+                        val displayedPeriodMap = remember(activeWeekDates, term, periodTimes) {
+                            val weekStart = activeWeekDates.firstOrNull()
+                            if (term == null || weekStart == null) {
+                                emptyMap()
+                            } else {
+                                ScheduleEngine.periodMapForDate(weekStart, term, periodTimes)
+                            }
+                        }
                         val maxPeriods = maxOf(
                             10,
-                            periodTimes.maxOfOrNull { it.periodNo } ?: 10,
+                            displayedPeriodMap.keys.maxOrNull() ?: 10,
                             maxOccEndPeriod
                         )
-                        val periodByNo = periodTimes.associateBy { it.periodNo }
+                        val periodByNo = displayedPeriodMap
 
                         Row(
                             modifier = Modifier

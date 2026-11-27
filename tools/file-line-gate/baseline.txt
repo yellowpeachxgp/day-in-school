@@ -16,5 +16,5 @@ feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/CampusHubSc
 feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/CampusMomentsScreen.kt	2875
 feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/LibrarySeatBookingScreen.kt	3483
 feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/SettingsScreen.kt	4519
-feature/timetable/src/main/kotlin/cn/edu/haut/campus/feature/timetable/TimetableScreen.kt	2743
+feature/timetable/src/main/kotlin/cn/edu/haut/campus/feature/timetable/TimetableScreen.kt	2751
 feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayScreen.kt	3760
