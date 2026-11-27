@@ -5,8 +5,8 @@ import java.time.Instant
 /**
  * W1-01a 的通用事件 envelope。
  *
- * scopeKey 只是不透明字符串，避免在本阶段引用 core/model 的 SchoolAccountScope；
- * W1-01b 可以在不改动 wire format 的前提下把类型化 scope 映射进来。
+ * scopeKey 只是不透明字符串；DomainEventCodecRegistry 对类型化事件使用
+ * schoolId/accountId/profileId[/campusId] 的稳定格式，通用 envelope 本身仍不依赖 core/model。
  */
 data class EventEnvelope(
     val eventId: String,

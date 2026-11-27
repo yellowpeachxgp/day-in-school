@@ -2,7 +2,7 @@ package cn.edu.haut.campus.core.events
 
 import kotlinx.coroutines.flow.Flow
 
-/** 通用事件总线；W1-01a 使用 EventEnvelope，不定义具体 DomainEvent。 */
+/** 通用 envelope 事件总线；类型化 §6.2 事件通过 DomainEventBus 门面复用同一投递语义。 */
 interface EventBus {
     /** 发布事件；同一 eventId 的完全相同 envelope 幂等去重，不同内容必须失败。 */
     suspend fun publish(event: EventEnvelope)

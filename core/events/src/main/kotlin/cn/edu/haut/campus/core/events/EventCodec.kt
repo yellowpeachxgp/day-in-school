@@ -3,7 +3,7 @@ package cn.edu.haut.campus.core.events
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
-/** 未来具体领域事件类型的 payload 编解码器；W1-01a 不定义具体 DomainEvent。 */
+/** 通用 payload 编解码器；§6.2 DomainEvent 使用 DomainEventCodecRegistry 做类型化注册。 */
 interface EventCodec<T> {
     val eventType: String
     val schemaVersion: Int
