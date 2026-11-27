@@ -24,6 +24,7 @@ class CampusMapScreenshotTest {
         @JvmStatic
         fun disableNondeterministicTileLoading() {
             CampusTileCache.tileLoadingEnabled = false
+            CampusTileCache.clearAllForPreview()
         }
 
         @AfterClass

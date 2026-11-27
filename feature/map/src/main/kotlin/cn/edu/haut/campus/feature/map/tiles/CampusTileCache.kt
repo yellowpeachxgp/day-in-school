@@ -26,6 +26,11 @@ internal object CampusTileCache {
         coordinator.clearFailureCooldowns()
     }
 
+    /** 仅测试使用：清空内存瓦片、在途标记与冷却状态，避免跨用例污染。 */
+    internal fun clearAllForPreview() {
+        coordinator.clearAll()
+    }
+
     fun onForegroundResume(): Boolean =
         coordinator.onForegroundResume()
 
