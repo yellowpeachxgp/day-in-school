@@ -25,6 +25,39 @@ enum class TimetableScreenStatus {
     UNSUPPORTED
 }
 
+/** 课表页本地写操作种类；用于把耐用写入的完成结果回接到仍存在的对话框。 */
+enum class TimetableWriteKind {
+    RestoreCanceledGroup,
+    DeleteLegacyOccurrenceOverride,
+    SelectCurrentTerm,
+    UpdateTermStartDate,
+    ResetSingleDayOccurrenceEdit,
+    CancelClassOccurrence,
+    DeleteCourseScheduleRules,
+    SaveSingleDayOccurrenceEdit,
+    SaveMergedCourseRuleEdit,
+    SaveMasterCourseRuleEdit,
+    DeleteCourseScheduleRule,
+    SchedulePracticalCourse,
+    AddManualCourse
+}
+
+@Immutable
+data class TimetableWriteOperation(
+    val id: Long,
+    val kind: TimetableWriteKind
+)
+
+/** id 单调递增；UI 只在已发起同 kind 写入后响应最新完成结果，避免旧结果误关新对话框。 */
+@Immutable
+data class TimetableWriteCompletion(
+    val id: Long,
+    val kind: TimetableWriteKind,
+    val errorMessage: String? = null
+) {
+    val isSuccess: Boolean get() = errorMessage == null
+}
+
 /** 课表页不可变渲染快照；周次、编辑表单、展开与输入草稿等纯界面瞬态继续留在 ui/ 的 remember 中。 */
 @Immutable
 data class TimetableUiState(
@@ -39,7 +72,9 @@ data class TimetableUiState(
     val buildings: List<Building> = emptyList(),
     val unscheduledCourses: List<UnscheduledAcademicCourseEntity> = emptyList(),
 
-    // 恢复命令的异步结果状态（不是纯界面输入/展开状态）。
+    // 恢复命令与本地写入的异步结果状态（不是纯界面输入/展开状态）。
     val restoreNotice: String? = null,
-    val pendingLegacyReviewTargets: List<OccurrenceOverride> = emptyList()
+    val pendingLegacyReviewTargets: List<OccurrenceOverride> = emptyList(),
+    val pendingWrites: List<TimetableWriteOperation> = emptyList(),
+    val latestWriteCompletion: TimetableWriteCompletion? = null
 )

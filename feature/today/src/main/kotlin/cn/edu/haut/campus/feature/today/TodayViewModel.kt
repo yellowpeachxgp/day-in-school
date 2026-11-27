@@ -12,9 +12,13 @@ import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.feature.today.state.TodayUiAction
 import cn.edu.haut.campus.feature.today.state.TodayUiEffect
 import cn.edu.haut.campus.feature.today.state.TodayUiState
+import cn.edu.haut.campus.feature.today.state.TodayWriteCompletion
+import cn.edu.haut.campus.feature.today.state.TodayWriteKind
+import cn.edu.haut.campus.feature.today.state.TodayWriteOperation
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +40,8 @@ internal fun todayClassEventKey(termId: String, occurrenceId: String): String =
 /** 聚合今日页 Repository Flow，并把仓库/提醒写操作集中在一个可测试边界。 */
 class TodayViewModel(
     private val repository: CampusRepository,
-    private val reminderCoordinator: ReminderCoordinator
+    private val reminderCoordinator: ReminderCoordinator,
+    private val writeExecutor: TodayWriteExecutor
 ) : ViewModel() {
     private class SessionMismatchCancellationException :
         CancellationException("今日页 ViewModel 所属账号会话已不是当前会话")
@@ -44,6 +49,7 @@ class TodayViewModel(
     private val expectedProfileId: String = repository.profileId
     private val expectedSessionGeneration: Long? = repository.sessionGeneration
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val writeSequence = AtomicLong(0L)
 
     private val _uiState = MutableStateFlow(TodayUiState())
     val uiState = _uiState.asStateFlow()
@@ -153,22 +159,22 @@ class TodayViewModel(
                 }
             }
             is TodayUiAction.RestoreCanceledOccurrence -> restoreCanceledOccurrence(action)
-            is TodayUiAction.DeleteLegacyOccurrenceOverride -> launchOperation {
-                repository.deleteOccurrenceOverride(action.overrideId)
-                ensureSessionCurrent()
-                _uiState.update { state ->
-                    state.copy(
-                        pendingLegacyRestoreTargets = state.pendingLegacyRestoreTargets.filterNot { it.id == action.overrideId }
-                    )
+            is TodayUiAction.DeleteLegacyOccurrenceOverride -> launchDurableOperation(
+                kind = TodayWriteKind.DeleteLegacyOccurrenceOverride,
+                write = { repository.deleteOccurrenceOverride(action.overrideId) },
+                onSuccess = {
+                    _uiState.update { state ->
+                        state.copy(
+                            pendingLegacyRestoreTargets = state.pendingLegacyRestoreTargets.filterNot { it.id == action.overrideId }
+                        )
+                    }
                 }
-                emit(TodayUiEffect.RefreshWidgets)
-            }
+            )
             TodayUiAction.ClearLegacyRestoreTargets -> _uiState.update { it.copy(pendingLegacyRestoreTargets = emptyList()) }
-            is TodayUiAction.SelectCurrentTerm -> launchOperation {
-                repository.selectCurrentTerm(action.termId)
-                ensureSessionCurrent()
-                emit(TodayUiEffect.RefreshWidgets)
-            }
+            is TodayUiAction.SelectCurrentTerm -> launchDurableOperation(
+                kind = TodayWriteKind.SelectCurrentTerm,
+                write = { repository.selectCurrentTerm(action.termId) }
+            )
             is TodayUiAction.LoadSnoozeOptions -> launchOperation {
                 loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = action.freshDialogLoad)
             }
@@ -238,21 +244,24 @@ class TodayViewModel(
                 updateCourseReminderFeedback(action.detailState, action.termId, feedback)
                 loadSnoozeOptions(action.detailState, action.termId, freshDialogLoad = false)
             }
-            is TodayUiAction.CancelClassOccurrence -> launchOperation {
-                repository.cancelClassOccurrenceOnDate(
-                    occ = action.detailState.occurrence,
-                    termId = action.termId,
-                    reason = "单次停课"
-                )
-                ensureSessionCurrent()
-                emit(TodayUiEffect.RefreshWidgets)
-                _uiState.update {
-                    it.copy(
-                        dynamicSyncBanner = "已将「" + action.detailState.occurrence.courseName +
-                            "」设为单次停课，可在课表卡底部点击「恢复上课」撤销"
+            is TodayUiAction.CancelClassOccurrence -> launchDurableOperation(
+                kind = TodayWriteKind.CancelClassOccurrence,
+                write = {
+                    repository.cancelClassOccurrenceOnDate(
+                        occ = action.detailState.occurrence,
+                        termId = action.termId,
+                        reason = "单次停课"
                     )
+                },
+                onSuccess = {
+                    _uiState.update {
+                        it.copy(
+                            dynamicSyncBanner = "已将「" + action.detailState.occurrence.courseName +
+                                "」设为单次停课，可在课表卡底部点击「恢复上课」撤销"
+                        )
+                    }
                 }
-            }
+            )
         }
     }
 
@@ -284,98 +293,99 @@ class TodayViewModel(
     }
 
     private fun restoreCanceledOccurrence(action: TodayUiAction.RestoreCanceledOccurrence) {
-        launchOperation {
-            val clickTermId = action.termId ?: return@launchOperation
-            val snapshotOverrides = action.occurrenceOverrides
-            val clickedRow = action.overrideId?.let { oid ->
-                snapshotOverrides.firstOrNull { it.id == oid }
-            }
-            val command = when {
-                action.overrideId != null && clickedRow == null -> CampusRepository.RestoreCommand(
-                    commandId = UUID.randomUUID().toString(),
-                    accountProfileId = repository.profileId,
-                    termId = clickTermId,
-                    intent = CampusRepository.RestoreIntent.RESTORE_SELECTION
-                )
-                clickedRow != null && clickedRow.courseRuleId == null -> CampusRepository.RestoreCommand(
-                    commandId = UUID.randomUUID().toString(),
-                    accountProfileId = repository.profileId,
-                    termId = clickTermId,
-                    intent = CampusRepository.RestoreIntent.UNPAUSE,
-                    selectedRows = listOf(
-                        CampusRepository.SelectedOverride(
-                            id = clickedRow.id,
-                            mutationToken = clickedRow.mutationToken,
-                            ruleId = null,
-                            dateIso = clickedRow.date.toString(),
-                            expectedMove = clickedRow.moveId
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { CampusRepository.ExpectedMove.Move(it) }
-                                ?: CampusRepository.ExpectedMove.NoMove,
-                            role = clickedRow.moveRole
-                        )
+        val clickTermId = action.termId ?: return
+        val snapshotOverrides = action.occurrenceOverrides
+        val clickedRow = action.overrideId?.let { oid ->
+            snapshotOverrides.firstOrNull { it.id == oid }
+        }
+        val command = when {
+            action.overrideId != null && clickedRow == null -> CampusRepository.RestoreCommand(
+                commandId = UUID.randomUUID().toString(),
+                accountProfileId = repository.profileId,
+                termId = clickTermId,
+                intent = CampusRepository.RestoreIntent.RESTORE_SELECTION
+            )
+            clickedRow != null && clickedRow.courseRuleId == null -> CampusRepository.RestoreCommand(
+                commandId = UUID.randomUUID().toString(),
+                accountProfileId = repository.profileId,
+                termId = clickTermId,
+                intent = CampusRepository.RestoreIntent.UNPAUSE,
+                selectedRows = listOf(
+                    CampusRepository.SelectedOverride(
+                        id = clickedRow.id,
+                        mutationToken = clickedRow.mutationToken,
+                        ruleId = null,
+                        dateIso = clickedRow.date.toString(),
+                        expectedMove = clickedRow.moveId
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { CampusRepository.ExpectedMove.Move(it) }
+                            ?: CampusRepository.ExpectedMove.NoMove,
+                        role = clickedRow.moveRole
                     )
                 )
-                else -> {
-                    val hitRows = snapshotOverrides.filter {
-                        it.termId == clickTermId &&
-                            it.courseRuleId != null &&
-                            it.courseRuleId in action.mergedRuleIds &&
-                            it.date == action.date && it.canceled
-                    }
-                    CampusRepository.RestoreCommand(
-                        commandId = UUID.randomUUID().toString(),
-                        accountProfileId = repository.profileId,
-                        termId = clickTermId,
-                        intent = CampusRepository.RestoreIntent.RESTORE_SELECTION,
-                        selectedRows = hitRows
-                            .filter { it.moveId.isNullOrBlank() }
-                            .map {
-                                CampusRepository.SelectedOverride(
-                                    id = it.id,
-                                    mutationToken = it.mutationToken,
-                                    ruleId = it.courseRuleId,
-                                    dateIso = it.date.toString(),
-                                    expectedMove = CampusRepository.ExpectedMove.NoMove,
-                                    role = it.moveRole
-                                )
-                            },
-                        selectedMoves = hitRows
-                            .mapNotNull { it.moveId?.takeIf { move -> move.isNotBlank() } }
-                            .distinct()
-                            .map { moveId ->
-                                CampusRepository.SelectedMove(
-                                    moveId = moveId,
-                                    expectedMembers = snapshotOverrides
-                                        .filter { it.termId == clickTermId && it.moveId == moveId }
-                                        .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
-                                )
-                            }
-                    )
+            )
+            else -> {
+                val hitRows = snapshotOverrides.filter {
+                    it.termId == clickTermId &&
+                        it.courseRuleId != null &&
+                        it.courseRuleId in action.mergedRuleIds &&
+                        it.date == action.date && it.canceled
                 }
+                CampusRepository.RestoreCommand(
+                    commandId = UUID.randomUUID().toString(),
+                    accountProfileId = repository.profileId,
+                    termId = clickTermId,
+                    intent = CampusRepository.RestoreIntent.RESTORE_SELECTION,
+                    selectedRows = hitRows
+                        .filter { it.moveId.isNullOrBlank() }
+                        .map {
+                            CampusRepository.SelectedOverride(
+                                id = it.id,
+                                mutationToken = it.mutationToken,
+                                ruleId = it.courseRuleId,
+                                dateIso = it.date.toString(),
+                                expectedMove = CampusRepository.ExpectedMove.NoMove,
+                                role = it.moveRole
+                            )
+                        },
+                    selectedMoves = hitRows
+                        .mapNotNull { it.moveId?.takeIf { move -> move.isNotBlank() } }
+                        .distinct()
+                        .map { moveId ->
+                            CampusRepository.SelectedMove(
+                                moveId = moveId,
+                                expectedMembers = snapshotOverrides
+                                    .filter { it.termId == clickTermId && it.moveId == moveId }
+                                    .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
+                            )
+                        }
+                )
             }
-            val restoreResult = repository.executeRestoreCommand(command)
-            ensureSessionCurrent()
-            if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED) {
-                emit(TodayUiEffect.RefreshWidgets)
-                if (restoreResult.legacyReviewRequired) {
+        }
+        launchDurableOperation(
+            kind = TodayWriteKind.RestoreCanceledOccurrence,
+            write = { repository.executeRestoreCommand(command) },
+            onSuccess = { restoreResult ->
+                if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED &&
+                    restoreResult.legacyReviewRequired
+                ) {
                     _uiState.update { it.copy(pendingLegacyRestoreTargets = restoreResult.legacyAmbiguousTargets) }
                 }
+                val banner = when (restoreResult.status) {
+                    CampusRepository.OccurrenceCommandStatus.APPLIED ->
+                        if (restoreResult.legacyReviewRequired) {
+                            "已恢复「" + action.courseName + "」，检测到可能关联的旧版调入记录，请核对"
+                        } else {
+                            "已恢复「" + action.courseName + "」当日排课与提醒"
+                        }
+                    CampusRepository.OccurrenceCommandStatus.CONFLICT ->
+                        "「" + action.courseName + "」记录已变化，未修改，请刷新后重新选择"
+                    CampusRepository.OccurrenceCommandStatus.NO_CHANGE ->
+                        "「" + action.courseName + "」已是上课状态"
+                }
+                _uiState.update { it.copy(dynamicSyncBanner = banner) }
             }
-            val banner = when (restoreResult.status) {
-                CampusRepository.OccurrenceCommandStatus.APPLIED ->
-                    if (restoreResult.legacyReviewRequired) {
-                        "已恢复「" + action.courseName + "」，检测到可能关联的旧版调入记录，请核对"
-                    } else {
-                        "已恢复「" + action.courseName + "」当日排课与提醒"
-                    }
-                CampusRepository.OccurrenceCommandStatus.CONFLICT ->
-                    "「" + action.courseName + "」记录已变化，未修改，请刷新后重新选择"
-                CampusRepository.OccurrenceCommandStatus.NO_CHANGE ->
-                    "「" + action.courseName + "」已是上课状态"
-            }
-            _uiState.update { it.copy(dynamicSyncBanner = banner) }
-        }
+        )
     }
 
     private suspend fun loadSnoozeOptions(
@@ -432,6 +442,63 @@ class TodayViewModel(
             )
         }
     }
+
+    /**
+     * 把用户写先交给不受组合生命周期限制的耐用执行器，再把完成/失败序列化回 UiState。
+     * 成功后的 Android 小组件刷新由 Route 注入的执行器完成；即使此时页面已经离场也不会漏刷。
+     */
+    private fun <T : Any> launchDurableOperation(
+        kind: TodayWriteKind,
+        write: suspend () -> T,
+        onSuccess: (T) -> Unit = {}
+    ) {
+        val generation = expectedSessionGeneration
+        if (generation == null || !isCurrentSession()) return
+        val operation = TodayWriteOperation(
+            id = writeSequence.incrementAndGet(),
+            kind = kind
+        )
+        _uiState.update { state ->
+            state.copy(pendingWrites = state.pendingWrites + operation)
+        }
+        val job = writeExecutor.enqueue(
+            profileId = expectedProfileId,
+            sessionGeneration = generation,
+            write = write,
+            onComplete = { result ->
+                if (!isCurrentSession()) return@enqueue
+                val failure = result.exceptionOrNull()
+                val completion = TodayWriteCompletion(
+                    id = operation.id,
+                    kind = kind,
+                    errorMessage = failure?.let { writeErrorMessage(it) }
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                        latestWriteCompletion = completion
+                    )
+                }
+                result.onSuccess { value -> onSuccess(value) }
+            }
+        )
+        if (job == null) {
+            val completion = TodayWriteCompletion(
+                id = operation.id,
+                kind = kind,
+                errorMessage = "账号会话尚未就绪，写入未执行"
+            )
+            _uiState.update { state ->
+                state.copy(
+                    pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                    latestWriteCompletion = completion
+                )
+            }
+        }
+    }
+
+    private fun writeErrorMessage(error: Throwable): String =
+        error.message?.takeIf { it.isNotBlank() } ?: "写入失败，请重试"
 
     private fun <T> collect(flow: Flow<T>, update: (T) -> Unit) {
         scope.launch {

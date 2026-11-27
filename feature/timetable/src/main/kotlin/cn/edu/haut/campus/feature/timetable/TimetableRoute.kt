@@ -15,12 +15,13 @@ import cn.edu.haut.campus.feature.timetable.ui.TimetableScreen as TimetableUiScr
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 
 private class TimetableViewModelFactory(
-    private val repository: CampusRepository
+    private val repository: CampusRepository,
+    private val writeExecutor: TimetableWriteExecutor
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(TimetableViewModel::class.java))
-        return TimetableViewModel(repository) as T
+        return TimetableViewModel(repository, writeExecutor) as T
     }
 }
 
@@ -35,7 +36,10 @@ fun TimetableRoute(
     val context = LocalContext.current
     val sessionKey = timetableSessionKey(repository.profileId, repository.sessionGeneration)
     val viewModelStoreOwner = rememberTimetableViewModelStoreOwner(sessionKey)
-    val factory = remember(repository) { TimetableViewModelFactory(repository) }
+    val writeExecutor = remember(context.applicationContext) {
+        TimetableWriteExecutor.android(context.applicationContext)
+    }
+    val factory = remember(repository, writeExecutor) { TimetableViewModelFactory(repository, writeExecutor) }
     val viewModel: TimetableViewModel = viewModel(
         viewModelStoreOwner = viewModelStoreOwner,
         key = sessionKey,

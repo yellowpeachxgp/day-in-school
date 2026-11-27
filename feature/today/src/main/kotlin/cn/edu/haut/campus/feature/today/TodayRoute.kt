@@ -17,12 +17,13 @@ import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 
 private class TodayViewModelFactory(
     private val repository: CampusRepository,
-    private val reminderCoordinator: ReminderCoordinator
+    private val reminderCoordinator: ReminderCoordinator,
+    private val writeExecutor: TodayWriteExecutor
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(TodayViewModel::class.java))
-        return TodayViewModel(repository, reminderCoordinator) as T
+        return TodayViewModel(repository, reminderCoordinator, writeExecutor) as T
     }
 }
 
@@ -50,7 +51,12 @@ fun TodayRoute(
     val sessionKey = todaySessionKey(repository.profileId, repository.sessionGeneration)
     val viewModelStoreOwner = rememberTodayViewModelStoreOwner(sessionKey)
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
-    val factory = remember(repository, reminderCoordinator) { TodayViewModelFactory(repository, reminderCoordinator) }
+    val writeExecutor = remember(context.applicationContext) {
+        TodayWriteExecutor.android(context.applicationContext)
+    }
+    val factory = remember(repository, reminderCoordinator, writeExecutor) {
+        TodayViewModelFactory(repository, reminderCoordinator, writeExecutor)
+    }
     val viewModel: TodayViewModel = viewModel(
         viewModelStoreOwner = viewModelStoreOwner,
         key = sessionKey,

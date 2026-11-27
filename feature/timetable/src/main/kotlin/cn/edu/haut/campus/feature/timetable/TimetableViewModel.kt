@@ -5,8 +5,12 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiEffect
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.TimetableWriteOperation
 import java.time.DayOfWeek
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +26,8 @@ import kotlinx.coroutines.launch
 
 /** 聚合课表页 Repository Flow，并把全部仓库写操作集中在一个可测试边界。 */
 class TimetableViewModel(
-    private val repository: CampusRepository
+    private val repository: CampusRepository,
+    private val writeExecutor: TimetableWriteExecutor
 ) : ViewModel() {
     private class SessionMismatchCancellationException :
         CancellationException("课表页 ViewModel 所属账号会话已不是当前会话")
@@ -30,6 +35,7 @@ class TimetableViewModel(
     private val expectedProfileId: String = repository.profileId
     private val expectedSessionGeneration: Long? = repository.sessionGeneration
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val writeSequence = AtomicLong(0L)
 
     private val _uiState = MutableStateFlow(TimetableUiState())
     val uiState = _uiState.asStateFlow()
@@ -55,191 +61,261 @@ class TimetableViewModel(
             TimetableUiAction.OpenImporter -> emit(TimetableUiEffect.NavigateToImporter)
             is TimetableUiAction.OpenMapRoom -> emit(TimetableUiEffect.NavigateToMapWithRoom(action.room))
             is TimetableUiAction.RestoreCanceledGroup -> restoreCanceledGroup(action)
-            is TimetableUiAction.DeleteLegacyOccurrenceOverride -> launchOperation {
-                repository.deleteOccurrenceOverride(action.overrideId)
-                ensureSessionCurrent()
-                _uiState.update { state ->
-                    state.copy(
-                        pendingLegacyReviewTargets = state.pendingLegacyReviewTargets.filterNot { it.id == action.overrideId }
-                    )
+            is TimetableUiAction.DeleteLegacyOccurrenceOverride -> launchDurableOperation(
+                kind = TimetableWriteKind.DeleteLegacyOccurrenceOverride,
+                write = {
+                    repository.deleteOccurrenceOverride(action.overrideId)
+                },
+                onSuccess = {
+                    _uiState.update { state ->
+                        state.copy(
+                            pendingLegacyReviewTargets = state.pendingLegacyReviewTargets.filterNot { it.id == action.overrideId }
+                        )
+                    }
                 }
-                emit(TimetableUiEffect.RefreshWidgets)
-            }
+            )
             TimetableUiAction.ClearLegacyReviewTargets -> _uiState.update { it.copy(pendingLegacyReviewTargets = emptyList()) }
-            is TimetableUiAction.SelectCurrentTerm -> launchRefreshOperation {
-                repository.selectCurrentTerm(action.termId)
-            }
-            is TimetableUiAction.UpdateTermStartDate -> launchRefreshOperation {
-                repository.updateTermStartDate(action.termId, action.startDate)
-            }
-            is TimetableUiAction.ResetSingleDayOccurrenceEdit -> launchRefreshOperation {
-                repository.resetSingleDayOccurrenceEdit(action.occurrence)
-            }
-            is TimetableUiAction.CancelClassOccurrence -> launchRefreshOperation {
-                repository.cancelClassOccurrenceOnDate(
-                    occ = action.occurrence,
-                    termId = action.termId,
-                    reason = "单次停课"
-                )
-            }
-            is TimetableUiAction.DeleteCourseScheduleRules -> launchRefreshOperation {
-                repository.deleteCourseScheduleRules(
-                    ruleIds = action.ruleIds,
-                    contextDate = action.contextDate
-                )
-            }
-            is TimetableUiAction.SaveSingleDayOccurrenceEdit -> launchRefreshOperation {
-                if (action.targetDate != action.occurrence.date) {
-                    repository.rescheduleSingleOccurrenceCrossDate(
+            is TimetableUiAction.SelectCurrentTerm -> launchDurableOperation(
+                kind = TimetableWriteKind.SelectCurrentTerm,
+                write = { repository.selectCurrentTerm(action.termId) }
+            )
+            is TimetableUiAction.UpdateTermStartDate -> launchDurableOperation(
+                kind = TimetableWriteKind.UpdateTermStartDate,
+                write = { repository.updateTermStartDate(action.termId, action.startDate) }
+            )
+            is TimetableUiAction.ResetSingleDayOccurrenceEdit -> launchDurableOperation(
+                kind = TimetableWriteKind.ResetSingleDayOccurrenceEdit,
+                write = { repository.resetSingleDayOccurrenceEdit(action.occurrence) }
+            )
+            is TimetableUiAction.CancelClassOccurrence -> launchDurableOperation(
+                kind = TimetableWriteKind.CancelClassOccurrence,
+                write = {
+                    repository.cancelClassOccurrenceOnDate(
                         occ = action.occurrence,
                         termId = action.termId,
-                        targetDate = action.targetDate,
-                        newStartPeriod = action.newStartPeriod,
-                        newEndPeriod = action.newEndPeriod,
-                        newRoom = action.newRoom
-                    )
-                } else {
-                    repository.saveSingleDayOccurrenceEdit(
-                        occ = action.occurrence,
-                        termId = action.termId,
-                        newStartPeriod = action.newStartPeriod,
-                        newEndPeriod = action.newEndPeriod,
-                        newRoom = action.newRoom
+                        reason = "单次停课"
                     )
                 }
-            }
-            is TimetableUiAction.SaveMergedCourseRuleEdit -> launchRefreshOperation {
-                repository.saveUserMergedCourseRuleEdit(
-                    course = action.course.copy(
-                        name = action.name.trim().ifEmpty { action.course.name },
-                        teacher = action.teacher.trim().ifEmpty { null },
-                        colorArgb = action.colorArgb
-                    ),
-                    primaryRule = action.primaryRule.copy(
-                        weekday = DayOfWeek.of(action.weekday.coerceIn(1, 7)),
-                        startPeriod = action.startPeriod,
-                        endPeriod = action.endPeriod,
-                        rawRoom = action.room.trim().ifEmpty { action.primaryRule.rawRoom },
-                        weeks = action.weeks
-                    ),
-                    mergedRuleIds = action.mergedRuleIds,
-                    contextDate = action.contextDate
-                )
-            }
-            is TimetableUiAction.SaveMasterCourseRuleEdit -> launchRefreshOperation {
-                repository.saveUserCourseEdit(
-                    course = action.course.copy(
-                        name = action.name.trim().ifEmpty { action.course.name },
-                        teacher = action.teacher.trim().ifEmpty { null },
-                        colorArgb = action.colorArgb
-                    ),
-                    rule = action.rule.copy(
+            )
+            is TimetableUiAction.DeleteCourseScheduleRules -> launchDurableOperation(
+                kind = TimetableWriteKind.DeleteCourseScheduleRules,
+                write = {
+                    repository.deleteCourseScheduleRules(
+                        ruleIds = action.ruleIds,
+                        contextDate = action.contextDate
+                    )
+                }
+            )
+            is TimetableUiAction.SaveSingleDayOccurrenceEdit -> launchDurableOperation(
+                kind = TimetableWriteKind.SaveSingleDayOccurrenceEdit,
+                write = {
+                    if (action.targetDate != action.occurrence.date) {
+                        repository.rescheduleSingleOccurrenceCrossDate(
+                            occ = action.occurrence,
+                            termId = action.termId,
+                            targetDate = action.targetDate,
+                            newStartPeriod = action.newStartPeriod,
+                            newEndPeriod = action.newEndPeriod,
+                            newRoom = action.newRoom
+                        )
+                    } else {
+                        repository.saveSingleDayOccurrenceEdit(
+                            occ = action.occurrence,
+                            termId = action.termId,
+                            newStartPeriod = action.newStartPeriod,
+                            newEndPeriod = action.newEndPeriod,
+                            newRoom = action.newRoom
+                        )
+                    }
+                }
+            )
+            is TimetableUiAction.SaveMergedCourseRuleEdit -> launchDurableOperation(
+                kind = TimetableWriteKind.SaveMergedCourseRuleEdit,
+                write = {
+                    repository.saveUserMergedCourseRuleEdit(
+                        course = action.course.copy(
+                            name = action.name.trim().ifEmpty { action.course.name },
+                            teacher = action.teacher.trim().ifEmpty { null },
+                            colorArgb = action.colorArgb
+                        ),
+                        primaryRule = action.primaryRule.copy(
+                            weekday = DayOfWeek.of(action.weekday.coerceIn(1, 7)),
+                            startPeriod = action.startPeriod,
+                            endPeriod = action.endPeriod,
+                            rawRoom = action.room.trim().ifEmpty { action.primaryRule.rawRoom },
+                            weeks = action.weeks
+                        ),
+                        mergedRuleIds = action.mergedRuleIds,
+                        contextDate = action.contextDate
+                    )
+                }
+            )
+            is TimetableUiAction.SaveMasterCourseRuleEdit -> launchDurableOperation(
+                kind = TimetableWriteKind.SaveMasterCourseRuleEdit,
+                write = {
+                    repository.saveUserCourseEdit(
+                        course = action.course.copy(
+                            name = action.name.trim().ifEmpty { action.course.name },
+                            teacher = action.teacher.trim().ifEmpty { null },
+                            colorArgb = action.colorArgb
+                        ),
+                        rule = action.rule.copy(
+                            weekday = DayOfWeek.of(action.weekday),
+                            startPeriod = action.startPeriod,
+                            endPeriod = action.endPeriod,
+                            rawRoom = action.room.trim().ifEmpty { action.rule.rawRoom },
+                            weeks = action.weeks
+                        )
+                    )
+                }
+            )
+            is TimetableUiAction.DeleteCourseScheduleRule -> launchDurableOperation(
+                kind = TimetableWriteKind.DeleteCourseScheduleRule,
+                write = { repository.deleteCourseScheduleRule(action.ruleId) }
+            )
+            is TimetableUiAction.SchedulePracticalCourse -> launchDurableOperation(
+                kind = TimetableWriteKind.SchedulePracticalCourse,
+                write = {
+                    repository.scheduleUnscheduledPracticalCourse(
+                        unscheduled = action.unscheduled,
+                        rawRoom = action.rawRoom,
                         weekday = DayOfWeek.of(action.weekday),
                         startPeriod = action.startPeriod,
                         endPeriod = action.endPeriod,
-                        rawRoom = action.room.trim().ifEmpty { action.rule.rawRoom },
                         weeks = action.weeks
                     )
-                )
-            }
-            is TimetableUiAction.DeleteCourseScheduleRule -> launchRefreshOperation {
-                repository.deleteCourseScheduleRule(action.ruleId)
-            }
-            is TimetableUiAction.SchedulePracticalCourse -> launchRefreshOperation {
-                repository.scheduleUnscheduledPracticalCourse(
-                    unscheduled = action.unscheduled,
-                    rawRoom = action.rawRoom,
-                    weekday = DayOfWeek.of(action.weekday),
-                    startPeriod = action.startPeriod,
-                    endPeriod = action.endPeriod,
-                    weeks = action.weeks
-                )
-            }
-            is TimetableUiAction.AddManualCourse -> launchRefreshOperation {
-                repository.addManualCourseWithRule(
-                    termId = action.termId,
-                    name = action.name,
-                    teacher = action.teacher,
-                    rawRoom = action.rawRoom,
-                    weekday = DayOfWeek.of(action.weekday),
-                    startPeriod = action.startPeriod,
-                    endPeriod = action.endPeriod,
-                    weeks = action.weeks,
-                    colorArgb = action.colorArgb
-                )
-            }
+                }
+            )
+            is TimetableUiAction.AddManualCourse -> launchDurableOperation(
+                kind = TimetableWriteKind.AddManualCourse,
+                write = {
+                    repository.addManualCourseWithRule(
+                        termId = action.termId,
+                        name = action.name,
+                        teacher = action.teacher,
+                        rawRoom = action.rawRoom,
+                        weekday = DayOfWeek.of(action.weekday),
+                        startPeriod = action.startPeriod,
+                        endPeriod = action.endPeriod,
+                        weeks = action.weeks,
+                        colorArgb = action.colorArgb
+                    )
+                }
+            )
         }
     }
 
     private fun restoreCanceledGroup(action: TimetableUiAction.RestoreCanceledGroup) {
-        launchOperation {
-            val clickTermId = action.termId ?: return@launchOperation
-            val snapshotOverrides = action.occurrenceOverrides
-            val groupRows = action.groupRows
-            val groupMoveIds = groupRows.mapNotNull { it.moveId }.distinct()
-            val selectedMoves = groupMoveIds.map { moveId ->
-                CampusRepository.SelectedMove(
-                    moveId = moveId,
-                    expectedMembers = snapshotOverrides
-                        .filter { it.termId == clickTermId && it.moveId == moveId }
-                        .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
-                )
-            }
-            val selectedRows = groupRows.filter { it.moveId.isNullOrBlank() }.map { row ->
-                CampusRepository.SelectedOverride(
-                    id = row.id,
-                    mutationToken = row.mutationToken,
-                    ruleId = row.courseRuleId,
-                    dateIso = row.date.toString(),
-                    expectedMove = CampusRepository.ExpectedMove.NoMove,
-                    role = row.moveRole
-                )
-            }
-            val command = CampusRepository.RestoreCommand(
-                commandId = UUID.randomUUID().toString(),
-                accountProfileId = repository.profileId,
-                termId = clickTermId,
-                intent = if (selectedRows.isEmpty() && selectedMoves.isNotEmpty()) {
-                    CampusRepository.RestoreIntent.UNDO_MOVES
-                } else {
-                    CampusRepository.RestoreIntent.RESTORE_SELECTION
-                },
-                selectedRows = selectedRows,
-                selectedMoves = selectedMoves
+        val clickTermId = action.termId ?: return
+        val snapshotOverrides = action.occurrenceOverrides
+        val groupRows = action.groupRows
+        val groupMoveIds = groupRows.mapNotNull { it.moveId }.distinct()
+        val selectedMoves = groupMoveIds.map { moveId ->
+            CampusRepository.SelectedMove(
+                moveId = moveId,
+                expectedMembers = snapshotOverrides
+                    .filter { it.termId == clickTermId && it.moveId == moveId }
+                    .map { CampusRepository.RowIdentity(it.id, it.mutationToken) }
             )
-            val result = repository.executeRestoreCommand(command)
-            ensureSessionCurrent()
-            when (result.status) {
-                CampusRepository.OccurrenceCommandStatus.APPLIED -> {
-                    _uiState.update { it.copy(restoreNotice = null) }
-                    emit(TimetableUiEffect.RefreshWidgets)
-                    if (result.legacyAmbiguousTargets.isNotEmpty()) {
-                        _uiState.update { it.copy(pendingLegacyReviewTargets = result.legacyAmbiguousTargets) }
+        }
+        val selectedRows = groupRows.filter { it.moveId.isNullOrBlank() }.map { row ->
+            CampusRepository.SelectedOverride(
+                id = row.id,
+                mutationToken = row.mutationToken,
+                ruleId = row.courseRuleId,
+                dateIso = row.date.toString(),
+                expectedMove = CampusRepository.ExpectedMove.NoMove,
+                role = row.moveRole
+            )
+        }
+        val command = CampusRepository.RestoreCommand(
+            commandId = UUID.randomUUID().toString(),
+            accountProfileId = repository.profileId,
+            termId = clickTermId,
+            intent = if (selectedRows.isEmpty() && selectedMoves.isNotEmpty()) {
+                CampusRepository.RestoreIntent.UNDO_MOVES
+            } else {
+                CampusRepository.RestoreIntent.RESTORE_SELECTION
+            },
+            selectedRows = selectedRows,
+            selectedMoves = selectedMoves
+        )
+        launchDurableOperation(
+            kind = TimetableWriteKind.RestoreCanceledGroup,
+            write = { repository.executeRestoreCommand(command) },
+            onSuccess = { result ->
+                when (result.status) {
+                    CampusRepository.OccurrenceCommandStatus.APPLIED -> {
+                        _uiState.update { it.copy(restoreNotice = null) }
+                        if (result.legacyAmbiguousTargets.isNotEmpty()) {
+                            _uiState.update { it.copy(pendingLegacyReviewTargets = result.legacyAmbiguousTargets) }
+                        }
                     }
+                    CampusRepository.OccurrenceCommandStatus.CONFLICT -> {
+                        _uiState.update { it.copy(restoreNotice = "记录已变化，未修改，请刷新后重新选择") }
+                    }
+                    CampusRepository.OccurrenceCommandStatus.NO_CHANGE -> Unit
                 }
-                CampusRepository.OccurrenceCommandStatus.CONFLICT -> {
-                    _uiState.update { it.copy(restoreNotice = "记录已变化，未修改，请刷新后重新选择") }
+            }
+        )
+    }
+
+    /**
+     * 把用户写先交给不受组合生命周期限制的耐用执行器，再把完成/失败序列化回 UiState。
+     * 成功后的 Android 小组件刷新由 Route 注入的执行器完成；即使此时页面已经离场也不会漏刷。
+     */
+    private fun <T : Any> launchDurableOperation(
+        kind: TimetableWriteKind,
+        write: suspend () -> T,
+        onSuccess: (T) -> Unit = {}
+    ) {
+        val generation = expectedSessionGeneration
+        if (generation == null || !isCurrentSession()) return
+        val operation = TimetableWriteOperation(
+            id = writeSequence.incrementAndGet(),
+            kind = kind
+        )
+        _uiState.update { state ->
+            state.copy(pendingWrites = state.pendingWrites + operation)
+        }
+        val job = writeExecutor.enqueue(
+            profileId = expectedProfileId,
+            sessionGeneration = generation,
+            write = write,
+            onComplete = { result ->
+                if (!isCurrentSession()) return@enqueue
+                val failure = result.exceptionOrNull()
+                val completion = TimetableWriteCompletion(
+                    id = operation.id,
+                    kind = kind,
+                    errorMessage = failure?.let { writeErrorMessage(it) }
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                        latestWriteCompletion = completion
+                    )
                 }
-                CampusRepository.OccurrenceCommandStatus.NO_CHANGE -> Unit
+                result.onSuccess { value -> onSuccess(value) }
+            }
+        )
+        if (job == null) {
+            val completion = TimetableWriteCompletion(
+                id = operation.id,
+                kind = kind,
+                errorMessage = "账号会话尚未就绪，写入未执行"
+            )
+            _uiState.update { state ->
+                state.copy(
+                    pendingWrites = state.pendingWrites.filterNot { it.id == operation.id },
+                    latestWriteCompletion = completion
+                )
             }
         }
     }
 
-    private fun launchRefreshOperation(block: suspend () -> Unit) {
-        launchOperation {
-            block()
-            ensureSessionCurrent()
-            emit(TimetableUiEffect.RefreshWidgets)
-        }
-    }
-
-    private fun launchOperation(block: suspend () -> Unit) {
-        scope.launch {
-            ensureSessionCurrent()
-            block()
-            ensureSessionCurrent()
-        }
-    }
+    private fun writeErrorMessage(error: Throwable): String =
+        error.message?.takeIf { it.isNotBlank() } ?: "写入失败，请重试"
 
     private fun <T> collect(flow: Flow<T>, update: (T) -> Unit) {
         scope.launch {
