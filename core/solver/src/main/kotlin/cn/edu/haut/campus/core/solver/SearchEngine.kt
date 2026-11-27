@@ -215,7 +215,8 @@ internal object SearchEngine {
                     .sumOf { compiled.variables[it].creditsMilli }
                 val lowerAlreadyGuaranteed = !compiled.creditLowerActive ||
                     node.assignedCreditsMilli + mandatoryFutureCredits >= compiled.minCreditMilli
-                if (!optimize && lowerAlreadyGuaranteed) {
+                val optionalDominanceProven = !optimize || incumbents.size >= maxSolutions
+                if (optionalDominanceProven && lowerAlreadyGuaranteed) {
                     for (variableIndex in compiled.variables.indices) {
                         val variable = compiled.variables[variableIndex]
                         if (variable.required || node.assignments[variableIndex] != Int.MIN_VALUE) continue

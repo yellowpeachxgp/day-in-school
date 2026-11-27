@@ -330,4 +330,31 @@ class TimetableSolverTest {
         assertTrue(ScheduleVerifier.verify(problem, result.ranked.single()).isValid)
     }
 
+    @Test
+    fun topKRetainsUsefulExtraOptionalSolutionAfterMinimum() {
+        val penalty = WeightedPreference.CandidatePenalty(
+            candidateIds = setOf("opt1"),
+            costPerOccurrenceMilli = 10,
+            id = "penalize-opt1",
+            label = "额外选修成本"
+        )
+        val problem = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option("req1", "REQ", credits = "1", slots = listOf(SolverTestFixtures.slot(1, 1, 2))),
+                SolverTestFixtures.option("opt1", "OPT", credits = "1", slots = listOf(SolverTestFixtures.slot(2, 1, 2)))
+            ),
+            hard = listOf(HardConstraint.RequireOffering("REQ")),
+            creditLower = "1",
+            creditUpper = "2",
+            soft = listOf(penalty)
+        )
+        val result = solver.solve(problem, maxSolutions = 5, budget = Duration.ofSeconds(2))
+        assertTrue(result is SolveResult.Solutions)
+        result as SolveResult.Solutions
+        assertEquals(2, result.ranked.size)
+        assertEquals(listOf("req1"), result.ranked[0].selections.map { it.option.id })
+        assertEquals(listOf("req1", "opt1"), result.ranked[1].selections.map { it.option.id }.sorted())
+        assertTrue(result.ranked[1].totalCostMilli > result.ranked[0].totalCostMilli)
+    }
+
 }
