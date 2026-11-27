@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -71,6 +72,38 @@ class PluginManagementScreenTest {
             ),
             actions
         )
+    }
+
+    @Test
+    fun disabledPendingUpgradeRequiresEnableBeforePermissionConfirmation() {
+        val disabledPending = PluginManagementPreviewFixtures.pendingUpgradePlugin.copy(status = "DISABLED")
+        val state = PluginManagementPreviewFixtures.content.copy(plugins = listOf(disabledPending))
+        composeRule.setContent {
+            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                PluginManagementScreen(state = state, onAction = {})
+            }
+        }
+
+        composeRule.onNodeWithTag("confirm-upgrade").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("先启用进入权限复核", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun restoredPermissionsAreShownSeparatelyFromNewPermissions() {
+        val restored = PluginManagementPreviewFixtures.pendingUpgradePlugin.copy(
+            pendingPermissionDiff = PluginManagementPreviewFixtures.pendingUpgradePlugin.pendingPermissionDiff.copy(
+                restored = listOf("network.request")
+            )
+        )
+        val state = PluginManagementPreviewFixtures.content.copy(plugins = listOf(restored))
+        composeRule.setContent {
+            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                PluginManagementScreen(state = state, onAction = {})
+            }
+        }
+
+        composeRule.onNodeWithTag("permission-diff").performScrollTo()
+        composeRule.onNodeWithText("恢复授权：network.request").assertIsDisplayed()
     }
 
     @Test
