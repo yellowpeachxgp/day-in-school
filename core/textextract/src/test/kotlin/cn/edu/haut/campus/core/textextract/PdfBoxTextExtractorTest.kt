@@ -10,6 +10,8 @@ import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
 import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
+import com.tom_roush.pdfbox.pdmodel.interactive.pagenavigation.PDThreadBead
+import com.tom_roush.pdfbox.util.Matrix
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -144,6 +146,62 @@ class PdfBoxTextExtractorTest {
         assertEquals(4, line.box.points.size)
     }
 
+    @Test
+    fun rotate90PositionedWordGapDoesNotFuseIntoIlllit() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(rotate90PositionedWordsPdf(), TextExtractionContext.synthetic())
+        )
+
+        assertTrue("不应融合为 illlit，实际: " + result.plainText, !result.plainText.contains("illlit"))
+        val hasSpacedLine = result.lines.any { it.text == "ill lit" }
+        val hasSeparateWords = result.lines.any { it.text == "ill" } && result.lines.any { it.text == "lit" }
+        assertTrue("positioned words 应保留为空格或独立边界: " + result.lines.map { it.text }, hasSpacedLine || hasSeparateWords)
+    }
+
+    @Test
+    fun articleBoundaryPreventsVerticalLabelMerge() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(articleBoundaryVerticalLabelsPdf(), TextExtractionContext.synthetic())
+        )
+
+        assertTrue(result.lines.any { it.text.contains("AAA") })
+        assertTrue(result.lines.any { it.text.contains("BBB") })
+        assertTrue("文章边界内文本不应跨 bead 融合: " + result.lines.map { it.text }, result.lines.none { it.text.contains("AAA") && it.text.contains("BBB") })
+    }
+
+    @Test
+    fun mixedFontCaptionStaysOutsideBodyLine() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(mixedFontCaptionPdf(), TextExtractionContext.synthetic())
+        )
+
+        assertTrue(result.lines.any { it.text == "Body" })
+        assertTrue(result.lines.any { it.text == "caption" })
+        assertTrue(result.lines.none { it.text.contains("Body") && it.text.contains("caption") })
+    }
+
+    @Test
+    fun rotatedLabelsWithLargeProjectionGapStaySeparate() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(rotatedSeparateLabelsPdf(), TextExtractionContext.synthetic())
+        )
+
+        assertTrue(result.lines.any { it.text == "FIRST" })
+        assertTrue(result.lines.any { it.text == "SECOND" })
+        assertTrue(result.lines.none { it.text.contains("FIRST") && it.text.contains("SECOND") })
+    }
+
+    @Test
+    fun raisedReferenceKeepsPdfBoxNormalizedLineOrder() = runBlocking {
+        val result = PdfBoxTextExtractor().extractPdf(
+            PdfExtractionRequest(raisedReferencePdf(), TextExtractionContext.synthetic())
+        )
+
+        val line = result.lines.single { it.text.contains("Report") }
+        assertTrue(line.text.contains("[1]"))
+        assertTrue(line.text.indexOf("Report") < line.text.indexOf("[1]"))
+    }
+
     private fun pdfWithPages(vararg pages: Pair<Int, List<String>>): ByteArray {
         val document = PDDocument()
         try {
@@ -172,6 +230,101 @@ class PdfBoxTextExtractorTest {
         } finally {
             document.close()
         }
+    }
+
+    private fun rotate90PositionedWordsPdf(): ByteArray {
+        return singlePagePdf(rotation = 90) { contentStream ->
+            writeText(contentStream, "ill", 72f, 720f, 12f)
+            writeText(contentStream, "lit", 88f, 720f, 12f)
+        }
+    }
+
+    private fun articleBoundaryVerticalLabelsPdf(): ByteArray {
+        return singlePagePdf(configurePage = { page ->
+            val firstBead = PDThreadBead()
+            firstBead.page = page
+            firstBead.rectangle = PDRectangle(50f, 40f, 120f, 65f)
+            val secondBead = PDThreadBead()
+            secondBead.page = page
+            secondBead.rectangle = PDRectangle(50f, 105f, 120f, 90f)
+            page.threadBeads = listOf(firstBead, secondBead)
+        }) { contentStream ->
+            writeText(contentStream, "AAA", Matrix.getRotateInstance(Math.PI / 2, 100f, 80f), 12f)
+            writeText(contentStream, "BBB", Matrix.getRotateInstance(Math.PI / 2, 100f, 108f), 12f)
+        }
+    }
+
+    private fun mixedFontCaptionPdf(): ByteArray {
+        return singlePagePdf { contentStream ->
+            writeText(contentStream, "Body", 72f, 720f, 16f)
+            writeText(contentStream, "caption", 76f, 704f, 7f)
+        }
+    }
+
+    private fun rotatedSeparateLabelsPdf(): ByteArray {
+        return singlePagePdf(rotation = 90) { contentStream ->
+            writeText(contentStream, "FIRST", 72f, 720f, 12f)
+            writeText(contentStream, "SECOND", 180f, 720f, 12f)
+        }
+    }
+
+    private fun raisedReferencePdf(): ByteArray {
+        return singlePagePdf { contentStream ->
+            writeText(contentStream, "Report", 72f, 720f, 12f)
+            writeText(contentStream, "[1]", 110f, 727f, 7f)
+        }
+    }
+
+    private fun singlePagePdf(
+        rotation: Int = 0,
+        configurePage: (PDPage) -> Unit = {},
+        writeContent: (PDPageContentStream) -> Unit
+    ): ByteArray {
+        val document = PDDocument()
+        try {
+            val page = PDPage(PDRectangle(612f, 792f))
+            page.rotation = rotation
+            configurePage(page)
+            document.addPage(page)
+            val contentStream = PDPageContentStream(document, page)
+            try {
+                writeContent(contentStream)
+            } finally {
+                contentStream.close()
+            }
+            val output = ByteArrayOutputStream()
+            document.save(output)
+            return output.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
+
+    private fun writeText(
+        contentStream: PDPageContentStream,
+        text: String,
+        x: Float,
+        y: Float,
+        fontSize: Float
+    ) {
+        contentStream.beginText()
+        contentStream.setFont(PDType1Font.HELVETICA, fontSize)
+        contentStream.newLineAtOffset(x, y)
+        contentStream.showText(text)
+        contentStream.endText()
+    }
+
+    private fun writeText(
+        contentStream: PDPageContentStream,
+        text: String,
+        matrix: Matrix,
+        fontSize: Float
+    ) {
+        contentStream.beginText()
+        contentStream.setFont(PDType1Font.HELVETICA, fontSize)
+        contentStream.setTextMatrix(matrix)
+        contentStream.showText(text)
+        contentStream.endText()
     }
 
     private fun contentlessFirstPagePdf(): ByteArray {
