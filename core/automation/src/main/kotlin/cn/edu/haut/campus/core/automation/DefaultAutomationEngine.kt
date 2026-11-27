@@ -1,0 +1,566 @@
+package cn.edu.haut.campus.core.automation
+
+import cn.edu.haut.campus.core.events.DomainEventBus
+import cn.edu.haut.campus.core.model.json.Json
+import cn.edu.haut.campus.core.timeline.TimelineService
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+
+class AutomationRuleNotFoundException(ruleId: String) :
+    IllegalArgumentException("自动化规则不存在: " + ruleId)
+
+class CrossScopeAutomationException(ruleId: String) :
+    IllegalArgumentException("触发事件与自动化规则 scope 不一致: " + ruleId)
+
+/**
+ * OnEvent 规则的触发实例必须携带 DomainEvent。无 event 的 OnEvent 触发只能是实现错误或
+ * 绕过 eventId 去重的尝试：fail-closed 在 dedupe/run 写入之前拒绝，不消耗任何执行权，
+ * 因此合法事件随后到达时仍能正常执行。异常消息即为拒绝原因。
+ */
+class OnEventTriggerMissingEventException(ruleId: String) :
+    IllegalArgumentException("OnEvent 规则触发必须携带 DomainEvent，拒绝无 event 触发: " + ruleId)
+
+/**
+ * OnEvent 规则触发携带的事件必须与规则声明的 eventType/filter 一致。不匹配说明调用方
+ * 绕过了订阅侧过滤，fail-closed 在 dedupe/run 写入之前拒绝。reason 不携带 payload 内容。
+ */
+class OnEventTriggerEventMismatchException(ruleId: String, reason: String) :
+    IllegalArgumentException("OnEvent 规则触发事件与规则声明不一致: " + ruleId + "；" + reason)
+
+sealed interface TriggerExecutionResult {
+    data class Executed(val run: AutomationRun) : TriggerExecutionResult
+    data class Duplicate(val dedupeKey: String, val existingRun: AutomationRun?) : TriggerExecutionResult
+}
+
+interface AutomationEngine {
+    /** 试运行：求值规则并预览动作，但不调用 ActionExecutor、不写 dedupe/run store。 */
+    suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun
+
+    /**
+     * 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。
+     * 本入口不携带事件，只适用于非 OnEvent 触发器；OnEvent 规则必须走 executeTrigger 并携带
+     * DomainEvent，否则按 OnEventTriggerMissingEventException fail-closed 拒绝。
+     */
+    suspend fun onTrigger(ruleId: String, triggerInstanceKey: String)
+
+    /**
+     * 带事件的完整触发入口；DomainEvent key 由 eventId 强制派生，重复实例返回 Duplicate，不追加第二份运行记录。
+     * OnEvent 规则的实例必须携带与规则声明 eventType/filter 一致的事件，否则在任何 dedupe/run
+     * 写入之前 fail-closed 拒绝；因此被拒绝的调用不会消耗合法事件的执行权。
+     */
+    suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult
+
+    fun runs(ruleId: String): Flow<List<AutomationRun>>
+}
+
+/**
+ * MASTER_PLAN §6.3 的纯 JVM 自动化引擎核心；调度、Room 持久化和 UI 由后续卡接入。
+ *
+ * pendingLease 是崩溃恢复窗口：lease 内重投视为同一执行窗口，过期后才允许补处理重新获得执行权。
+ * 实现方应让 lease 大于动作最坏执行时间；过期恢复时动作必须用 RunContext 中稳定的 runId/dedupeKey 做副作用幂等。
+ */
+class DefaultAutomationEngine(
+    private val ruleStore: AutomationRuleStore,
+    private val runStore: AutomationRunStore,
+    private val dedupeStore: AutomationDedupeStore,
+    private val registry: AutomationExtensionRegistry,
+    private val clock: Clock = Clock.systemUTC(),
+    private val timelineService: TimelineService? = null,
+    private val domainEventBus: DomainEventBus? = null,
+    private val confirmationPort: ActionConfirmationPort? = null,
+    private val pendingLease: Duration = DEFAULT_PENDING_LEASE
+) : AutomationEngine {
+
+    init {
+        require(!pendingLease.isZero && !pendingLease.isNegative) { "dedupe pendingLease 必须为正时长" }
+    }
+
+    override suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun {
+        val triggerKey = AutomationKeys.dryRunTriggerInstanceKey(rule.id, at)
+        val instance = TriggerInstance(
+            ruleId = rule.id,
+            triggerInstanceKey = triggerKey,
+            firedAt = at,
+            source = "dry-run"
+        )
+        return executeRule(rule, instance, dryRun = true)
+    }
+
+    override suspend fun onTrigger(ruleId: String, triggerInstanceKey: String) {
+        executeTrigger(
+            TriggerInstance(
+                ruleId = ruleId,
+                triggerInstanceKey = triggerInstanceKey,
+                firedAt = clock.instant(),
+                source = "manual"
+            )
+        )
+    }
+
+    override suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult {
+        val rule = ruleStore.get(instance.ruleId) ?: throw AutomationRuleNotFoundException(instance.ruleId)
+        val boundInstance = bindDomainEventInstance(rule, instance)
+
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, boundInstance.triggerInstanceKey, rule.dedupe, boundInstance.firedAt)
+        val runId = AutomationKeys.runId(rule.id, boundInstance.triggerInstanceKey)
+        val acquiredAt = clock.instant()
+        val acquire = dedupeStore.tryAcquire(
+            AutomationDedupeRecord(
+                dedupeKey = dedupeKey,
+                ruleId = rule.id,
+                triggerInstanceKey = boundInstance.triggerInstanceKey,
+                runId = runId,
+                acquiredAt = acquiredAt,
+                policyFingerprint = AutomationKeys.policyFingerprint(rule.dedupe),
+                leaseExpiresAt = acquiredAt.plus(pendingLease)
+            )
+        )
+        if (acquire is DedupeAcquireResult.AlreadyExists) {
+            val existingRun = runStore.get(acquire.existing.runId)
+            if (existingRun != null && acquire.existing.state == AutomationDedupeState.PENDING) {
+                // 崩溃可能发生在 run append 成功之后、dedupe 转终态之前；发现 run 已持久化时直接修复终态。
+                dedupeStore.markRunRecorded(acquire.existing, clock.instant())
+            }
+            return TriggerExecutionResult.Duplicate(
+                dedupeKey = dedupeKey,
+                existingRun = existingRun
+            )
+        }
+
+        val acquired = (acquire as DedupeAcquireResult.Acquired).record
+        val alreadyAppendedRun = runStore.get(runId)
+        if (alreadyAppendedRun != null) {
+            dedupeStore.markRunRecorded(acquired, clock.instant())
+            return TriggerExecutionResult.Duplicate(
+                dedupeKey = dedupeKey,
+                existingRun = alreadyAppendedRun
+            )
+        }
+
+        val run = executeRule(rule, boundInstance, dryRun = false)
+        runStore.append(run)
+        val markedTerminal = dedupeStore.markRunRecorded(acquired, clock.instant())
+        if (!markedTerminal && !hasRunRecordedTerminalForSameInstance(acquired)) {
+            throw AutomationDedupeCompletionException(dedupeKey)
+        }
+        return TriggerExecutionResult.Executed(run)
+    }
+
+    override fun runs(ruleId: String): Flow<List<AutomationRun>> = runStore.runs(ruleId)
+
+    /** 严格 CAS 实现上的防御性复核：并发修复方已写入同一触发实例的终态时，完成结果幂等成功。 */
+    private suspend fun hasRunRecordedTerminalForSameInstance(acquired: AutomationDedupeRecord): Boolean {
+        val current = dedupeStore.find(acquired.dedupeKey) ?: return false
+        return current.state == AutomationDedupeState.RUN_RECORDED && current.hasSameRunIdentityAs(acquired)
+    }
+
+    /**
+     * DomainEvent 触发绑定是 fail-closed 边界，全部校验都在 dedupe/run 写入之前完成：
+     *
+     * - OnEvent 规则的实例必须携带事件；event=null 时用任意 key 反复调用都只会得到
+     *   [OnEventTriggerMissingEventException]，不会执行动作、不会消耗 dedupe，合法事件到达后仍能执行。
+     * - 携带的事件 scope 必须与规则一致；OnEvent 规则还要求事件类型与 filter
+     *   满足规则声明，否则说明调用方绕过了订阅侧过滤。
+     * - 实例身份只能由 eventId 派生。即使调用方传入伪造或被改写的 key，
+     *   引擎也会用同一个确定性 key 计算 dedupe/run/context，重放不会获得新的执行权。
+     *
+     * 非 OnEvent 触发器（定时、课前、阈值、地理围栏回执、插件等）不由 DomainEvent 驱动，
+     * event=null 是合法语义，实例身份按调用方 key 派生；若附带事件上下文则同样强制 eventId 派生。
+     */
+    private fun bindDomainEventInstance(rule: AutomationRule, instance: TriggerInstance): TriggerInstance {
+        val event = instance.event
+        val onEvent = rule.trigger as? TriggerSpec.OnEvent
+        if (onEvent != null && event == null) {
+            throw OnEventTriggerMissingEventException(rule.id)
+        }
+        if (event == null) return instance
+        if (event.scope != rule.scope) throw CrossScopeAutomationException(rule.id)
+        if (onEvent != null) {
+            val inconsistency = DomainEventTriggerSupport.inconsistencyReason(onEvent, event)
+            if (inconsistency != null) {
+                throw OnEventTriggerEventMismatchException(rule.id, inconsistency)
+            }
+        }
+        val boundKey = DomainEventTriggerSupport.triggerInstanceKey(event)
+        return if (instance.triggerInstanceKey == boundKey) {
+            instance
+        } else {
+            instance.copy(triggerInstanceKey = boundKey)
+        }
+    }
+
+    private suspend fun executeRule(
+        rule: AutomationRule,
+        instance: TriggerInstance,
+        dryRun: Boolean
+    ): AutomationRun {
+        val startedAt = clock.instant()
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
+        val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey)
+        val context = RunContext(
+            scope = rule.scope,
+            rule = rule,
+            triggerInstanceKey = instance.triggerInstanceKey,
+            firedAt = instance.firedAt,
+            now = startedAt,
+            dryRun = dryRun,
+            runId = runId,
+            dedupeKey = dedupeKey,
+            triggerEvent = instance.event,
+            timelineService = timelineService,
+            domainEventBus = domainEventBus
+        )
+
+        if (!rule.enabled) {
+            return buildRun(
+                runId = runId,
+                rule = rule,
+                instance = instance,
+                dedupeKey = dedupeKey,
+                startedAt = startedAt,
+                evaluations = emptyList(),
+                outcomes = emptyList(),
+                status = RunStatus.DISABLED,
+                dryRun = dryRun,
+                statusReason = "规则处于禁用状态"
+            )
+        }
+
+        val validationProblems = validateRuleAgainstRegistry(rule)
+        if (validationProblems.isNotEmpty()) {
+            return buildRun(
+                runId = runId,
+                rule = rule,
+                instance = instance,
+                dedupeKey = dedupeKey,
+                startedAt = startedAt,
+                evaluations = emptyList(),
+                outcomes = emptyList(),
+                status = RunStatus.INVALID_RULE,
+                dryRun = dryRun,
+                statusReason = validationProblems.take(6).joinToString("; ")
+            )
+        }
+
+        val evaluations = evaluateConditions(rule, context)
+        val failures = evaluations.mapIndexedNotNull { index, result ->
+            if (result.effectivePassed) null else {
+                val reason = result.reason ?: "未通过"
+                "condition[" + index + "] " + result.conditionType + ": " + reason
+            }
+        }
+        if (failures.isNotEmpty()) {
+            return buildRun(
+                runId = runId,
+                rule = rule,
+                instance = instance,
+                dedupeKey = dedupeKey,
+                startedAt = startedAt,
+                evaluations = evaluations,
+                outcomes = emptyList(),
+                status = RunStatus.CONDITIONS_NOT_MET,
+                dryRun = dryRun,
+                statusReason = failures.take(6).joinToString("; ")
+            )
+        }
+
+        val outcomes = if (dryRun) {
+            previewActions(rule, context)
+        } else {
+            executeActions(rule, context)
+        }
+        val status = deriveStatus(dryRun, outcomes)
+        return buildRun(
+            runId = runId,
+            rule = rule,
+            instance = instance,
+            dedupeKey = dedupeKey,
+            startedAt = startedAt,
+            evaluations = evaluations,
+            outcomes = outcomes,
+            status = status,
+            dryRun = dryRun,
+            statusReason = null
+        )
+    }
+
+    private fun buildRun(
+        runId: String,
+        rule: AutomationRule,
+        instance: TriggerInstance,
+        dedupeKey: String,
+        startedAt: Instant,
+        evaluations: List<ConditionResult>,
+        outcomes: List<ActionOutcome>,
+        status: RunStatus,
+        dryRun: Boolean,
+        statusReason: String?
+    ): AutomationRun = AutomationRun(
+        runId = runId,
+        ruleId = rule.id,
+        triggerInstanceKey = instance.triggerInstanceKey,
+        firedAt = instance.firedAt,
+        evaluations = evaluations,
+        outcomes = outcomes,
+        status = status,
+        dryRun = dryRun,
+        dedupeKey = dedupeKey,
+        startedAt = startedAt,
+        finishedAt = clock.instant(),
+        statusReason = statusReason?.let { sanitizeDetail(it, 1000) }
+    )
+
+    private fun validateRuleAgainstRegistry(rule: AutomationRule): List<String> {
+        val problems = ArrayList<String>()
+        val triggerProvider = registry.triggerProvider(rule.trigger.type)
+        if (triggerProvider == null) {
+            problems += "trigger 未注册: " + rule.trigger.type
+        } else {
+            val pluginTrigger = rule.trigger as? TriggerSpec.Plugin
+            if (pluginTrigger != null) {
+                triggerProvider.configSchema.validate(pluginTrigger.config).take(4).forEach { violation ->
+                    problems += "trigger config " + violation.path + " " + violation.rule
+                }
+            }
+        }
+
+        rule.conditions.forEachIndexed { index, spec ->
+            val evaluator = registry.conditionEvaluator(spec.type)
+            if (evaluator == null) {
+                problems += "condition[" + index + "] 未注册: " + spec.type
+            } else {
+                evaluator.configSchema.validate(spec.config).take(4).forEach { violation ->
+                    problems += "condition[" + index + "] config " + violation.path + " " + violation.rule
+                }
+            }
+        }
+
+        rule.actions.forEachIndexed { index, spec ->
+            val executor = registry.actionExecutor(spec.type)
+            if (executor == null) {
+                problems += "action[" + index + "] 未注册: " + spec.type
+            } else {
+                if (executor.risk == ActionRisk.EXTERNAL_WRITE_FORBIDDEN) {
+                    problems += "action[" + index + "] 外部写动作禁止注册: " + spec.type
+                }
+                executor.configSchema.validate(spec.config).take(4).forEach { violation ->
+                    problems += "action[" + index + "] config " + violation.path + " " + violation.rule
+                }
+            }
+        }
+        return problems.map { sanitizeDetail(it, 180) }
+    }
+
+    private suspend fun evaluateConditions(
+        rule: AutomationRule,
+        context: RunContext
+    ): List<ConditionResult> = rule.conditions.map { spec ->
+        val evaluator = registry.requireConditionEvaluator(spec.type)
+        val raw = try {
+            evaluator.evaluate(spec, context)
+        } catch (error: Throwable) {
+            if (error is CancellationException || error is Error) throw error
+            ConditionResult(
+                conditionType = spec.type,
+                passed = false,
+                certainty = Certainty.UNKNOWN,
+                reason = "条件求值异常（" + safeErrorName(error) + "），按不通过"
+            )
+        }
+        normalizeConditionResult(spec, raw)
+    }
+
+    private fun normalizeConditionResult(spec: ConditionSpec, raw: ConditionResult): ConditionResult {
+        var result = raw
+        if (result.conditionType != spec.type) {
+            result = result.copy(
+                conditionType = spec.type,
+                reason = appendReason(result.reason, "求值器返回类型不匹配，已按规则条件类型记录")
+            )
+        }
+        if (result.certainty == Certainty.UNKNOWN) {
+            result = result.copy(
+                passed = false,
+                reason = appendReason(result.reason, "certainty=UNKNOWN，视为不通过")
+            )
+        }
+        if (!result.passed && result.reason == null) {
+            result = result.copy(reason = "条件未通过")
+        }
+        return result.copy(evidence = result.evidence.take(MAX_EVIDENCE_PER_STEP))
+    }
+
+    private fun previewActions(rule: AutomationRule, context: RunContext): List<ActionOutcome> {
+        val quietActive = isQuietHoursActive(rule, context.firedAt)
+        return rule.actions.map { spec ->
+            val executor = registry.requireActionExecutor(spec.type)
+            val suffix = when {
+                executor.risk == ActionRisk.NEEDS_USER_CONFIRM -> "；真实执行前需要一次性用户确认"
+                executor.risk == ActionRisk.LOCAL_NOTIFY && quietActive -> "；当前处于 quietHours，真实执行会抑制通知"
+                else -> ""
+            }
+            ActionOutcome(
+                actionType = spec.type,
+                risk = executor.risk,
+                status = ActionOutcomeStatus.DRY_RUN_PREVIEW,
+                detail = "dry-run 预览：不会执行副作用" + suffix
+            )
+        }
+    }
+
+    private suspend fun executeActions(rule: AutomationRule, context: RunContext): List<ActionOutcome> {
+        val quietActive = isQuietHoursActive(rule, context.firedAt)
+        return rule.actions.map { spec ->
+            val executor = registry.requireActionExecutor(spec.type)
+            val actionContext = context.copy(now = clock.instant())
+            when {
+                executor.risk == ActionRisk.EXTERNAL_WRITE_FORBIDDEN -> ActionOutcome(
+                    actionType = spec.type,
+                    risk = executor.risk,
+                    status = ActionOutcomeStatus.FAILED,
+                    detail = "外部写动作被安全边界拒绝"
+                )
+                executor.risk == ActionRisk.LOCAL_NOTIFY && quietActive -> ActionOutcome(
+                    actionType = spec.type,
+                    risk = executor.risk,
+                    status = ActionOutcomeStatus.SKIPPED_QUIET_HOURS,
+                    detail = "quietHours 生效，通知动作已抑制"
+                )
+                executor.risk == ActionRisk.NEEDS_USER_CONFIRM -> {
+                    val confirmation = validConfirmation(rule, spec, actionContext)
+                    if (confirmation == null) {
+                        ActionOutcome(
+                            actionType = spec.type,
+                            risk = executor.risk,
+                            status = ActionOutcomeStatus.BLOCKED_CONFIRMATION_REQUIRED,
+                            detail = "缺少有效的一次性用户确认，动作未执行"
+                        )
+                    } else {
+                        invokeExecutor(spec, executor, actionContext.copy(confirmation = confirmation))
+                    }
+                }
+                else -> invokeExecutor(spec, executor, actionContext)
+            }
+        }
+    }
+
+    private suspend fun validConfirmation(
+        rule: AutomationRule,
+        spec: ActionSpec,
+        context: RunContext
+    ): ActionConfirmation? {
+        val port = confirmationPort ?: return null
+        val confirmation = try {
+            port.consumeConfirmation(rule, spec, context)
+        } catch (error: Throwable) {
+            if (error is CancellationException || error is Error) throw error
+            null
+        } ?: return null
+        val digest = AutomationKeys.sha256Hex(Json.canonical(spec.config))
+        return confirmation.takeIf {
+            it.ruleId == rule.id &&
+                it.actionType == spec.type &&
+                it.configDigest == digest &&
+                it.isValidAt(clock.instant())
+        }
+    }
+
+    private suspend fun invokeExecutor(
+        spec: ActionSpec,
+        executor: ActionExecutor,
+        context: RunContext
+    ): ActionOutcome {
+        val startedAt = clock.instant()
+        return try {
+            val raw = executor.execute(spec, context.copy(now = startedAt))
+            normalizeActionOutcome(spec, executor, raw, startedAt, clock.instant())
+        } catch (error: Throwable) {
+            if (error is CancellationException || error is Error) throw error
+            ActionOutcome(
+                actionType = spec.type,
+                risk = executor.risk,
+                status = ActionOutcomeStatus.FAILED,
+                detail = "动作执行异常（" + safeErrorName(error) + "）",
+                startedAt = startedAt,
+                finishedAt = clock.instant()
+            )
+        }
+    }
+
+    private fun normalizeActionOutcome(
+        spec: ActionSpec,
+        executor: ActionExecutor,
+        raw: ActionOutcome,
+        startedAt: Instant,
+        finishedAt: Instant
+    ): ActionOutcome {
+        val executorStart = raw.startedAt
+        val executorFinish = raw.finishedAt
+        val normalizedTimes = when {
+            executorStart != null && executorFinish != null -> executorStart to executorFinish
+            executorStart != null && !finishedAt.isBefore(executorStart) -> executorStart to finishedAt
+            executorFinish != null && !executorFinish.isBefore(startedAt) -> startedAt to executorFinish
+            else -> startedAt to finishedAt
+        }
+        var outcome = raw.copy(
+            actionType = spec.type,
+            risk = executor.risk,
+            startedAt = normalizedTimes.first,
+            finishedAt = normalizedTimes.second,
+            evidence = raw.evidence.take(MAX_EVIDENCE_PER_STEP)
+        )
+        if (outcome.status == ActionOutcomeStatus.DRY_RUN_PREVIEW) {
+            outcome = outcome.copy(
+                status = ActionOutcomeStatus.FAILED,
+                detail = appendReason(outcome.detail, "真实执行中执行器错误返回 dry-run 状态")
+            )
+        }
+        return outcome
+    }
+
+    private fun deriveStatus(dryRun: Boolean, outcomes: List<ActionOutcome>): RunStatus {
+        if (dryRun) return RunStatus.WOULD_EXECUTE
+        val success = outcomes.count { it.status == ActionOutcomeStatus.SUCCESS }
+        val failed = outcomes.count { it.status == ActionOutcomeStatus.FAILED }
+        val suppressed = outcomes.count {
+            it.status == ActionOutcomeStatus.BLOCKED_CONFIRMATION_REQUIRED ||
+                it.status == ActionOutcomeStatus.SKIPPED_QUIET_HOURS
+        }
+        return when {
+            failed == 0 && success == 0 && suppressed > 0 -> RunStatus.SUPPRESSED
+            failed == 0 -> RunStatus.EXECUTED
+            success > 0 || suppressed > 0 -> RunStatus.PARTIAL_FAILED
+            else -> RunStatus.FAILED
+        }
+    }
+
+    private fun isQuietHoursActive(rule: AutomationRule, at: Instant): Boolean {
+        val quietHours = rule.quietHours ?: return false
+        val local = at.atZone(quietHours.zone).toLocalTime()
+        val start = quietHours.window.start
+        val end = quietHours.window.end
+        return if (quietHours.window.crossesMidnight) {
+            !local.isBefore(start) || local.isBefore(end)
+        } else {
+            !local.isBefore(start) && local.isBefore(end)
+        }
+    }
+
+    private fun appendReason(existing: String?, addition: String): String =
+        if (existing.isNullOrBlank()) addition else sanitizeDetail(existing + "；" + addition, 512)
+
+    private fun safeErrorName(error: Throwable): String = error::class.simpleName ?: "Throwable"
+
+    private fun sanitizeDetail(value: String, maxLength: Int): String {
+        val cleaned = value.filterNot { it.isISOControl() }
+        return if (cleaned.length <= maxLength) cleaned else cleaned.substring(0, maxLength)
+    }
+
+    private companion object {
+        const val MAX_EVIDENCE_PER_STEP: Int = 8
+        val DEFAULT_PENDING_LEASE: Duration = Duration.ofMinutes(5)
+    }
+}
