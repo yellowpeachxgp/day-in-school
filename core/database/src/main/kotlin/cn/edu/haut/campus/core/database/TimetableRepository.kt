@@ -225,7 +225,9 @@ class TimetableRepository internal constructor(
         val contextDateIso = contextDate?.toString()
 
         writeCourseAggregates(
-            courseIdsProvider = { setOf(course.id) },
+            courseIdsProvider = {
+                setOf(course.id, primaryRule.courseId) + courseIdsForRules((mergedRuleIds + primaryRule.id).toSet())
+            },
             actor = Actor.USER,
             actorDetail = "course-user-edit"
         ) {
@@ -946,7 +948,12 @@ class TimetableRepository internal constructor(
         date: LocalDate,
         expectedMoveId: String? = null
     ): CampusRepository.OccurrenceCommandResult = writeCourseAggregates(
-        courseIdsProvider = { courseIdsForRules(ruleIds) },
+        courseIdsProvider = {
+            val directCourseIds = dao.getOccurrenceOverridesSnapshot()
+                .filter { it.courseRuleId in ruleIds && it.dateIso == date.toString() }
+                .mapNotNullTo(mutableSetOf()) { it.courseId }
+            courseIdsForRules(ruleIds) + directCourseIds
+        },
         actor = Actor.USER,
         actorDetail = "occurrence-rule-cancellation-restore"
     ) {
