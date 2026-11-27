@@ -1,7 +1,6 @@
 package cn.edu.haut.campus.feature.grades
 
 import android.app.Activity
-import android.os.Bundle
 import android.os.Looper
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
