@@ -18,6 +18,7 @@ import java.nio.file.Files
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.Signature
+import java.util.Base64
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -167,6 +168,52 @@ class ExtensionPackageSecurityTest {
             inst = installer.installation("schoolx", "org.example.signed")!!
             assertEquals("1.0.0", inst.activeVersion)
             assertEquals(listOf("ui.slot.render"), inst.grantedPermissions)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rollbackReverifiesStoredSignatureAndArtifactIntegrityFailClosed() {
+        val root = Files.createTempDirectory("w601a-rollback-reverify")
+        try {
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val v1Artifact = "v1".toByteArray()
+            val v2Artifact = "v2".toByteArray()
+            val v1 = signedManifest(version = "1.0.0", artifacts = mapOf("dist/data.txt" to v1Artifact))
+            val v2 = signedManifest(version = "1.1.0", artifacts = mapOf("dist/data.txt" to v2Artifact))
+            installer.install(v1.toByteArray(), mapOf("dist/data.txt" to v1Artifact), "schoolx")
+            installer.install(v2.toByteArray(), mapOf("dist/data.txt" to v2Artifact), "schoolx")
+            assertEquals("1.1.0", installer.installation("schoolx", "org.example.signed")?.activeVersion)
+
+            fun encoded(value: String): String =
+                Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
+            val v1Dir = root.resolve("versions")
+                .resolve(encoded("org.example.signed"))
+                .resolve(encoded("1.0.0"))
+            val artifactFile = v1Dir.resolve("artifacts").resolve("dist").resolve("data.txt")
+            val originalArtifact = Files.readAllBytes(artifactFile)
+            Files.write(artifactFile, "xx".toByteArray())
+            assertPackageError(PackageError.FILE_HASH_MISMATCH) {
+                installer.rollback("schoolx", "org.example.signed", "1.0.0")
+            }
+            assertEquals("1.1.0", installer.installation("schoolx", "org.example.signed")?.activeVersion)
+
+            Files.write(artifactFile, originalArtifact)
+            val manifestFile = v1Dir.resolve("manifest.json")
+            val originalManifest = Files.readAllBytes(manifestFile)
+            val tamperedManifest = String(originalManifest, Charsets.UTF_8)
+                .replace("Signed Fixture", "Signed FixturX")
+                .toByteArray(Charsets.UTF_8)
+            Files.write(manifestFile, tamperedManifest)
+            assertPackageError(PackageError.SIGNATURE_INVALID) {
+                installer.rollback("schoolx", "org.example.signed", "1.0.0")
+            }
+            assertEquals("1.1.0", installer.installation("schoolx", "org.example.signed")?.activeVersion)
+
+            Files.write(manifestFile, originalManifest)
+            val rollback = installer.rollback("schoolx", "org.example.signed", "1.0.0")
+            assertEquals("1.0.0", rollback.activeVersion)
         } finally {
             root.toFile().deleteRecursively()
         }

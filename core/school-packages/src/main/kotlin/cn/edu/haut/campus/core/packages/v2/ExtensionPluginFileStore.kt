@@ -114,6 +114,20 @@ class ExtensionPluginFileStore(
         return Files.readAllBytes(file)
     }
 
+    /** Read stored artifact bytes for re-verification; keys are canonical relative POSIX paths. */
+    fun readVersionArtifactMap(pluginId: String, version: String): Map<String, ByteArray> {
+        val artifactsRoot = versionDir(pluginId, version).resolve("artifacts")
+        if (!Files.isDirectory(artifactsRoot)) return emptyMap()
+        val result = linkedMapOf<String, ByteArray>()
+        Files.walk(artifactsRoot).use { stream ->
+            stream.filter { Files.isRegularFile(it) }.forEach { file ->
+                val relative = artifactsRoot.relativize(file).joinToString("/") { it.toString() }
+                result[relative] = Files.readAllBytes(file)
+            }
+        }
+        return result
+    }
+
     @Synchronized
     fun saveInstallation(installation: ExtensionInstallation) {
         val file = installationFile(installation.schoolId, installation.pluginId)

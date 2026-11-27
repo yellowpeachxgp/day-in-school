@@ -225,11 +225,16 @@ class ExtensionPluginInstaller(
     private fun loadStoredManifest(pluginId: String, version: String): ExtensionManifestV2 {
         val bytes = store.readVersionManifestBytes(pluginId, version)
             ?: throw PackageException(PackageError.ROLLBACK_UNAVAILABLE, "目标插件版本不存在或已损坏：" + version)
-        return try {
-            ExtensionManifestV2Codec.parseOrAdapt(String(bytes, Charsets.UTF_8), currentHostApi)
-        } catch (error: PackageException) {
-            throw PackageException(PackageError.ROLLBACK_UNAVAILABLE, "目标插件版本清单不可用：" + version, error.runtimeValidationCode)
-        }
+        // Persisted package bytes are evidence, not trusted input. Every lifecycle
+        // decision that reads an old version (permission confirmation, revocation,
+        // and rollback) re-verifies the publisher signature and every declared
+        // artifact digest before using its manifest.
+        return ExtensionPackageVerifier.verify(
+            bytes,
+            store.readVersionArtifactMap(pluginId, version),
+            keys,
+            currentHostApi
+        ).manifest
     }
 
     private fun extractUiSlotsJson(manifestBytes: ByteArray): String {
