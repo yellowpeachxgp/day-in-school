@@ -178,13 +178,18 @@ private fun validateSchemaNode(schema: JsonValue.Obj, path: String, depth: Int) 
         }
     }
 
-    schema.fields["minimum"]?.let { require(it is JsonValue.Num) { "minimum 必须是 number" } }
-    schema.fields["maximum"]?.let { require(it is JsonValue.Num) { "maximum 必须是 number" } }
-    val minimum = (schema.fields["minimum"] as? JsonValue.Num)?.literal?.toBigDecimalOrNullStrict()
-    val maximum = (schema.fields["maximum"] as? JsonValue.Num)?.literal?.toBigDecimalOrNullStrict()
+    val minimum = requiredNumericKeyword(schema, "minimum")
+    val maximum = requiredNumericKeyword(schema, "maximum")
     if (minimum != null && maximum != null) {
         require(minimum <= maximum) { "minimum 不能大于 maximum" }
     }
+}
+
+private fun requiredNumericKeyword(schema: JsonValue.Obj, keyword: String): BigDecimal? {
+    val node = schema.fields[keyword] ?: return null
+    require(node is JsonValue.Num) { keyword + " 必须是 number" }
+    return node.literal.toBigDecimalOrNullStrict()
+        ?: throw IllegalArgumentException(keyword + " 必须是合法数字")
 }
 
 private fun intKeyword(schema: JsonValue.Obj, keyword: String) {
@@ -194,6 +199,9 @@ private fun intKeyword(schema: JsonValue.Obj, keyword: String) {
             ?: throw IllegalArgumentException(keyword + " 必须是合法数字")
         require(value.stripTrailingZeros().scale() <= 0 && value >= BigDecimal.ZERO) {
             keyword + " 必须是非负 integer"
+        }
+        require(value <= BigDecimal.valueOf(Int.MAX_VALUE.toLong())) {
+            keyword + " 超出本安全子集支持的 Int 范围"
         }
     }
 }

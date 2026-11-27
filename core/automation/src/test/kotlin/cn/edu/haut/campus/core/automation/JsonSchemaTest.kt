@@ -62,6 +62,30 @@ class JsonSchemaTest {
     }
 
     @Test
+    fun malformedOrOutOfRangeNumericKeywordsFailAtSchemaConstruction() {
+        assertThrows(IllegalArgumentException::class.java) {
+            JsonSchema.of(
+                JsonValue.Obj(
+                    mapOf(
+                        "type" to JsonValue.Str("number"),
+                        "minimum" to JsonValue.Num("not-a-number")
+                    )
+                )
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            JsonSchema.of(
+                JsonValue.Obj(
+                    mapOf(
+                        "type" to JsonValue.Str("array"),
+                        "maxItems" to JsonValue.Num("2147483648")
+                    )
+                )
+            )
+        }
+    }
+
+    @Test
     fun anyOfAndNotAreEvaluated() {
         val schema = JsonSchema.parse(
             """{
