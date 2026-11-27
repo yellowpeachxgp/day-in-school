@@ -14,7 +14,7 @@
 #   7. 无 git 环境或无 main 参照分支时 fail-closed（退出 64），不静默放行
 #
 # 覆盖范围：git 跟踪的 kt/kts/java/xml/mjs/cjs/js/ts/sql/sh/py/yaml/yml 文件。
-# 不覆盖：.md 文档（长文属正常形态）、.json（多为生成物或数据）、二进制。
+# 不覆盖：contracts/** 中的 .yaml/.yml（权威/生成契约文档）、.md 文档、.json、二进制；contracts 下源码仍纳入。
 # 退出码：0 通过（可含 WARNING/INFO）；1 存在 FAILED 项；64 环境错误（含无法验证棘轮）。
 set -Eeuo pipefail
 
@@ -80,6 +80,14 @@ if [ -n "$dupes" ]; then
     [ -z "$dupe" ] && continue
     report_failure "baseline.txt 存在重复条目：$dupe"
   done < <(printf '%s\n' "$dupes")
+fi
+
+contract_entries=$(awk -F '\t' '$1 ~ /^contracts\// { print $1 }' "$tmp_entries" || true)
+if [ -n "$contract_entries" ]; then
+  while IFS= read -r contract_entry; do
+    [ -z "$contract_entry" ] && continue
+    report_failure "baseline.txt 不允许登记 contracts/** 条目：$contract_entry（契约 yaml/yml 豁免扫描，其他文件按源码门禁处理）"
+  done < <(printf '%s\n' "$contract_entries")
 fi
 
 # --- 1. 棘轮参照：merge-base 版本的 baseline ----------------------------------
@@ -166,6 +174,11 @@ else
     allow_removed=$(grep -E '^# allow-remove: ' "$BASELINE" | sed 's/^# allow-remove: //' | awk '{print $1}' || true)
     while IFS='	' read -r path ref_lines; do
       [ -z "$path" ] && continue
+      case "$path" in
+        contracts/*.yaml|contracts/*.yml)
+          report_info "基线条目 $path 移除：contracts/** 的 yaml/yml 属权威/生成契约文档，不纳入源代码行数棘轮"
+          continue ;;
+      esac
       if [ ! -f "$path" ]; then
         report_info "基线条目 $path 随文件消失而移除（参照 $ref_lines 行，清零方向）"
         continue
@@ -185,7 +198,7 @@ else
 fi
 
 # --- 2. 扫描 git 跟踪的文本源文件 ---------------------------------------------
-files=$(git ls-files | grep -E '\.(kt|kts|java|xml|mjs|cjs|js|ts|sql|sh|py|yaml|yml)$' | LC_ALL=C sort || true)
+files=$(git ls-files | grep -E '\.(kt|kts|java|xml|mjs|cjs|js|ts|sql|sh|py|yaml|yml)$' | grep -Ev '^contracts/.*\.(yaml|yml)$' | LC_ALL=C sort || true)
 
 while IFS= read -r file; do
   [ -z "$file" ] && continue
