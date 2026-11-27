@@ -8,6 +8,12 @@
 - 2026-11-26 复核：`cis-gate` 已安装且可执行；两仓裸库已存在；INF-00 的 main 基线门禁结果见 `BASELINE.md`。
 - 开发机不存放 GitHub 凭据；两个公开仓库只读拉取。
 
+## 本机参考克隆损坏记录（2026-11-27）
+
+- 原参考克隆 `/Volumes/SN 770/Developer/day-in-school` 的对象 `14c6c72cde35b62a13959d9f57cbd02c2b659772` 已损坏；只记录事实，不在该克隆中修复。
+- 主代理未对该克隆执行 `git gc`、`git prune` 或删除操作；统一改用干净种子克隆 `/Volumes/SN 770/Developer/campus-worktrees/day-in-school/_seed` 作为工作源。
+- 本记录只涉及本机路径与 Git 对象哈希，不包含真实开发机地址、账号、密码、Token 或 Key。
+
 ## 目录约定
 
 | 用途 | 路径 |

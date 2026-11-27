@@ -47,6 +47,9 @@ jobs:
             :core:academic-plan:test :core:selection:test \
             testDebugUnitTest --stacktrace
 
+      - name: 验证 Roborazzi 截图基线
+        run: ./gradlew --no-daemon verifyRoborazziDebug --stacktrace
+
       - name: 检查 Debug 和 Release 的 Android Lint
         run: ./gradlew --no-daemon lintDebug lintRelease --stacktrace
 
@@ -74,6 +77,9 @@ jobs:
             **/build/reports/tests/**
             **/build/test-results/**
             **/build/reports/lint-results-*
+            **/build/reports/roborazzi/**
+            **/build/test-results/roborazzi/**
+            **/build/outputs/roborazzi-compare/**
           if-no-files-found: warn
           retention-days: 30
 
