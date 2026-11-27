@@ -30,7 +30,7 @@ internal interface ParcelHubRuntimePort {
  * 实现从 CampusRepository 兼容门面逐字迁入；Room schema、通知原因与云同步触发时序保持不变。
  */
 class ParcelHubRepository internal constructor(
-    environment: CampusRepositoryEnvironment,
+    private val environment: CampusRepositoryEnvironment,
     private val appContext: Context,
     private val xiaomiAccountVault: XiaomiAccountSecureVault,
     private val runtimePort: ParcelHubRuntimePort
