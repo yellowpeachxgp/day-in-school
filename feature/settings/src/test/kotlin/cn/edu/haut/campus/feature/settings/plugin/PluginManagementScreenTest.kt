@@ -38,6 +38,7 @@ class PluginManagementScreenTest {
         }
 
         composeRule.onAllNodesWithText("fixture-official-examples")[0].assertIsDisplayed()
+        composeRule.onNodeWithTag("revoke-network.request").performScrollTo()
         composeRule.onNodeWithText("network.request").assertIsDisplayed()
         composeRule.onNodeWithTag("permission-diff").performScrollTo()
         composeRule.onNodeWithText("新增权限：network.request").assertIsDisplayed()
