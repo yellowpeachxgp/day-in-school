@@ -87,6 +87,7 @@ sealed interface TriggerSpec {
 
         init {
             requireAutomationType(eventType, "eventType")
+            filter?.let(AutomationDataSafety::validateJsonValue)
         }
 
         companion object { const val TYPE: String = "core.on-event" }
@@ -122,6 +123,7 @@ sealed interface TriggerSpec {
             requireAutomationToken(pluginId, "pluginId")
             requireAutomationToken(triggerId, "triggerId")
             requireAutomationType(type, "plugin trigger type")
+            AutomationDataSafety.validateJsonValue(config)
         }
 
         companion object {
@@ -136,14 +138,20 @@ data class ConditionSpec(
     val type: String,
     val config: JsonValue.Obj = EMPTY_AUTOMATION_CONFIG
 ) {
-    init { requireAutomationType(type) }
+    init {
+        requireAutomationType(type)
+        AutomationDataSafety.validateJsonValue(config)
+    }
 }
 
 data class ActionSpec(
     val type: String,
     val config: JsonValue.Obj = EMPTY_AUTOMATION_CONFIG
 ) {
-    init { requireAutomationType(type) }
+    init {
+        requireAutomationType(type)
+        AutomationDataSafety.validateJsonValue(config)
+    }
 }
 
 /**
@@ -212,6 +220,7 @@ data class Evidence(
         require(detail.isNotBlank() && detail.length <= 512) { "证据 detail 为空或过长" }
         require(detail.none { it.isISOControl() }) { "证据 detail 不能包含控制字符" }
         if (data != null) {
+            AutomationDataSafety.validateJsonValue(data)
             require(Json.canonical(data).length <= 2048) { "证据 JSON 过大" }
         }
     }

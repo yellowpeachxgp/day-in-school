@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.automation
 
+import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import java.time.Duration
 import java.time.Instant
@@ -43,5 +44,17 @@ class AutomationModelsTest {
         }
         val plugin = TriggerSpec.Plugin(pluginId = "weather-pack", triggerId = "rain")
         assertEquals("plugin.weather-pack.rain", plugin.type)
+    }
+
+    @Test
+    fun sensitiveKeysCannotEnterConfigOrEvidence() {
+        val sensitive = JsonValue.Obj(mapOf("apiToken" to JsonValue.Str("dummy")))
+
+        assertThrows(SensitiveAutomationDataException::class.java) {
+            ActionSpec(type = "test.action", config = sensitive)
+        }
+        assertThrows(SensitiveAutomationDataException::class.java) {
+            Evidence(source = "test.source", detail = "证据", data = sensitive)
+        }
     }
 }
