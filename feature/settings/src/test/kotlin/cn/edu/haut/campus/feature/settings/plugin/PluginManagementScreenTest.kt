@@ -43,7 +43,7 @@ class PluginManagementScreenTest {
         composeRule.onNodeWithTag("permission-diff").performScrollTo()
         composeRule.onNodeWithText("新增权限：network.request").assertIsDisplayed()
         composeRule.onNodeWithText("移除权限：parcel.ai.invoke").assertIsDisplayed()
-        composeRule.onNodeWithText("签名已验证", substring = true).assertIsDisplayed()
+        composeRule.onAllNodesWithText("签名已验证", substring = true)[0].performScrollTo().assertIsDisplayed()
     }
 
     @Test
