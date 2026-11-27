@@ -2849,7 +2849,7 @@ class CampusRepository internal constructor(
             for (cloudPlan in cloudPlansRequiringCoordination) {
                 var cloudToken = cloudIdentityRepository.resolveValidCloudAccessToken(forceRefresh = false)
                 if (cloudToken.isBlank()) {
-                    cloudToken = resolveValidCloudAccessToken(forceRefresh = true)
+                    cloudToken = cloudIdentityRepository.resolveValidCloudAccessToken(forceRefresh = true)
                 }
                 val checkRes = withContext(Dispatchers.IO) {
                     CampusCloudOidcHelper.coordinateStopCloudJobBeforeEngineSwitchDetailed(
@@ -2945,13 +2945,13 @@ class CampusRepository internal constructor(
                     throw IllegalStateException("开启云端准点抢座需保存校园统一认证密码（避免凌晨登录态过期），请重新验证并保存学号与密码")
                 }
             }
-            var token = resolveValidCloudAccessToken(
+            var token = cloudIdentityRepository.resolveValidCloudAccessToken(
                 forceRefresh = false,
                 expectedIdentity = identitySessionAtStart,
                 expectedStudentNo = currentStudentNo
             )
             if (token.isBlank()) {
-                token = resolveValidCloudAccessToken(
+                token = cloudIdentityRepository.resolveValidCloudAccessToken(
                     forceRefresh = true,
                     expectedIdentity = identitySessionAtStart,
                     expectedStudentNo = currentStudentNo
@@ -3149,7 +3149,7 @@ class CampusRepository internal constructor(
                 // 首交后被 401 拒绝只能证明 pre-persist，切号/换址/换学号期间的旧会话提交
                 // 绝不得携新令牌重试——refresh 发起、返回、凭据写回三点再验（resolver 内），
                 // 此处先做业务侧复核，身份不符即恢复本机计划并中止
-                val liveStudentBeforeRetry = (buildDelegatedCredentialBundle().first
+                val liveStudentBeforeRetry = (cloudIdentityRepository.buildDelegatedCredentialBundle().first
                     ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
                 if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
                     liveStudentBeforeRetry != currentStudentNo
@@ -3159,7 +3159,7 @@ class CampusRepository internal constructor(
                 }
                 // 测试闩锁（生产为 null）：确定性覆盖"401→refresh"窗口的切号/换址交错
                 cloudSubmitRetryBarrierHookForTest?.invoke()
-                token = resolveValidCloudAccessToken(
+                token = cloudIdentityRepository.resolveValidCloudAccessToken(
                     forceRefresh = true,
                     failedAccessToken = token,
                     expectedIdentity = identitySessionAtStart,
@@ -3173,7 +3173,7 @@ class CampusRepository internal constructor(
                 if (token.isNotBlank()) {
                     // 复验③·重提前：拿回的令牌必须仍属于开始时的身份会话与学号——
                     // 切号后旧提交不得携新 token 重试，网络地址也继续沿用已验证 base
-                    val liveStudentAfterRetry = (buildDelegatedCredentialBundle().first
+                    val liveStudentAfterRetry = (cloudIdentityRepository.buildDelegatedCredentialBundle().first
                         ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
                     if (!isCloudIdentitySnapshotCurrent(identitySessionAtStart) ||
                         liveStudentAfterRetry != currentStudentNo
@@ -3462,7 +3462,7 @@ class CampusRepository internal constructor(
             !allowCloudExecuteNow
         ) {
             val activeCloudId = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim()
-            val liveStuForFire = (buildDelegatedCredentialBundle().first
+            val liveStuForFire = (cloudIdentityRepository.buildDelegatedCredentialBundle().first
                 ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
             val belongsToActiveIdentity = cloudIdentityRepository.isBookingPlanVisibleToIdentity(
                 plan = current,
@@ -3584,7 +3584,7 @@ class CampusRepository internal constructor(
                             val planOwnerCloud = current.ownerCloudUserId?.trim().orEmpty()
                             val validCloudJobId = current.cloudJobId?.takeIf { it.isNotBlank() && !it.startsWith("cjob_") }
                             val cloudOwnerMatched = planOwnerCloud.isNotEmpty() && activeCloudId.isNotEmpty() && planOwnerCloud == activeCloudId
-                            val cloudToken = if (validCloudJobId != null && cloudOwnerMatched) resolveValidCloudAccessToken() else ""
+                            val cloudToken = if (validCloudJobId != null && cloudOwnerMatched) cloudIdentityRepository.resolveValidCloudAccessToken() else ""
                             if (!cloudOwnerMatched) {
                                 AutomatedSeatBookingResult(
                                     confirmed = false,
@@ -3619,7 +3619,7 @@ class CampusRepository internal constructor(
                         } else {
                             // 本机抢座在发起实际外部写入前：1) 核验计划归属学号与当前活跃学号一致；2) 按实际学校身份与 owner 核对同日冲突（不同人隔离，同一学号跨云账号仍严格防重！）
                             val activeCloudIdForFire = cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId?.trim()
-                            val liveStuForFire = (buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
+                            val liveStuForFire = (cloudIdentityRepository.buildDelegatedCredentialBundle().first ?: preferencesFlow.first().savedStudentId.orEmpty()).trim()
                             val planOwnerStu = current.ownerStudentId?.trim().orEmpty()
                             val effectiveStudentForConflict = planOwnerStu.ifEmpty { liveStuForFire }
 
@@ -4021,7 +4021,7 @@ class CampusRepository internal constructor(
         val nowMs = System.currentTimeMillis()
         var cloudStopSent = false
         if (current.executionMode == BookingExecutionMode.CLOUD_HOSTED.wireName) {
-            val token = resolveValidCloudAccessToken(forceRefresh = false)
+            val token = cloudIdentityRepository.resolveValidCloudAccessToken(forceRefresh = false)
             if (token.isNotBlank()) {
                 val cloudBaseUrl = runCatching {
                     NetworkProxyConfig.normalizeCloudApiBaseUrl(
@@ -4168,7 +4168,7 @@ class CampusRepository internal constructor(
             val hasCloudJob = plan != null && !plan.cloudJobId.isNullOrBlank() && !plan.cloudJobId.startsWith("cjob_")
             var cloudCancelConfirmed = false
             if (hasCloudJob && plan != null) {
-                val cloudToken = resolveValidCloudAccessToken()
+                val cloudToken = cloudIdentityRepository.resolveValidCloudAccessToken()
                 if (cloudToken.isNotBlank()) {
                     val cloudBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
                         preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
