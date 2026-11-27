@@ -68,7 +68,7 @@ internal fun SettingsUpdateUiState.resetTransientForExit(): SettingsUpdateUiStat
  * 根设置页内部有“我的 / 系统设置”二级切换。拆分前相关 remember 挂在根 SettingsScreen，
  * 因此只在根页随底栏离开时才重置，而不是在二级分区切换时提前重置。
  */
-internal class SettingsTransientResetRegistry {
+class SettingsTransientResetRegistry {
     private val callbacks = mutableMapOf<Any, () -> Unit>()
 
     @Synchronized

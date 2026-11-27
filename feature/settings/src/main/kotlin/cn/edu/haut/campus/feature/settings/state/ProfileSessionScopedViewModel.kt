@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
  * Ready 会话不再是本实例绑定的 repository/profileId/generation，立即取消全部收集协程
  * 并把状态清空；竞态中晚到的 Flow 发射也会被丢弃。
  */
-internal abstract class ProfileSessionScopedViewModel(
+abstract class ProfileSessionScopedViewModel(
     private val repository: CampusRepository,
     sessionStates: Flow<AccountSessionState>
 ) : ViewModel() {
