@@ -220,11 +220,18 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
         val notifyReasons = ConcurrentLinkedQueue<String>()
         repo.onScheduleOrPolicyChangedListener = { reason -> notifyReasons += reason }
         repo.cloudHttpTransportForTest = { method, url, body, _, _ ->
-            if (method == "POST" && url.endsWith("/api/v1/sync/snapshot")) {
-                body?.let(snapshotBodies::add)
-                syncPayloadWithJobAndParcel("cloud_user_c5")
-            } else {
-                """{"ok":true,"data":{}}"""
+            when {
+                method == "POST" && url.endsWith("/api/v1/sync/snapshot") -> {
+                    body?.let(snapshotBodies::add)
+                    syncPayloadWithJobAndParcel("cloud_user_c5")
+                }
+                method == "POST" && url.endsWith("/api/v1/me/consents") ->
+                    """{"ok":true,"data":{"id":"consent_c5","auth_version":3}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings") ->
+                    """{"ok":true,"data":{"id":"bind_c5"}}"""
+                method == "POST" && url.endsWith("/api/v1/school-bindings/bind_c5/complete") ->
+                    """{"ok":true,"data":{}}"""
+                else -> """{"ok":true,"data":{}}"""
             }
         }
         repo.saveAuthorizedSyncCredentials("20240001", "pw-c5", "2026", "3")
@@ -269,8 +276,8 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
 
         val versionBeforeExplicitSync = mergedPlan.stateVersion
         snapshotBodies.clear()
-        val explicit = repo.syncWithCampusCloud()
-        assertTrue(explicit.isSuccess)
+        val reconfirmed = repo.reconfirmAndRestoreCloudBookingPlans()
+        assertTrue(reconfirmed.isSuccess)
         val afterExplicit = dao.getLibraryBookingPlanById("plan_job_c5_sync")!!
         assertEquals(versionBeforeExplicitSync + 1, afterExplicit.stateVersion)
         assertEquals("云端已有一行任务不得重复落库", 1, dao.getLibraryBookingPlansSnapshot().count { it.cloudJobId == "job_c5_sync" })
