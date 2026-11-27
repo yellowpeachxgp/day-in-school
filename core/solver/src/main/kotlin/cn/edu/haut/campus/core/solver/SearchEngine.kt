@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.solver
 
+import java.math.BigInteger
 import java.time.Duration
 import java.util.BitSet
 
@@ -84,7 +85,7 @@ internal object SearchEngine {
                 return SearchOutcome(emptyList(), exhaustive = true)
             }
             searchNode(root)
-            val ranked = incumbents.sortedWith(compareBy<ScheduleSolution> { it.totalCostMilli }.thenBy { it.signature })
+            val ranked = incumbents.sortedWith(compareBy<ScheduleSolution> { it.totalCostMilli })
             return SearchOutcome(ranked, exhaustive = !timedOut)
         }
 
@@ -214,7 +215,7 @@ internal object SearchEngine {
                     .sumOf { compiled.variables[it].creditsMilli }
                 val lowerAlreadyGuaranteed = !compiled.creditLowerActive ||
                     node.assignedCreditsMilli + mandatoryFutureCredits >= compiled.minCreditMilli
-                if (lowerAlreadyGuaranteed) {
+                if (!optimize && lowerAlreadyGuaranteed) {
                     for (variableIndex in compiled.variables.indices) {
                         val variable = compiled.variables[variableIndex]
                         if (variable.required || node.assignments[variableIndex] != Int.MIN_VALUE) continue
@@ -336,7 +337,7 @@ internal object SearchEngine {
                 for ((credits, cost) in sorted) {
                     if (deficit <= 0L) break
                     val used = minOf(deficit, credits)
-                    val fractionCost = ceilDiv(cost * used, credits)
+                    val fractionCost = ceilDivProduct(cost, used, credits)
                     bound = Math.addExact(bound, fractionCost)
                     deficit -= used
                 }
@@ -376,10 +377,17 @@ internal object SearchEngine {
                 signature = signature
             )
             incumbents += solution
-            incumbents.sortWith(compareBy<ScheduleSolution> { it.totalCostMilli }.thenBy { it.signature })
+            incumbents.sortWith(compareBy<ScheduleSolution> { it.totalCostMilli })
             while (incumbents.size > maxSolutions) incumbents.removeAt(incumbents.lastIndex)
         }
 
-        private fun ceilDiv(value: Long, divisor: Long): Long = if (value <= 0L) 0L else ((value - 1L) / divisor) + 1L
+        private fun ceilDivProduct(value: Long, multiplier: Long, divisor: Long): Long {
+            if (value <= 0L || multiplier <= 0L) return 0L
+            val product = BigInteger.valueOf(value).multiply(BigInteger.valueOf(multiplier))
+            val parts = product.divideAndRemainder(BigInteger.valueOf(divisor))
+            val quotient = parts[0]
+            val rounded = if (parts[1].signum() == 0) quotient else quotient.add(BigInteger.ONE)
+            return rounded.longValueExact()
+        }
     }
 }

@@ -19,6 +19,32 @@ class SyntheticBenchmarkTest {
                 val first = SyntheticBenchmarkGenerator.generate(size, family, seed)
                 val second = SyntheticBenchmarkGenerator.generate(size, family, seed)
                 assertEquals(size, first.problem.candidates.size)
+                val expectedOfferings = when (size) {
+                    50 -> 10
+                    100 -> 16
+                    else -> 25
+                }
+                val expectedRequired = when (size) {
+                    50 -> 4
+                    100 -> 5
+                    else -> 6
+                }
+                assertEquals(expectedOfferings, first.problem.candidates.map { it.offeringId }.distinct().size)
+                assertEquals(expectedRequired, first.requiredOfferingIds.size)
+                val counts = first.problem.candidates.groupBy { it.offeringId }.mapValues { it.value.size }
+                when (size) {
+                    50 -> assertTrue(counts.values.all { it == 5 })
+                    100 -> {
+                        val ordered = counts.keys.sorted()
+                        assertTrue(ordered.take(12).all { counts.getValue(it) == 6 })
+                        assertTrue(ordered.drop(12).all { counts.getValue(it) == 7 })
+                    }
+                    else -> assertTrue(counts.values.all { it == 8 })
+                }
+                assertEquals(8, first.problem.fixedOccupancy.sumOf { it.slots.size })
+                if (family != BenchmarkFamily.UNCERTAIN_DATA) {
+                    assertTrue(first.problem.candidates.all { candidate -> candidate.slots.all { it.weeks.isKnown } })
+                }
                 assertEquals(first.canonicalJson, second.canonicalJson)
                 assertEquals(first.sha256, second.sha256)
                 assertTrue(first.sha256.matches(Regex("[0-9a-f]{64}")))
