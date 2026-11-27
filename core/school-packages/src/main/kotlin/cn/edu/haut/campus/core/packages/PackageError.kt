@@ -13,6 +13,9 @@ enum class PackageError {
     /** 清单声明了非 dis-campus-plugin/v1 的格式，或声明了本宿主不支持的包类型。 */
     MANIFEST_UNSUPPORTED_FORMAT,
 
+    /** 传输档案（ZIP）结构损坏或被篡改：畸形头、长度不一致、CRC 失败、本地头与中央目录不符。 */
+    ARCHIVE_CORRUPT,
+
     /** 清单体积超过宿主上限。 */
     MANIFEST_TOO_LARGE,
 
