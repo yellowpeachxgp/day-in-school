@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -36,6 +37,8 @@ class CampusMomentsViewModel(
         viewModelScope.launch { repository.cloudIdentityBindingFlow.collectLatest { value -> mutableUiState.update { it.copy(cloudBinding = value) } } }
     }
 
+    override suspend fun currentCloudUserId(): String =
+        repository.cloudIdentityBindingFlow.first()?.cloudUserId.orEmpty()
     override suspend fun refreshCampusMomentsSnapshot(): Result<CampusMomentsSnapshot> = repository.refreshCampusMomentsSnapshot()
     override suspend fun publishMomentsPost(
         type: MomentsPostType,

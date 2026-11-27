@@ -10,6 +10,8 @@ import cn.edu.haut.campus.core.model.MomentsTextbookListing
 
 /** Moments 用户动作面；粒度与拆分前 Repository 调用一致，确保纯搬移。 */
 interface CampusMomentsUiAction {
+    /** 发送前复核当前云端账号，避免切号后误用捕获身份。 */
+    suspend fun currentCloudUserId(): String
     suspend fun refreshCampusMomentsSnapshot(): Result<CampusMomentsSnapshot>
     suspend fun publishMomentsPost(
         type: MomentsPostType,

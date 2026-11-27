@@ -927,7 +927,7 @@ internal fun CampusMomentsScreenContent(
                 val submitPostId = activeDetailPost.id
                 val submitViewerId = activeViewerCloudUserId
                 scope.launch {
-                    val liveViewerId = actions.cloudIdentityBindingFlow.first()?.cloudUserId.orEmpty()
+                    val liveViewerId = actions.currentCloudUserId()
                     val result = if (submitViewerId.isNotBlank() && submitViewerId == liveViewerId) {
                         actions.submitMomentsContactRequest(
                             postId = submitPostId,
@@ -953,7 +953,7 @@ internal fun CampusMomentsScreenContent(
                 val submitPostId = activeDetailPost.id
                 val submitViewerId = activeViewerCloudUserId
                 scope.launch {
-                    val liveViewerId = actions.cloudIdentityBindingFlow.first()?.cloudUserId.orEmpty()
+                    val liveViewerId = actions.currentCloudUserId()
                     val result = if (submitViewerId.isNotBlank() && submitViewerId == liveViewerId) {
                         actions.handleMomentsContactRequestAction(
                             postId = submitPostId,
