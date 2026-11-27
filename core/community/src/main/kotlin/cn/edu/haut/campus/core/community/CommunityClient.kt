@@ -181,7 +181,7 @@ class CommunityClient(
         body: JsonValue.Obj?,
         idempotencyKey: String?,
     ) {
-        val requiredPathParams = Regex("\{([^}]+)\}").findAll(operation.pathTemplate).map { it.groupValues[1] }.toSet()
+        val requiredPathParams = Regex("""\{([^}]+)\}""").findAll(operation.pathTemplate).map { it.groupValues[1] }.toSet()
         val unexpected = pathParams.keys - requiredPathParams
         require(unexpected.isEmpty()) { "存在多余 path 参数：" + unexpected.joinToString(",") }
         for (name in requiredPathParams) {
@@ -200,7 +200,7 @@ class CommunityClient(
 
     private fun resolvePath(template: String, params: Map<String, String>): String {
         var resolved = template
-        Regex("\{([^}]+)\}").findAll(template).forEach { match ->
+        Regex("""\{([^}]+)\}""").findAll(template).forEach { match ->
             val name = match.groupValues[1]
             resolved = resolved.replace("{" + name + "}", percentEncode(checkNotNull(params[name])))
         }

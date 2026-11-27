@@ -133,6 +133,7 @@ class FileCommunityCacheStore(
             }
             Files.createDirectories(responsesDir)
         }
+        Unit
     }
 
     override suspend fun wipe() = withContext(Dispatchers.IO) {

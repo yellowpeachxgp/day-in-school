@@ -703,7 +703,8 @@ data class PlaceStatusSubscriptionTargetInput(
     init {
         requireWireEnum(type, setOf("PLACE", "AREA"), "target.type")
         if (type == "PLACE") {
-            requireText(placeRef, "target.place_ref")
+            require(!placeRef.isNullOrBlank()) { "PLACE target 必须提供 place_ref" }
+            placeRef?.let { requireText(it, "target.place_ref") }
             require(bbox == null) { "PLACE target 不允许 bbox" }
         } else {
             requireNotNull(bbox) { "AREA target 必须提供 bbox" }
