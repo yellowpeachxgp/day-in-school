@@ -1,7 +1,7 @@
 {
   "schemaVersion": "cis-acceptance-matrix/v1",
   "matrixId": "stage-s-capability-matrix",
-  "updatedAt": "2026-11-26",
+  "updatedAt": "2026-11-27",
   "source": {
     "masterPlanPathAfterInf01": "docs/roadmap/MASTER_PLAN.md",
     "masterPlanVersion": "v1.1",
@@ -1155,10 +1155,11 @@
       "id": "C22",
       "kind": "capability",
       "title": "插件 v2.1",
-      "acceptanceSummary": "新 types、slots、permissions 可用；开发者工具可用；非官方示例插件零修改宿主安装、停用、升级、回滚、卸载；单插件故障隔离。",
+      "acceptanceSummary": "按 I43 §5：阶段0 AC-01/02/03/04/05（Schema、共享夹具、槽位、示例加载、指南一致）；阶段1 AC-11/12/13/14/15/16/17/18/19/20/21/22/23/24（权限确认与回滚、隔离、持久化、命令语义、故障隔离、卸载清理、Android 安装与 CLI 卫生）；阶段2 AC-31/32/33/34/35/36（渲染器、槽位、管理页、官方示例、零修改宿主、失败安全）；阶段3 AC-41/42/43（simulate、pack、教程复现）。AC-1x/AC-2x 属安全类，终验必须由第二独立验收子代理复核。",
       "sourceRefs": [
         "MASTER_PLAN.md §14.2",
-        "MASTER_PLAN.md §14.3"
+        "MASTER_PLAN.md §14.3",
+        "task-notes/campus/research/I43.md §5"
       ],
       "requiredEvidenceTypes": [
         "devbox-command-log",
@@ -1178,9 +1179,11 @@
       "migration": {
         "involved": true,
         "types": [
+          "room",
+          "cloud-sql",
           "plugin-package-format"
         ],
-        "notes": "插件包格式、签名、版本升级与回滚必须验证；宿主 Git tree 和构建校验 SHA 不变。"
+        "notes": "插件包格式、签名、版本升级与回滚必须验证；宿主 Git tree 和构建校验 SHA 不变。云端 SQL 0011 分配给 W6-01a 插件持久化，属于必须验收的 cloud-sql 迁移；Room v19 预留为 W6-01a Android 插件 schema 演进的条件性 room 迁移，若最终不需要则按 D14 顺延并在验收记录中说明。"
       },
       "deviceTested": {
         "pendingUser": false,
