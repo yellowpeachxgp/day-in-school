@@ -59,6 +59,43 @@ class SettingsLifecycleWiringGuardTest {
     }
 
     @Test
+    fun transientAndHighPrivacyRoutesUseCompositionScopedOwner() {
+        val localOwnerRoutes = listOf(
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/focus/StudyFocusRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/library/catalog/LibraryCatalogRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/schoolcenter/SchoolCenterRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/cloud/XPeachCloudRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/dorm/DormElectricityRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/library/seat/LibrarySeatRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/moments/CampusMomentsRoute.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/parcel/ParcelHubRoute.kt"
+        )
+        for (relative in localOwnerRoutes) {
+            val source = read(relative)
+            assertTrue("$relative must remember a composition owner", source.contains("rememberSettingsSessionViewModelStoreOwner"))
+            assertTrue("$relative must install that owner", source.contains("viewModelStoreOwner = viewModelStoreOwner"))
+        }
+
+        val settingsScreen = read("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/SettingsScreen.kt")
+        val homeRoute = read("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeRouteSection.kt")
+        assertTrue(settingsScreen.contains("rememberSettingsSessionViewModelStoreOwner"))
+        assertTrue(settingsScreen.contains("viewModelStoreOwner = rootViewModelStoreOwner"))
+        assertTrue(homeRoute.contains("viewModelStoreOwner: ViewModelStoreOwner"))
+        assertTrue(homeRoute.contains("viewModelStoreOwner = viewModelStoreOwner"))
+    }
+
+    @Test
+    fun updateCheckerKeepsRootLifetimeAndAutomaticKey() {
+        val settingsScreen = read("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/SettingsScreen.kt")
+        val updateViewModel = read("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/update/SettingsUpdateViewModel.kt")
+
+        assertTrue(settingsScreen.contains("val settingsUpdateViewModel"))
+        assertTrue(settingsScreen.contains("viewModelStoreOwner = rootViewModelStoreOwner"))
+        assertTrue(updateViewModel.contains("lastAutoCheckKey"))
+        assertTrue(updateViewModel.contains("checkLatestRelease(manual = false)"))
+    }
+
+    @Test
     fun highPrivacyViewModelsUseProfileSessionGuard() {
         val viewModels = listOf(
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/cloud/XPeachCloudViewModel.kt",
