@@ -197,8 +197,14 @@ class TodayWriteExecutorRaceTest {
         try {
             sessions.registerLifecycleHook(
                 key = hookKey,
-                beforeSwitch = { events.add("switch-before") },
-                afterSwitch = { events.add("switch-after") }
+                beforeSwitch = {
+                    raceMarker("before switch hook")
+                    events.add("switch-before")
+                },
+                afterSwitch = {
+                    raceMarker("after switch hook")
+                    events.add("switch-after")
+                }
             )
             val writeStarted = CompletableDeferred<Unit>()
             val releaseWrite = CompletableDeferred<Unit>()
