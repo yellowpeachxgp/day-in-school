@@ -42,6 +42,19 @@ class ExtensionPackageSecurityTest {
     }
 
     @Test
+    fun cloudSignedReferencePluginVerifiesWithAndroidTrustRoot() {
+        val manifestBytes = readResource("/reference-v2-plugin/manifest.json")
+        val artifactBytes = readResource("/reference-v2-plugin/index.mjs")
+        val verified = ExtensionPackageVerifier.verify(
+            manifestBytes,
+            mapOf("dist/index.mjs" to artifactBytes),
+            ExtensionPublisherTrustRoots.officialExamplesRegistry()
+        )
+        assertEquals("org.example.hello-campus", verified.manifest.pluginId)
+        assertEquals("dis-official-examples-2026", verified.publisherId)
+    }
+
+    @Test
     fun ac21RejectsTamperedManifestArtifactUnknownPublisherZipSlipHttpOriginAndHostApi() {
         val artifact = "declarative data".toByteArray()
         val valid = signedManifest(artifacts = mapOf("dist/data.txt" to artifact))
@@ -249,6 +262,9 @@ class ExtensionPackageSecurityTest {
         }
         return out.toByteArray()
     }
+
+    private fun readResource(name: String): ByteArray =
+        requireNotNull(javaClass.getResourceAsStream(name)) { "missing test resource: " + name }.use { it.readBytes() }
 
     private fun assertPackageError(expected: PackageError, block: () -> Unit) {
         try {

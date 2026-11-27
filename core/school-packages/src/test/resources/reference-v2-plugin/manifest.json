@@ -1,0 +1,41 @@
+{
+  "schema_version": "dis-extension/v2",
+  "plugin_id": "org.example.hello-campus",
+  "name": "HAUT 校园生活助手卡片",
+  "version": "1.0.0",
+  "min_host_api": 2,
+  "max_host_api": 2,
+  "permissions": [
+    "ui.slot.render",
+    "storage.scoped"
+  ],
+  "allowed_origins": [],
+  "ui_slots": [
+    {
+      "slot_id": "campus.services",
+      "card_id": "org.example.hello-campus.card",
+      "title": "HAUT 莲花街自习导航",
+      "subtitle": "零宿主侵入扩展卡片",
+      "action_command": "greetCampus"
+    }
+  ],
+  "commands": [
+    {
+      "name": "greetCampus",
+      "description": "Return campus greeting card data",
+      "required_permission": "ui.slot.render"
+    }
+  ],
+  "entry_artifacts": [
+    {
+      "path": "dist/index.mjs",
+      "sha256": "a67afcb98a0498cc07ea2d32886f2ede2cde5ef218e77d3b43f2776aa5704266",
+      "size_bytes": 448
+    }
+  ],
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "dis-official-examples-2026",
+    "value_base64": "4LmsmvPEMNnsvEq1EeinUziHXYQXlc3iuXEfLVXqC70UYolDgUaWhPUReJYB2D4kupzTAee+LDPmAbrho98uAw=="
+  }
+}
