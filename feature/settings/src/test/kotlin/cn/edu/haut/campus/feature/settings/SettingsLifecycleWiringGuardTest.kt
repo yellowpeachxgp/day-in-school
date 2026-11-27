@@ -42,7 +42,7 @@ class SettingsLifecycleWiringGuardTest {
         assertTrue(homeRoute.contains("transientResetRegistry.register"))
         assertTrue(updateRoute.contains("transientResetRegistry.register"))
         assertFalse(homeUi.contains("SyncHistoryDialog("))
-        assertEquals(1, Regex("SyncHistoryDialog\(").findAll(settingsScreen + homeUi).count())
+        assertEquals(1, Regex("SyncHistoryDialog\\(").findAll(settingsScreen + homeUi).count())
     }
 
     @Test
