@@ -25,7 +25,7 @@ internal class TodayWriteLifecycle {
 
     val pending: Boolean get() = activeToken != null
 
-    /**  rapid double-click 复用同一 token；ViewModel 会按 token 去重，绝不把重复点击当两次写。 */
+    /** 快速重复点击复用同一 token；ViewModel 会按 token 去重，绝不把重复点击当两次写。 */
     fun begin(kind: TodayWriteKind): String {
         activeToken?.let { return it }
         val token = kind.name + ":" + UUID.randomUUID().toString()
