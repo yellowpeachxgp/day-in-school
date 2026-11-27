@@ -579,10 +579,34 @@ class TimetableRepository internal constructor(
                 )
             }
             val desiredIds = desired.map { it.second.id }.toSet()
+            val removedRuleIds = existingRuleEntities.mapNotNull { old ->
+                old.id.takeIf { it !in desiredIds }
+            }.toSet()
+            val allOverrides = dao.getOccurrenceOverridesSnapshot()
+            // 与通用规则删除入口同一安全口径：若矩阵编辑移除调课 SOURCE 所属规则，
+            // 同事务清理失去全部 SOURCE 的 TARGET，避免旧调入课在新矩阵外凭空复活。
+            val moveIdsLosingSources = allOverrides
+                .filter { ov ->
+                    !ov.moveId.isNullOrBlank() &&
+                        ov.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE &&
+                        ov.courseRuleId != null && ov.courseRuleId in removedRuleIds
+                }
+                .associate { it.moveId!! to it.termId }
             for (old in existingRuleEntities) {
-                if (old.id !in desiredIds) {
+                if (old.id in removedRuleIds) {
                     dao.deleteRuleById(old.id)
                     dao.deleteOccurrenceOverridesByRuleId(old.id)
+                }
+            }
+            for ((moveId, termOfMove) in moveIdsLosingSources) {
+                val remaining = dao.getOccurrenceOverridesForMove(termOfMove, moveId)
+                val hasSurvivingSource = remaining.any {
+                    it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.courseRuleId != null
+                }
+                if (!hasSurvivingSource) {
+                    for (orphan in remaining) {
+                        dao.deleteOccurrenceOverrideById(orphan.id)
+                    }
                 }
             }
 
