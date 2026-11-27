@@ -147,6 +147,8 @@ object ExtensionManifestV2Codec {
 
         rejectUnknownFields(root, TOP_LEVEL_KEYS, "插件清单")
 
+        val legacySchemaVersion = parseLegacySchemaVersion(root.fields["legacy_schema_version"])
+
         val pluginId = requiredString(root, "plugin_id")
         if (!PLUGIN_ID.matches(pluginId) || pluginId.length < 5 || pluginId.length > 120) {
             reject(PackageError.MANIFEST_INVALID, "plugin_id 格式非法: " + pluginId)
@@ -303,7 +305,7 @@ object ExtensionManifestV2Codec {
 
         return ExtensionManifestV2(
             schemaVersion = formatOrSchema,
-            legacySchemaVersion = null,
+            legacySchemaVersion = legacySchemaVersion,
             pluginId = pluginId,
             name = name,
             version = version,
@@ -392,6 +394,19 @@ object ExtensionManifestV2Codec {
                 RUNTIME_PATH_UNSAFE
             )
         }
+    }
+
+    private fun parseLegacySchemaVersion(value: JsonValue?): String? {
+        if (value == null) return null
+        val legacy = value.stringOrNull()
+            ?: reject(PackageError.MANIFEST_INVALID, "legacy_schema_version 必须是字符串")
+        if (legacy != PackageManifestCodec.FORMAT) {
+            reject(
+                PackageError.MANIFEST_INVALID,
+                "legacy_schema_version 只支持 " + PackageManifestCodec.FORMAT + ": " + legacy
+            )
+        }
+        return legacy
     }
 
     private fun parseSignature(value: JsonValue?): ExtensionSignatureDeclaration? {

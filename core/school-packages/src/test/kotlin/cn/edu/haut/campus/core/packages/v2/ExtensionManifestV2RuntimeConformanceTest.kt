@@ -50,6 +50,30 @@ class ExtensionManifestV2RuntimeConformanceTest {
     }
 
     @Test
+    fun parity缺口legacy枚举非空白显示串与整数字面量全部对齐() {
+        val legacy = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-legacy-schema-version.json"))
+        assertEquals("dis-campus-plugin/v1", legacy.legacySchemaVersion)
+
+        val padded = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-display-strings-padded-nonblank.json"))
+        assertEquals("  Runtime Fixture Plugin  ", padded.name)
+        assertEquals("  Runtime Fixture Card  ", padded.uiSlots[0].title)
+
+        listOf(
+            "invalid-runtime_schema_invalid-invalid-legacy-schema-version.json",
+            "invalid-runtime_schema_invalid-blank-name.json",
+            "invalid-runtime_schema_invalid-blank-ui-slot-title.json",
+            "invalid-runtime_schema_invalid-decimal-integer-min-host-api.json"
+        ).forEach { fileName ->
+            try {
+                ExtensionManifestV2Codec.parseOrAdapt(fixtureText(fileName))
+                fail(fileName + " must be rejected")
+            } catch (e: PackageException) {
+                assertEquals(fileName + ": " + e.message, "runtime_schema_invalid", e.runtimeValidationCode)
+            }
+        }
+    }
+
+    @Test
     fun 运行时hostApi2槽位表与六个已实现槽位一致() {
         assertEquals(
             setOf(
@@ -73,6 +97,9 @@ class ExtensionManifestV2RuntimeConformanceTest {
         assertTrue(text.contains("must not be presented as the CT/INF contract shared fixture source"))
         assertTrue(text.contains("home.cards"))
     }
+
+    private fun fixtureText(fileName: String): String =
+        File(fixtureDir(), fileName).readText(Charsets.UTF_8)
 
     private fun fixtureDir(): File {
         val resource = javaClass.classLoader.getResource("runtime-plugin-manifest-fixtures")
