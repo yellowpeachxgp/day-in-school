@@ -37,7 +37,6 @@ import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
 import cn.edu.haut.campus.core.campusservices.LibraryStudyRegionItem
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
-import cn.edu.haut.campus.core.campusservices.ParcelHubEngine
 import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
@@ -49,8 +48,6 @@ import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountSecureVault
 import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
-import cn.edu.haut.campus.core.campusservices.XiaomiExpressApi
-import cn.edu.haut.campus.core.campusservices.XiaomiPassportClient
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
 import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
