@@ -164,8 +164,22 @@ paths:
               schema:
                 type: string
                 const: no-store
+        '303':
+          description: 浏览器重复返回失效回调时，沿独立有效的 Cookie 会话回到工作台，不重新签发票据
+          headers:
+            Location:
+              schema:
+                type: string
+                const: /reservations
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: 登录流程无效；JSON 客户端收到标准错误，浏览器收到中文重登入口
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+            text/html:
+              schema:
+                type: string
   /api/v1/auth/mobile/exchange:
     post:
       operationId: exchangeMobileAppTicket
@@ -1393,7 +1407,7 @@ paths:
       tags: [admin]
       security:
         - bearerAuth: []
-      summary: Issue an idempotent refund for a PAID order (`dis:reservation:<orderUUID>:refund:v1`, capped at paid amount)
+      summary: Create a dual-approval refund request for a PAID order (executes only after a distinct second admin approves)
       parameters:
         - name: orderId
           in: path
@@ -1408,12 +1422,12 @@ paths:
             schema:
               $ref: '#/components/schemas/AdminRefundRequest'
       responses:
-        '200':
-          description: Order refunded
+        '202':
+          description: Dual-approval refund request created; no refund has executed yet
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrderEnvelope'
+                $ref: '#/components/schemas/RefundRequestEnvelope'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
@@ -1434,16 +1448,429 @@ paths:
                 $ref: '#/components/schemas/AuditEventListEnvelope'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /api/v1/auth/web/start:
+    get:
+      operationId: startWebOidcRedirect
+      tags: [identity]
+      summary: Initiate web OIDC redirect flow to XPeach SSO
+      responses:
+        '302':
+          description: Redirect to XPeach SSO authorize endpoint
+  /api/v1/auth/web/logout:
+    get:
+      operationId: logoutWebSession
+      tags: [identity]
+      summary: Revoke active web session cookie and redirect to portal landing
+      responses:
+        '302':
+          description: Session cleared and redirected
+  /api/v1/auth/web/exchange:
+    post:
+      operationId: exchangeWebAuthTicket
+      tags: [identity]
+      summary: Exchange single-use web ticket for web session cookie and access token
+      responses:
+        '200':
+          description: Web session issued
+  /api/v1/auth/mobile/status:
+    get:
+      operationId: getMobileAuthTransactionStatus
+      tags: [identity]
+      summary: Poll mobile OIDC PKCE transaction completion status
+      responses:
+        '200':
+          description: Mobile transaction status
+  /api/v1/auth/oidc/native-login:
+    post:
+      operationId: loginNativeWithSso
+      tags: [identity]
+      summary: Perform native OIDC login against XPeach SSO with optional TOTP verification
+      responses:
+        '200':
+          description: Session issued or TOTP challenge required
+  /api/v1/sync/snapshot:
+    get:
+      operationId: getUserSyncSnapshot
+      tags: [identity]
+      security:
+        - bearerAuth: []
+      summary: Pull unified user sync snapshot (wallet, bindings, reservations, parcels, campus content)
+      responses:
+        '200':
+          description: Unified sync snapshot
+    post:
+      operationId: pushUserSyncSnapshot
+      tags: [identity]
+      security:
+        - bearerAuth: []
+      summary: Bidirectional sync of school bindings, parcels, reservation cancellations and snapshot pull
+      responses:
+        '200':
+          description: Unified sync snapshot after push
+  /api/v1/admin/orders/{orderId}/quick-refund:
+    post:
+      operationId: quickRefundAdminOrder
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Create a dual-approval refund request (legacy 1-click refunds no longer execute unilaterally)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminQuickRefundRequest'
+      responses:
+        '202':
+          description: Dual-approval refund request created pending second-admin approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundRequestEnvelope'
+  /api/v1/reservation-jobs/{jobId}/execute-now:
+    post:
+      operationId: executeReservationJobNow
+      tags: [reservations]
+      security:
+        - bearerAuth: []
+      summary: Trigger immediate PRECHECK -> FINAL_CHECK -> FIRE execution for an armed reservation job
+      parameters:
+        - $ref: '#/components/parameters/JobIdParam'
+      responses:
+        '200':
+          description: Reservation job executed
+  /api/v1/reservation-jobs/{jobId}/cancel-seat:
+    post:
+      operationId: cancelConfirmedReservationSeat
+      tags: [reservations]
+      security:
+        - bearerAuth: []
+      summary: Release a live confirmed or active library seat reservation
+      parameters:
+        - $ref: '#/components/parameters/JobIdParam'
+      responses:
+        '200':
+          description: Seat reservation released
+  /api/v1/school-bindings/bind-live:
+    post:
+      operationId: bindLiveSchoolAccount
+      tags: [schools]
+      security:
+        - bearerAuth: []
+      summary: Verify live HAUT CAS/library credentials and store KMS-encrypted session bundle
+      responses:
+        '201':
+          description: Live school binding verified and stored
+  /api/v1/schools/haut/library/live-regions:
+    get:
+      operationId: getHautLibraryLiveRegions
+      tags: [schools]
+      security:
+        - bearerAuth: []
+      summary: Query live HAUT library study regions and active seat bookings
+      responses:
+        '200':
+          description: Live study regions
+  /api/v1/schools/haut/library/live-seats:
+    get:
+      operationId: getHautLibraryLiveSeats
+      tags: [schools]
+      security:
+        - bearerAuth: []
+      summary: Query live HAUT library seat availability for a target region and date
+      responses:
+        '200':
+          description: Live region seats
+  /api/v1/campus-content:
+    get:
+      operationId: getCampusContent
+      tags: [schools]
+      summary: Public cloud-controlled catalog of campus bulletin, partner clubs, competitions, and channels
+      responses:
+        '200':
+          description: Campus community and competition catalog
+  /api/v1/admin/campus-content:
+    get:
+      operationId: getAdminCampusContent
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Retrieve full campus content catalog including disabled entries for admin console
+      responses:
+        '200':
+          description: Admin campus content catalog
+    put:
+      operationId: updateAdminCampusContent
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Update campus bulletin, channels, clubs, or competitions in bulk
+      responses:
+        '200':
+          description: Updated campus content catalog
+  /api/v1/admin/campus-content/channels:
+    post:
+      operationId: upsertAdminCampusChannel
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Create or update a cloud-controlled campus channel item
+      responses:
+        '200':
+          description: Upserted channel catalog
+  /api/v1/admin/campus-content/channels/{channelId}:
+    delete:
+      operationId: deleteAdminCampusChannel
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Delete a campus channel item by ID
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Updated channel catalog
+  /api/v1/admin/campus-content/clubs:
+    post:
+      operationId: upsertAdminCampusClub
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Create or update a cloud-controlled partner student club item
+      responses:
+        '200':
+          description: Upserted club catalog
+  /api/v1/admin/campus-content/clubs/{clubId}:
+    delete:
+      operationId: deleteAdminCampusClub
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Delete a student club item by ID
+      parameters:
+        - name: clubId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Updated club catalog
+  /api/v1/admin/campus-content/competitions:
+    post:
+      operationId: upsertAdminCampusCompetition
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Create or update a cloud-controlled university competition item
+      responses:
+        '200':
+          description: Upserted competition catalog
+  /api/v1/admin/campus-content/competitions/{competitionId}:
+    delete:
+      operationId: deleteAdminCampusCompetition
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Delete a university competition item by ID
+      parameters:
+        - name: competitionId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Updated competition catalog
+  /api/v1/me/orders/{orderId}/settle:
+    post:
+      operationId: settleMyOrder
+      tags: [finance]
+      security:
+        - bearerAuth: []
+      summary: Self-service settlement of a DEBIT_PENDING or PAYMENT_DUE confirmed order at the stored accepted price (no client-supplied amount)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order settled or still pending
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/orders/{orderId}/refund-requests:
+    post:
+      operationId: createRefundRequest
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Create an immutable dual-person refund request (PENDING_APPROVAL, 24h expiry)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminRefundRequest'
+      responses:
+        '202':
+          description: Refund request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundRequestEnvelope'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/refund-requests:
+    get:
+      operationId: listRefundRequests
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: List dual-approval refund requests and their lifecycle status
+      responses:
+        '200':
+          description: Refund requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundRequestListEnvelope'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/refund-requests/{requestId}/approve:
+    post:
+      operationId: approveRefundRequest
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Approve a pending refund request as the DISTINCT second authenticated finance admin (self-approval rejected)
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Refund request approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundRequestEnvelope'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/refund-requests/{requestId}/execute:
+    post:
+      operationId: executeRefundRequest
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Execute an approved refund request with immutable-hash and role re-verification (idempotent event key)
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Refund executed or idempotently converged (order REFUNDED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundExecutionEnvelope'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/admin/credential-integrity:
+    get:
+      operationId: auditCredentialIntegrity
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Read-only audit of binding to credential_ref integrity (shared/mismatched/missing refs; no plaintext)
+      responses:
+        '200':
+          description: Credential integrity report
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/finance-worker/metrics:
+    get:
+      operationId: getFinanceWorkerMetrics
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Finance retry worker metrics (pending debits, backlog age, manual-review queue, last run)
+      responses:
+        '200':
+          description: Finance worker metrics
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/admin/orders/{orderId}/refund-reconcile:
+    post:
+      operationId: reconcileLegacyRefund
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      summary: Read-only reconcile of a legacy (pre-dual-approval) refund operation via its original idempotency key — never dispatches a new write
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Legacy refund reconciled or still unresolved
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /api/v1/reservation-quote:
     get:
       operationId: getReservationQuote
       tags: [reservations]
       security:
         - bearerAuth: []
-      summary: 获取十分钟内可确认且仅消费一次的预约报价
+      summary: Issue a short-lived server price quote to pin at plan creation
       responses:
         '200':
-          description: 报价已签发
+          description: Quote issued (amount, price_version, expires_at, quote_hash)
           content:
             application/json:
               schema:
@@ -2103,6 +2530,19 @@ components:
           type: string
         accepted_policy_version:
           type: string
+        repeat_days:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 1
+        remaining_days:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 1
+        end_local_date:
+          type: string
+          format: date
     UpdateReservationPlanRequest:
       type: object
       additionalProperties: false
@@ -2122,6 +2562,14 @@ components:
           type: boolean
         enabled:
           type: boolean
+        repeat_days:
+          type: integer
+          minimum: 1
+          maximum: 30
+        remaining_days:
+          type: integer
+          minimum: 0
+          maximum: 30
     ReservationPlanEnvelope:
       type: object
       required: [ok, code, request_id, data, meta]
@@ -2155,6 +2603,12 @@ components:
             target_local_date:
               type: string
             target_local_time:
+              type: string
+            repeat_days:
+              type: integer
+            remaining_days:
+              type: integer
+            end_local_date:
               type: string
             target_at:
               type: string
@@ -2619,15 +3073,155 @@ components:
     AdminRefundRequest:
       type: object
       additionalProperties: false
-      required: [amount_micropeach, reason, second_approver_ref]
+      required: [amount_micropeach]
       properties:
         amount_micropeach:
           type: integer
           minimum: 1
         reason:
           type: string
-        second_approver_ref:
+          maxLength: 200
+    AdminQuickRefundRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
           type: string
+          maxLength: 200
+    RefundRequest:
+      type: object
+      additionalProperties: false
+      required: [id, order_id, cloud_user_id, amount_micropeach, reason, request_hash, status, created_by, created_at, expires_at, approved_by, approved_at, executed_at, result_error]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        cloud_user_id:
+          type: string
+        amount_micropeach:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          maxLength: 200
+        request_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        status:
+          type: string
+          enum: [PENDING_APPROVAL, APPROVED, EXECUTING, RESULT_UNKNOWN, REFUNDED, EXPIRED, FAILED]
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        approved_by:
+          type: [string, 'null']
+        approved_at:
+          type: [string, 'null']
+          format: date-time
+        executed_at:
+          type: [string, 'null']
+          format: date-time
+        result_error:
+          type: [string, 'null']
+    RefundRequestEnvelope:
+      type: object
+      required: [ok, code, request_id, data, meta]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        code:
+          type: string
+        request_id:
+          type: string
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund_request]
+          properties:
+            refund_request:
+              $ref: '#/components/schemas/RefundRequest'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RefundLegacyReconcileQueueItem:
+      type: object
+      additionalProperties: false
+      required: [order_id, event_key, status, attempt_count, created_at, updated_at]
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        event_key:
+          type: string
+        status:
+          type: string
+        attempt_count:
+          type: integer
+          minimum: 0
+        last_error_code:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RefundRequestListEnvelope:
+      type: object
+      required: [ok, code, request_id, data, meta]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        code:
+          type: string
+        request_id:
+          type: string
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund_requests, legacy_reconcile_queue]
+          properties:
+            refund_requests:
+              type: array
+              items:
+                $ref: '#/components/schemas/RefundRequest'
+            legacy_reconcile_queue:
+              type: array
+              items:
+                $ref: '#/components/schemas/RefundLegacyReconcileQueueItem'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RefundExecutionEnvelope:
+      type: object
+      required: [ok, code, request_id, data, meta]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        code:
+          type: string
+        request_id:
+          type: string
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund_request, order]
+          properties:
+            refund_request:
+              $ref: '#/components/schemas/RefundRequest'
+            order:
+              type: object
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
     AuditEventListEnvelope:
       type: object
       required: [ok, code, request_id, data, meta]
