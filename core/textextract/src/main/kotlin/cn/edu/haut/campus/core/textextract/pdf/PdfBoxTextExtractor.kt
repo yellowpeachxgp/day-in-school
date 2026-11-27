@@ -145,6 +145,8 @@ class PdfBoxTextExtractor(
     private data class PdfGlyph(
         val height: Float,
         val widthDir: Float,
+        val readingX: Float,
+        val readingY: Float,
         val displayStartX: Float,
         val displayStartY: Float,
         val displayEndX: Float,
@@ -160,6 +162,12 @@ class PdfBoxTextExtractor(
     private data class PdfLineDraft(
         val pageIndex: Int,
         val pieces: List<PdfLinePiece>
+    )
+
+    private data class OrderedPdfLinePiece(
+        val order: Int,
+        val pageIndex: Int,
+        val piece: PdfLinePiece
     )
 
     /**
@@ -241,6 +249,8 @@ class PdfBoxTextExtractor(
             return PdfGlyph(
                 height = heightDir,
                 widthDir = widthDirAdj,
+                readingX = xDirAdj,
+                readingY = yDirAdj,
                 displayStartX = displayStart.first,
                 displayStartY = displayStart.second,
                 displayEndX = displayEnd.first,
@@ -265,24 +275,68 @@ class PdfBoxTextExtractor(
     }
 
     private fun buildLines(drafts: List<PdfLineDraft>): List<ExtractedTextLine> {
-        val output = mutableListOf<ExtractedTextLine>()
+        val orderedPieces = mutableListOf<OrderedPdfLinePiece>()
+        var order = 0
         for (draft in drafts) {
-            val text = buildLineText(draft.pieces).trim()
-            if (text.isBlank()) continue
-            val glyphs = draft.pieces.flatMap { it.glyphs }
-            if (glyphs.isEmpty()) continue
-            output.add(
-                ExtractedTextLine(
-                    lineIndex = output.size,
-                    pageIndex = draft.pageIndex,
-                    text = text,
-                    confidence = null,
-                    box = lineBoundingBox(glyphs),
-                    coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
-                )
+            for (piece in draft.pieces) {
+                orderedPieces.add(OrderedPdfLinePiece(order++, draft.pageIndex, piece))
+            }
+        }
+        val output = mutableListOf<ExtractedTextLine>()
+        val pageIndexes = orderedPieces.map { it.pageIndex }.distinct().sorted()
+        for (pageIndex in pageIndexes) {
+            val pagePieces = orderedPieces.filter { it.pageIndex == pageIndex }
+            val sortedByBaseline = pagePieces.sortedWith(
+                compareBy<OrderedPdfLinePiece> { baselineY(it.piece) }
+                    .thenBy { readingX(it.piece) }
+                    .thenBy { it.order }
             )
+            val groups = mutableListOf<MutableList<OrderedPdfLinePiece>>()
+            for (piece in sortedByBaseline) {
+                val current = groups.lastOrNull()
+                val pieceY = baselineY(piece.piece)
+                val pieceHeight = piece.piece.glyphs.maxOf { it.height }
+                if (current == null) {
+                    groups.add(mutableListOf(piece))
+                } else {
+                    val referenceY = current.map { baselineY(it.piece) }.average().toFloat()
+                    val referenceHeight = current.maxOf { ordered -> ordered.piece.glyphs.maxOf { glyph -> glyph.height } }
+                    val threshold = maxOf(2.0f, maxOf(pieceHeight, referenceHeight) * 0.45f)
+                    if (kotlin.math.abs(pieceY - referenceY) <= threshold) {
+                        current.add(piece)
+                    } else {
+                        groups.add(mutableListOf(piece))
+                    }
+                }
+            }
+
+            for (group in groups) {
+                val pieces = group.sortedBy { it.order }.map { it.piece }
+                val text = buildLineText(pieces).trim()
+                if (text.isBlank()) continue
+                val glyphs = pieces.flatMap { it.glyphs }
+                if (glyphs.isEmpty()) continue
+                output.add(
+                    ExtractedTextLine(
+                        lineIndex = output.size,
+                        pageIndex = pageIndex,
+                        text = text,
+                        confidence = null,
+                        box = lineBoundingBox(glyphs),
+                        coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
+                    )
+                )
+            }
         }
         return output
+    }
+
+    private fun baselineY(piece: PdfLinePiece): Float {
+        return piece.glyphs.map { it.readingY }.average().toFloat()
+    }
+
+    private fun readingX(piece: PdfLinePiece): Float {
+        return piece.glyphs.minOf { it.readingX }
     }
 
     private fun buildLineText(pieces: List<PdfLinePiece>): String {

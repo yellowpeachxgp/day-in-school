@@ -31,7 +31,7 @@ class TextExtractModelsTest {
 
     @Test
     fun streamingImageHashMatchesCanonicalBytesHash() {
-        val image = ArgbImage(2, 2, intArrayOf(0xFF000000.toInt(), 0xFF112233, 0x80445566, 0x00FFFFFF))
+        val image = ArgbImage(2, 2, intArrayOf(0xFF000000.toInt(), 0xFF112233.toInt(), 0x80445566.toInt(), 0x00FFFFFF))
         assertEquals(TextExtractHashes.sha256Hex(image.canonicalBytes()), TextExtractHashes.sha256Hex(image))
     }
 }
