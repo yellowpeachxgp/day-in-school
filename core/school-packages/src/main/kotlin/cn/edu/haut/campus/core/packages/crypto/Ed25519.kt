@@ -1,24 +1,17 @@
 package cn.edu.haut.campus.core.packages.crypto
 
-import cn.edu.haut.campus.core.packages.PackageError
-import cn.edu.haut.campus.core.packages.PackageException
 import java.math.BigInteger
-import java.security.KeyFactory
-import java.security.PublicKey
-import java.security.Signature
-import java.security.interfaces.EdECPublicKey
-import java.security.spec.EdECPoint
-import java.security.spec.EdECPublicKeySpec
-import java.security.spec.NamedParameterSpec
+import java.security.MessageDigest
 
 /**
- * Ed25519（JDK EdDSA）验签的最小封装。
+ * Ed25519（RFC 8032）纯 Kotlin/JVM 验签实现。
  *
- * 信任清单里保存的是 RFC 8032 的 32 字节原始公钥，而 JDK 只提供 EdECPublicKey，
- * 因此这里实现两个方向的编码转换：y 采用 32 字节小端，最高位是 x 的奇偶符号。
- * 本对象不提供签名能力——宿主只验证，不生成学校包签名。
+ * Android 12/12L（API 31/32）没有平台 Ed25519 Signature/EdEC 密钥类；本对象只使用
+ * 所有受支持 Android 版本都可用的 BigInteger 与 SHA-512，因此签名安装链不依赖
+ * API 33。这里只验签、不签名，私钥永远不会进入宿主。
  *
- * UNVERIFIED：实现按 RFC 8032 的公开编码规则自写，未与任何真实学校的发布密钥联调。
+ * 实现边界：标量与点编码都来自公开签名数据或宿主信任根，不包含秘密，因此未采用
+ * 恒定时间实现；信任根解析、长度与 canonical 编码检查全部 fail closed。
  */
 object Ed25519 {
 
@@ -26,53 +19,146 @@ object Ed25519 {
 
     const val SIGNATURE_BYTES: Int = 64
 
-    /** 把 32 字节原始公钥转换为 JDK 公钥对象；长度不符直接拒绝。 */
-    fun toPublicKey(raw: ByteArray): PublicKey {
-        if (raw.size != PUBLIC_KEY_BYTES) {
-            throw PackageException(PackageError.SIGNATURE_INVALID, "Ed25519 公钥必须是 32 字节")
-        }
-        val littleEndian = raw.copyOf()
-        val xOdd = (littleEndian[31].toInt() and 0x80) != 0
-        littleEndian[31] = (littleEndian[31].toInt() and 0x7f).toByte()
-        val y = BigInteger(1, littleEndian.reversedArray())
-        return try {
-            KeyFactory.getInstance("Ed25519").generatePublic(
-                EdECPublicKeySpec(NamedParameterSpec.ED25519, EdECPoint(xOdd, y))
-            )
-        } catch (error: Exception) {
-            throw PackageException(PackageError.SIGNATURE_INVALID, "无法构造 Ed25519 公钥：" + error.javaClass.simpleName)
-        }
+    private val ZERO: BigInteger = BigInteger.ZERO
+    private val ONE: BigInteger = BigInteger.ONE
+    private val TWO: BigInteger = BigInteger.valueOf(2)
+    private val P: BigInteger = ONE.shiftLeft(255).subtract(BigInteger.valueOf(19))
+    private val L: BigInteger = ONE.shiftLeft(252).add(
+        BigInteger("27742317777372353535851937790883648493")
+    )
+    private val D: BigInteger = BigInteger("-121665")
+        .multiply(BigInteger("121666").modInverse(P))
+        .mod(P)
+    private val SQRT_M1: BigInteger = TWO.modPow(
+        P.subtract(ONE).divide(BigInteger.valueOf(4)),
+        P
+    )
+    private val BASE_COMPRESSED: ByteArray = byteArrayOf(
+        0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66
+    )
+
+    /** Extended twisted Edwards point: x=X/Z, y=Y/Z, xy=T/Z. */
+    private data class Point(
+        val x: BigInteger,
+        val y: BigInteger,
+        val z: BigInteger,
+        val t: BigInteger
+    )
+
+    private val NEUTRAL = Point(ZERO, ONE, ONE, ZERO)
+    private val BASE_POINT: Point by lazy {
+        decodePoint(BASE_COMPRESSED, rejectSmallOrder = true)
+            ?: error("Ed25519 base point encoding is invalid")
     }
 
-    /** 把 JDK 公钥转换回 32 字节原始公钥，用于信任清单的存储格式。 */
-    fun toRaw(publicKey: PublicKey): ByteArray {
-        val ed = publicKey as? EdECPublicKey
-            ?: throw PackageException(PackageError.SIGNATURE_INVALID, "公钥不是 Ed25519 类型")
-        val bigEndian = ed.point.y.toByteArray()
-        if (bigEndian.size > PUBLIC_KEY_BYTES) {
-            // BigInteger 只有在最高位为 1 时才会多出一个前导 0x00 字节。
-            if (bigEndian[0].toInt() != 0) {
-                throw PackageException(PackageError.SIGNATURE_INVALID, "公钥超出 32 字节")
-            }
-        }
-        val padded = ByteArray(PUBLIC_KEY_BYTES)
-        val length = minOf(bigEndian.size, PUBLIC_KEY_BYTES)
-        System.arraycopy(bigEndian, bigEndian.size - length, padded, PUBLIC_KEY_BYTES - length, length)
-        val raw = padded.reversedArray()
-        if (ed.point.isXOdd) raw[31] = (raw[31].toInt() or 0x80).toByte()
-        return raw
-    }
-
-    /** 验签失败返回 false，任何底层异常都按"不通过"处理（fail closed）。 */
-    fun verify(publicKey: PublicKey, payload: ByteArray, signature: ByteArray): Boolean {
-        if (signature.size != SIGNATURE_BYTES) return false
+    /** Verify an RFC 8032 Ed25519 signature using a raw 32-byte public key. */
+    fun verify(publicKeyRaw: ByteArray, payload: ByteArray, signature: ByteArray): Boolean {
+        if (publicKeyRaw.size != PUBLIC_KEY_BYTES || signature.size != SIGNATURE_BYTES) return false
         return try {
-            val verifier = Signature.getInstance("Ed25519")
-            verifier.initVerify(publicKey)
-            verifier.update(payload)
-            verifier.verify(signature)
+            val publicKey = decodePoint(publicKeyRaw.copyOf(), rejectSmallOrder = true) ?: return false
+            val encodedR = signature.copyOfRange(0, 32)
+            val r = decodePoint(encodedR, rejectSmallOrder = true) ?: return false
+            val s = littleEndianUnsigned(signature.copyOfRange(32, 64))
+            if (s >= L) return false
+
+            val digestInput = ByteArray(encodedR.size + publicKeyRaw.size + payload.size)
+            System.arraycopy(encodedR, 0, digestInput, 0, encodedR.size)
+            System.arraycopy(publicKeyRaw, 0, digestInput, encodedR.size, publicKeyRaw.size)
+            System.arraycopy(payload, 0, digestInput, encodedR.size + publicKeyRaw.size, payload.size)
+            val hash = MessageDigest.getInstance("SHA-512").digest(digestInput)
+            val h = littleEndianUnsigned(hash).mod(L)
+
+            val left = scalarMultiply(BASE_POINT, s)
+            val right = add(r, scalarMultiply(publicKey, h))
+            sameProjectivePoint(left, right)
         } catch (_: Exception) {
             false
         }
     }
+
+    private fun add(p: Point, q: Point): Point {
+        val a = mul(p.x, q.x)
+        val b = mul(p.y, q.y)
+        val c = mul(D, mul(p.t, q.t))
+        val d = mul(p.z, q.z)
+        val e = sub(mul(addMod(p.x, p.y), addMod(q.x, q.y)), addMod(a, b))
+        val f = sub(d, c)
+        val g = addMod(d, c)
+        // Edwards a=-1: y numerator is y1*y2 - a*x1*x2 = y1*y2 + x1*x2.
+        val h = addMod(b, a)
+        return Point(
+            x = mul(e, f),
+            y = mul(g, h),
+            z = mul(f, g),
+            t = mul(e, h)
+        )
+    }
+
+    private fun scalarMultiply(point: Point, scalar: BigInteger): Point {
+        var result = NEUTRAL
+        var addend = point
+        for (bit in 0 until scalar.bitLength()) {
+            if (scalar.testBit(bit)) result = add(result, addend)
+            addend = add(addend, addend)
+        }
+        return result
+    }
+
+    private fun decodePoint(encoded: ByteArray, rejectSmallOrder: Boolean): Point? {
+        if (encoded.size != 32) return null
+        val encodedY = encoded.copyOf()
+        val xIsOdd = (encodedY[31].toInt() and 0x80) != 0
+        encodedY[31] = (encodedY[31].toInt() and 0x7f).toByte()
+        val y = littleEndianUnsigned(encodedY)
+        if (y >= P) return null
+
+        val yy = mul(y, y)
+        val u = sub(yy, ONE)
+        val v = addMod(mul(D, yy), ONE)
+        if (v == ZERO) return null
+        val ratio = try {
+            mul(u, v.modInverse(P))
+        } catch (_: ArithmeticException) {
+            return null
+        }
+        var x = ratio.modPow(P.add(BigInteger.valueOf(3)).divide(BigInteger.valueOf(8)), P)
+        if (mul(x, x) != ratio) {
+            x = mul(x, SQRT_M1)
+        }
+        if (mul(x, x) != ratio) return null
+        if (x == ZERO && xIsOdd) return null
+        if ((x.testBit(0)) != xIsOdd) x = P.subtract(x).mod(P)
+
+        val point = Point(x, y, ONE, mul(x, y))
+        if (!isOnCurve(point)) return null
+        if (rejectSmallOrder && isSmallOrder(point)) return null
+        return point
+    }
+
+    private fun isOnCurve(point: Point): Boolean {
+        val xx = mul(point.x, point.x)
+        val yy = mul(point.y, point.y)
+        val xy2 = mul(mul(point.x, point.y), mul(point.x, point.y))
+        val left = sub(yy, xx)
+        val right = addMod(ONE, mul(D, xy2))
+        return left == right
+    }
+
+    private fun isSmallOrder(point: Point): Boolean =
+        sameProjectivePoint(scalarMultiply(point, BigInteger.valueOf(8)), NEUTRAL)
+
+    private fun sameProjectivePoint(p: Point, q: Point): Boolean =
+        mul(p.x, q.z) == mul(q.x, p.z) && mul(p.y, q.z) == mul(q.y, p.z)
+
+    private fun littleEndianUnsigned(bytes: ByteArray): BigInteger =
+        BigInteger(1, bytes.reversedArray())
+
+    private fun addMod(a: BigInteger, b: BigInteger): BigInteger = a.add(b).mod(P)
+
+    private fun sub(a: BigInteger, b: BigInteger): BigInteger = a.subtract(b).mod(P)
+
+    private fun mul(a: BigInteger, b: BigInteger): BigInteger = a.multiply(b).mod(P)
 }

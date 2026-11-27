@@ -5,7 +5,7 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.packages.PackageError
 import cn.edu.haut.campus.core.packages.PackageException
-import cn.edu.haut.campus.core.packages.crypto.Ed25519
+import cn.edu.haut.campus.core.packages.SyntheticPackages
 import cn.edu.haut.campus.core.packages.crypto.PublisherKeyRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,7 +26,7 @@ import java.util.zip.ZipOutputStream
 class ExtensionPackageSecurityTest {
 
     private val keyPair: KeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-    private val registry = PublisherKeyRegistry(mapOf("test-publisher" to Ed25519.toRaw(keyPair.public)))
+    private val registry = PublisherKeyRegistry(mapOf("test-publisher" to SyntheticPackages.rawPublic(keyPair)))
 
     @Test
     fun signedV2PackageInstallsAndCommandTypeParityFieldsSurvive() {
@@ -80,7 +80,7 @@ class ExtensionPackageSecurityTest {
         }
 
         val otherKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val unknownRegistry = PublisherKeyRegistry(mapOf("other-publisher" to Ed25519.toRaw(otherKey.public)))
+        val unknownRegistry = PublisherKeyRegistry(mapOf("other-publisher" to SyntheticPackages.rawPublic(otherKey)))
         assertPackageError(PackageError.SIGNATURE_UNTRUSTED_PUBLISHER) {
             ExtensionPackageVerifier.verify(valid.toByteArray(), mapOf("dist/data.txt" to artifact), unknownRegistry)
         }

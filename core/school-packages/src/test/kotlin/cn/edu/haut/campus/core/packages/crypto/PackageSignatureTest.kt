@@ -1,8 +1,6 @@
 package cn.edu.haut.campus.core.packages.crypto
 
-import cn.edu.haut.campus.core.packages.PackageError
 import cn.edu.haut.campus.core.packages.SyntheticPackages
-import cn.edu.haut.campus.core.packages.assertPackageError
 import cn.edu.haut.campus.core.packages.manifest.PackageManifestCodec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -83,15 +81,14 @@ class PackageSignatureTest {
     }
 
     @Test
-    fun 公钥原始编码与JDK对象可以往返() {
+    fun 桌面JDK原始公钥编码提取稳定() {
         val raw = SyntheticPackages.rawPublic(keyPair)
         assertEquals("UNVERIFIED：原始公钥必须是 32 字节", 32, raw.size)
         assertEquals(
-            "UNVERIFIED：公钥编码往返必须一致",
+            "UNVERIFIED：SPKI 尾部原始公钥必须与桌面 JDK 编码一致",
             raw.toList(),
-            Ed25519.toRaw(Ed25519.toPublicKey(raw)).toList()
+            keyPair.public.encoded.copyOfRange(keyPair.public.encoded.size - 32, keyPair.public.encoded.size).toList()
         )
-        assertPackageError(PackageError.SIGNATURE_INVALID) { Ed25519.toPublicKey(ByteArray(31)) }
     }
 
     @Test

@@ -54,11 +54,7 @@ object PackageSignature {
 
     fun verifyPayload(publicKeyRaw: ByteArray, payload: ByteArray, signature: ByteArray): Boolean {
         if (signature.size != Ed25519.SIGNATURE_BYTES) return false
-        val publicKey = try {
-            Ed25519.toPublicKey(publicKeyRaw)
-        } catch (_: Exception) {
-            return false
-        }
-        return Ed25519.verify(publicKey, payload, signature)
+        if (publicKeyRaw.size != Ed25519.PUBLIC_KEY_BYTES) return false
+        return Ed25519.verify(publicKeyRaw, payload, signature)
     }
 }

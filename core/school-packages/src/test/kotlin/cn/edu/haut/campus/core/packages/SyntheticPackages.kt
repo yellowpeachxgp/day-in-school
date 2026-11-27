@@ -2,7 +2,6 @@ package cn.edu.haut.campus.core.packages
 
 import cn.edu.haut.campus.core.packages.bundle.PackageBundle
 import cn.edu.haut.campus.core.packages.bundle.PackageLimits
-import cn.edu.haut.campus.core.packages.crypto.Ed25519
 import cn.edu.haut.campus.core.packages.crypto.PackageSignaturePayload
 import cn.edu.haut.campus.core.packages.crypto.PublisherKeyRegistry
 import java.security.KeyPair
@@ -31,7 +30,11 @@ object SyntheticPackages {
 
     fun keyPair(): KeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
 
-    fun rawPublic(keyPair: KeyPair): ByteArray = Ed25519.toRaw(keyPair.public)
+    /** Test-only extraction from a desktop-JDK SPKI key; production never uses EdEC/API 33 classes. */
+    fun rawPublic(keyPair: KeyPair): ByteArray {
+        val encoded = keyPair.public.encoded
+        return encoded.copyOfRange(encoded.size - 32, encoded.size)
+    }
 
     fun registry(keyPair: KeyPair, publisher: String = PUBLISHER): PublisherKeyRegistry =
         PublisherKeyRegistry(mapOf(publisher to rawPublic(keyPair)))

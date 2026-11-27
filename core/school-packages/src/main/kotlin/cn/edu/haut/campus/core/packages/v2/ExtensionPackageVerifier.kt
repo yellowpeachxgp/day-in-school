@@ -88,7 +88,7 @@ object ExtensionPackageVerifier {
         } catch (error: IllegalArgumentException) {
             throw PackageException(PackageError.SIGNATURE_INVALID, "插件签名不是合法 Base64")
         }
-        if (!Ed25519.verify(Ed25519.toPublicKey(publicKey), canonicalBytes, signatureBytes)) {
+        if (!Ed25519.verify(publicKey, canonicalBytes, signatureBytes)) {
             throw PackageException(
                 PackageError.SIGNATURE_INVALID,
                 "插件签名与规范化摘要不匹配：" + manifest.pluginId + "@" + manifest.version.value
