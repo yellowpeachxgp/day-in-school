@@ -400,9 +400,7 @@ class PdfBoxTextExtractor(
     ): PdfMergeDecision {
         val currentGeometry = current.geometry ?: return PdfMergeDecision(false, false)
         val nextGeom = nextGeometry ?: return PdfMergeDecision(false, false)
-        if (current.pageIndex != next.pageIndex || current.articleIndex != next.articleIndex ||
-            current.paragraphIndex != next.paragraphIndex
-        ) {
+        if (current.pageIndex != next.pageIndex || current.articleIndex != next.articleIndex) {
             return PdfMergeDecision(false, false)
         }
 
@@ -431,6 +429,11 @@ class PdfBoxTextExtractor(
         val spaceWidth = maxOf(currentGeometry.maxSpaceWidth, nextGeom.maxSpaceWidth).coerceAtLeast(2.0f)
         val directJoinGap = maxOf(1.0f, spaceWidth * 0.6f)
         val wordJoinGap = maxOf(spaceWidth * 2.75f, maxHeight * 1.1f)
+        // PDFBox 可能把旋转断行误标成新 paragraph；只有连续/近连续字形投影能跨这种伪边界。
+        // 真正跨 paragraph 的 positioned words 至少保留边界，绝不会无空格融合。
+        if (current.paragraphIndex != next.paragraphIndex && gap > directJoinGap) {
+            return PdfMergeDecision(false, false)
+        }
         return when {
             gap <= directJoinGap -> PdfMergeDecision(merge = true, inferSpace = false)
             gap <= wordJoinGap -> PdfMergeDecision(merge = true, inferSpace = true)

@@ -10,6 +10,7 @@ import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
 import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
+import com.tom_roush.pdfbox.pdmodel.interactive.pagenavigation.PDThread
 import com.tom_roush.pdfbox.pdmodel.interactive.pagenavigation.PDThreadBead
 import com.tom_roush.pdfbox.util.Matrix
 import java.io.ByteArrayOutputStream
@@ -249,6 +250,9 @@ class PdfBoxTextExtractorTest {
             val secondBead = PDThreadBead()
             secondBead.page = page
             secondBead.rectangle = PDRectangle(50f, 105f, 120f, 90f)
+            val thread = PDThread()
+            thread.firstBead = firstBead
+            firstBead.appendBead(secondBead)
             page.threadBeads = listOf(firstBead, secondBead)
         }) { contentStream ->
             writeText(contentStream, "AAA", Matrix.getRotateInstance(Math.PI / 2, 100f, 80f), 12f)
