@@ -215,6 +215,8 @@ class CampusRepositoryW005c8ProfileLifecycleCharacterizationTest {
                 diagnostic = "null"
             )
         )
+        // W6-01a 后手工 DAO upsert 已按唯一签名安装路径移除；这里只用 SQL 构造
+        // 拆分前遗留 Room 行作为启动清洗输入，不把该行重新建模成可安装/可启用插件。
         database.openHelper.writableDatabase.execSQL(
             "INSERT INTO installed_extension_plugins (" +
                 "pluginId, name, activeVersion, previousVersion, schemaFormat, status, grantedPermissionsJson, uiSlotsJson, updatedAtEpochMillis" +

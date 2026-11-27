@@ -717,7 +717,13 @@ fun HautCampusRootApp(
                                 resetTrigger = if (currentTab == PrimaryBottomTab.TIMETABLE) tabResetCounter else 0
                             )
                             PrimaryBottomTab.GRADES -> GradesScreen(
-                                repository = repository,
+                                gradesRepository = repository.gradesRepository,
+                                examRepository = repository.examRepository,
+                                termRepository = repository.termRepository,
+                                timetableRepository = repository.timetableRepository,
+                                campusServicesRepository = repository.campusServicesRepository,
+                                profileId = repository.profileId,
+                                sessionGeneration = repository.sessionGeneration,
                                 onNavigateToImporter = { overlayScreen = "importer" },
                                 onNavigateToMapWithRoom = { room ->
                                     mapRoomQuery = room
