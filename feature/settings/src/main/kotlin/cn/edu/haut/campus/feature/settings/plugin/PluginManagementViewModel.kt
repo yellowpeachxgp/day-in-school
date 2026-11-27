@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 
 /** 插件管理页状态 holder；生命周期写操作直连 W6-01a 安装器，不新增 CampusRepository facade。 */
 class PluginManagementViewModel(
@@ -30,6 +31,7 @@ class PluginManagementViewModel(
 ) : ProfileSessionScopedViewModel(profileId, sessionGeneration, isSessionActive, sessionStates) {
     private val mutableUiState = MutableStateFlow(PluginManagementUiState())
     val uiState: StateFlow<PluginManagementUiState> = mutableUiState.asStateFlow()
+    private val refreshGeneration = AtomicLong(0L)
 
     init {
         launchSessionCollect(installer.revision) {
@@ -63,8 +65,8 @@ class PluginManagementViewModel(
 
     private fun runLifecycle(pluginId: String, successMessage: String, block: () -> Unit) {
         if (mutableUiState.value.busyPluginId != null) return
+        mutableUiState.update { it.copy(busyPluginId = pluginId, feedback = null) }
         launchSessionJob {
-            mutableUiState.update { it.copy(busyPluginId = pluginId, feedback = null) }
             val feedback = runCatching {
                 withContext(Dispatchers.IO) { block() }
                 successMessage
@@ -75,8 +77,9 @@ class PluginManagementViewModel(
     }
 
     private suspend fun refreshSnapshot() {
+        val generation = refreshGeneration.incrementAndGet()
         val snapshot = withContext(Dispatchers.IO) { loadSnapshot() }
-        if (isSessionValidForEmission()) {
+        if (generation == refreshGeneration.get() && isSessionValidForEmission()) {
             mutableUiState.update {
                 it.copy(
                     matrix = if (snapshot.isEmpty()) SettingsUiMatrix.Empty else SettingsUiMatrix.Content,

@@ -92,6 +92,30 @@ class DeclarativeCommandGateTest {
     }
 
     @Test
+    fun duplicateCommandOrBlankRequiredPermissionFailsClosed() {
+        val duplicate = DeclarativeCommandGate.resolve(
+            pluginId = "org.example.demo",
+            commandName = "open",
+            declarations = listOf(openUrl, openUrl.copy(description = "duplicate")),
+            grantedPermissions = setOf("network.request"),
+            allowedOrigins = setOf("https://club.example.com"),
+            allowedHostRoutes = emptySet()
+        )
+        assertEquals(DeclarativeCommandGate.COMMAND_UNSUPPORTED, (duplicate as DeclarativeCommandDecision.Blocked).errorCode)
+
+        val blankPermission = openUrl.copy(requiredPermission = " ")
+        val blankDecision = DeclarativeCommandGate.resolve(
+            pluginId = "org.example.demo",
+            commandName = "open",
+            declarations = listOf(blankPermission),
+            grantedPermissions = setOf("network.request"),
+            allowedOrigins = setOf("https://club.example.com"),
+            allowedHostRoutes = emptySet()
+        )
+        assertEquals(DeclarativeCommandGate.PERMISSION_DENIED, (blankDecision as DeclarativeCommandDecision.Blocked).errorCode)
+    }
+
+    @Test
     fun hostRouteMustBeExactWhitelistMatch() {
         val denied = DeclarativeCommandGate.resolve(
             pluginId = "org.example.demo",

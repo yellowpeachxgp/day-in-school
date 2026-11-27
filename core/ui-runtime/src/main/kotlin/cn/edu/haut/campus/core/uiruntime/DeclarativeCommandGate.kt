@@ -35,9 +35,16 @@ object DeclarativeCommandGate {
         allowedOrigins: Set<String>,
         allowedHostRoutes: Set<String>
     ): DeclarativeCommandDecision {
-        val declaration = declarations.firstOrNull { it.name == commandName }
-            ?: return DeclarativeCommandDecision.Blocked(COMMAND_UNKNOWN, "插件未声明命令：" + commandName)
+        val matchingDeclarations = declarations.filter { it.name == commandName }
+        val declaration = matchingDeclarations.singleOrNull()
+            ?: return DeclarativeCommandDecision.Blocked(
+                if (matchingDeclarations.isEmpty()) COMMAND_UNKNOWN else COMMAND_UNSUPPORTED,
+                if (matchingDeclarations.isEmpty()) "插件未声明命令：" + commandName else "插件重复声明命令：" + commandName
+            )
         val requiredPermission = declaration.requiredPermission
+        if (requiredPermission != null && requiredPermission.isBlank()) {
+            return DeclarativeCommandDecision.Blocked(PERMISSION_DENIED, "命令权限声明为空：" + commandName)
+        }
         if (!requiredPermission.isNullOrBlank() && requiredPermission !in grantedPermissions) {
             return DeclarativeCommandDecision.Blocked(PERMISSION_DENIED, "命令缺少已授予权限：" + requiredPermission)
         }
