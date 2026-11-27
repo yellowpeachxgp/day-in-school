@@ -226,6 +226,15 @@ internal object SyntheticBenchmarkGenerator {
         )
     }
 
+    /** 测试专用：用同一夹具元数据重算 CanonicalJson，用于验证输入事实面的指纹覆盖。 */
+    internal fun canonicalJsonForFixture(
+        size: Int,
+        family: BenchmarkFamily,
+        seed: Long,
+        problem: SelectionProblem,
+        required: List<String>
+    ): String = canonicalJson(size, family, seed, problem, required)
+
     private fun choosePlantedOfferings(
         offeringIds: List<String>,
         required: List<String>,
@@ -452,7 +461,7 @@ internal object SyntheticBenchmarkGenerator {
             ",\"sectionsPerDay\":" + grid.sectionsPerDay +
             ",\"weekCount\":" + grid.weekCount +
             ",\"zone\":" + quote(grid.zone.id) + "}" +
-            ",\"travel\":" + quote("benchmark-travel-matrix-v1") + "}"
+            ",\"travel\":" + canonicalTravelMatrix(problem.travel) + "}"
     }
 
     private fun canonicalSlots(input: List<SolverClassSlot>): String =
@@ -495,11 +504,47 @@ internal object SyntheticBenchmarkGenerator {
             "{\"id\":" + quote(preference.id) + ",\"label\":" + quote(preference.label) + ",\"type\":" + quote(type) + "}"
         }
 
+    private fun canonicalTravelMatrix(travel: TravelTimeMatrix): String {
+        require(travel is PrecomputedTravelTimeMatrix) { "固定基准只能为 PrecomputedTravelTimeMatrix 生成完整 CanonicalJson" }
+        val entriesJson = travel.entries.entries
+            .sortedWith(
+                compareBy<Map.Entry<TravelPair, TravelTimeEstimate>>(
+                    { it.key.from.campusId?.value ?: "" },
+                    { it.key.from.buildingId ?: "" },
+                    { it.key.from.room ?: "" },
+                    { it.key.to.campusId?.value ?: "" },
+                    { it.key.to.buildingId ?: "" },
+                    { it.key.to.room ?: "" }
+                )
+            )
+            .joinToString(separator = ",") { entry ->
+                "{\"estimate\":" + canonicalTravelEstimate(entry.value) +
+                    ",\"from\":" + canonicalSolverLocation(entry.key.from) +
+                    ",\"to\":" + canonicalSolverLocation(entry.key.to) + "}"
+            }
+        return "{\"entries\":[" + entriesJson + "]" +
+            ",\"missing\":" + canonicalTravelEstimate(travel.missing) +
+            ",\"sameLocationZero\":true" +
+            ",\"type\":\"precomputed-travel-time-matrix-v1\"}"
+    }
+
+    private fun canonicalSolverLocation(location: SolverLocation): String =
+        "{\"buildingId\":" + nullableQuote(location.buildingId) +
+            ",\"campusId\":" + nullableQuote(location.campusId?.value) +
+            ",\"room\":" + nullableQuote(location.room) + "}"
+
+    private fun canonicalTravelEstimate(estimate: TravelTimeEstimate): String = when (estimate) {
+        is TravelTimeEstimate.Reachable -> "{\"minutes\":" + estimate.minutes + ",\"type\":\"reachable\"}"
+        TravelTimeEstimate.NotWithinBreak -> "{\"type\":\"not-within-break\"}"
+        TravelTimeEstimate.Unknown -> "{\"type\":\"unknown\"}"
+    }
 
     private fun capacityText(capacity: ClassCapacity): String = when (capacity) {
         ClassCapacity.Unknown -> "unknown"
         is ClassCapacity.Known -> "known:" + capacity.total + ":" + capacity.selected
     }
+
+    private fun nullableQuote(value: String?): String = value?.let { quote(it) } ?: "null"
 
     private fun quote(value: String): String {
         val out = StringBuilder()

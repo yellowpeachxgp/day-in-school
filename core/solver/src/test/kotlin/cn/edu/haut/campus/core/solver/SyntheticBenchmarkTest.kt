@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.solver
 
 import java.io.File
+import java.security.MessageDigest
 import java.time.Duration
 import java.util.Locale
 import org.junit.Assert.assertEquals
@@ -62,6 +63,39 @@ class SyntheticBenchmarkTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun travelMatrixContentParticipatesInCanonicalSha256() {
+        val instance = SyntheticBenchmarkGenerator.generate(50, BenchmarkFamily.MEDIUM_PLANTED, SyntheticBenchmarkGenerator.seeds.first())
+        assertTrue(instance.canonicalJson.contains("\"type\":\"precomputed-travel-time-matrix-v1\""))
+        assertTrue(instance.canonicalJson.contains("\"missing\":{\"type\":\"unknown\"}"))
+        assertTrue(instance.canonicalJson.contains("\"buildingId\":\"A01\",\"campusId\":\"north\",\"room\":\"101\""))
+
+        val matrix = instance.problem.travel as PrecomputedTravelTimeMatrix
+        val pair = TravelPair(
+            SolverTestFixtures.location(SolverTestFixtures.north, "A01"),
+            SolverTestFixtures.location(SolverTestFixtures.north, "A02")
+        )
+        val original = matrix.entries.getValue(pair)
+        assertTrue(original is TravelTimeEstimate.Reachable)
+        original as TravelTimeEstimate.Reachable
+        val changedEntries = matrix.entries.toMutableMap()
+        changedEntries[pair] = original.copy(minutes = original.minutes + 1)
+        val changedProblem = instance.problem.copy(
+            travel = PrecomputedTravelTimeMatrix(changedEntries, matrix.missing)
+        )
+        val changedCanonicalJson = SyntheticBenchmarkGenerator.canonicalJsonForFixture(
+            instance.size,
+            instance.family,
+            instance.seed,
+            changedProblem,
+            instance.requiredOfferingIds
+        )
+
+        assertTrue(changedCanonicalJson.contains("\"minutes\":" + (original.minutes + 1) + ",\"type\":\"reachable\""))
+        assertTrue(instance.canonicalJson != changedCanonicalJson)
+        assertTrue(instance.sha256 != sha256(changedCanonicalJson))
     }
 
     @Test
@@ -206,6 +240,11 @@ class SyntheticBenchmarkTest {
     }
 
     private fun formatMillis(nanos: Long): String = String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0)
+
+    private fun sha256(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return digest.joinToString(separator = "") { it.toInt().and(255).toString(16).padStart(2, '0') }
+    }
 
     private fun recordBenchmark(line: String) {
         println(line)

@@ -79,6 +79,7 @@ internal object SearchEngine {
         private val signatures = HashSet<String>()
         private var timedOut = false
         private var terminated = false
+        private var nodesInRun = 0L
 
         fun search(): SearchOutcome {
             val root = initialNode()
@@ -130,11 +131,12 @@ internal object SearchEngine {
 
         private fun searchNode(node: Node) {
             if (terminated) return
-            if (budget.expired() || (nodeLimit != null && stats.nodes >= nodeLimit)) {
+            if (budget.expired() || (nodeLimit != null && nodesInRun >= nodeLimit)) {
                 timedOut = true
                 return
             }
             stats.nodes++
+            nodesInRun++
             if (node.assignedCount == variableCount) {
                 considerSolution(node)
                 if (!optimize && incumbents.isNotEmpty()) terminated = true
@@ -150,7 +152,7 @@ internal object SearchEngine {
 
             val variableIndex = selectVariable(node) ?: return
             for (value in orderedValues(node, variableIndex)) {
-                if (budget.expired() || (nodeLimit != null && stats.nodes >= nodeLimit)) {
+                if (budget.expired() || (nodeLimit != null && nodesInRun >= nodeLimit)) {
                     timedOut = true
                     return
                 }

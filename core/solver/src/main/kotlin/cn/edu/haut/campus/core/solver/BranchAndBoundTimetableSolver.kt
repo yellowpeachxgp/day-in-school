@@ -77,6 +77,13 @@ class BranchAndBoundTimetableSolver : TimetableSolver {
     }
 
     companion object {
+        /**
+         * 单次 QuickXplain 一致性 oracle 调用的搜索节点上限。
+         *
+         * 每次 oracle 都从 0 独立计数；[MutableSolverStats.nodes] 只是整个 solve 的累计诊断值，
+         * 不会消耗后续 oracle 的额度。达到上限只让该次一致性检查返回 UNKNOWN；
+         * 全部 oracle 仍共享外层墙钟预算。
+         */
         private const val ORACLE_NODE_LIMIT: Long = 100_000L
 
         fun create(): BranchAndBoundTimetableSolver = BranchAndBoundTimetableSolver()

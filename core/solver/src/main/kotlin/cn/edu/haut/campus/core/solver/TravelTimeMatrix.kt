@@ -28,11 +28,18 @@ fun interface TravelTimeMatrix {
     fun estimate(from: SolverLocation, to: SolverLocation): TravelTimeEstimate
 }
 
-/** 确定性预计算矩阵；缺失楼宇对返回 [missing]，绝不猜测。 */
+/**
+ * 确定性预计算矩阵；缺失楼宇对返回 [missing]，绝不猜测。
+ *
+ * [entries] 是构造时的只读快照，按有向地点对完整暴露，供固定基准生成 CanonicalJson 指纹；
+ * 不得把它当作可在求解过程中修改的缓存。
+ */
 class PrecomputedTravelTimeMatrix(
-    private val entries: Map<TravelPair, TravelTimeEstimate>,
-    private val missing: TravelTimeEstimate = TravelTimeEstimate.Unknown
+    entries: Map<TravelPair, TravelTimeEstimate>,
+    val missing: TravelTimeEstimate = TravelTimeEstimate.Unknown
 ) : TravelTimeMatrix {
+    val entries: Map<TravelPair, TravelTimeEstimate> = entries.toMap()
+
     override fun estimate(from: SolverLocation, to: SolverLocation): TravelTimeEstimate {
         if (from.campusId != null && from.buildingId != null && from == to) {
             return TravelTimeEstimate.Reachable(0)

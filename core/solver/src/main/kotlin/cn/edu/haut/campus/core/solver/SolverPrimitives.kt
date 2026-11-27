@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.selection.ClassCapacity
 import cn.edu.haut.campus.core.selection.ClassSlot
 import cn.edu.haut.campus.core.selection.TeachingWeeks
 import java.math.BigDecimal
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -101,6 +102,7 @@ data class TeachingTimeGrid(
     init {
         require(weekCount in 1..TeachingWeeks.MAX_WEEK) { "教学周数量超出范围" }
         require(sectionsPerDay in 1..ClassSlot.MAX_SECTION) { "每日节次数量超出范围" }
+        require(firstWeekMonday.dayOfWeek == DayOfWeek.MONDAY) { "firstWeekMonday 必须是周一" }
         require(periodTimes.keys == (1..sectionsPerDay).toSet()) { "节次时间必须连续覆盖 1..sectionsPerDay" }
         require(periodTimes.all { (section, period) -> period.section == section }) { "节次时间键与 section 不一致" }
         val ordered = periodTimes.values.sortedBy { it.section }
