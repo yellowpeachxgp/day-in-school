@@ -96,7 +96,7 @@ class PersonalEventSearchIndexContributor(
                 row.scopeSchoolId == scope.schoolId.value &&
                     row.scopeAccountId == scope.accountId.value &&
                     row.scopeProfileId == scope.profileId.value &&
-                    (scope.campusId == null || row.scopeCampusId == scope.campusId.value)
+                    (scope.campusId == null || row.scopeCampusId == scope.campusId?.value)
             }
             .sortedBy { it.id }
             .asSequence()
