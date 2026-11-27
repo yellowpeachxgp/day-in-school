@@ -75,7 +75,8 @@ class CampusServicesW005c1CharacterizationTest {
         repo.updateAllWidgetDefaults(compact = true, privacyMode = true)
 
         val state = repo.preferencesFlow.first()
-        assertEquals(true, state.useDynamicColor)
+        // setThemePalette 会显式关闭动态色：冻结的是这一既有顺序副作用，而不是先入为主地期待 true。
+        assertEquals(false, state.useDynamicColor)
         assertEquals("CUSTOM", state.themePaletteKey)
         assertEquals(0xFF123456L, state.customThemeSeedArgb)
         assertEquals(0xFF123456.toInt(), repo.getActiveThemeAccentArgb())
