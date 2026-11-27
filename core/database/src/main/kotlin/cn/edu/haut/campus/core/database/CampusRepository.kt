@@ -261,6 +261,42 @@ class CampusRepository internal constructor(
             this@CampusRepository.cloudHttpTransportForTest
     }
     private val momentsRepository = MomentsRepository(repositoryEnvironment, momentsRuntimePort)
+    private val campusServicesRuntimePort = object : CampusServicesRuntimePort {
+        override val preferencesFlow: Flow<AppPreferencesState>
+            get() = this@CampusRepository.preferencesFlow
+        override val activeSessionGeneration: Long?
+            get() = this@CampusRepository.activeSessionGeneration
+
+        override suspend fun migrateLegacyAcademicCredentialsIfNeeded() =
+            this@CampusRepository.migrateLegacyAcademicCredentialsIfNeeded()
+
+        override fun readAcademicCredential(accountId: String): AcademicCredentialReadResult =
+            this@CampusRepository.academicCredentialVault.read(
+                this@CampusRepository.academicCredentialScope(accountId)
+            )
+
+        override suspend fun <T> withCloudIdentityBarrier(block: suspend () -> T): T =
+            bookingPlanStateMutex.withLock {
+                cloudIdentityMutex.withLock {
+                    block()
+                }
+            }
+
+        override suspend fun bumpCloudIdentityGenerationForBaseUrlChange(cloudUserId: String?): Long =
+            this@CampusRepository.bumpCloudIdentityGenerationLocked(
+                cloudUserId = cloudUserId,
+                markUnlinkTombstone = false
+            )
+
+        override suspend fun currentCloudUserIdInBarrier(): String? =
+            this@CampusRepository.cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId
+    }
+    private val campusServicesRepository = CampusServicesRepository(
+        environment = repositoryEnvironment,
+        appContext = appContext,
+        utilityAccountStore = utilityAccountStore,
+        runtimePort = campusServicesRuntimePort
+    )
 
     @Volatile
     private var activeSessionGeneration: Long? = null
@@ -1948,61 +1984,17 @@ class CampusRepository internal constructor(
         }
     }
 
-    suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
-        preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
-            if (inviteUrl.isBlank()) {
-                current.remove(channelId)
-            } else {
-                current[channelId] = inviteUrl.trim()
-            }
-            prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS] = encodeKeyValueMap(current)
-        }
-    }
+    suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) =
+        campusServicesRepository.saveCustomChannelUrl(channelId, inviteUrl)
 
-    suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) {
-        preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
-            if (groupNumber.isBlank()) {
-                current.remove(clubId)
-            } else {
-                current[clubId] = groupNumber.trim()
-            }
-            prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS] = encodeKeyValueMap(current)
-        }
-    }
+    suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) =
+        campusServicesRepository.saveCustomClubGroupNumber(clubId, groupNumber)
 
     /**
-     * 从云端控制平面 (`GET /api/v1/campus-content?school_id=haut`) 实时拉取最新的校园频道与学生社团名录，
-     * 并持久化到本地 DataStore 供全端响应式渲染。
+     * 拉取最新校园频道与学生社团名录；行为委托 CampusServicesRepository，语义不变。
      */
     suspend fun refreshCampusCommunityContent(): Result<cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-                )
-                val (catalog, rawJson) = CampusCloudOidcHelper.fetchPublicCampusContent(
-                    schoolId = schoolId,
-                    cloudBaseUrl = baseUrl
-                ) ?: throw IllegalStateException("无法连接云端获取最新校园频道与社团内容")
-                val now = System.currentTimeMillis()
-                preferences.edit { prefs ->
-                    prefs.remove(CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1)
-                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
-                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
-                }
-                catalog
-            }
-        }
-
-    private fun decodeKeyValueMap(raw: String?): Map<String, String> {
-        if (raw.isNullOrBlank()) return emptyMap()
-        return raw.split("\n").mapNotNull { line ->
-            val idx = line.indexOf('\t')
-            if (idx <= 0) null else line.substring(0, idx) to line.substring(idx + 1)
-        }.toMap()
-    }
+        campusServicesRepository.refreshCampusCommunityContent()
 
     /**
      * 刷新校园互助广场云端快照；行为委托 MomentsRepository，语义不变。
@@ -2183,12 +2175,6 @@ class CampusRepository internal constructor(
         finderContact = finderContact,
         message = message
     )
-
-    private fun encodeKeyValueMap(map: Map<String, String>): String {
-        return map.entries.joinToString("\n") { (k, v) ->
-            "${k.replace("\t", " ").replace("\n", " ")}\t${v.replace("\n", "").trim()}"
-        }
-    }
 
     suspend fun setTimelineZoomScale(scale: Float) {
         preferences.edit { it[CampusRepositoryPrefKeys.TIMELINE_SCALE] = ThemeVisualDefaults.clampTimelineZoomScale(scale) }
@@ -6386,22 +6372,16 @@ class CampusRepository internal constructor(
 
     // --- Unified Extension Plugins (dis-extension/v2 + dis-campus-plugin/v1) ---
     val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =
-        cloudAndParcelDao.observeInstalledExtensionPlugins()
+        campusServicesRepository.installedExtensionPluginsFlow
 
-    suspend fun ensureDefaultReferencePluginsInstalled() {
-        runCatching {
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.hello-campus")
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.parcel-station")
-        }
-    }
+    suspend fun ensureDefaultReferencePluginsInstalled() =
+        campusServicesRepository.ensureDefaultReferencePluginsInstalled()
 
-    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) {
-        cloudAndParcelDao.upsertInstalledExtensionPlugin(entity)
-    }
+    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
+        campusServicesRepository.upsertExtensionPlugin(entity)
 
-    suspend fun removeExtensionPlugin(pluginId: String) {
-        cloudAndParcelDao.deleteInstalledExtensionPlugin(pluginId)
-    }
+    suspend fun removeExtensionPlugin(pluginId: String) =
+        campusServicesRepository.removeExtensionPlugin(pluginId)
 
     companion object {
         private const val LOG_TAG = "CampusRepository"
