@@ -205,6 +205,37 @@ class PdfBoxTextExtractorTest {
         assertTrue(line.text.indexOf("Report") < line.text.indexOf("[1]"))
     }
 
+    @Test
+    fun debugArticleDraftMetadata() {
+        org.junit.Assert.fail(probeDrafts(articleBoundaryVerticalLabelsPdf()))
+    }
+
+    private fun probeDrafts(pdfBytes: ByteArray): String {
+        val stripperClass = Class.forName("cn.edu.haut.campus.core.textextract.pdf.PdfBoxTextExtractor\$LineCollectingPdfTextStripper")
+        val constructor = stripperClass.getDeclaredConstructor()
+        constructor.isAccessible = true
+        val stripper = constructor.newInstance()
+        val document = PDDocument.load(pdfBytes)
+        try {
+            val getText = stripperClass.methods.first { it.name == "getText" && it.parameterCount == 1 }
+            getText.invoke(stripper, document)
+            val drafts = readField(stripper, "lineDrafts") as List<*>
+            return drafts.joinToString(prefix = "drafts=", separator = "|") { draft ->
+                val pieces = readField(draft!!, "pieces") as List<*>
+                val text = pieces.joinToString("") { piece -> readField(piece!!, "text") as String }
+                "o" + readField(draft, "order") + "/a" + readField(draft, "articleIndex") + "/p" + readField(draft, "paragraphIndex") + ":" + text
+            }
+        } finally {
+            document.close()
+        }
+    }
+
+    private fun readField(target: Any, name: String): Any? {
+        val field = target.javaClass.getDeclaredField(name)
+        field.isAccessible = true
+        return field.get(target)
+    }
+
     private fun pdfWithPages(vararg pages: Pair<Int, List<String>>): ByteArray {
         val document = PDDocument()
         try {
