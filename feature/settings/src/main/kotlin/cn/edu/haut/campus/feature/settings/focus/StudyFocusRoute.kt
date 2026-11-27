@@ -11,6 +11,8 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
 import cn.edu.haut.campus.feature.settings.focus.ui.StudyFocusScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 自习专注 Route：只负责创建平台 FocusCoordinator 并装配状态。 */
 @Composable
@@ -23,8 +25,11 @@ fun StudyFocusRoute(
     val diagnosticProvider = remember(context) {
         { FocusDeliveryTracker.buildDiagnosticSummary(context, FocusDeliveryTracker.KIND_TEST) }
     }
+    val sessionKey = "study-focus-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: StudyFocusViewModel = viewModel(
-        key = "study-focus-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = StudyFocusViewModel.factory(repository, focusCoordinator, diagnosticProvider)
     )
     DisposableEffect(viewModel) {

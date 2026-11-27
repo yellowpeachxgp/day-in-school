@@ -17,12 +17,14 @@ import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiAction
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiEffect
 import cn.edu.haut.campus.feature.settings.schoolcenter.ui.SchoolCenterScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
 
 /**
  * 学校中心 Route：只负责装配 ViewModel、导航回调与剪贴板平台事件。
  *
  * 例外说明：这里有意使用静态 key，因为本页是跨账号管理面，必须持续展示全局身份列表；
- * 普通账号数据页不得复用此例外。纯界面瞬态仍在退出时显式重置。
+ * 普通账号数据页不得复用此例外。静态 key 只存在于本次组合作用域 Owner 内，
+ * 页面退出即清空；纯界面瞬态仍显式重置作为双保险。
  */
 @Composable
 fun SchoolCenterRoute(
@@ -34,8 +36,11 @@ fun SchoolCenterRoute(
     activeSession: ActiveSession? = null,
     onSwitchProfile: ((String) -> Unit)? = null
 ) {
+    val sessionKey = "school-center"
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: SchoolCenterViewModel = viewModel(
-        key = "school-center",
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = SchoolCenterViewModel.factory(sessions)
     )
     DisposableEffect(viewModel) {
