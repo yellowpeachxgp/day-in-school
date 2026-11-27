@@ -46,12 +46,12 @@ class FeatureUiCardCodecTest {
     @Test
     fun malformedOrBoundaryViolatingCardsFailClosed() {
         assertTrue(FeatureUiCardCodec.parse("[]") is FeatureUiCardCodec.DecodeResult.Invalid)
-        assertTrue(FeatureUiCardCodec.parse("{"slot":"home.cards"}") is FeatureUiCardCodec.DecodeResult.Invalid)
+        assertTrue(FeatureUiCardCodec.parse("""{"slot":"home.cards"}""") is FeatureUiCardCodec.DecodeResult.Invalid)
         val tooManyNodes = buildString {
-            append("{"slot":"home.cards","component_id":"demo","template":"metric-card/v1","title":"t","nodes":[")
+            append("""{"slot":"home.cards","component_id":"demo","template":"metric-card/v1","title":"t","nodes":[""")
             repeat(21) { index ->
                 if (index > 0) append(',')
-                append("{"kind":"Text","label":"x"}")
+                append("""{"kind":"Text","label":"x"}""")
             }
             append("]}")
         }

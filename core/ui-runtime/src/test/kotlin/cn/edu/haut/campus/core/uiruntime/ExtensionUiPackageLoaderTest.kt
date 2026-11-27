@@ -77,7 +77,7 @@ class ExtensionUiPackageLoaderTest {
             val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
             val artifacts = linkedMapOf<String, ByteArray>()
             if (cardJson != null) artifacts["cards/demo-card.json"] = cardJson.toByteArray(Charsets.UTF_8)
-            artifacts["assets/data.json"] = "{"items":[]}".toByteArray(Charsets.UTF_8)
+            artifacts["assets/data.json"] = """{"items":[]}""".toByteArray(Charsets.UTF_8)
             val manifest = signedManifest(keyPair, artifacts)
             installer.install(manifest.toByteArray(Charsets.UTF_8), artifacts, "schoolx")
             block(installer, ExtensionUiPackageLoader(installer, "schoolx"))
