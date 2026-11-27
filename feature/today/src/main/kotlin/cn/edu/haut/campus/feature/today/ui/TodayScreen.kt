@@ -366,7 +366,7 @@ private fun TodayLegacyContent(
         ) {
             TodayStatusBanner(status = state.status)
             AnimatedVisibility(
-                visible = dynamicSyncBanner != null
+                visible = dynamicSyncBanner != null,
                 enter = expandVertically(tween(220)) + fadeIn(tween(180)),
                 exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
             ) {

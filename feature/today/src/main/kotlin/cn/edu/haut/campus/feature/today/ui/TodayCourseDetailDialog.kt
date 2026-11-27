@@ -420,7 +420,7 @@ internal fun CourseDetailAndSnoozeDialog(
                         onClick = {
                             onAction(TodayUiAction.CancelClassOccurrence(detailState, termId))
                             onDismiss()
-                        }
+                        },
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         val isTodayOcc = occ.date == LocalDate.now(HAUT_ZONE_ID)

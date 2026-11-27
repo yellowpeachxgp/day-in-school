@@ -11,8 +11,8 @@ internal fun String?.cleanUiText(): String? {
     val lower = trimmed.lowercase()
     if (lower == "null" || lower == "undefined" || lower == "none" || lower == "nil") return null
     val cleaned = trimmed
-        .replace(Regex("(?i)\s*·\s*null\b"), "")
-        .replace(Regex("(?i)\bnull\s*·\s*"), "")
+        .replace(Regex("""(?i)\s*·\s*null\b"""), "")
+        .replace(Regex("""(?i)\bnull\s*·\s*"""), "")
         .trim()
     if (cleaned.isEmpty() || cleaned.equals("null", ignoreCase = true)) return null
     return cleaned
