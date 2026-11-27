@@ -46,7 +46,7 @@ manifest 的 `card_id` 允许点号，feature-ui 的 `component_id` 只允许小
 - `open_host_route`：必须精确属于宿主白名单；当前白名单为 `home.today`、`campus.services`、`library.catalog`、`library.seats`、`parcel.hub`、`settings.extensions`。
 - `show_data`：只允许安全相对路径，读取同版本已验签 artifact；不做脚本求值。
 
-未知类型、未声明命令、撤权后的命令、越出 origin/route/path 白名单的目标全部 fail-closed。命令响应不回显请求 payload，也不伪装成插件代码已经执行。
+未知类型、未声明命令、重复命令、空白权限声明、撤权后的命令、越出 origin/route/path 白名单的目标全部 fail-closed。`show_data` 在真正读取前会再次核验安装状态、签名/摘要和当前授权；命令响应不回显请求 payload，也不伪装成插件代码已经执行。
 
 ## 5. 插件管理页
 

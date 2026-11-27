@@ -30,7 +30,7 @@ fun rememberExtensionUiContributions(
 fun androidDeclarativeCommandHandler(
     context: Context,
     onOpenHostRoute: (String) -> Unit = {},
-    onShowData: (pluginId: String, artifactPath: String) -> Unit = { _, _ -> }
+    onShowData: (ResolvedDeclarativeCommand) -> Unit = {}
 ): DeclarativeCommandHandler = DeclarativeCommandHandler { command ->
     when (command.type) {
         "open_url" -> runCatching {
@@ -41,6 +41,6 @@ fun androidDeclarativeCommandHandler(
             )
         }
         "open_host_route" -> onOpenHostRoute(command.target)
-        "show_data" -> onShowData(command.pluginId, command.target)
+        "show_data" -> onShowData(command)
     }
 }

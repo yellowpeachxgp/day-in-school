@@ -8,9 +8,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import cn.edu.haut.campus.core.database.ExtensionPluginRuntimeRegistry
 import cn.edu.haut.campus.core.uiruntime.ExtensionSlotHost
+import cn.edu.haut.campus.core.uiruntime.ResolvedDeclarativeCommand
+import cn.edu.haut.campus.core.uiruntime.VerifiedShowDataExecutor
 import cn.edu.haut.campus.core.uiruntime.androidDeclarativeCommandHandler
 import cn.edu.haut.campus.core.uiruntime.rememberExtensionUiContributions
-import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,14 +37,11 @@ fun ExtensionPluginSlot(
         ExtensionPluginRuntimeRegistry.installerForContext(context, profileId)
     }
     val contributions = rememberExtensionUiContributions(installer, schoolId)
-    val showData: (String, String) -> Unit = remember(installer, profileId, schoolId, sessionGeneration) {
-        { pluginId, artifactPath ->
+    val showData: (ResolvedDeclarativeCommand) -> Unit = remember(installer, profileId, schoolId, sessionGeneration) {
+        { command ->
             scope.launch {
                 val text = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val verified = installer.verifiedStoredPackage(schoolId, pluginId)
-                        verified.artifactMap[artifactPath]?.let { String(it, StandardCharsets.UTF_8) }
-                    }.getOrNull()
+                    VerifiedShowDataExecutor.readUtf8(installer, schoolId, command)
                 }
                 Toast.makeText(
                     context,

@@ -67,6 +67,18 @@ class ExtensionUiPackageLoaderTest {
     }
 
     @Test
+    fun showDataExecutionRevalidatesPermissionImmediatelyBeforeReading() = withInstalledPlugin(cardJson = validCardJson()) { installer, _ ->
+        val verified = installer.verifiedStoredPackage("schoolx", PLUGIN_ID)
+        val declaration = verified.manifest.commands.single { it.name == "show" }
+        val command = ResolvedDeclarativeCommand(PLUGIN_ID, declaration, "show_data", "assets/data.json")
+
+        assertEquals("""{"items":[]}""", VerifiedShowDataExecutor.readUtf8(installer, "schoolx", command))
+
+        installer.revokePermission("schoolx", PLUGIN_ID, "ui.slot.render")
+        assertEquals(null, VerifiedShowDataExecutor.readUtf8(installer, "schoolx", command))
+    }
+
+    @Test
     fun normalizedCardIdCollisionFailsClosedForEveryConflictingCard() = withInstalledPlugin(
         cardJson = validCardJson(),
         slots = listOf("home.cards" to "demo.card", "home.cards" to "demo-card")
