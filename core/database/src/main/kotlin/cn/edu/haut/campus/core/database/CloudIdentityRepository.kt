@@ -20,6 +20,9 @@ import kotlinx.coroutines.withContext
  * 云同步编排仍由兼容外观的 Sync 后续批次所有者提供；本批只保持原有触发与传输读取时序。
  */
 internal interface CloudIdentityRuntimePort {
+    /** 门面 preferencesFlow 惰性读取（与 MomentsRuntimePort 同一模式），避免构造期属性初始化环。 */
+    val preferencesFlow: Flow<AppPreferencesState>
+
     /** 登录/换号完成后触发一次后台云同步（火后即忘），语义与门面原 repoScope.launch 一致。 */
     fun launchCloudSync()
 
@@ -44,13 +47,16 @@ class CloudIdentityRepository internal constructor(
     private val cloudIdentityMutex: Mutex,
     private val bookingPlanStateMutex: Mutex,
     private val cloudTokenMutex: Mutex,
-    private val preferencesFlow: Flow<AppPreferencesState>,
     private val librarySeatRepository: LibrarySeatRepository,
     private val runtimePort: CloudIdentityRuntimePort
 ) {
     private val preferences = environment.preferences
     private val database = environment.database
     private val cloudAndParcelDao = database.cloudAndParcelDao()
+
+    /** 惰性读取门面 preferencesFlow（实例固定），避免构造期属性初始化环。 */
+    private val preferencesFlow: Flow<AppPreferencesState>
+        get() = runtimePort.preferencesFlow
 
     private val profileId: String
         get() = environment.accountProfile.id

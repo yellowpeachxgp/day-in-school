@@ -356,6 +356,9 @@ class CampusRepository internal constructor(
     )
 
     private val cloudIdentityRuntimePort = object : CloudIdentityRuntimePort {
+        override val preferencesFlow: Flow<AppPreferencesState>
+            get() = this@CampusRepository.preferencesFlow
+
         override fun launchCloudSync() {
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
@@ -366,7 +369,7 @@ class CampusRepository internal constructor(
         override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? =
             this@CampusRepository.cloudHttpTransportForTest
     }
-    private val cloudIdentityRepository = CloudIdentityRepository(
+    private val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
         environment = repositoryEnvironment,
         appContext = appContext,
         cloudTokenVault = cloudTokenVault,
@@ -375,7 +378,6 @@ class CampusRepository internal constructor(
         cloudIdentityMutex = cloudIdentityMutex,
         bookingPlanStateMutex = bookingPlanStateMutex,
         cloudTokenMutex = cloudTokenMutex,
-        preferencesFlow = campusServicesRepository.preferencesFlow,
         librarySeatRepository = librarySeatRepository,
         runtimePort = cloudIdentityRuntimePort
     )
