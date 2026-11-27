@@ -25,7 +25,7 @@ class UnknownEventException(eventId: String) :
 /**
  * 事务型 outbox 的最小协议。
  *
- * W1-01a 只提供内存实现；业务写事务、Room 持久化和 DomainEvent 类型化映射留给 W1-01b。
+ * W1-01a 只提供内存实现；DomainEventBus 复用同一 outbox 做类型化映射，业务写事务与 Room 持久化留给后续 Vault 卡。
  * ack 按 consumer group 记录：同组任意消费者确认后，该组后续 backlog 不再包含此事件。
  */
 interface EventOutbox {

@@ -1,0 +1,14 @@
+package cn.edu.haut.campus.feature.grades.state
+
+/** 学业页用户意图。UI 只发送动作，不直接触碰 Repository、Intent 或导航回调。 */
+sealed interface GradesUiAction {
+    data object ToggleGpaPrivacyShield : GradesUiAction
+    data object ExportGradesCsv : GradesUiAction
+    data object OpenImporter : GradesUiAction
+    data class OpenMapRoom(val room: String) : GradesUiAction
+    data object OpenLibrarySeats : GradesUiAction
+    data object OpenLibraryCatalog : GradesUiAction
+    data object OpenFocus : GradesUiAction
+    data object OpenEmptyClassrooms : GradesUiAction
+    data object OpenCompetitions : GradesUiAction
+}
