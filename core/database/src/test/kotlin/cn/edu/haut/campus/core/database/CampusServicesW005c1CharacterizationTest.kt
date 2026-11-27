@@ -237,21 +237,16 @@ class CampusServicesW005c1CharacterizationTest {
     }
 
     @Test
-    fun w005c1_extension_plugin_registry_roundtrip() = runBlocking {
-        val plugin = InstalledExtensionPluginEntity(
-            pluginId = "org.example.test-plugin",
-            name = "测试插件",
-            activeVersion = "1.0.0",
-            previousVersion = null,
-            schemaFormat = "dis-campus-plugin/v1",
-            status = "ENABLED",
-            grantedPermissionsJson = "[]",
-            uiSlotsJson = "[]",
-            updatedAtEpochMillis = 123L
-        )
-        repo.upsertExtensionPlugin(plugin)
-        assertEquals(listOf(plugin), repo.installedExtensionPluginsFlow.first())
-        repo.removeExtensionPlugin(plugin.pluginId)
+    fun w005c1_extension_plugin_registry_exposes_only_signed_lifecycle_api() = runBlocking {
+        val methodNames = repo.javaClass.methods.map { it.name }.toSet()
+        assertTrue(methodNames.contains("installSignedExtensionPackageZip"))
+        assertTrue(methodNames.contains("installSignedExtensionPackage"))
+        assertTrue(methodNames.contains("setExtensionPluginEnabled"))
+        assertTrue(methodNames.contains("revokeExtensionPluginPermission"))
+        assertTrue(methodNames.contains("rollbackExtensionPlugin"))
+        assertTrue(methodNames.contains("removeExtensionPlugin"))
+        assertTrue(repo.installedExtensionPluginsFlow.first().isEmpty())
+        repo.removeExtensionPlugin("org.example.missing")
         assertTrue(repo.installedExtensionPluginsFlow.first().isEmpty())
     }
 }

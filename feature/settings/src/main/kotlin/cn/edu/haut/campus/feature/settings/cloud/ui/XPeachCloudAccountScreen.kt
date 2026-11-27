@@ -631,11 +631,9 @@ internal fun XPeachCloudAccountScreenContent(
                                 onClick = {
                                     scope.launch {
                                         val next = if (plugin.status == "ENABLED") "DISABLED" else "ENABLED"
-                                        actions.upsertExtensionPlugin(
-                                            plugin.copy(
-                                                status = next,
-                                                updatedAtEpochMillis = System.currentTimeMillis()
-                                            )
+                                        actions.setExtensionPluginEnabled(
+                                            pluginId = plugin.pluginId,
+                                            enabled = next == "ENABLED"
                                         )
                                         feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
                                     }

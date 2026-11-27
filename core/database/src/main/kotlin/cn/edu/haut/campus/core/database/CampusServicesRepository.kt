@@ -23,7 +23,7 @@ class CampusServicesRepository internal constructor(
     private val runtimePort: CampusServicesRuntimePort
 ) {
     private val campusContentService = CampusContentService(environment, runtimePort)
-    private val extensionPluginRegistry = ExtensionPluginRegistry(environment)
+    private val extensionPluginRegistry = ExtensionPluginRegistry(environment, appContext)
     private val reminderSettingsStore = ReminderSettingsStore(environment)
     private val appPreferencesStore = AppPreferencesStore(environment, runtimePort)
     private val utilityService = UtilityService(environment, appContext, utilityAccountStore, runtimePort)
@@ -43,11 +43,29 @@ class CampusServicesRepository internal constructor(
     suspend fun ensureDefaultReferencePluginsInstalled() =
         extensionPluginRegistry.ensureDefaultReferencePluginsInstalled()
 
-    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
-        extensionPluginRegistry.upsertExtensionPlugin(entity)
+    suspend fun installSignedExtensionPackageZip(zipBytes: ByteArray) =
+        extensionPluginRegistry.installSignedExtensionPackageZip(zipBytes)
+
+    suspend fun installSignedExtensionPackage(manifestBytes: ByteArray, artifactMap: Map<String, ByteArray>) =
+        extensionPluginRegistry.installSignedExtensionPackage(manifestBytes, artifactMap)
+
+    suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean) =
+        extensionPluginRegistry.setExtensionPluginEnabled(pluginId, enabled)
+
+    suspend fun confirmExtensionPluginPermissions(pluginId: String) =
+        extensionPluginRegistry.confirmExtensionPluginPermissions(pluginId)
+
+    suspend fun revokeExtensionPluginPermission(pluginId: String, permission: String) =
+        extensionPluginRegistry.revokeExtensionPluginPermission(pluginId, permission)
+
+    suspend fun rollbackExtensionPlugin(pluginId: String, targetVersion: String? = null) =
+        extensionPluginRegistry.rollbackExtensionPlugin(pluginId, targetVersion)
 
     suspend fun removeExtensionPlugin(pluginId: String) =
         extensionPluginRegistry.removeExtensionPlugin(pluginId)
+
+    suspend fun wipeExtensionPluginData(reason: String) =
+        extensionPluginRegistry.wipeExtensionPluginData(reason)
 
     val activeReminderTasksFlow: Flow<List<cn.edu.haut.campus.core.model.ReminderTaskDomain>> =
         reminderSettingsStore.activeReminderTasksFlow

@@ -223,10 +223,15 @@ class CampusRepositorySplitCharacterizationTest {
             "syncXiaomiExpressPackages",
             "fetchXiaomiParcelDetail",
             "ensureDefaultReferencePluginsInstalled",
-            "upsertExtensionPlugin",
+            "installSignedExtensionPackageZip",
+            "installSignedExtensionPackage",
+            "setExtensionPluginEnabled",
+            "confirmExtensionPluginPermissions",
+            "revokeExtensionPluginPermission",
+            "rollbackExtensionPlugin",
             "removeExtensionPlugin"
         )
-        assertEquals(164, expectedPublicMethods.distinct().size)
+        assertEquals(169, expectedPublicMethods.distinct().size)
         val missingMethods = expectedPublicMethods.filterNot { hasSourceApiName(it) }
         assertEquals("CampusRepository 公开实例方法不得减少", emptyList<String>(), missingMethods)
 

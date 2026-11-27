@@ -3,7 +3,6 @@ package cn.edu.haut.campus.feature.settings.cloud.state
 import cn.edu.haut.campus.core.campusservices.CloudSyncSnapshotResult
 import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.core.database.CloudIdentityBindingEntity
-import cn.edu.haut.campus.core.database.InstalledExtensionPluginEntity
 
 /** 云账号与扩展页用户动作面；不包含任何手填安装入口。 */
 interface XPeachCloudUiAction {
@@ -14,6 +13,6 @@ interface XPeachCloudUiAction {
     suspend fun saveVerifiedXpeachCloudAccount(profile: XpeachCloudAccountProfile): CloudIdentityBindingEntity
     suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans()
     suspend fun reconfirmAndRestoreCloudBookingPlans(): Result<CloudSyncSnapshotResult>
-    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity)
+    suspend fun setExtensionPluginEnabled(pluginId: String, enabled: Boolean)
     suspend fun removeExtensionPlugin(pluginId: String)
 }
