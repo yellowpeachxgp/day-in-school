@@ -9,8 +9,42 @@ import java.nio.charset.StandardCharsets
  * 避免不同模块对数字、转义、键顺序产生不一致的规范化结果。
  */
 sealed interface JsonValue {
-    data class Obj(val fields: Map<String, JsonValue>) : JsonValue
-    data class Arr(val items: List<JsonValue>) : JsonValue
+    /**
+     * JSON object 值类型。构造时复制输入 map，并用不可修改视图保存，避免调用方保留的
+     * MutableMap 别名在校验或编码后改变值内容。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+     */
+    class Obj(fields: Map<String, JsonValue>) : JsonValue {
+        val fields: Map<String, JsonValue> = java.util.Collections.unmodifiableMap(LinkedHashMap(fields))
+
+        operator fun component1(): Map<String, JsonValue> = fields
+
+        fun copy(fields: Map<String, JsonValue> = this.fields): Obj = Obj(fields)
+
+        override fun equals(other: Any?): Boolean = other is Obj && fields == other.fields
+
+        override fun hashCode(): Int = fields.hashCode()
+
+        override fun toString(): String = "Obj(fields=" + fields + ")"
+    }
+
+    /**
+     * JSON array 值类型。构造时复制输入 list，并用不可修改视图保存，避免调用方保留的
+     * MutableList 别名在校验或编码后改变值内容。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+     */
+    class Arr(items: List<JsonValue>) : JsonValue {
+        val items: List<JsonValue> = java.util.Collections.unmodifiableList(ArrayList(items))
+
+        operator fun component1(): List<JsonValue> = items
+
+        fun copy(items: List<JsonValue> = this.items): Arr = Arr(items)
+
+        override fun equals(other: Any?): Boolean = other is Arr && items == other.items
+
+        override fun hashCode(): Int = items.hashCode()
+
+        override fun toString(): String = "Arr(items=" + items + ")"
+    }
+
     data class Str(val value: String) : JsonValue
     data class Num(val literal: String) : JsonValue
     data class Bool(val value: Boolean) : JsonValue

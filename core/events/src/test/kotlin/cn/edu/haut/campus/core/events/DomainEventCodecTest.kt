@@ -7,6 +7,7 @@ import cn.edu.haut.campus.core.model.FieldChangeKind
 import cn.edu.haut.campus.core.model.FieldDiff
 import cn.edu.haut.campus.core.model.json.JsonValue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -155,6 +156,209 @@ class DomainEventCodecTest {
     }
 
     @Test
+    fun mutableListAliasCannotChangeFieldDiffAfterValidation() {
+        val backingChanges = mutableListOf(
+            FieldChange(
+                path = "/room",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Str("W111"),
+                after = JsonValue.Str("W112")
+            )
+        )
+        val diff = FieldDiff(backingChanges)
+        val event = courseChanged("event-mutable-diff-alias", diff)
+
+        backingChanges.add(
+            FieldChange(
+                path = "/sessionCookie",
+                kind = FieldChangeKind.ADDED,
+                before = null,
+                after = JsonValue.Str("must-not-enter-event")
+            )
+        )
+
+        assertEquals(2, backingChanges.size)
+        assertEquals(1, event.diff.changes.size)
+        val encoded = registry.encode(event)
+        assertFalse(encoded.payload.text.contains("sessionCookie"))
+        assertFalse(encoded.payload.text.contains("must-not-enter-event"))
+    }
+
+    @Test
+    fun mutableJsonBackingCollectionsCannotChangeFieldDiffAfterValidation() {
+        val arrayBacking = mutableListOf<JsonValue>(JsonValue.Str("safe"))
+        val objectBacking = mutableMapOf<String, JsonValue>(
+            "items" to JsonValue.Arr(arrayBacking)
+        )
+        val after = JsonValue.Obj(objectBacking)
+        val diff = FieldDiff(
+            listOf(
+                FieldChange(
+                    path = "/payload",
+                    kind = FieldChangeKind.ADDED,
+                    before = null,
+                    after = after
+                )
+            )
+        )
+        val event = courseChanged("event-mutable-json-alias", diff)
+
+        objectBacking["password"] = JsonValue.Str("must-not-enter-event")
+        arrayBacking.add(JsonValue.Obj(mapOf("secret" to JsonValue.Str("must-not-enter-event"))))
+
+        val snapshotAfter = event.diff.changes.single().after as JsonValue.Obj
+        assertEquals(setOf("items"), snapshotAfter.fields.keys)
+        assertEquals(1, (snapshotAfter.fields.getValue("items") as JsonValue.Arr).items.size)
+        val encoded = registry.encode(event)
+        assertFalse(encoded.payload.text.contains("password"))
+        assertFalse(encoded.payload.text.contains("secret"))
+        assertFalse(encoded.payload.text.contains("must-not-enter-event"))
+    }
+
+    @Test
+    fun foreignScopeCreatedRefsMutationCannotChangeNoticeAfterValidation() {
+        val backingRefs = mutableListOf(
+            DomainEventTestFixtures.ref(EntityType.PERSONAL_EVENT, "personal-event-valid")
+        )
+        val event = DomainEvent.NoticeConfirmed(
+            eventId = "event-created-refs-alias",
+            scope = DomainEventTestFixtures.scope,
+            occurredAt = DomainEventTestFixtures.occurredAt,
+            inboxItemId = "inbox-item-created-refs",
+            createdRefs = backingRefs
+        )
+        val foreignScope = DomainEventTestFixtures.scope.copy(campusId = null)
+
+        backingRefs.add(
+            DomainEventTestFixtures.ref(EntityType.PERSONAL_EVENT, "personal-event-foreign", foreignScope)
+        )
+
+        assertEquals(2, backingRefs.size)
+        assertEquals(1, event.createdRefs.size)
+        val encoded = registry.encode(event)
+        assertFalse(encoded.payload.text.contains("personal-event-foreign"))
+
+        val directForeignScopeError = runCatching {
+            DomainEvent.NoticeConfirmed(
+                eventId = "event-created-refs-foreign",
+                scope = DomainEventTestFixtures.scope,
+                occurredAt = DomainEventTestFixtures.occurredAt,
+                inboxItemId = "inbox-item-created-refs",
+                createdRefs = backingRefs
+            )
+        }.exceptionOrNull()
+        assertTrue(directForeignScopeError is IllegalArgumentException)
+    }
+
+    @Test
+    fun fiveSensitiveWordClassesAreRejectedInPathsAndNestedJsonKeys() {
+        val sensitiveNames = listOf(
+            "Password",
+            "user_credential",
+            "session-cookie",
+            "access.token",
+            "CLIENT_SECRET"
+        )
+
+        sensitiveNames.forEach { sensitiveName ->
+            val pathDiff = FieldDiff(
+                listOf(
+                    FieldChange(
+                        path = "/" + sensitiveName,
+                        kind = FieldChangeKind.ADDED,
+                        before = null,
+                        after = JsonValue.Str("x")
+                    )
+                )
+            )
+            val pathError = runCatching { validateFieldDiffSafety(pathDiff) }.exceptionOrNull()
+            assertTrue("敏感路径应被拒绝: " + sensitiveName, pathError is SensitiveEventPayloadException)
+
+            val nestedDiff = FieldDiff(
+                listOf(
+                    FieldChange(
+                        path = "/payload",
+                        kind = FieldChangeKind.ADDED,
+                        before = null,
+                        after = JsonValue.Obj(
+                            mapOf(
+                                "safeContainer" to JsonValue.Obj(
+                                    mapOf(sensitiveName to JsonValue.Str("x"))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            val nestedError = runCatching { validateFieldDiffSafety(nestedDiff) }.exceptionOrNull()
+            assertTrue("嵌套敏感键应被拒绝: " + sensitiveName, nestedError is SensitiveEventPayloadException)
+        }
+    }
+
+    @Test
+    fun ordinaryAcademicFieldNamesAreNotFalsePositiveSensitiveWords() {
+        val benignPaths = listOf(
+            "/room",
+            "/teacher",
+            "/courseName",
+            "/weekCount",
+            "/note",
+            "/metadata/author",
+            "/publicKey",
+            "/session",
+            "/sourceSystem",
+            "/contentRevision"
+        )
+
+        benignPaths.forEachIndexed { index, path ->
+            val diff = FieldDiff(
+                listOf(
+                    FieldChange(
+                        path = path,
+                        kind = FieldChangeKind.ADDED,
+                        before = null,
+                        after = JsonValue.Str("ordinary-value")
+                    )
+                )
+            )
+            val event = courseChanged("event-benign-field-" + index, diff)
+
+            validateDomainEventInvariant(event)
+            val encoded = registry.encode(event)
+            assertTrue(encoded.payload.text.contains("ordinary-value"))
+        }
+    }
+
+    @Test
+    fun exact16KiBPayloadIsAcceptedAndOneByteBeyondIsRejected() {
+        fun largeTextDiff(textLength: Int): FieldDiff = FieldDiff(
+            listOf(
+                FieldChange(
+                    path = "/largeText",
+                    kind = FieldChangeKind.ADDED,
+                    before = null,
+                    after = JsonValue.Str("x".repeat(textLength))
+                )
+            )
+        )
+
+        fun payloadSize(textLength: Int): Int = registry
+            .encode(courseChanged("event-size-probe", largeTextDiff(textLength)))
+            .payload
+            .text
+            .toByteArray(Charsets.UTF_8)
+            .size
+
+        val emptyStringPayloadSize = payloadSize(0)
+        val exactTextLength = MAX_DOMAIN_EVENT_PAYLOAD_BYTES - emptyStringPayloadSize
+        assertTrue(exactTextLength > 0)
+        assertEquals(MAX_DOMAIN_EVENT_PAYLOAD_BYTES, payloadSize(exactTextLength))
+
+        val error = runCatching { payloadSize(exactTextLength + 1) }.exceptionOrNull()
+        assertTrue(error is DomainEventPayloadTooLargeException)
+    }
+
+    @Test
     fun oversizedPayloadIsRejectedInsteadOfCarryingBlobData() {
         val largeDiff = FieldDiff(
             listOf(
@@ -234,4 +438,14 @@ class DomainEventCodecTest {
         assertTrue(wrongType is IllegalArgumentException)
         assertTrue(wrongScope is IllegalArgumentException)
     }
+
+    private fun courseChanged(eventId: String, diff: FieldDiff): DomainEvent.CourseChanged =
+        DomainEvent.CourseChanged(
+            eventId = eventId,
+            scope = DomainEventTestFixtures.scope,
+            occurredAt = DomainEventTestFixtures.occurredAt,
+            courseRef = DomainEventTestFixtures.ref(EntityType.COURSE, "course-math-1"),
+            change = ChangeKind.UPDATED,
+            diff = diff
+        )
 }

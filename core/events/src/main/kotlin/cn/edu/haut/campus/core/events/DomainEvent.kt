@@ -43,9 +43,7 @@ sealed interface DomainEvent {
         val diff: FieldDiff
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            validateScopedEntityRef(courseRef, scope, EntityType.COURSE, "courseRef")
-            validateFieldDiffSafety(diff)
+            validateDomainEventInvariant(this)
         }
     }
 
@@ -56,8 +54,7 @@ sealed interface DomainEvent {
         val examRef: EntityRef
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            validateScopedEntityRef(examRef, scope, EntityType.EXAM, "examRef")
+            validateDomainEventInvariant(this)
         }
     }
 
@@ -68,8 +65,7 @@ sealed interface DomainEvent {
         val attemptRef: EntityRef
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            validateScopedEntityRef(attemptRef, scope, EntityType.GRADE_ATTEMPT, "attemptRef")
+            validateDomainEventInvariant(this)
         }
     }
 
@@ -83,14 +79,7 @@ sealed interface DomainEvent {
         val provenance: DataProvenance
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            validateScopedEntityRef(meterRef, scope, EntityType.UTILITY_METER, "meterRef")
-            estimatedDaysLeft?.let { estimate ->
-                require(estimate.isFinite() && estimate >= 0.0 && !isNegativeZero(estimate)) {
-                    "estimatedDaysLeft 必须是有限非负数或 null，且不使用负零"
-                }
-            }
-            validateEventProvenance(provenance, scope)
+            validateDomainEventInvariant(this)
         }
     }
 
@@ -103,28 +92,73 @@ sealed interface DomainEvent {
         val accuracyMeters: Float
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            require(accuracyMeters.isFinite() && accuracyMeters >= 0f && !isNegativeZero(accuracyMeters)) {
-                "accuracyMeters 必须是有限非负数，且不使用负零"
-            }
+            validateDomainEventInvariant(this)
         }
     }
 
-    data class NoticeConfirmed(
+    class NoticeConfirmed(
         override val eventId: String,
         override val scope: SchoolAccountScope,
         override val occurredAt: Instant,
         val inboxItemId: String,
-        val createdRefs: List<EntityRef>
+        createdRefs: List<EntityRef>
     ) : DomainEvent {
+        /**
+         * 构造时复制输入 list，并用不可修改视图保存。调用方即使保留 MutableList 别名，
+         * 也不能在校验或事件编码之后追加跨 scope 引用。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+         */
+        val createdRefs: List<EntityRef> = java.util.Collections.unmodifiableList(ArrayList(createdRefs))
+
         init {
-            validateDomainEventId(eventId)
-            validateEventToken(inboxItemId, "inboxItemId")
-            require(createdRefs.distinct().size == createdRefs.size) { "createdRefs 不能包含重复引用" }
-            createdRefs.forEachIndexed { index, ref ->
-                require(ref.scope == scope) { "createdRefs[" + index + "] 与事件 scope 不一致" }
-            }
+            validateDomainEventInvariant(this)
         }
+
+        operator fun component1(): String = eventId
+
+        operator fun component2(): SchoolAccountScope = scope
+
+        operator fun component3(): Instant = occurredAt
+
+        operator fun component4(): String = inboxItemId
+
+        operator fun component5(): List<EntityRef> = createdRefs
+
+        fun copy(
+            eventId: String = this.eventId,
+            scope: SchoolAccountScope = this.scope,
+            occurredAt: Instant = this.occurredAt,
+            inboxItemId: String = this.inboxItemId,
+            createdRefs: List<EntityRef> = this.createdRefs
+        ): NoticeConfirmed = NoticeConfirmed(
+            eventId = eventId,
+            scope = scope,
+            occurredAt = occurredAt,
+            inboxItemId = inboxItemId,
+            createdRefs = createdRefs
+        )
+
+        override fun equals(other: Any?): Boolean = other is NoticeConfirmed &&
+            eventId == other.eventId &&
+            scope == other.scope &&
+            occurredAt == other.occurredAt &&
+            inboxItemId == other.inboxItemId &&
+            createdRefs == other.createdRefs
+
+        override fun hashCode(): Int {
+            var result = eventId.hashCode()
+            result = 31 * result + scope.hashCode()
+            result = 31 * result + occurredAt.hashCode()
+            result = 31 * result + inboxItemId.hashCode()
+            result = 31 * result + createdRefs.hashCode()
+            return result
+        }
+
+        override fun toString(): String = "NoticeConfirmed(eventId=" + eventId +
+            ", scope=" + scope +
+            ", occurredAt=" + occurredAt +
+            ", inboxItemId=" + inboxItemId +
+            ", createdRefs=" + createdRefs +
+            ")"
     }
 
     data class GroupEventConfirmed(
@@ -135,9 +169,7 @@ sealed interface DomainEvent {
         val eventRef: EntityRef
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
-            validateEventToken(groupId, "groupId")
-            validateScopedEntityRef(eventRef, scope, EntityType.GROUP_EVENT, "eventRef")
+            validateDomainEventInvariant(this)
         }
     }
 
@@ -149,8 +181,57 @@ sealed interface DomainEvent {
         val since: Instant
     ) : DomainEvent {
         init {
-            validateDomainEventId(eventId)
+            validateDomainEventInvariant(this)
         }
+    }
+}
+
+/**
+ * 重新执行每个 DomainEvent 在构造边界声明的完整 invariant。
+ *
+ * 构造函数首先调用本函数；codec 在 encode 边界再次调用，形成防御性复核。这样即使未来某个事件
+ * 新增可变成分或调用方绕过正常构造路径，敏感字段、scope、引用类型和数值边界也不会只在对象创建时检查一次。
+ */
+internal fun validateDomainEventInvariant(event: DomainEvent) {
+    validateDomainEventId(event.eventId)
+    when (event) {
+        is DomainEvent.CourseChanged -> {
+            validateScopedEntityRef(event.courseRef, event.scope, EntityType.COURSE, "courseRef")
+            event.diff.validateInvariant()
+            validateFieldDiffSafety(event.diff)
+        }
+        is DomainEvent.ExamPublished -> {
+            validateScopedEntityRef(event.examRef, event.scope, EntityType.EXAM, "examRef")
+        }
+        is DomainEvent.GradeReleased -> {
+            validateScopedEntityRef(event.attemptRef, event.scope, EntityType.GRADE_ATTEMPT, "attemptRef")
+        }
+        is DomainEvent.UtilityBalanceSampled -> {
+            validateScopedEntityRef(event.meterRef, event.scope, EntityType.UTILITY_METER, "meterRef")
+            event.estimatedDaysLeft?.let { estimate ->
+                require(estimate.isFinite() && estimate >= 0.0 && !isNegativeZero(estimate)) {
+                    "estimatedDaysLeft 必须是有限非负数或 null，且不使用负零"
+                }
+            }
+            validateEventProvenance(event.provenance, event.scope)
+        }
+        is DomainEvent.GeofenceTransition -> {
+            require(event.accuracyMeters.isFinite() && event.accuracyMeters >= 0f && !isNegativeZero(event.accuracyMeters)) {
+                "accuracyMeters 必须是有限非负数，且不使用负零"
+            }
+        }
+        is DomainEvent.NoticeConfirmed -> {
+            validateEventToken(event.inboxItemId, "inboxItemId")
+            require(event.createdRefs.distinct().size == event.createdRefs.size) { "createdRefs 不能包含重复引用" }
+            event.createdRefs.forEachIndexed { index, ref ->
+                require(ref.scope == event.scope) { "createdRefs[" + index + "] 与事件 scope 不一致" }
+            }
+        }
+        is DomainEvent.GroupEventConfirmed -> {
+            validateEventToken(event.groupId, "groupId")
+            validateScopedEntityRef(event.eventRef, event.scope, EntityType.GROUP_EVENT, "eventRef")
+        }
+        is DomainEvent.DataStale -> Unit
     }
 }
 

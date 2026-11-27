@@ -96,6 +96,8 @@ class DomainEventCodecRegistry(
 
     fun encode(event: DomainEvent): EventEnvelope {
         val codec = codecsByClass[event::class] ?: throw UnregisteredDomainEventException(event)
+        // encode 是跨进程/持久化边界：不信任“构造时已经检查过”这一事实，重新执行完整 invariant 与敏感字段校验。
+        validateDomainEventInvariant(event)
         val payload = codec.encodeUnchecked(event)
         validatePayloadSize(payload)
         return EventEnvelope(

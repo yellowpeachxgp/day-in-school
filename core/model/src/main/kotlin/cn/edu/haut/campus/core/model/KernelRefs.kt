@@ -118,6 +118,11 @@ data class FieldChange(
     val after: JsonValue?
 ) {
     init {
+        validateInvariant()
+    }
+
+    /** 重新执行字段差异的结构 invariant；codec 等信任边界可在输入来源不完全可信时复查。 */
+    fun validateInvariant() {
         requireJsonPointer(path)
         when (kind) {
             FieldChangeKind.ADDED -> {
@@ -144,16 +149,36 @@ data class FieldChange(
  * 还原字段时，应由上层使用对应 ChangeKind 并在 journal 的 before/after 快照中说明，
  * 而不是悄悄传入空 diff。
  */
-data class FieldDiff(
-    val changes: List<FieldChange>
-) {
+class FieldDiff(changes: List<FieldChange>) {
+    /**
+     * 构造时复制输入 list，并用不可修改视图保存。调用方即使保留 MutableList 别名，
+     * 也不能在校验或事件编码之后追加、替换差异项。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+     */
+    val changes: List<FieldChange> = java.util.Collections.unmodifiableList(ArrayList(changes))
+
     init {
+        validateInvariant()
+    }
+
+    /** 重新执行差异集合 invariant；codec 等信任边界可在输入来源不完全可信时复查。 */
+    fun validateInvariant() {
         require(changes.isNotEmpty()) { "字段差异至少要包含一个字段" }
+        changes.forEach { it.validateInvariant() }
         require(changes.map { it.path }.distinct().size == changes.size) { "字段差异包含重复路径" }
     }
 
     val paths: Set<String>
         get() = changes.mapTo(linkedSetOf()) { it.path }
+
+    operator fun component1(): List<FieldChange> = changes
+
+    fun copy(changes: List<FieldChange> = this.changes): FieldDiff = FieldDiff(changes)
+
+    override fun equals(other: Any?): Boolean = other is FieldDiff && changes == other.changes
+
+    override fun hashCode(): Int = changes.hashCode()
+
+    override fun toString(): String = "FieldDiff(changes=" + changes + ")"
 }
 
 /** 领域实体已发生的变更种类；事件消费者不得把 RESTORED 当作普通 CREATED 处理。 */
