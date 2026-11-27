@@ -642,24 +642,6 @@ class CampusRepository internal constructor(
         )
     }
 
-    private fun extractReminderConfig(prefs: androidx.datastore.preferences.core.Preferences): ReminderGlobalConfig {
-        val quietMode = prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
-        return ReminderGlobalConfig(
-            enabled = prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] ?: true,
-            classLeadMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 120),
-            classSnoozeDefaultMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
-            classSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            classSnoozeCutoffMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
-            examDayBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] ?: true,
-            examHourBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
-            examSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            preciseReminderPreferred = prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
-            liveProgressRefreshMinutes = (prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] ?: 5).takeIf { it in setOf(1, 5, 10) } ?: 5,
-            lockscreenPrivate = prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
-            quietMode = quietMode
-        )
-    }
-
     val studentProfileFlow: Flow<StudentProfile?> =
         gradesRepository.studentProfileFlow
 
@@ -710,17 +692,15 @@ class CampusRepository internal constructor(
         timetableRepository.unscheduledCoursesFlow
 
     val activeReminderTasksFlow: Flow<List<ReminderTaskDomain>> =
-        reminderDao.observeActiveTasks().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.activeReminderTasksFlow
 
     val reminderEventOverridesFlow: Flow<List<ReminderEventOverride>> =
-        reminderDao.observeEventPrefs().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.reminderEventOverridesFlow
 
     fun observeReminderTasksInWindow(windowStartMs: Long, windowEndMs: Long): Flow<List<ReminderTaskDomain>> =
-        reminderDao.observeTasksInEventWindow(windowStartMs, windowEndMs).map { list ->
-            list.map { it.toDomain() }
-        }
+        campusServicesRepository.observeReminderTasksInWindow(windowStartMs, windowEndMs)
 
-    fun reminderDao(): ReminderDao = reminderDao
+    fun reminderDao(): ReminderDao = campusServicesRepository.reminderDao()
     fun utilityAndFocusDao(): UtilityAndFocusDao = utilityAndFocusDao
     fun utilityAccountSecureStore(): UtilityAccountSecureStore = utilityAccountStore
 
@@ -2211,78 +2191,26 @@ class CampusRepository internal constructor(
         notifyScheduleOrPolicyChanged("WIDGET_CONFIG_UPDATED")
     }
 
-    suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig {
-        val prefs = preferences.data.first()
-        return extractReminderConfig(prefs)
-    }
-
+    suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig =
+        campusServicesRepository.getReminderConfigSnapshot()
 
     suspend fun getExamSchedulesSnapshot(): List<ExamScheduleItem> =
         examRepository.getExamSchedulesSnapshot()
 
-    suspend fun getReminderEventOverridesSnapshot(): List<ReminderEventOverride> {
-        return reminderDao.getEventPrefsSnapshot().map { it.toDomain() }
-    }
+    suspend fun getReminderEventOverridesSnapshot(): List<ReminderEventOverride> =
+        campusServicesRepository.getReminderEventOverridesSnapshot()
 
-    suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) {
-        preferences.edit { prefs ->
-            val current = extractReminderConfig(prefs)
-            val updated = transform(current)
-            prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] = updated.enabled
-            prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 120)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
-            prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] = updated.examDayBeforeEnabled
-            prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
-            prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
-            prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
-            prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] = updated.liveProgressRefreshMinutes.takeIf { it in setOf(1, 5, 10) } ?: 5
-            prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
-            prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
-            prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(
-                enabled = updated.enabled,
-                classLeadMinutes = updated.classLeadMinutes,
-                maxSnoozes = updated.classSnoozeMaxCount,
-                cutoffMinutesBeforeStart = updated.classSnoozeCutoffMinutes,
-                examDayEnabled = updated.examDayBeforeEnabled,
-                examHourEnabled = updated.examHourBeforeEnabled
-            )
-        }
-        notifyScheduleOrPolicyChanged("REMINDER_GLOBAL_CONFIG_UPDATED")
-    }
+    suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) =
+        campusServicesRepository.updateReminderGlobalConfig(transform)
 
-    suspend fun upsertReminderEventOverride(override: ReminderEventOverride) {
-        reminderDao.upsertEventPref(override.toEntity())
-        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_UPSERTED:${override.eventScopeKey}")
-    }
+    suspend fun upsertReminderEventOverride(override: ReminderEventOverride) =
+        campusServicesRepository.upsertReminderEventOverride(override)
 
-    suspend fun removeReminderEventOverride(scopeKey: String) {
-        reminderDao.deleteEventPref(scopeKey)
-        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_REMOVED:$scopeKey")
-    }
+    suspend fun removeReminderEventOverride(scopeKey: String) =
+        campusServicesRepository.removeReminderEventOverride(scopeKey)
 
-    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) {
-        val nowMs = System.currentTimeMillis()
-        val timeText = java.time.Instant.ofEpochMilli(nowMs)
-            .atZone(HAUT_ZONE_ID)
-            .toLocalTime()
-            .withNano(0)
-            .toString()
-        val formatted = "[$timeText] $message"
-        preferences.edit { prefs ->
-            val existing = prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS]
-                ?.split("\n")
-                ?.filter { it.isNotBlank() }
-                .orEmpty()
-            val updated = (listOf(formatted) + existing).take(30)
-            prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS] = updated.joinToString("\n")
-            if (reconcileSummary != null) {
-                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS] = nowMs
-                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY] = reconcileSummary
-            }
-        }
-    }
+    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) =
+        campusServicesRepository.appendReminderDiagnosticLog(message, reconcileSummary)
 
     suspend fun setCampusServiceFeatureFlag(
         utilitiesEnabled: Boolean? = null,

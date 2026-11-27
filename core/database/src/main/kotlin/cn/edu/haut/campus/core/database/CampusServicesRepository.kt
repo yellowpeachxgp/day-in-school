@@ -17,6 +17,7 @@ class CampusServicesRepository internal constructor(
 ) {
     private val campusContentService = CampusContentService(environment, runtimePort)
     private val extensionPluginRegistry = ExtensionPluginRegistry(environment)
+    private val reminderSettingsStore = ReminderSettingsStore(environment)
 
     suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) =
         campusContentService.saveCustomChannelUrl(channelId, inviteUrl)
@@ -38,4 +39,33 @@ class CampusServicesRepository internal constructor(
 
     suspend fun removeExtensionPlugin(pluginId: String) =
         extensionPluginRegistry.removeExtensionPlugin(pluginId)
+
+    val activeReminderTasksFlow: Flow<List<cn.edu.haut.campus.core.model.ReminderTaskDomain>> =
+        reminderSettingsStore.activeReminderTasksFlow
+
+    val reminderEventOverridesFlow: Flow<List<cn.edu.haut.campus.core.model.ReminderEventOverride>> =
+        reminderSettingsStore.reminderEventOverridesFlow
+
+    fun observeReminderTasksInWindow(windowStartMs: Long, windowEndMs: Long): Flow<List<cn.edu.haut.campus.core.model.ReminderTaskDomain>> =
+        reminderSettingsStore.observeReminderTasksInWindow(windowStartMs, windowEndMs)
+
+    fun reminderDao(): ReminderDao = reminderSettingsStore.reminderDao()
+
+    suspend fun getReminderConfigSnapshot(): cn.edu.haut.campus.core.model.ReminderGlobalConfig =
+        reminderSettingsStore.getReminderConfigSnapshot()
+
+    suspend fun getReminderEventOverridesSnapshot(): List<cn.edu.haut.campus.core.model.ReminderEventOverride> =
+        reminderSettingsStore.getReminderEventOverridesSnapshot()
+
+    suspend fun updateReminderGlobalConfig(transform: (cn.edu.haut.campus.core.model.ReminderGlobalConfig) -> cn.edu.haut.campus.core.model.ReminderGlobalConfig) =
+        reminderSettingsStore.updateReminderGlobalConfig(transform)
+
+    suspend fun upsertReminderEventOverride(override: cn.edu.haut.campus.core.model.ReminderEventOverride) =
+        reminderSettingsStore.upsertReminderEventOverride(override)
+
+    suspend fun removeReminderEventOverride(scopeKey: String) =
+        reminderSettingsStore.removeReminderEventOverride(scopeKey)
+
+    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) =
+        reminderSettingsStore.appendReminderDiagnosticLog(message, reconcileSummary)
 }
