@@ -551,8 +551,3 @@ internal fun FloatingRouteBottomSheet(
         }
     }
 }
-
-/**
- * 河南工业大学官方 GIS 网页端 (`https://gis.haut.edu.cn/cmipsh5/#/`) 内嵌全屏浏览弹窗。
- */
-@SuppressLint("SetJavaScriptEnabled")

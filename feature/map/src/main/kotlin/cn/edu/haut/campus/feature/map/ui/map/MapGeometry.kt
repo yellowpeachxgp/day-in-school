@@ -1,7 +1,11 @@
 package cn.edu.haut.campus.feature.map.ui.map
 
 import androidx.compose.ui.geometry.Offset
+import kotlin.math.abs
 
+/**
+ * 射线法判断屏幕点是否落在多边形内（用于点击室内房间或官方建筑轮廓）。
+ */
 internal fun isScreenPointInRing(pt: Offset, ring: List<Offset>): Boolean {
     if (ring.size < 3) return false
     var inside = false
@@ -18,7 +22,3 @@ internal fun isScreenPointInRing(pt: Offset, ring: List<Offset>): Boolean {
     }
     return inside
 }
-
-/**
- * 一级校园室外地图画布（纯粹聚焦室外导航、实测建筑轮廓与防重叠地标标注；室内平面图已独立至二级页面）。
- */

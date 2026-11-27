@@ -189,6 +189,9 @@ import kotlin.math.sinh
 import kotlin.math.tan
 
 
+/**
+ * 一级校园室外地图画布（纯粹聚焦室外导航、实测建筑轮廓与防重叠地标标注；室内平面图已独立至二级页面）。
+ */
 @Composable
 internal fun RealCampusTileMap(
     buildings: List<Building>,

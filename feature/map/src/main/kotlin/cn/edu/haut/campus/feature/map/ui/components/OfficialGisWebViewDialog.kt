@@ -189,6 +189,10 @@ import kotlin.math.sinh
 import kotlin.math.tan
 
 
+/**
+ * 河南工业大学官方 GIS 网页端 (`https://gis.haut.edu.cn/cmipsh5/#/`) 内嵌全屏浏览弹窗。
+ */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 internal fun OfficialGisWebViewDialog(
     onDismiss: () -> Unit,
@@ -266,7 +270,3 @@ internal fun OfficialGisWebViewDialog(
         }
     }
 }
-
-/**
- * 射线法判断屏幕点是否落在多边形内（用于点击室内房间或官方建筑轮廓）。
- */
