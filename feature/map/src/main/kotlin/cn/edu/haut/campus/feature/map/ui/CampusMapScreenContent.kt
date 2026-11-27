@@ -196,11 +196,16 @@ import kotlin.reflect.KProperty
 
 
 private class MapActionDelegate<T>(
-    private val currentValue: T,
+    initialValue: T,
     private val write: (T) -> Unit
 ) {
+    private var currentValue: T = initialValue
+
     operator fun getValue(thisRef: Any?, property: KProperty<*>): T = currentValue
-    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) = write(value)
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+        currentValue = value
+        write(value)
+    }
 }
 
 private fun <T> mapActionState(value: T, write: (T) -> Unit): MapActionDelegate<T> =
