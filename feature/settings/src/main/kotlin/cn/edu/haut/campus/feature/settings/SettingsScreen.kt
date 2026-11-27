@@ -135,6 +135,7 @@ import cn.edu.haut.campus.core.model.totalFocusMinutes
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.ReminderPermissions
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
+import cn.edu.haut.campus.feature.settings.hub.ui.CampusHospitalPharmacyDialog
 import kotlinx.coroutines.launch
 import java.io.File
 import java.math.BigDecimal
