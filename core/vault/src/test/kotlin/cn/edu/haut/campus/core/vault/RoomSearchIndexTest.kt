@@ -95,7 +95,7 @@ class RoomSearchIndexTest {
         val single = index.query(scope, SearchQuery(scope, "数"))
         assertTrue(single.hits.any { it.document.ref.id == "course-1" })
 
-        val operators = index.query(scope, SearchQuery(scope, "OR AND NOT NEAR * - ""))
+        val operators = index.query(scope, SearchQuery(scope, "OR AND NOT NEAR * - " + 34.toChar()))
         assertEquals(0, operators.totalCount)
     }
 

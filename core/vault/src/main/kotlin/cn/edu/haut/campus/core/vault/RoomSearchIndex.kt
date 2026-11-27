@@ -223,7 +223,7 @@ class RoomSearchIndex(
     }
 
     private fun querySingleLong(sql: String, args: List<Any?>): Long {
-        val bindArgs = args.map { value ->
+        val bindArgs = args.map<Any?> { value ->
             when (value) {
                 null -> null
                 is String -> value
