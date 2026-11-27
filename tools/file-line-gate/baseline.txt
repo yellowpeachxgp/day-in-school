@@ -6,7 +6,7 @@ app/src/main/kotlin/cn/edu/haut/campus/OnboardingFlowScreen.kt	1727
 core/campusservices/src/main/kotlin/cn/edu/haut/campus/core/campusservices/CampusCloudClientAndAuth.kt	4417
 core/campusservices/src/main/kotlin/cn/edu/haut/campus/core/campusservices/HautLibrarySeatAuthClient.kt	2738
 core/campusservices/src/test/kotlin/cn/edu/haut/campus/core/campusservices/CampusServicesUnitTest.kt	2726
-core/database/src/main/kotlin/cn/edu/haut/campus/core/database/CampusRepository.kt	8226
+core/database/src/main/kotlin/cn/edu/haut/campus/core/database/CampusRepository.kt	6514
 core/database/src/test/kotlin/cn/edu/haut/campus/core/database/BookingDispatchExclusiveClaimDaoTest.kt	3836
 core/database/src/test/kotlin/cn/edu/haut/campus/core/database/CourseMoveRecoveryTest.kt	1560
 core/designsystem/src/main/kotlin/cn/edu/haut/campus/core/designsystem/HautTheme.kt	2992
