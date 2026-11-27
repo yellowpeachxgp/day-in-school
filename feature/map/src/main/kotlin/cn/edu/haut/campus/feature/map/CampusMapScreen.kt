@@ -142,6 +142,7 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.location.CampusGeofenceRecognizer
 import cn.edu.haut.campus.core.location.CampusMapNavigator
 import cn.edu.haut.campus.core.location.CampusMapProviderRegistry
+import cn.edu.haut.campus.core.location.CampusMapViewportMath
 import cn.edu.haut.campus.core.location.CampusTileCacheCoordinator
 import cn.edu.haut.campus.core.location.TileRenderLookup
 import cn.edu.haut.campus.core.location.GisBuildingFootprint
@@ -173,19 +174,14 @@ import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.asinh
-import kotlin.math.atan
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
-import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.sinh
-import kotlin.math.tan
 
 private object CampusTileCache {
     private val coordinator = CampusTileCacheCoordinator<ImageBitmap>(maxMemoryEntries = 360)
@@ -1399,7 +1395,7 @@ fun CampusMapScreen(
                             navigationPlan = if (inAppNavigationActive) navigationPlan else null,
                             centerLatGcj = mapCenterLatGcj,
                             centerLonGcj = mapCenterLonGcj,
-                            zoom = mapZoom.coerceIn(12.6f, 18.8f),
+                            zoom = CampusMapViewportMath.clampZoom(mapZoom),
                             styleMode = if (isLianhuajieActive) gisStyleMode else GisMapStyleMode.STREET_STANDARD,
                             gisDataset = if (isLianhuajieActive) gisDataset else null,
                             activeBuildingFootprint = activeBuildingFootprint,
@@ -1409,7 +1405,7 @@ fun CampusMapScreen(
                             onViewportChange = { newLat, newLon, newZoom ->
                                 mapCenterLatGcj = newLat
                                 mapCenterLonGcj = newLon
-                                mapZoom = newZoom.coerceIn(12.6f, 18.8f)
+                                mapZoom = CampusMapViewportMath.clampZoom(newZoom)
                             },
                             onSelectBuilding = { clicked ->
                                 selectedBuilding = clicked
@@ -1426,12 +1422,12 @@ fun CampusMapScreen(
                             XPeachIconButton(
                                 icon = Icons.Default.Add,
                                 contentDescription = "放大地图",
-                                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
+                                onClick = { mapZoom = CampusMapViewportMath.zoomInByButton(mapZoom) }
                             )
                             XPeachIconButton(
                                 icon = Icons.Default.Remove,
                                 contentDescription = "缩小地图",
-                                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
+                                onClick = { mapZoom = CampusMapViewportMath.zoomOutByButton(mapZoom) }
                             )
                         }
                     }
@@ -2315,12 +2311,12 @@ fun CampusMapScreen(
             XPeachIconButton(
                 icon = Icons.Default.Add,
                 contentDescription = "放大地图",
-                onClick = { mapZoom = (mapZoom + 0.55f).coerceIn(12.6f, 18.8f) }
+                onClick = { mapZoom = CampusMapViewportMath.zoomInByButton(mapZoom) }
             )
             XPeachIconButton(
                 icon = Icons.Default.Remove,
                 contentDescription = "缩小地图",
-                onClick = { mapZoom = (mapZoom - 0.55f).coerceIn(12.6f, 18.8f) }
+                onClick = { mapZoom = CampusMapViewportMath.zoomOutByButton(mapZoom) }
             )
             XPeachIconButton(
                 icon = Icons.Default.ZoomOutMap,
@@ -2983,29 +2979,18 @@ private fun RealCampusTileMap(
         }
     }
 
-    val tileZ = if (styleMode == GisMapStyleMode.OFFICIAL_25D_2026) {
-        zoom.roundToInt().coerceIn(12, 17)
-    } else {
-        zoom.roundToInt().coerceIn(12, 18)
-    }
+    val tileZ = CampusMapViewportMath.tileZoomFor(
+        zoom = zoom,
+        official25d = styleMode == GisMapStyleMode.OFFICIAL_25D_2026
+    )
     val scaleFactor = 2.0.pow((zoom - tileZ).toDouble()).toFloat()
     val baseTileRenderPx = 256f * context.resources.displayMetrics.density * 0.90f * scaleFactor
 
-    fun latLonToTileXY(lat: Double, lon: Double, z: Int): Pair<Double, Double> {
-        val n = 2.0.pow(z.toDouble())
-        val x = (lon + 180.0) / 360.0 * n
-        val latRad = Math.toRadians(lat.coerceIn(-85.0, 85.0))
-        val y = (1.0 - asinh(tan(latRad)) / PI) / 2.0 * n
-        return x to y
-    }
+    fun latLonToTileXY(lat: Double, lon: Double, z: Int): Pair<Double, Double> =
+        CampusMapViewportMath.latLonToTileXY(lat, lon, z)
 
-    fun tileXYToLatLon(tx: Double, ty: Double, z: Int): Pair<Double, Double> {
-        val n = 2.0.pow(z.toDouble())
-        val lon = tx / n * 360.0 - 180.0
-        val latRad = atan(sinh(PI * (1.0 - 2.0 * ty / n)))
-        val lat = Math.toDegrees(latRad)
-        return lat to lon
-    }
+    fun tileXYToLatLon(tx: Double, ty: Double, z: Int): Pair<Double, Double> =
+        CampusMapViewportMath.tileXYToLatLon(tx, ty, z)
 
     val (centerTileX, centerTileY) = remember(centerLatGcj, centerLonGcj, tileZ) {
         latLonToTileXY(centerLatGcj, centerLonGcj, tileZ)
@@ -3161,12 +3146,7 @@ private fun RealCampusTileMap(
                         val canceled = event.changes.any { it.isConsumed }
                         if (!canceled) {
                             val pressedCount = event.changes.count { it.pressed }
-                            val rawZoom = event.calculateZoom()
-                            val gestureZoom = if (rawZoom.isFinite() && rawZoom > 0f) {
-                                rawZoom.coerceIn(0.25f, 4.0f)
-                            } else {
-                                1f
-                            }
+                            val gestureZoom = CampusMapViewportMath.sanitizeGestureZoom(event.calculateZoom())
                             val pan = event.calculatePan()
                             if (!pastTouchSlop) {
                                 panAccum += pan
@@ -3182,27 +3162,24 @@ private fun RealCampusTileMap(
                                     Offset(canvasWidthPx / 2f, canvasHeightPx / 2f)
                                 }
                                 if (gestureZoom != 1f || pan != Offset.Zero) {
-                                    val zNow = currentTileZ
-                                    val tilePxNow = currentBaseTilePx
-                                    val (cTx, cTy) = latLonToTileXY(currentCenterLat, currentCenterLon, zNow)
-                                    val newZoom = (currentZoom + (ln(gestureZoom.toDouble()) / ln(2.0)).toFloat())
-                                        .coerceIn(12.6f, 18.8f)
-                                    val zoomRatio = 2.0.pow((newZoom - currentZoom).toDouble()).toFloat()
-                                    val offsetFromCenterX = centroid.x - (canvasWidthPx / 2f)
-                                    val offsetFromCenterY = centroid.y - (canvasHeightPx / 2f)
-                                    val dxPx = -pan.x + offsetFromCenterX * (1f - 1f / zoomRatio)
-                                    val dyPx = -pan.y + offsetFromCenterY * (1f - 1f / zoomRatio)
-                                    val dTileX = dxPx / tilePxNow
-                                    val dTileY = dyPx / tilePxNow
-                                    val (newLat, newLon) = tileXYToLatLon(
-                                        cTx + dTileX,
-                                        cTy + dTileY,
-                                        zNow
+                                    val viewport = CampusMapViewportMath.viewportAfterGesture(
+                                        centerLatGcj = currentCenterLat,
+                                        centerLonGcj = currentCenterLon,
+                                        currentZoom = currentZoom,
+                                        tileZ = currentTileZ,
+                                        baseTileRenderPx = currentBaseTilePx,
+                                        canvasWidthPx = canvasWidthPx,
+                                        canvasHeightPx = canvasHeightPx,
+                                        centroidX = centroid.x,
+                                        centroidY = centroid.y,
+                                        panX = pan.x,
+                                        panY = pan.y,
+                                        rawGestureZoom = gestureZoom
                                     )
                                     currentOnViewportChange(
-                                        newLat.coerceIn(18.0, 54.0),
-                                        newLon.coerceIn(73.0, 136.0),
-                                        newZoom
+                                        viewport.centerLatGcj,
+                                        viewport.centerLonGcj,
+                                        viewport.zoom
                                     )
                                 }
                                 event.changes.forEach { change ->
