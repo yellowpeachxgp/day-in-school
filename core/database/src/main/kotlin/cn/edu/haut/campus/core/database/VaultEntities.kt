@@ -190,7 +190,7 @@ interface VaultDao {
     @Query("SELECT * FROM entity_journal WHERE writeGroupId = :writeGroupId ORDER BY changeId ASC")
     suspend fun getJournalGroup(writeGroupId: String): List<EntityJournalEntity>
 
-    @Query("SELECT * FROM entity_journal WHERE entityType = :entityType AND entityId = :entityId ORDER BY occurredAtEpochMs DESC, changeId DESC")
+    @Query("SELECT * FROM entity_journal WHERE entityType = :entityType AND entityId = :entityId ORDER BY occurredAtEpochMs ASC, changeId ASC")
     fun observeJournalForEntity(entityType: String, entityId: String): Flow<List<EntityJournalEntity>>
 
     @Query("SELECT * FROM entity_journal WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND entityType IN (:types) ORDER BY occurredAtEpochMs DESC, changeId DESC LIMIT :limit")
