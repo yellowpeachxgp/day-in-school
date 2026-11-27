@@ -246,6 +246,8 @@ class ExtensionPackageSecurityTest {
             assertEquals(1, cleanup.installationFiles)
             assertEquals(1, cleanup.storageFiles)
             assertEquals(1, cleanup.cacheFiles)
+            assertTrue("signed package versions must be removed on uninstall", cleanup.packageVersionFiles >= 2)
+            assertEquals(0L, countRegularFiles(root.resolve("versions")))
             assertEquals(null, installer.installation("schoolx", "org.example.signed"))
             assertEquals(0 to 0, installer.scopedStorageCounts("schoolx", "org.example.signed"))
             assertTrue(installer.auditLines().any { it.contains("UNINSTALL_PLUGIN") })
@@ -256,6 +258,8 @@ class ExtensionPackageSecurityTest {
             assertTrue(wipe.installationFiles >= 1)
             assertEquals(emptyList<ExtensionInstallation>(), installer.snapshot())
             assertEquals(0 to 0, installer.scopedStorageCounts("schoolx", "org.example.signed"))
+            assertTrue(wipe.packageVersionFiles >= 2)
+            assertEquals(0L, countRegularFiles(root.resolve("versions")))
         } finally {
             root.toFile().deleteRecursively()
         }
@@ -307,6 +311,11 @@ class ExtensionPackageSecurityTest {
             "value_base64" to JsonValue.Str(java.util.Base64.getEncoder().encodeToString(signature))
         ))
         return Json.canonical(JsonValue.Obj(fields))
+    }
+
+    private fun countRegularFiles(root: java.nio.file.Path): Long {
+        if (!Files.isDirectory(root)) return 0L
+        return Files.walk(root).use { stream -> stream.filter { Files.isRegularFile(it) }.count() }
     }
 
     private fun zipOf(entries: Map<String, ByteArray>): ByteArray {

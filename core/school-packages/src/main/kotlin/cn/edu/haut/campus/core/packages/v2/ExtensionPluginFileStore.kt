@@ -36,7 +36,8 @@ data class ExtensionInstallation(
 data class ExtensionCleanupResult(
     val installationFiles: Int,
     val storageFiles: Int,
-    val cacheFiles: Int
+    val cacheFiles: Int,
+    val packageVersionFiles: Int = 0
 )
 
 /** File count and byte usage of one plugin-scoped storage/cache partition. */
@@ -191,11 +192,13 @@ class ExtensionPluginFileStore(
         val installationCount = if (Files.exists(installationFile(schoolId, pluginId))) 1 else 0
         val storageCount = countScopedFiles("storage", schoolId, pluginId)
         val cacheCount = countScopedFiles("cache", schoolId, pluginId)
+        val packageVersionCount = countRegularFiles(versionsDir.resolve(encodeKey(pluginId)))
         Files.deleteIfExists(installationFile(schoolId, pluginId))
         deleteRecursively(storageDir.resolve(encodeKey(schoolId)).resolve(encodeKey(pluginId)))
         deleteRecursively(cacheDir.resolve(encodeKey(schoolId)).resolve(encodeKey(pluginId)))
+        deleteRecursively(versionsDir.resolve(encodeKey(pluginId)))
         appendAudit("UNINSTALL_PLUGIN", pluginId, schoolId, reason)
-        return ExtensionCleanupResult(installationCount, storageCount, cacheCount)
+        return ExtensionCleanupResult(installationCount, storageCount, cacheCount, packageVersionCount)
     }
 
     @Synchronized
@@ -203,16 +206,19 @@ class ExtensionPluginFileStore(
         val installationCount = countRegularFiles(installationsDir)
         val storageCount = countRegularFiles(storageDir)
         val cacheCount = countRegularFiles(cacheDir)
+        val packageVersionCount = countRegularFiles(versionsDir)
         deleteRecursively(installationsDir)
         deleteRecursively(storageDir)
         deleteRecursively(cacheDir)
         deleteRecursively(stagingDir)
+        deleteRecursively(versionsDir)
         Files.createDirectories(installationsDir)
         Files.createDirectories(storageDir)
         Files.createDirectories(cacheDir)
         Files.createDirectories(stagingDir)
+        Files.createDirectories(versionsDir)
         appendAudit("WIPE_EXTENSION_PLUGIN_DATA", "*", "*", reason)
-        return ExtensionCleanupResult(installationCount, storageCount, cacheCount)
+        return ExtensionCleanupResult(installationCount, storageCount, cacheCount, packageVersionCount)
     }
 
     fun auditLines(): List<String> =
