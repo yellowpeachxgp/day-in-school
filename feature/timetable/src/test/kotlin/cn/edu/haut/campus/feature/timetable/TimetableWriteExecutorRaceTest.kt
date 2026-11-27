@@ -157,11 +157,13 @@ class TimetableWriteExecutorRaceTest {
     fun realAccountSessionSwitchIsMutexedWithWritesAndStaleWriteFailsClosed() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val sessions = AccountSessionCoordinator.getInstance(context)
-        val first = sessions.initialize()
-        val secondProfile = sessions.createOfflineProfile(
-            SchoolDirectory.hautProfile(),
-            "并发回归身份 " + System.nanoTime()
-        )
+        val first = withTimeout(10_000) { sessions.initialize() }
+        val secondProfile = withTimeout(10_000) {
+            sessions.createOfflineProfile(
+                SchoolDirectory.hautProfile(),
+                "并发回归身份 " + System.nanoTime()
+            )
+        }
         val events = CopyOnWriteArrayList<String>()
         val hookKey = "timetable-session-race-" + System.nanoTime()
         val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -204,7 +206,7 @@ class TimetableWriteExecutorRaceTest {
                     onComplete = { result -> firstCompletion.set(result) }
                 )
             )
-            writeStarted.await()
+            withTimeout(2_000) { writeStarted.await() }
 
             val switchToSecond = async(Dispatchers.Default) { sessions.switchProfile(secondProfile.id) }
             yield()
@@ -212,7 +214,7 @@ class TimetableWriteExecutorRaceTest {
             assertFalse("真实 switchProfile 不得越过已经开始的 withActiveSession 写", events.contains("switch-before"))
             releaseWrite.complete(Unit)
             withTimeout(5_000) { switchToSecond.await() }
-            firstWriteJob.join()
+            withTimeout(2_000) { firstWriteJob.join() }
             assertTrue(firstCompletion.get()?.isSuccess == true)
             assertTrue(
                 "写结束必须先于切换 hook，证明真实互斥锁没有交错",
@@ -251,7 +253,7 @@ class TimetableWriteExecutorRaceTest {
 
             releaseSwitchHook.complete(Unit)
             withTimeout(5_000) { switchBack.await() }
-            staleJob.join()
+            withTimeout(2_000) { staleJob.join() }
             assertFalse("切换完成后旧 generation 必须 fail-closed", staleWriteCalled.get())
             assertTrue(staleCompletion.get()?.exceptionOrNull() is TimetableSessionMismatchWriteException)
         } finally {
