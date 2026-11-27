@@ -85,7 +85,9 @@ internal fun TodayStatusScaffold(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 if (status == TodayScreenStatus.LOADING) {
-                    CircularProgressIndicator()
+                    // 截图门禁必须让 Robolectric looper 静止：Loading 骨架使用确定性进度，
+                    // 不把 indeterminate infinite animation 带进 Roborazzi 基线。
+                    CircularProgressIndicator(progress = { 0.62f })
                 }
                 XPeachEmptyState(
                     title = copy.title,
