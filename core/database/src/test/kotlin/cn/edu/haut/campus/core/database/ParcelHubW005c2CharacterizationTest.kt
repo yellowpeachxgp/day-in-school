@@ -215,7 +215,7 @@ class ParcelHubW005c2CharacterizationTest {
         assertTrue(blankToken.isFailure)
 
         val savedResult = repo.saveXiaomiAccountFromWebLogin(
-            token = " synthetic-service-token ",
+            token = "dummy",
             cUserId = " 123456789 ",
             accountId = " 123456789 ",
             detectedPhones = listOf("13800000000", "not-a-phone", "13800000000")
