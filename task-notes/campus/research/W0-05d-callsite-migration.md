@@ -1,6 +1,6 @@
 # W0-05-d CampusRepository 调用方迁移路径与 facade 收口评估
 
-> 基线：c8 合入后的 `origin/main`（4c12c041）。本批分支只迁移第一个内聚调用方簇 `feature/grades`，不全仓改写。  
+> 基线：c8 合入后的 `origin/main`（4c12c041）。本批分支只迁移第一个内聚调用方簇 `feature/grades`，不全仓改写。
 > 统计口径：精确词法引用 `CampusRepository`（排除 `CampusRepositoryPrefKeys` / `CampusRepositoryEnvironment` 等同前缀符号）；它是迁移工作量信号，不等同于唯一运行期调用次数。
 
 ## 1. c8 后全仓调用点盘点（迁移前）
@@ -17,7 +17,7 @@
 | feature/timetable | 1 | 12 | 1 | 24 | 依赖 7 个 facade nested RestoreCommand 类型 |
 | feature/today | 1 | 20 | 3 | 38 | 最宽 UI 簇；依赖同一组 nested RestoreCommand 类型 |
 
-迁移前全仓精确引用：93 个 Kotlin 文件、428 行；其中 `core/database` 生产 78 行、测试 203 行。生产层仓库外热点合计 144 行。  
+迁移前全仓精确引用：93 个 Kotlin 文件、428 行；其中 `core/database` 生产 78 行、测试 203 行。生产层仓库外热点合计 144 行。
 本批迁移后：90 个文件、421 行；`feature/grades` 生产代码精确引用降为 **0**。`core/database` 测试仍是最大兼容面，需最后迁移或随 facade 退役删除。
 
 ## 2. 任务卡与 R05 终态约束
