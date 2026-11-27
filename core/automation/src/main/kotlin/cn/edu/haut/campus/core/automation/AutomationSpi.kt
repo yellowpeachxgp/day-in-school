@@ -15,7 +15,17 @@ interface ArmContext {
     val timelineService: TimelineService?
     val domainEventBus: DomainEventBus?
 
-    /** 触发一次规则实例。DomainEvent 触发必须传 event；引擎会忽略传入 key 并用 eventId 强制派生实例身份。 */
+    /**
+     * 触发一次规则实例。event 的 null 语义按规则触发器类型区分：
+     *
+     * - OnEvent（DomainEvent 驱动）规则必须携带非空 event，且事件类型与 filter 必须满足规则声明；
+     *   event=null 的 OnEvent 触发只能是实现错误或绕过 eventId 去重的尝试，会被 fail-closed 拒绝
+     *   （实现方应在 fire 边界拒绝，引擎入口仍会复核），且不消耗 dedupe、不产生运行记录。
+     * - 非 OnEvent 触发器（定时、课前、阈值、地理围栏回执、插件等）不由 DomainEvent 驱动，
+     *   event=null 是合法语义；若实现方附带事件上下文，引擎同样按 eventId 强制派生实例身份。
+     *
+     * 引擎会忽略传入 key 并用 eventId 强制派生实例身份；改写 key 不能让同一事件获得第二次执行权。
+     */
     suspend fun fire(
         triggerInstanceKey: String,
         firedAt: Instant,

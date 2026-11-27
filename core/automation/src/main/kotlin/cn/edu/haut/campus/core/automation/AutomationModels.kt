@@ -196,6 +196,8 @@ data class AutomationRule(
 /**
  * 一次触发实例。DomainEvent 触发时 triggerInstanceKey 只是调用方提示；引擎入口会强制用 eventId 重新派生，
  * 因此改写传入 key 不能让同一事件获得第二次执行权，outbox 重投也不会重复执行。
+ * OnEvent 规则的实例必须携带 event 且事件类型/filter 满足规则声明；event=null 或事件不匹配的
+ * OnEvent 触发在任何 dedupe/run 写入之前被引擎 fail-closed 拒绝，不消耗合法事件的执行权。
  */
 data class TriggerInstance(
     val ruleId: String,

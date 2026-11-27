@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.automation
 import cn.edu.haut.campus.core.events.DomainEvent
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.json.Json
+import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.timeline.LocalTimeWindow
 import java.time.Clock
 import java.time.Duration
@@ -441,6 +442,180 @@ class DefaultAutomationEngineTest {
         assertTrue("改写 key 的重放必须命中同一个 eventId 派生键", replay is TriggerExecutionResult.Duplicate)
         assertEquals(1, action.calls.size)
         assertEquals(1, harness.engine.runs(rule.id).first().size)
+    }
+
+    @Test
+    fun onEventTriggerWithoutEventIsFailClosedRejectedBeforeDedupe() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(
+            actionExecutor = action,
+            triggerTypes = setOf(TriggerSpec.OnEvent.TYPE)
+        )
+        val rule = AutomationTestFixtures.rule(trigger = TriggerSpec.OnEvent(eventType = "data.stale"))
+        harness.ruleStore.upsert(rule)
+
+        val directError = runCatching {
+            harness.engine.executeTrigger(TriggerInstance(rule.id, "no-event-key", firedAt))
+        }.exceptionOrNull()
+        val manualError = runCatching {
+            harness.engine.onTrigger(rule.id, "manual-no-event-key")
+        }.exceptionOrNull()
+
+        assertTrue(directError is OnEventTriggerMissingEventException)
+        assertTrue(manualError is OnEventTriggerMissingEventException)
+        assertTrue(directError?.message?.contains(rule.id) == true)
+        assertEquals("无 event 的 OnEvent 触发不得执行动作", 0, action.calls.size)
+        assertEquals("拒绝发生在 dedupe 写入之前，不消耗任何执行权", 0, harness.dedupeStore.count())
+        assertEquals(emptyList<AutomationRun>(), harness.engine.runs(rule.id).first())
+    }
+
+    @Test
+    fun onEventTriggerEventTypeMismatchIsRejected() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(
+            actionExecutor = action,
+            triggerTypes = setOf(TriggerSpec.OnEvent.TYPE)
+        )
+        val rule = AutomationTestFixtures.rule(trigger = TriggerSpec.OnEvent(eventType = "data.stale"))
+        harness.ruleStore.upsert(rule)
+        val wrongTypeEvent = DomainEvent.GeofenceTransition(
+            eventId = "geo-event-type-mismatch",
+            scope = AutomationTestFixtures.scope,
+            occurredAt = firedAt,
+            campusId = AutomationTestFixtures.scope.campusId,
+            enter = true,
+            accuracyMeters = 15f
+        )
+
+        val error = runCatching {
+            harness.engine.executeTrigger(DomainEventTriggerSupport.triggerInstance(rule.id, wrongTypeEvent))
+        }.exceptionOrNull()
+
+        assertTrue(error is OnEventTriggerEventMismatchException)
+        assertTrue(error?.message?.contains("geofence.transition") == true)
+        assertTrue(error?.message?.contains("data.stale") == true)
+        assertEquals(0, action.calls.size)
+        assertEquals(0, harness.dedupeStore.count())
+        assertEquals(emptyList<AutomationRun>(), harness.engine.runs(rule.id).first())
+    }
+
+    @Test
+    fun onEventTriggerFilterMismatchIsRejected() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(
+            actionExecutor = action,
+            triggerTypes = setOf(TriggerSpec.OnEvent.TYPE)
+        )
+        val rule = AutomationTestFixtures.rule(
+            trigger = TriggerSpec.OnEvent(
+                eventType = "data.stale",
+                filter = JsonValue.Obj(
+                    mapOf("capability" to JsonValue.Str("GRADES_READ"))
+                )
+            )
+        )
+        harness.ruleStore.upsert(rule)
+        val filterMismatchedEvent = DomainEvent.DataStale(
+            eventId = "stale-event-filter-mismatch",
+            scope = AutomationTestFixtures.scope,
+            occurredAt = firedAt,
+            capability = CapabilityKind.TIMETABLE_READ,
+            since = firedAt.minusSeconds(600)
+        )
+
+        val error = runCatching {
+            harness.engine.executeTrigger(DomainEventTriggerSupport.triggerInstance(rule.id, filterMismatchedEvent))
+        }.exceptionOrNull()
+
+        assertTrue(error is OnEventTriggerEventMismatchException)
+        assertTrue(error?.message?.contains("filter") == true)
+        assertEquals(0, action.calls.size)
+        assertEquals(0, harness.dedupeStore.count())
+    }
+
+    @Test
+    fun arbitraryKeyNullEventReplayNeverExecutesAndDoesNotPoisonLegitimateEvent() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(
+            actionExecutor = action,
+            triggerTypes = setOf(TriggerSpec.OnEvent.TYPE)
+        )
+        val rule = AutomationTestFixtures.rule(trigger = TriggerSpec.OnEvent(eventType = "data.stale"))
+        harness.ruleStore.upsert(rule)
+        val event = DomainEvent.DataStale(
+            eventId = "stale-event-after-replay",
+            scope = AutomationTestFixtures.scope,
+            occurredAt = firedAt,
+            capability = CapabilityKind.TIMETABLE_READ,
+            since = firedAt.minusSeconds(600)
+        )
+        // 攻击者/错误调用方预先知道合法事件将使用的派生键，并混合任意 key 做无 event 重放。
+        val replayKeys = (1..12).map { "attacker-key-" + it } +
+            DomainEventTriggerSupport.triggerInstanceKey(event)
+
+        replayKeys.forEach { key ->
+            val error = runCatching {
+                harness.engine.executeTrigger(TriggerInstance(rule.id, key, firedAt))
+            }.exceptionOrNull()
+            assertTrue("任意 key 无 event 重放必须被拒绝: " + key, error is OnEventTriggerMissingEventException)
+        }
+
+        assertEquals("重放不得执行任何动作", 0, action.calls.size)
+        assertEquals("重放不得消耗 dedupe", 0, harness.dedupeStore.count())
+        assertEquals(emptyList<AutomationRun>(), harness.engine.runs(rule.id).first())
+
+        val legitimate = harness.engine.executeTrigger(DomainEventTriggerSupport.triggerInstance(rule.id, event))
+
+        assertTrue("拒绝不消耗执行权，合法事件到达后仍能正常执行", legitimate is TriggerExecutionResult.Executed)
+        assertEquals(RunStatus.EXECUTED, (legitimate as TriggerExecutionResult.Executed).run.status)
+        assertEquals(1, action.calls.size)
+        assertEquals(1, harness.engine.runs(rule.id).first().size)
+    }
+
+    @Test
+    fun expiredLeaseConcurrentRecoverersExactlyOneWinsExecution() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val mutableClock = MutableClock(clockNow)
+        val recoveringRunStore = FailOnceAppendRunStore(InMemoryAutomationRunStore())
+        val lease = Duration.ofSeconds(30)
+        val harness = newHarness(
+            actionExecutor = action,
+            runStore = recoveringRunStore,
+            clock = mutableClock,
+            pendingLease = lease
+        )
+        val rule = AutomationTestFixtures.rule()
+        harness.ruleStore.upsert(rule)
+        val instance = TriggerInstance(rule.id, "lease-race-instance", firedAt)
+        val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
+
+        val crash = runCatching { harness.engine.executeTrigger(instance) }.exceptionOrNull()
+        assertTrue(crash is IllegalStateException)
+        assertEquals(1, action.calls.size)
+
+        mutableClock.advance(lease.plusSeconds(1))
+        val results = (1..8).map {
+            async(Dispatchers.Default) {
+                harness.engine.executeTrigger(instance.copy(firedAt = firedAt.plusSeconds(90)))
+            }
+        }.awaitAll()
+
+        assertEquals(
+            "lease 过期后并发恢复者必须原子竞争，恰好一个获得执行权",
+            1,
+            results.filterIsInstance<TriggerExecutionResult.Executed>().size
+        )
+        assertEquals(7, results.filterIsInstance<TriggerExecutionResult.Duplicate>().size)
+        assertEquals("只有获胜恢复者补执行一次动作", 2, action.calls.size)
+        assertEquals(1, harness.dedupeStore.count())
+        assertEquals(1, harness.engine.runs(rule.id).first().size)
+        val record = harness.dedupeStore.find(dedupeKey) ?: error("恢复后 dedupe 应存在")
+        assertEquals(AutomationDedupeState.RUN_RECORDED, record.state)
+        assertEquals(
+            "并发恢复保持 runId 稳定，动作实现可对副作用幂等",
+            action.contexts[0].runId,
+            action.contexts[1].runId
+        )
     }
 
     private fun newHarness(

@@ -30,12 +30,25 @@ object DomainEventTriggerSupport {
         spec: TriggerSpec.OnEvent,
         event: DomainEvent,
         registry: DomainEventCodecRegistry = DomainEventCodecRegistry.DEFAULT
-    ): Boolean {
+    ): Boolean = inconsistencyReason(spec, event, registry) == null
+
+    /**
+     * 事件与 OnEvent 规则声明的一致性校验。返回 null 表示事件类型与 filter 都满足规则声明；
+     * 否则返回不一致原因。原因只携带事件类型名与声明类型名，不携带 payload 内容，
+     * 可以安全进入异常消息与审计日志。
+     */
+    fun inconsistencyReason(
+        spec: TriggerSpec.OnEvent,
+        event: DomainEvent,
+        registry: DomainEventCodecRegistry = DomainEventCodecRegistry.DEFAULT
+    ): String? {
         val envelope = registry.encode(event)
-        if (envelope.eventType != spec.eventType) return false
-        val filter = spec.filter ?: return true
+        if (envelope.eventType != spec.eventType) {
+            return "事件类型 " + envelope.eventType + " 与规则声明的 eventType " + spec.eventType + " 不一致"
+        }
+        val filter = spec.filter ?: return null
         val payload = Json.parse(envelope.payload.text)
-        return jsonSubsetMatches(filter, payload)
+        return if (jsonSubsetMatches(filter, payload)) null else "事件 payload 不满足规则声明的 filter"
     }
 
     private fun jsonSubsetMatches(expected: JsonValue, actual: JsonValue): Boolean {

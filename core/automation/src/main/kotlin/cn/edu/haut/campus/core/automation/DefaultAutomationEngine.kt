@@ -15,6 +15,21 @@ class AutomationRuleNotFoundException(ruleId: String) :
 class CrossScopeAutomationException(ruleId: String) :
     IllegalArgumentException("触发事件与自动化规则 scope 不一致: " + ruleId)
 
+/**
+ * OnEvent 规则的触发实例必须携带 DomainEvent。无 event 的 OnEvent 触发只能是实现错误或
+ * 绕过 eventId 去重的尝试：fail-closed 在 dedupe/run 写入之前拒绝，不消耗任何执行权，
+ * 因此合法事件随后到达时仍能正常执行。异常消息即为拒绝原因。
+ */
+class OnEventTriggerMissingEventException(ruleId: String) :
+    IllegalArgumentException("OnEvent 规则触发必须携带 DomainEvent，拒绝无 event 触发: " + ruleId)
+
+/**
+ * OnEvent 规则触发携带的事件必须与规则声明的 eventType/filter 一致。不匹配说明调用方
+ * 绕过了订阅侧过滤，fail-closed 在 dedupe/run 写入之前拒绝。reason 不携带 payload 内容。
+ */
+class OnEventTriggerEventMismatchException(ruleId: String, reason: String) :
+    IllegalArgumentException("OnEvent 规则触发事件与规则声明不一致: " + ruleId + "；" + reason)
+
 sealed interface TriggerExecutionResult {
     data class Executed(val run: AutomationRun) : TriggerExecutionResult
     data class Duplicate(val dedupeKey: String, val existingRun: AutomationRun?) : TriggerExecutionResult
@@ -24,10 +39,18 @@ interface AutomationEngine {
     /** 试运行：求值规则并预览动作，但不调用 ActionExecutor、不写 dedupe/run store。 */
     suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun
 
-    /** 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。 */
+    /**
+     * 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。
+     * 本入口不携带事件，只适用于非 OnEvent 触发器；OnEvent 规则必须走 executeTrigger 并携带
+     * DomainEvent，否则按 OnEventTriggerMissingEventException fail-closed 拒绝。
+     */
     suspend fun onTrigger(ruleId: String, triggerInstanceKey: String)
 
-    /** 带事件的完整触发入口；DomainEvent key 由 eventId 强制派生，重复实例返回 Duplicate，不追加第二份运行记录。 */
+    /**
+     * 带事件的完整触发入口；DomainEvent key 由 eventId 强制派生，重复实例返回 Duplicate，不追加第二份运行记录。
+     * OnEvent 规则的实例必须携带与规则声明 eventType/filter 一致的事件，否则在任何 dedupe/run
+     * 写入之前 fail-closed 拒绝；因此被拒绝的调用不会消耗合法事件的执行权。
+     */
     suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult
 
     fun runs(ruleId: String): Flow<List<AutomationRun>>
@@ -78,10 +101,8 @@ class DefaultAutomationEngine(
     }
 
     override suspend fun executeTrigger(instance: TriggerInstance): TriggerExecutionResult {
-        val boundInstance = bindDomainEventInstance(instance)
-        val rule = ruleStore.get(boundInstance.ruleId) ?: throw AutomationRuleNotFoundException(boundInstance.ruleId)
-        val event = boundInstance.event
-        if (event != null && event.scope != rule.scope) throw CrossScopeAutomationException(rule.id)
+        val rule = ruleStore.get(instance.ruleId) ?: throw AutomationRuleNotFoundException(instance.ruleId)
+        val boundInstance = bindDomainEventInstance(rule, instance)
 
         val dedupeKey = AutomationKeys.dedupeKey(rule.id, boundInstance.triggerInstanceKey, rule.dedupe, boundInstance.firedAt)
         val runId = AutomationKeys.runId(rule.id, boundInstance.triggerInstanceKey)
@@ -131,11 +152,32 @@ class DefaultAutomationEngine(
     override fun runs(ruleId: String): Flow<List<AutomationRun>> = runStore.runs(ruleId)
 
     /**
-     * DomainEvent 的实例身份只能由 eventId 派生。即使调用方传入伪造或被改写的 key，
-     * 引擎也会用同一个确定性 key 计算 dedupe/run/context，重放不会获得新的执行权。
+     * DomainEvent 触发绑定是 fail-closed 边界，全部校验都在 dedupe/run 写入之前完成：
+     *
+     * - OnEvent 规则的实例必须携带事件；event=null 时用任意 key 反复调用都只会得到
+     *   [OnEventTriggerMissingEventException]，不会执行动作、不会消耗 dedupe，合法事件到达后仍能执行。
+     * - 携带的事件 scope 必须与规则一致；OnEvent 规则还要求事件类型与 filter
+     *   满足规则声明，否则说明调用方绕过了订阅侧过滤。
+     * - 实例身份只能由 eventId 派生。即使调用方传入伪造或被改写的 key，
+     *   引擎也会用同一个确定性 key 计算 dedupe/run/context，重放不会获得新的执行权。
+     *
+     * 非 OnEvent 触发器（定时、课前、阈值、地理围栏回执、插件等）不由 DomainEvent 驱动，
+     * event=null 是合法语义，实例身份按调用方 key 派生；若附带事件上下文则同样强制 eventId 派生。
      */
-    private fun bindDomainEventInstance(instance: TriggerInstance): TriggerInstance {
-        val event = instance.event ?: return instance
+    private fun bindDomainEventInstance(rule: AutomationRule, instance: TriggerInstance): TriggerInstance {
+        val event = instance.event
+        val onEvent = rule.trigger as? TriggerSpec.OnEvent
+        if (onEvent != null && event == null) {
+            throw OnEventTriggerMissingEventException(rule.id)
+        }
+        if (event == null) return instance
+        if (event.scope != rule.scope) throw CrossScopeAutomationException(rule.id)
+        if (onEvent != null) {
+            val inconsistency = DomainEventTriggerSupport.inconsistencyReason(onEvent, event)
+            if (inconsistency != null) {
+                throw OnEventTriggerEventMismatchException(rule.id, inconsistency)
+            }
+        }
         val boundKey = DomainEventTriggerSupport.triggerInstanceKey(event)
         return if (instance.triggerInstanceKey == boundKey) {
             instance
