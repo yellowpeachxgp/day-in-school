@@ -1211,6 +1211,13 @@ internal fun TimetableEditingDialogs(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    writeLifecycle.errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     for (t in terms) {
                         val isCurrent = t.id == term?.id
                         val count = rules.count { it.termId == t.id }
@@ -1270,7 +1277,7 @@ internal fun TimetableEditingDialogs(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    (dateError ?: writeLifecycle.errorMessage)?.let { message ->
+                    dateError?.let { message ->
                         Text(
                             text = message,
                             style = MaterialTheme.typography.labelSmall,
