@@ -420,27 +420,81 @@ internal object SyntheticBenchmarkGenerator {
         required: List<String>
     ): String {
         val candidates = problem.candidates.sortedBy { it.id }.joinToString(separator = ",") { candidate ->
-            val slots = candidate.slots.sortedWith(compareBy<SolverClassSlot> { it.weekday }.thenBy { it.startSection }).joinToString(separator = ",") { slot ->
-                "{\"endSection\":" + slot.endSection +
-                    ",\"location\":" + quote(slot.location?.let { (it.campusId?.value ?: "unknown") + "/" + (it.buildingId ?: "unknown") } ?: "unknown") +
-                    ",\"startSection\":" + slot.startSection +
-                    ",\"weekday\":" + slot.weekday +
-                    ",\"weeks\":" + quote(if (slot.weeks.isKnown) slot.weeks.weeks.sorted().joinToString("+") else "unknown") +
-                    "}"
-            }
             "{\"capacity\":" + quote(capacityText(candidate.capacity)) +
                 ",\"credits\":" + quote(candidate.credits.stripTrailingZeros().toPlainString()) +
                 ",\"id\":" + quote(candidate.id) +
                 ",\"offeringId\":" + quote(candidate.offeringId) +
-                ",\"slots\":[" + slots + "]}"
+                ",\"slots\":[" + canonicalSlots(candidate.slots) + "]}"
+        }
+        val fixed = problem.fixedOccupancy.sortedBy { it.id }.joinToString(separator = ",") { occupancy ->
+            "{\"id\":" + quote(occupancy.id) +
+                ",\"label\":" + quote(occupancy.label) +
+                ",\"slots\":[" + canonicalSlots(occupancy.slots) + "]}"
+        }
+        val hard = canonicalHardConstraints(problem.hard)
+        val soft = canonicalSoftPreferences(problem.soft)
+        val grid = problem.timeGrid
+        val periods = (1..grid.sectionsPerDay).joinToString(separator = ",") { section ->
+            val period = grid.period(section)
+            quote(section.toString() + "=" + period.start.toString() + "-" + period.end.toString())
         }
         return "{\"candidates\":[" + candidates + "]" +
             ",\"creditRange\":[" + quote(problem.creditRange.start.stripTrailingZeros().toPlainString()) + "," + quote(problem.creditRange.endInclusive.stripTrailingZeros().toPlainString()) + "]" +
             ",\"family\":" + quote(family.wireId) +
+            ",\"fixedOccupancy\":[" + fixed + "]" +
+            ",\"hard\":[" + hard + "]" +
             ",\"required\":[" + required.sorted().joinToString(separator = ",") { quote(it) } + "]" +
             ",\"seed\":" + seed +
-            ",\"size\":" + size + "}"
+            ",\"size\":" + size +
+            ",\"soft\":[" + soft + "]" +
+            ",\"timeGrid\":{\"firstWeekMonday\":" + quote(grid.firstWeekMonday.toString()) +
+            ",\"periodTimes\":[" + periods + "]" +
+            ",\"sectionsPerDay\":" + grid.sectionsPerDay +
+            ",\"weekCount\":" + grid.weekCount +
+            ",\"zone\":" + quote(grid.zone.id) + "}" +
+            ",\"travel\":" + quote("benchmark-travel-matrix-v1") + "}"
     }
+
+    private fun canonicalSlots(input: List<SolverClassSlot>): String =
+        input.sortedWith(compareBy<SolverClassSlot> { it.weekday }.thenBy { it.startSection }.thenBy { it.endSection })
+            .joinToString(separator = ",") { slot -> canonicalSlot(slot) }
+
+    private fun canonicalSlot(slot: SolverClassSlot): String =
+        "{\"endSection\":" + slot.endSection +
+            ",\"location\":" + quote(slot.location?.let { (it.campusId?.value ?: "unknown") + "/" + (it.buildingId ?: "unknown") } ?: "unknown") +
+            ",\"startSection\":" + slot.startSection +
+            ",\"weekday\":" + slot.weekday +
+            ",\"weeks\":" + quote(if (slot.weeks.isKnown) slot.weeks.weeks.sorted().joinToString("+") else "unknown") +
+            "}"
+
+    private fun canonicalHardConstraints(hard: List<HardConstraint>): String =
+        hard.sortedBy { it.ref.id }.joinToString(separator = ",") { constraint ->
+            val details = when (constraint) {
+                is HardConstraint.RequireOffering -> "{\"offeringId\":" + quote(constraint.offeringId) + "}"
+                is HardConstraint.CapacityPolicy -> "{\"allowUnknown\":" + constraint.allowUnknown + ",\"excludeFull\":" + constraint.excludeFull + "}"
+                is HardConstraint.TimeExclusion -> "{\"slots\":[" + canonicalSlots(constraint.slots) + "]}"
+                is HardConstraint.CampusRestriction -> "{\"allowedCampusIds\":[" + constraint.allowedCampusIds.map { it.value }.sorted().joinToString(separator = ",") { quote(it) } + "]}"
+                is HardConstraint.MutualExclusion -> "{\"offeringIds\":[" + constraint.offeringIds.sorted().joinToString(separator = ",") { quote(it) } + "]}"
+                is HardConstraint.CommutePolicy -> "{\"bufferMinutes\":" + constraint.bufferMinutes + ",\"unknownTravel\":" + quote(constraint.unknownTravel.name) + "}"
+            }
+            "{\"details\":" + details + ",\"id\":" + quote(constraint.ref.id) + ",\"kind\":" + quote(constraint.ref.kind.name) + "}"
+        }
+
+    private fun canonicalSoftPreferences(soft: List<WeightedPreference>): String =
+        soft.sortedBy { it.id }.joinToString(separator = ",") { preference ->
+            val type = when (preference) {
+                is WeightedPreference.EarlySection -> "early-section:" + preference.latestEarlySection + ":" + preference.costPerOccurrenceMilli
+                is WeightedPreference.LateSection -> "late-section:" + preference.firstLateSection + ":" + preference.costPerOccurrenceMilli
+                is WeightedPreference.GapTime -> "gap-time:" + preference.costPerHourMilli
+                is WeightedPreference.TravelTime -> "travel-time:" + preference.costPerMinuteMilli
+                is WeightedPreference.DailyLoad -> "daily-load:" + preference.maxSectionsPerDay + ":" + preference.costPerExtraSectionMilli
+                is WeightedPreference.UnknownCapacityRisk -> "unknown-capacity-risk:" + preference.costPerClassMilli
+                is WeightedPreference.UnknownWeeksRisk -> "unknown-weeks-risk:" + preference.costPerClassMilli
+                is WeightedPreference.CandidatePenalty -> "candidate-penalty:" + preference.candidateIds.sorted().joinToString("+") + ":" + preference.costPerOccurrenceMilli
+            }
+            "{\"id\":" + quote(preference.id) + ",\"label\":" + quote(preference.label) + ",\"type\":" + quote(type) + "}"
+        }
+
 
     private fun capacityText(capacity: ClassCapacity): String = when (capacity) {
         ClassCapacity.Unknown -> "unknown"
