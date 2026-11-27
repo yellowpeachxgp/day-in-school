@@ -93,6 +93,15 @@ class PeriodTimeEditorTest {
         assertTrue(issues.any { it.code == "EMPTY_WEEKS" })
         assertTrue(issues.any { it.code == "BLANK_ROOM" })
         assertTrue(issues.any { it.code == "REVERSED_CUSTOM_TIME" })
+
+        val overlapping = PeriodTimeEditor.validateOccurrenceRules(
+            listOf(
+                OccurrenceRule(DayOfWeek.MONDAY, 1, 4, setOf(14, 15), "场地A"),
+                OccurrenceRule(DayOfWeek.MONDAY, 3, 5, setOf(15), "场地B"),
+                OccurrenceRule(DayOfWeek.MONDAY, 5, 6, setOf(15), "场地C")
+            )
+        )
+        assertTrue(overlapping.any { it.code == "OVERLAPPING_OCCURRENCE" })
     }
 
     @Test

@@ -122,6 +122,18 @@ object PeriodTimeEditor {
             return issues
         }
         val seen = linkedSetOf<String>()
+        for ((index, rule) in rules.withIndex()) {
+            for (other in rules.drop(index + 1)) {
+                val overlapsTime = rule.startPeriod <= other.endPeriod && other.startPeriod <= rule.endPeriod
+                if (rule.weekday == other.weekday && overlapsTime && rule.weeks.intersect(other.weeks).isNotEmpty()) {
+                    issues += ValidationIssue(
+                        "OVERLAPPING_OCCURRENCE",
+                        "同一星期与周次的实践课时间段重叠",
+                        maxOf(rule.startPeriod, other.startPeriod)
+                    )
+                }
+            }
+        }
         for (rule in rules) {
             if (rule.startPeriod !in 1..MAX_PERIOD_NO || rule.endPeriod !in 1..MAX_PERIOD_NO) {
                 issues += ValidationIssue("PERIOD_OUT_OF_RANGE", "节次必须在 1-${MAX_PERIOD_NO} 之间", rule.startPeriod)
