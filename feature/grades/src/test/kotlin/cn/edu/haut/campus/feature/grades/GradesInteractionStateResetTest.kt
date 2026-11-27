@@ -10,11 +10,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * W0-06a 审阅阻断回归：底栏切换离开组合后，筛选/分段/展开/模拟器输入等
  * 纯界面状态必须重置（与拆分前 remember 生命周期一致，不得随 Activity 级 VM 保留）。
+ * Robolectric 仅为 compose runtime 提供 android.os.Trace 等影子实现，组合本身纯 JVM 同步驱动。
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class GradesInteractionStateResetTest {
 
     @Test
