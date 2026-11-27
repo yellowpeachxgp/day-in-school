@@ -217,10 +217,14 @@ class PdfBoxTextExtractorTest {
         val stripper = constructor.newInstance()
         val document = PDDocument.load(pdfBytes)
         try {
+            val beadSummary = document.getPage(0).threadBeads.mapIndexed { index, bead ->
+                val rect = bead.rectangle
+                "b" + index + "[x" + rect.lowerLeftX + ".." + rect.upperRightX + ",y" + rect.lowerLeftY + ".." + rect.upperRightY + "]"
+            }.joinToString(",")
             val getText = stripperClass.methods.first { it.name == "getText" && it.parameterCount == 1 }
             getText.invoke(stripper, document)
             val drafts = readField(stripper, "lineDrafts") as List<*>
-            return drafts.joinToString(prefix = "drafts=", separator = "|") { draft ->
+            return drafts.joinToString(prefix = "beads=" + beadSummary + ";drafts=", separator = "|") { draft ->
                 val pieces = readField(draft!!, "pieces") as List<*>
                 val text = pieces.joinToString("") { piece -> readField(piece!!, "text") as String }
                 val glyphs = pieces.flatMap { piece -> readField(piece!!, "glyphs") as List<*> }
