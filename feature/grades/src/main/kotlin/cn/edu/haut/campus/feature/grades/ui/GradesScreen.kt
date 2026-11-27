@@ -67,11 +67,14 @@ import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.GpaCalculator
+import cn.edu.haut.campus.feature.grades.state.GradesScreenStatus
 import cn.edu.haut.campus.feature.grades.state.GradesUiAction
 import cn.edu.haut.campus.feature.grades.state.GradesUiState
 import cn.edu.haut.campus.feature.grades.ui.components.AcademicPlanProgressSection
 import cn.edu.haut.campus.feature.grades.ui.components.ExamScheduleRowItem
 import cn.edu.haut.campus.feature.grades.ui.components.GpaCompactStat
+import cn.edu.haut.campus.feature.grades.ui.components.GradesStatusBanner
+import cn.edu.haut.campus.feature.grades.ui.components.GradesStatusScaffold
 import cn.edu.haut.campus.feature.grades.ui.components.SelectionDraftSection
 import cn.edu.haut.campus.feature.grades.ui.components.TermTrendChart
 import cn.edu.haut.campus.core.domain.SchoolDirectory
@@ -108,6 +111,31 @@ import java.time.ZonedDateTime
 
 @Composable
 fun GradesScreen(
+    state: GradesUiState,
+    onAction: (GradesUiAction) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    when (state.status) {
+        GradesScreenStatus.LOADING,
+        GradesScreenStatus.ERROR_RETRYABLE,
+        GradesScreenStatus.ERROR_TERMINAL,
+        GradesScreenStatus.NEEDS_PERMISSION,
+        GradesScreenStatus.NEEDS_LOGIN,
+        GradesScreenStatus.UNSUPPORTED -> GradesStatusScaffold(
+            status = state.status,
+            onAction = onAction,
+            modifier = modifier
+        )
+        else -> GradesLegacyContent(
+            state = state,
+            onAction = onAction,
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
+private fun GradesLegacyContent(
     state: GradesUiState,
     onAction: (GradesUiAction) -> Unit,
     modifier: Modifier = Modifier
@@ -218,6 +246,11 @@ fun GradesScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            GradesStatusBanner(
+                status = state.status,
+                modifier = Modifier.fillMaxWidth()
+            )
+
             if (attempts.isEmpty()) {
                 XPeachCard {
                     Row(
