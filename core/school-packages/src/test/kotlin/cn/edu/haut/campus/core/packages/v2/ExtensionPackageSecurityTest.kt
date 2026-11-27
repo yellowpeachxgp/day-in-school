@@ -68,6 +68,17 @@ class ExtensionPackageSecurityTest {
             ExtensionPackageVerifier.verify(valid.toByteArray(), mapOf("dist/data.txt" to "tampered".toByteArray()), registry)
         }
 
+        assertPackageError(PackageError.FILE_UNLISTED) {
+            ExtensionPackageVerifier.verify(
+                valid.toByteArray(),
+                mapOf(
+                    "dist/data.txt" to artifact,
+                    "dist/undeclared.txt" to "not covered by the signed manifest".toByteArray()
+                ),
+                registry
+            )
+        }
+
         val otherKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
         val unknownRegistry = PublisherKeyRegistry(mapOf("other-publisher" to Ed25519.toRaw(otherKey.public)))
         assertPackageError(PackageError.SIGNATURE_UNTRUSTED_PUBLISHER) {
