@@ -69,6 +69,9 @@ class PdfBoxTextExtractorTest {
             PdfExtractionRequest(pdfBytes, TextExtractionContext.synthetic())
         )
 
+        val lineSummary = result.lines.map { it.pageIndex.toString() + ":" + it.text }
+        assertTrue("未抽出普通页文本: " + lineSummary, result.lines.any { it.text.contains("First page") })
+        assertTrue("未抽出旋转页文本: " + lineSummary, result.lines.any { it.text.contains("Rotated page") })
         val first = result.lines.single { it.text.contains("First page") }
         val rotated = result.lines.single { it.text.contains("Rotated page") }
         assertEquals(0, first.pageIndex)
