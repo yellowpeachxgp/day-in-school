@@ -1,7 +1,6 @@
 package cn.edu.haut.campus.feature.timetable
 
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -91,7 +90,7 @@ class TimetableWriteFailureUiTest {
         )
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("写入失败：测试").assertExists()
+        composeRule.onNodeWithText("写入失败：测试").fetchSemanticsNode()
         composeRule.onNodeWithText("学期与校历").assertIsDisplayed()
         assertFalse(dismissed)
         assertTrue(
