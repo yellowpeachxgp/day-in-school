@@ -11,14 +11,14 @@ class ExtensionSlotHostIntegrationGuardTest {
         val repoRoot = File("../..").canonicalFile
         fun text(path: String) = File(repoRoot, path).readText()
 
-        assertTrue(text("feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayExtensionSlot.kt").contains(""home.cards""))
+        assertTrue(text("feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayExtensionSlot.kt").contains("home.cards"))
         assertTrue(text("feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayScreen.kt").contains("TodayExtensionSlot("))
-        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/schoolcenter/SchoolCenterRoute.kt").contains(""campus.services""))
-        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/library/seat/LibrarySeatRoute.kt").contains(""library.actions""))
+        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/schoolcenter/SchoolCenterRoute.kt").contains("campus.services"))
+        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/library/seat/LibrarySeatRoute.kt").contains("library.actions"))
         val parcel = text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/parcel/ParcelHubRoute.kt")
-        assertTrue(parcel.contains(""parcel.cards""))
-        assertTrue(parcel.contains(""parcel.providers""))
-        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeRouteSection.kt").contains(""settings.entries""))
+        assertTrue(parcel.contains("parcel.cards"))
+        assertTrue(parcel.contains("parcel.providers"))
+        assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeRouteSection.kt").contains("settings.entries"))
     }
 
     @Test
