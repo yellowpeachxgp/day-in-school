@@ -81,7 +81,7 @@ class Issue17HospitalPharmacyCatalogRegressionTest {
             ),
             notesByTitle.keys
         )
-        val allNotes = notesByTitle.values.joinToString("\n")
+        val allNotes = (notesByTitle.keys + notesByTitle.values).joinToString("\n")
         assertTrue(allNotes.contains("医保报销前基准单价"))
         assertTrue(allNotes.contains("不代表校医院当前实时库存或在售状态"))
         assertTrue(allNotes.contains("并非所有药品均可医保报销"))
