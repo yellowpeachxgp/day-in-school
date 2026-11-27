@@ -3,8 +3,11 @@ package cn.edu.haut.campus.feature.map
 import cn.edu.haut.campus.feature.map.preview.MapPreviewFixtures
 import cn.edu.haut.campus.feature.map.preview.MapPreviewScenario
 import cn.edu.haut.campus.feature.map.state.MapUiState
+import cn.edu.haut.campus.feature.map.tiles.CampusTileCache
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.AfterClass
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,6 +19,20 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [36], qualifiers = RobolectricDeviceQualifiers.Pixel5)
 class CampusMapScreenshotTest {
+    companion object {
+        @BeforeClass
+        @JvmStatic
+        fun disableNondeterministicTileLoading() {
+            CampusTileCache.tileLoadingEnabled = false
+        }
+
+        @AfterClass
+        @JvmStatic
+        fun restoreTileLoading() {
+            CampusTileCache.tileLoadingEnabled = true
+        }
+    }
+
     @Test fun content() = capture(MapPreviewFixtures.content)
     @Test fun needsLocationPermission() = capture(MapPreviewFixtures.needsLocationPermission)
     @Test fun tilesLoading() = capture(MapPreviewFixtures.tilesLoading)

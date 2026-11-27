@@ -191,6 +191,12 @@ import kotlin.math.tan
 internal object CampusTileCache {
     private val coordinator = CampusTileCacheCoordinator<ImageBitmap>(maxMemoryEntries = 360)
 
+    /**
+     * 截图测试确定性开关。生产代码从不修改它，默认 true 时保持原瓦片加载行为。
+     */
+    @Volatile
+    internal var tileLoadingEnabled: Boolean = true
+
     fun clearFailureCooldowns() {
         coordinator.clearFailureCooldowns()
     }
@@ -213,6 +219,7 @@ internal object CampusTileCache {
         onLoaded: () -> Unit,
         onCooldownScheduled: ((Long) -> Unit)? = null
     ) {
+        if (!tileLoadingEnabled) return
         coordinator.loadTileIfNeeded(
             styleMode = styleMode,
             z = z,
