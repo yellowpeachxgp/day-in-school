@@ -79,7 +79,7 @@ object DeclarativeCommandGate {
         allowedHostRoutes: Set<String>
     ): DeclarativeCommandDecision {
         val route = declaration.route ?: return DeclarativeCommandDecision.Blocked(TARGET_INVALID, "open_host_route 缺少 route")
-        if (route.isBlank() || route.length > 120 || route.any { it.isISOControl() || it == '\' || it == ' ' }) {
+        if (route.isBlank() || route.length > 120 || route.any { it.isISOControl() || it == '\\' || it == ' ' }) {
             return DeclarativeCommandDecision.Blocked(TARGET_INVALID, "open_host_route route 格式非法")
         }
         if (route !in allowedHostRoutes) {
