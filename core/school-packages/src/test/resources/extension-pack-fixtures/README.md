@@ -1,8 +1,9 @@
 # extension-pack-fixtures：云端 dis-plugin pack 产出的 ZIP 校验联动夹具
 
 > W6-01b / AC-42。本目录的夹具由云端 `cloud-in-school` 仓库 `packages/plugin-sdk` 的
-> `dis-plugin` CLI 真实产出，用于验证「pack 生成的 ZIP 可被 Android 的校验链消费」。
-> 完整的 Android 安装链路（原子写入、授权登记、数据库）属于 W6-01a，不在本夹具断言范围。
+> `dis-plugin` CLI 真实产出，用于验证「pack 生成的 ZIP 可被 Android 安装链消费」。
+> 审阅返修后，测试一律经生产解包校验入口 `ExtensionPackZip`（core/school-packages src/main）
+> 消费夹具；完整的原子安装、授权登记与数据库链路属于 W6-01a，不在本夹具断言范围。
 
 ## 文件
 
