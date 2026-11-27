@@ -205,6 +205,8 @@ class TimetableViewModelDurableWriteTest {
                 }
             )
             val viewModel = TimetableViewModel(fixture.repository, executor)
+            val firstOperationKey = "operation-a"
+            val secondOperationKey = "operation-b"
 
             viewModel.onAction(
                 TimetableUiAction.AddManualCourse(
@@ -217,7 +219,7 @@ class TimetableViewModelDurableWriteTest {
                     endPeriod = 2,
                     weeks = setOf(1),
                     colorArgb = 0xFF0072BC,
-                    writeToken = "token-a"
+                    writeToken = firstOperationKey
                 )
             )
             viewModel.onAction(
@@ -231,32 +233,32 @@ class TimetableViewModelDurableWriteTest {
                     endPeriod = 4,
                     weeks = setOf(1),
                     colorArgb = 0xFF0072BC,
-                    writeToken = "token-b"
+                    writeToken = secondOperationKey
                 )
             )
             withTimeout(2_000) { firstStarted.await() }
             withTimeout(2_000) { secondStarted.await() }
-            assertEquals(setOf("token-a", "token-b"), viewModel.uiState.value.pendingWrites.map { it.token }.toSet())
+            assertEquals(setOf(firstOperationKey, secondOperationKey), viewModel.uiState.value.pendingWrites.map { it.token }.toSet())
 
             secondGate.complete(Unit)
             withTimeout(2_000) {
-                while (!viewModel.uiState.value.writeCompletions.containsKey("token-b")) yield()
+                while (!viewModel.uiState.value.writeCompletions.containsKey(secondOperationKey)) yield()
             }
-            assertFalse("同 kind 的第二次完成不得被第一次操作误消费", viewModel.uiState.value.writeCompletions.containsKey("token-a"))
-            val completionB = viewModel.uiState.value.writeCompletions.getValue("token-b")
-            assertEquals("token-b", completionB.token)
+            assertFalse("同 kind 的第二次完成不得被第一次操作误消费", viewModel.uiState.value.writeCompletions.containsKey(firstOperationKey))
+            val completionB = viewModel.uiState.value.writeCompletions.getValue(secondOperationKey)
+            assertEquals(secondOperationKey, completionB.token)
             assertTrue(completionB.isSuccess)
-            assertTrue(viewModel.uiState.value.pendingWrites.any { it.token == "token-a" })
+            assertTrue(viewModel.uiState.value.pendingWrites.any { it.token == firstOperationKey })
 
-            viewModel.onAction(TimetableUiAction.ConsumeWriteCompletion("token-b"))
-            assertFalse(viewModel.uiState.value.writeCompletions.containsKey("token-b"))
+            viewModel.onAction(TimetableUiAction.ConsumeWriteCompletion(secondOperationKey))
+            assertFalse(viewModel.uiState.value.writeCompletions.containsKey(secondOperationKey))
 
             firstGate.complete(Unit)
             withTimeout(2_000) {
-                while (!viewModel.uiState.value.writeCompletions.containsKey("token-a")) yield()
+                while (!viewModel.uiState.value.writeCompletions.containsKey(firstOperationKey)) yield()
             }
-            val completionA = viewModel.uiState.value.writeCompletions.getValue("token-a")
-            assertEquals("token-a", completionA.token)
+            val completionA = viewModel.uiState.value.writeCompletions.getValue(firstOperationKey)
+            assertEquals(firstOperationKey, completionA.token)
             assertTrue(completionA.isSuccess)
             assertTrue(viewModel.uiState.value.pendingWrites.isEmpty())
         } finally {
@@ -286,6 +288,7 @@ class TimetableViewModelDurableWriteTest {
                 }
             )
             val viewModel = TimetableViewModel(fixture.repository, executor)
+            val matrixOperationKey = "matrix-operation"
             val entity = UnscheduledAcademicCourseEntity(
                 termId = "2026-2027-1",
                 sourceKey = "matrix-source-key",
@@ -324,13 +327,13 @@ class TimetableViewModelDurableWriteTest {
                             customEndTime = LocalTime.of(16, 30)
                         )
                     ),
-                    writeToken = "matrix-token"
+                    writeToken = matrixOperationKey
                 )
             )
             withTimeout(2_000) {
-                while (!viewModel.uiState.value.writeCompletions.containsKey("matrix-token")) yield()
+                while (!viewModel.uiState.value.writeCompletions.containsKey(matrixOperationKey)) yield()
             }
-            val completion = viewModel.uiState.value.writeCompletions.getValue("matrix-token")
+            val completion = viewModel.uiState.value.writeCompletions.getValue(matrixOperationKey)
             assertEquals(TimetableWriteKind.SchedulePracticalCourseMatrix, completion.kind)
             assertTrue(completion.errorMessage, completion.isSuccess)
             assertTrue(fixture.dao.getUnscheduledCoursesSnapshot().isEmpty())
