@@ -2870,7 +2870,6 @@ class CampusRepository internal constructor(
         stopInFlightOrQueuedDelegation(planId)
     }
 
-    @Volatile
     internal var liveSeatCancelObserverForTest: ((planId: String?, bookingId: String?) -> Unit)?
         get() = libraryBookingPlanRepository.liveSeatCancelObserverForTest
         set(value) {
