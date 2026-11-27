@@ -27,8 +27,18 @@ class RoomEventOutbox(
     private val listeners = ConcurrentHashMap<Long, (OutboxEventRecord) -> Unit>()
 
     override suspend fun append(envelope: EventEnvelope): EventAppendResult {
+        val outcome = appendDeferred(envelope)
+        if (outcome.status == EventAppendStatus.APPENDED) notifyAppended(outcome.record)
+        return outcome
+    }
+
+    /**
+     * 只持久化不通知 live listener。RoomVaultJournal 在外层业务事务提交后统一补发通知，
+     * 避免嵌套事务最终回滚却把未提交事件先推给进程内消费者。
+     */
+    internal suspend fun appendDeferred(envelope: EventEnvelope): EventAppendResult {
         val encoded = CanonicalEventEnvelopeCodec.encode(envelope).text
-        val outcome = database.withTransaction {
+        return database.withTransaction {
             val existing = dao.getOutboxByEventId(envelope.eventId)
             if (existing != null) {
                 if (existing.envelopeJson != encoded) throw EventIdConflictException(envelope.eventId)
@@ -55,8 +65,6 @@ class RoomEventOutbox(
                 )
             }
         }
-        if (outcome.status == EventAppendStatus.APPENDED) notifyAppended(outcome.record)
-        return outcome
     }
 
     override suspend fun pendingUnacked(consumerGroup: String): List<OutboxEventRecord> {
@@ -97,7 +105,7 @@ class RoomEventOutbox(
         return { listeners.remove(id) }
     }
 
-    private fun notifyAppended(record: OutboxEventRecord) {
+    internal fun notifyAppended(record: OutboxEventRecord) {
         listeners.values.forEach { callback -> runCatching { callback(record) } }
     }
 

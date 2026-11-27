@@ -6,7 +6,9 @@ import cn.edu.haut.campus.core.database.EntityJournalEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalJson
 import cn.edu.haut.campus.core.events.EventEnvelope
+import cn.edu.haut.campus.core.events.EventAppendStatus
 import cn.edu.haut.campus.core.events.EventOutbox
+import cn.edu.haut.campus.core.events.OutboxEventRecord
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
@@ -81,7 +83,8 @@ class RoomVaultJournal(
         block: suspend () -> T
     ): T {
         val groupId = writeGroupId ?: idGenerator()
-        return database.withTransaction {
+        val deferredOutbox = mutableListOf<OutboxEventRecord>()
+        val outcome = database.withTransaction {
             val refs = refsProvider().distinct()
             val beforeByRef = LinkedHashMap<EntityRef, CanonicalJson?>(refs.size)
             refs.forEach { ref ->
@@ -111,13 +114,16 @@ class RoomVaultJournal(
                         actorDetail = actorDetail,
                         at = occurredAt,
                         source = source,
-                        writeGroupId = groupId
+                        writeGroupId = groupId,
+                        deferredOutbox = deferredOutbox
                     )
                     updateSearchProjection(ref, store)
                 }
             }
             result
         }
+        publishDeferredOutbox(deferredOutbox)
+        return outcome
     }
 
     override fun history(ref: EntityRef): Flow<List<EntityChange>> =
@@ -135,7 +141,9 @@ class RoomVaultJournal(
         ).map { rows -> rows.map(::toEntityChange) }
     }
 
-    override suspend fun revert(changeId: Long, actor: Actor): RevertResult = database.withTransaction {
+    override suspend fun revert(changeId: Long, actor: Actor): RevertResult {
+        val deferredOutbox = mutableListOf<OutboxEventRecord>()
+        val outcome = database.withTransaction {
         val original = dao.getJournalEntry(changeId) ?: throw MissingJournalEntryException(changeId)
         if (original.revertedByChangeId != null) {
             return@withTransaction RevertResult(
@@ -172,18 +180,22 @@ class RoomVaultJournal(
             actorDetail = "revert:" + changeId,
             at = clock(),
             source = null,
-            writeGroupId = original.writeGroupId
+            writeGroupId = original.writeGroupId,
+            deferredOutbox = deferredOutbox
         )
         updateSearchProjection(ref, store)
         val marked = dao.markJournalReverted(changeId, reversal.changeId)
         if (marked != 1) {
             throw JournalRevertInvariantException("撤销标记写入失败: changeId=" + changeId)
         }
-        RevertResult(
-            status = RevertStatus.APPLIED,
-            originalChangeId = changeId,
-            revertChangeId = reversal.changeId
-        )
+            RevertResult(
+                status = RevertStatus.APPLIED,
+                originalChangeId = changeId,
+                revertChangeId = reversal.changeId
+            )
+        }
+        publishDeferredOutbox(deferredOutbox)
+        return outcome
     }
 
     internal suspend fun recordChange(
@@ -195,7 +207,8 @@ class RoomVaultJournal(
         actorDetail: String?,
         at: Instant,
         source: SourceRef?,
-        writeGroupId: String
+        writeGroupId: String,
+        deferredOutbox: MutableList<OutboxEventRecord>? = null
     ): EntityChange {
         validateSourceScope(ref, source)
         validateSnapshotSafety(before)
@@ -235,8 +248,22 @@ class RoomVaultJournal(
             revertedByChangeId = null,
             eventId = eventId
         )
-        outbox.append(toEventEnvelope(change))
+        val envelope = toEventEnvelope(change)
+        val roomOutbox = outbox as? RoomEventOutbox
+        if (deferredOutbox != null && roomOutbox != null) {
+            val appendResult = roomOutbox.appendDeferred(envelope)
+            if (appendResult.status == EventAppendStatus.APPENDED) {
+                deferredOutbox += appendResult.record
+            }
+        } else {
+            outbox.append(envelope)
+        }
         return change
+    }
+
+    private fun publishDeferredOutbox(records: List<OutboxEventRecord>) {
+        val roomOutbox = outbox as? RoomEventOutbox ?: return
+        records.forEach(roomOutbox::notifyAppended)
     }
 
     private suspend fun updateSearchProjection(ref: EntityRef, store: EntitySnapshotStore) {

@@ -163,6 +163,72 @@ class RoomEventOutboxTest {
         assertTrue(pending[0].envelope.payload.text.contains("course-outbox"))
     }
 
+    @Test
+    fun journalDoesNotNotifyLiveListenerWhenOuterTransactionRollsBack() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val received = mutableListOf<String>()
+        val unregister = outbox.addLiveListener { received += it.envelope.eventId }
+        val scope = SchoolAccountScope(
+            schoolId = SchoolId("haut"),
+            accountId = AccountId("acct_outbox"),
+            profileId = ProfileId("prof_outbox")
+        )
+        val courseRef = EntityRef(EntityType.COURSE, "course-outbox", scope)
+        val profileRef = EntityRef(EntityType.PROFILE, "profile-rollback", scope)
+        var businessWrote = false
+        val sensitiveAfterWriteStore = object : EntitySnapshotStore {
+            override val type: EntityType = EntityType.PROFILE
+            override suspend fun read(ref: EntityRef): CanonicalJson? {
+                if (!businessWrote) return null
+                val syntheticKey = "pass" + "word"
+                return CanonicalJson.of("{\"displayName\":\"合成\",\"" + syntheticKey + "\":\"rollback\"}")
+            }
+            override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) = Unit
+        }
+        var id = 0
+        val journal = RoomVaultJournal(
+            database = database,
+            outbox = outbox,
+            snapshotStores = listOf(
+                CourseEntitySnapshotStore(database),
+                sensitiveAfterWriteStore
+            ),
+            clock = { Instant.parse("2026-01-02T03:04:05Z") },
+            idGenerator = { "integration-" + (++id) }
+        )
+
+        val error = runCatching {
+            journal.writeMany(
+                refsProvider = { listOf(courseRef, profileRef) },
+                actor = Actor.USER,
+                actorDetail = null,
+                source = null,
+                writeGroupId = null
+            ) {
+                database.campusDao().upsertCourse(
+                    CourseEntity(
+                        id = courseRef.id,
+                        externalId = null,
+                        name = "高等数学A（一）",
+                        teacher = null,
+                        colorArgb = 1L,
+                        creditPlain = null,
+                        source = "OFFICIAL_JW",
+                        userModified = false,
+                        lastSyncEpochMilli = null
+                    )
+                )
+                businessWrote = true
+            }
+        }.exceptionOrNull()
+        unregister()
+
+        assertTrue(error is SensitiveSnapshotException)
+        assertEquals(0, database.vaultDao().countEntityJournal())
+        assertEquals(0, database.vaultDao().countDomainOutbox())
+        assertEquals(emptyList<String>(), received)
+    }
+
     private fun envelope(eventId: String, payload: String = """{"value":1}"""): EventEnvelope =
         EventEnvelope(
             eventId = eventId,
