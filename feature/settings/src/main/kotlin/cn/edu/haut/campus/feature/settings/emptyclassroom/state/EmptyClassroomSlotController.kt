@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.settings
+package cn.edu.haut.campus.feature.settings.emptyclassroom.state
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf

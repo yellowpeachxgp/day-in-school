@@ -106,6 +106,7 @@ import cn.edu.haut.campus.core.model.PresetQqChannelItem
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import cn.edu.haut.campus.feature.settings.emptyclassroom.state.EmptyClassroomSlotController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.DayOfWeek

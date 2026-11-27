@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.settings
+package cn.edu.haut.campus.feature.settings.moments.state
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

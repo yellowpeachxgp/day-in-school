@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.settings
+package cn.edu.haut.campus.feature.settings.emptyclassroom.state
 
 import cn.edu.haut.campus.core.domain.CampusStudyRoomCatalog
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID

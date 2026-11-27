@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.settings
+package cn.edu.haut.campus.feature.settings.library.state
 
 import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
 import cn.edu.haut.campus.core.campusservices.CloudReservationQuote

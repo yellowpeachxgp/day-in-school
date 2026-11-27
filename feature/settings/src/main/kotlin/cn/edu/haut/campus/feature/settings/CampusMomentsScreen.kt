@@ -94,6 +94,8 @@ import cn.edu.haut.campus.core.model.MomentsPostItem
 import cn.edu.haut.campus.core.model.MomentsPostType
 import cn.edu.haut.campus.core.model.MomentsTextbookListing
 import cn.edu.haut.campus.core.model.PresetCampusMomentsCatalog
+import cn.edu.haut.campus.feature.settings.moments.state.ContactComposerAudience
+import cn.edu.haut.campus.feature.settings.moments.state.MomentsContactComposerStateMachine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
