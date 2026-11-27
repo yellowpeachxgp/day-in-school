@@ -28,6 +28,7 @@ class ProfileDataWiper internal constructor(
     private val reminderDao: ReminderDao,
     private val utilityAndFocusDao: UtilityAndFocusDao,
     private val cloudAndParcelDao: CloudAndParcelDao,
+    private val vaultDao: VaultDao,
     private val academicCredentialVault: AcademicCredentialVault,
     private val academicCredentialMutex: Mutex,
     private val cloudIdentityMutex: Mutex,
@@ -207,6 +208,12 @@ class ProfileDataWiper internal constructor(
                 cloudAndParcelDao.clearCloudIdentityBinding()
                 cloudAndParcelDao.clearLibraryBookingPlans()
                 cloudAndParcelDao.clearParcelItems()
+                vaultDao.clearPersonalEvents()
+                vaultDao.clearEntityJournal()
+                vaultDao.clearDomainOutbox()
+                vaultDao.clearSearchDocs()
+                vaultDao.clearSearchFts()
+                vaultDao.clearBlobStore()
             }
         }
         cloudTokenMutex.withLock {

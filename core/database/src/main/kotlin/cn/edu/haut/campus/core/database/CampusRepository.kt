@@ -346,6 +346,7 @@ class CampusRepository internal constructor(
         reminderDao = reminderDao,
         utilityAndFocusDao = utilityAndFocusDao,
         cloudAndParcelDao = cloudAndParcelDao,
+        vaultDao = database.vaultDao(),
         academicCredentialVault = academicCredentialVault,
         academicCredentialMutex = academicCredentialMutex,
         cloudIdentityMutex = cloudIdentityMutex,

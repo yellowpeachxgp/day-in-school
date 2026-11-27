@@ -276,9 +276,15 @@ interface CampusDao {
         LibraryBookingPlanEntity::class,
         ParcelItemEntity::class,
         ParcelSourceConnectionEntity::class,
-        InstalledExtensionPluginEntity::class
+        InstalledExtensionPluginEntity::class,
+        PersonalEventEntity::class,
+        EntityJournalEntity::class,
+        DomainOutboxEntity::class,
+        SearchDocEntity::class,
+        SearchFtsEntity::class,
+        BlobStoreEntity::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
@@ -286,4 +292,5 @@ abstract class HautDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
     abstract fun utilityAndFocusDao(): UtilityAndFocusDao
     abstract fun cloudAndParcelDao(): CloudAndParcelDao
+    abstract fun vaultDao(): VaultDao
 }
