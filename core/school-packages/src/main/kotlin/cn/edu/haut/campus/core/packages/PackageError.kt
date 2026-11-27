@@ -91,5 +91,11 @@ enum class PackageError {
  */
 class PackageException(
     val error: PackageError,
-    message: String
+    message: String,
+    /**
+     * W6-00 runtime manifest conformance detail code. This is not a contract
+     * error-catalog entry; it is a testable validation classifier shared by
+     * the cloud SDK and Android runtime parsers.
+     */
+    val runtimeValidationCode: String? = null
 ) : IllegalArgumentException(message)
