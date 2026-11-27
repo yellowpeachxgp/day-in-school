@@ -28,6 +28,7 @@ class ExtensionPluginInstaller(
     private val revisionState = MutableStateFlow(0L)
     val revision: StateFlow<Long> = revisionState
 
+    @Synchronized
     fun install(
         manifestBytes: ByteArray,
         artifactMap: Map<String, ByteArray>,
@@ -91,8 +92,16 @@ class ExtensionPluginInstaller(
             }
         }
 
+        val versionAlreadyPresent = store.versionExists(manifest.pluginId, manifest.version.value)
         store.saveVersion(verified)
-        store.saveInstallation(next)
+        try {
+            store.saveInstallation(next)
+        } catch (error: Exception) {
+            if (!versionAlreadyPresent) {
+                store.deleteVersion(manifest.pluginId, manifest.version.value)
+            }
+            throw error
+        }
         bump()
         return ExtensionInstallResult(next, verified.manifestDigest)
     }
@@ -107,6 +116,7 @@ class ExtensionPluginInstaller(
     fun installation(schoolId: String, pluginId: String): ExtensionInstallation? =
         store.loadInstallation(schoolId, pluginId)
 
+    @Synchronized
     fun confirmPendingPermissions(schoolId: String, pluginId: String): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val pending = existing.pendingVersion
@@ -129,6 +139,7 @@ class ExtensionPluginInstaller(
         return next
     }
 
+    @Synchronized
     fun setEnabled(schoolId: String, pluginId: String, enabled: Boolean): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val next = if (enabled) {
@@ -148,6 +159,7 @@ class ExtensionPluginInstaller(
         return next
     }
 
+    @Synchronized
     fun revokePermission(schoolId: String, pluginId: String, permission: String): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val activeManifest = loadStoredManifest(pluginId, existing.activeVersion)
@@ -163,6 +175,7 @@ class ExtensionPluginInstaller(
         return next
     }
 
+    @Synchronized
     fun rollback(schoolId: String, pluginId: String, targetVersion: String? = null): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val rollbackVersion = targetVersion ?: existing.previousVersion
@@ -182,12 +195,14 @@ class ExtensionPluginInstaller(
         return next
     }
 
+    @Synchronized
     fun uninstall(schoolId: String, pluginId: String, reason: String = "USER_UNINSTALL"): ExtensionCleanupResult {
         val result = store.cleanupPlugin(schoolId, pluginId, reason)
         bump()
         return result
     }
 
+    @Synchronized
     fun wipeAll(reason: String): ExtensionCleanupResult {
         val result = store.wipeAll(reason)
         bump()

@@ -75,7 +75,8 @@ class ExtensionPluginFileStore(
         val pluginId = verified.manifest.pluginId
         val version = verified.manifest.version.value
         val target = versionDir(pluginId, version)
-        if (Files.isDirectory(target)) return
+        if (Files.isDirectory(target) && Files.isRegularFile(target.resolve("manifest.json"))) return
+        if (Files.isDirectory(target)) deleteRecursively(target)
         val staging = stagingDir.resolve("staged-" + UUID.randomUUID().toString().replace("-", ""))
         var writeIndex = 0
         try {
@@ -101,6 +102,11 @@ class ExtensionPluginFileStore(
 
     fun versionExists(pluginId: String, version: String): Boolean =
         Files.isRegularFile(versionDir(pluginId, version).resolve("manifest.json"))
+
+    @Synchronized
+    fun deleteVersion(pluginId: String, version: String) {
+        deleteRecursively(versionDir(pluginId, version))
+    }
 
     fun readVersionManifestBytes(pluginId: String, version: String): ByteArray? {
         val file = versionDir(pluginId, version).resolve("manifest.json")

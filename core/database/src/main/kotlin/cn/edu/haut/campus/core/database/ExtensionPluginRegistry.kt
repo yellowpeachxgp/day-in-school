@@ -10,6 +10,7 @@ import cn.edu.haut.campus.core.packages.v2.ExtensionPublisherTrustRoots
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
@@ -37,7 +38,7 @@ internal class ExtensionPluginRegistry(
     )
 
     val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =
-        installer.revision.map { snapshotProjections() }
+        installer.revision.map { snapshotProjections() }.flowOn(Dispatchers.IO)
 
     suspend fun ensureDefaultReferencePluginsInstalled() {
         // W6-HOTFIX 行为保持不变：参考插件不再由设置页手工伪造为数据库行。
