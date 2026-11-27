@@ -1,74 +1,45 @@
 package cn.edu.haut.campus.feature.grades
 
-import android.app.Activity
-import android.os.Looper
+import androidx.compose.runtime.Applier
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.ComposeView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.ViewTreeLifecycleOwner
-import androidx.lifecycle.ViewTreeViewModelStoreOwner
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
-import org.robolectric.Robolectric
-import org.robolectric.Shadows
+import androidx.compose.runtime.Composition
+import androidx.compose.runtime.Recomposer
+import kotlin.coroutines.EmptyCoroutineContext
 
 /**
- * Robolectric 组合测试基座：真实 Activity + ComposeView，
- * 组合随 dispose() 同步销毁，覆盖「组合离开即重置/清理」类回归场景。
- * 只依赖本模块既有测试类路径（compose-ui / lifecycle / savedstate / robolectric）。
+ * 纯 JVM 组合测试基座：直接驱动 compose runtime，
+ * 初始组合与 dispose 均同步执行，不依赖 Android 视图/Looper，
+ * 覆盖「组合离开即重置/清理」类回归场景。
  */
 internal class GradesCompositionHarness {
 
-    /** 自给自足的三合一 Owner：不依赖 androidx.activity，避免新增测试接线。 */
-    private class HostOwners : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
-        private val lifecycleRegistry = LifecycleRegistry(this)
-        private val savedStateController = SavedStateRegistryController.create(this)
-
-        override val lifecycle: Lifecycle get() = lifecycleRegistry
-        override val viewModelStore: ViewModelStore = ViewModelStore()
-        override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
-
-        fun restoreThenResume() {
-            savedStateController.performRestore(null)
-            lifecycleRegistry.currentState = Lifecycle.State.RESUMED
-        }
+    /** 测试内容不发射任何界面节点，使用空 Applier 满足组合结构要求。 */
+    private object UnitApplier : Applier<Unit> {
+        override val current: Unit = Unit
+        override fun down(node: Unit) {}
+        override fun up() {}
+        override fun insertTopDown(index: Int, instance: Unit) {}
+        override fun insertBottomUp(index: Int, instance: Unit) {}
+        override fun remove(index: Int, count: Int) {}
+        override fun move(from: Int, to: Int, count: Int) {}
+        override fun clear() {}
+        override fun onEndChanges() {}
     }
 
-    private val owners = HostOwners()
-    val activity: Activity = Robolectric
-        .buildActivity(Activity::class.java)
-        .setup()
-        .get()
-    val composeView: ComposeView = ComposeView(activity)
+    private val recomposer = Recomposer(EmptyCoroutineContext)
+    private var composition: Composition? = null
 
-    init {
-        ViewTreeLifecycleOwner.set(composeView, owners)
-        ViewTreeViewModelStoreOwner.set(composeView, owners)
-        ViewTreeSavedStateRegistryOwner.set(composeView, owners)
-        owners.restoreThenResume()
-        activity.setContentView(composeView)
-    }
-
+    /** 同步执行初始组合；重复调用先销毁旧组合，模拟「离开后再进入」。 */
     fun compose(content: @Composable () -> Unit) {
-        composeView.setContent(content)
-        pumpMain()
+        dispose()
+        val next = Composition(UnitApplier, recomposer)
+        composition = next
+        next.setContent(content)
     }
 
+    /** 同步销毁组合：DisposableEffect 的 onDispose 随调用即执行。 */
     fun dispose() {
-        composeView.disposeComposition()
-        pumpMain()
-    }
-
-    fun pumpMain() {
-        repeat(3) {
-            Shadows.shadowOf(Looper.getMainLooper()).idle()
-        }
-        Robolectric.flushForegroundThreadScheduler()
+        composition?.dispose()
+        composition = null
     }
 }

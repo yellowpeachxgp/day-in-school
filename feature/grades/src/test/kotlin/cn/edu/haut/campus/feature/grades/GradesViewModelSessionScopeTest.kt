@@ -11,17 +11,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 /**
  * W0-06a 审阅阻断回归：Profile 切换不得串数据。
  * 学业页 ViewModel 以 profileId+sessionGeneration 为 key，存放在组合作用域的
  * ViewModelStoreOwner 中；组合销毁（Profile 切换/底栏切换）必须及时清除旧 VM。
  */
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
 class GradesViewModelSessionScopeTest {
 
     private class ProbeViewModel : ViewModel() {
