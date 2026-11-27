@@ -197,6 +197,10 @@ class ProfileDataWiper internal constructor(
                 dao.clearUnscheduledCourses()
                 dao.clearImportAudits()
                 dao.clearWidgetConfigs()
+                // W0-04：作息方案与用户方案节次行是按 Profile 保存的个人排课数据；
+                // 默认参考 period_times（schemeId=NULL）仍按既有 reference 语义保留。
+                dao.clearPeriodTimeSchemes()
+                dao.clearSchemePeriodTimes()
                 reminderDao.clearAllTasks()
                 reminderDao.clearAllEventPrefs()
                 utilityAndFocusDao.clearAllDailySamples()

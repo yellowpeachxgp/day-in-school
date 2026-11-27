@@ -38,6 +38,39 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPeriodTimes(items: List<PeriodTimeEntity>)
 
+    @Query("DELETE FROM period_times WHERE id = :id")
+    suspend fun deletePeriodTimeById(id: String): Int
+
+    @Query("DELETE FROM period_times WHERE timeTableId = :timeTableId AND schemeId IS NULL")
+    suspend fun deleteBasePeriodTimesForTimeTable(timeTableId: String): Int
+
+    @Query("DELETE FROM period_times WHERE schemeId = :schemeId")
+    suspend fun deletePeriodTimesForScheme(schemeId: String): Int
+
+    @Query("DELETE FROM period_times WHERE schemeId IS NOT NULL")
+    suspend fun clearSchemePeriodTimes(): Int
+
+    @Query("SELECT * FROM period_time_schemes ORDER BY termId ASC, startDateIso ASC, id ASC")
+    fun observePeriodTimeSchemes(): Flow<List<PeriodTimeSchemeEntity>>
+
+    @Query("SELECT * FROM period_time_schemes ORDER BY termId ASC, startDateIso ASC, id ASC")
+    suspend fun getPeriodTimeSchemesSnapshot(): List<PeriodTimeSchemeEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPeriodTimeSchemes(items: List<PeriodTimeSchemeEntity>)
+
+    @Query("DELETE FROM period_time_schemes WHERE id = :schemeId")
+    suspend fun deletePeriodTimeSchemeById(schemeId: String): Int
+
+    @Query("DELETE FROM period_time_schemes")
+    suspend fun clearPeriodTimeSchemes(): Int
+
+    @Query("SELECT COUNT(*) FROM period_time_schemes")
+    suspend fun countPeriodTimeSchemes(): Int
+
+    @Query("SELECT COUNT(*) FROM period_times WHERE schemeId IS NOT NULL")
+    suspend fun countSchemePeriodTimes(): Int
+
     @Query("SELECT * FROM calendar_overrides")
     fun observeCalendarOverrides(): Flow<List<CalendarOverrideEntity>>
 
@@ -252,6 +285,7 @@ interface CampusDao {
         StudentProfileEntity::class,
         TermEntity::class,
         PeriodTimeEntity::class,
+        PeriodTimeSchemeEntity::class,
         CalendarOverrideEntity::class,
         CourseEntity::class,
         CourseScheduleRuleEntity::class,
@@ -278,7 +312,7 @@ interface CampusDao {
         ParcelSourceConnectionEntity::class,
         InstalledExtensionPluginEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
