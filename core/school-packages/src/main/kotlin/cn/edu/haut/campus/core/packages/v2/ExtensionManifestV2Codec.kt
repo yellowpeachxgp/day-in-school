@@ -53,7 +53,7 @@ data class ExtensionManifestV2(
 /**
  * snake_case dis-extension/v2 运行时清单解析器。
  *
- * W6-00 注意：contracts/** 在 CT-01 独占期间不能被本卡修改。因此本对象使用
+ * W6-00 注意：contracts 目录在 CT-01 契约线独占期间不能被本卡修改。因此本对象使用
  * core/school-packages/src/main/resources/runtime-host-api-matrix.json 作为
  * 运行时事实源；该文件明确不是 contracts 共享契约夹具或契约矩阵。
  */
