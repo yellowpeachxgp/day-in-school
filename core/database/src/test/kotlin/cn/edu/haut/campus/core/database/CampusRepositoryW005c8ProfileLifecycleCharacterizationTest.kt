@@ -215,18 +215,10 @@ class CampusRepositoryW005c8ProfileLifecycleCharacterizationTest {
                 diagnostic = "null"
             )
         )
-        cloudDao.upsertInstalledExtensionPlugin(
-            InstalledExtensionPluginEntity(
-                pluginId = "org.example.hello-campus",
-                name = "legacy sample",
-                activeVersion = "1.0.0",
-                previousVersion = null,
-                schemaFormat = "dis-extension/v2",
-                status = "ENABLED",
-                grantedPermissionsJson = "[]",
-                uiSlotsJson = "[]",
-                updatedAtEpochMillis = 1_000L
-            )
+        database.openHelper.writableDatabase.execSQL(
+            "INSERT INTO installed_extension_plugins (" +
+                "pluginId, name, activeVersion, previousVersion, schemaFormat, status, grantedPermissionsJson, uiSlotsJson, updatedAtEpochMillis" +
+                ") VALUES ('org.example.hello-campus', 'legacy sample', '1.0.0', NULL, 'dis-extension/v2', 'ENABLED', '[]', '[]', 1000)"
         )
         val writeEvents = Collections.synchronizedList(mutableListOf<String>())
         val afterWrite = CountDownLatch(1)
