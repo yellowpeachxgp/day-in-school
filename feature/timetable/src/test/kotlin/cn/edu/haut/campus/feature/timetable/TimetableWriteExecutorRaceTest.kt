@@ -194,6 +194,7 @@ class TimetableWriteExecutorRaceTest {
                         writeStarted.complete(Unit)
                         releaseWrite.await()
                         events.add("write-end")
+                        Unit
                     },
                     onComplete = { result -> firstCompletion.set(result) }
                 )
