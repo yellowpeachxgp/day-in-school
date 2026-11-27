@@ -70,6 +70,13 @@ class PaddleOcrOnnxEngine(
         val startedAt = System.currentTimeMillis()
         val extractedAt = request.context.extractedAt ?: Instant.now()
         val image = request.image
+        val inputPixels = image.width.toLong() * image.height.toLong()
+        if (inputPixels > config.maxInputPixels) {
+            throw TextExtractionException(
+                TextExtractErrorKind.INPUT_TOO_LARGE,
+                "图片像素超过 OCR 输入预算: " + inputPixels + " > " + config.maxInputPixels
+            )
+        }
         val detInput = DetPreprocessor.preprocess(image, config)
         val (detOutput, detShape) = backend.runDetection(detInput.data, detInput.shape)
         val boxes = DbPostProcessor.process(

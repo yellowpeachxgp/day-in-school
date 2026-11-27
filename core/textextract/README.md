@@ -6,6 +6,7 @@
 
 - 离线端侧：不依赖 GMS，不下载模型，不上传图片、PDF 或抽取文本。
 - OCR：PP-OCRv6_tiny ONNX + ONNX Runtime Android 1.21.1；不使用 OpenCV。检测后处理、轮廓、最小面积矩形、透视裁剪和缩放在本模块内用纯 Kotlin 实现，算法语义参考 PaddleOCR `deploy/ppocr-android`。
+- OCR 内存预算：默认输入硬上限 12 MP（更大的相机帧必须由调用方先安全下采样并以 `INPUT_TOO_LARGE` fail-closed）；检测张量预算 2 MP。检测缩放图 Int 与 CHW float tensor 合计约 16 B/px（≤32 MB），输入位图本身 4 B/px（≤48 MB），图片哈希改为 8 KiB 流式计算，不再额外复制 4 B/px canonical buffer。
 - PDF：PdfBox-Android 2.0.27 patch 0 抽取嵌入文本与显示页左上角 PDF point 坐标；页旋转会折算进四点行框，扫描件 PDF 不在本模块隐式渲染，调用方可把页面位图走 OCR 输入。
 - 加密 PDF：首版为控制体积排除 BouncyCastle 传递依赖，加密 PDF 以 `PDF_ENCRYPTION_UNSUPPORTED` / `PDF_ENCRYPTED` 明确失败，不静默降级。
 - 原件持久化、`blob_store`、擦除链路和分享入口属于 W1-03/W2-05，不在本卡范围。

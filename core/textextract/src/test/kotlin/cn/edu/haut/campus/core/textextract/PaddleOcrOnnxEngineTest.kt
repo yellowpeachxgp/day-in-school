@@ -78,6 +78,30 @@ class PaddleOcrOnnxEngineTest {
     }
 
     @Test
+    fun oversizedImageFailsClosedBeforeInference() = runBlocking {
+        val config = PaddleOcrConfig(numThreads = 1, maxInputPixels = 16L)
+        val engine = PaddleOcrOnnxEngine.fromModelBytes(
+            detModelBytes = FixtureLoader.detModelBytes(),
+            recModelBytes = FixtureLoader.recModelBytes(),
+            recConfigYaml = FixtureLoader.recConfigYaml(),
+            config = config
+        )
+        try {
+            engine.extractImage(
+                ImageExtractionRequest(
+                    image = ArgbImage(5, 5, IntArray(25) { 0xFFFFFFFF.toInt() }),
+                    context = TextExtractionContext.synthetic()
+                )
+            )
+            org.junit.Assert.fail("超过输入像素预算的图片不应进入推理")
+        } catch (error: TextExtractionException) {
+            assertEquals(TextExtractErrorKind.INPUT_TOO_LARGE, error.kind)
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
     fun corruptedModelBytesFailIntegrityBeforeInference() {
         val corruptedDet = FixtureLoader.detModelBytes()
         corruptedDet[0] = (corruptedDet[0].toInt() xor 0x01).toByte()

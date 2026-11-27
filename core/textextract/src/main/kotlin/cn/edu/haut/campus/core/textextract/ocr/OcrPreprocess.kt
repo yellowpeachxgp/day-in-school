@@ -11,6 +11,8 @@ import cn.edu.haut.campus.core.textextract.ArgbImage
 import cn.edu.haut.campus.core.textextract.internal.Geometry
 import cn.edu.haut.campus.core.textextract.internal.ImageOps
 import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.sqrt
 
 internal data class TensorInput(
     val data: FloatArray,
@@ -72,6 +74,20 @@ internal object DetPreprocessor {
         }
         newWidth = maxOf(Geometry.roundHalfToEven(newWidth / 32.0) * 32, 32)
         newHeight = maxOf(Geometry.roundHalfToEven(newHeight / 32.0) * 32, 32)
+        if (newWidth.toLong() * newHeight.toLong() > config.detMaxDetectionPixels) {
+            val budgetScale = sqrt(config.detMaxDetectionPixels.toDouble() / (newWidth.toDouble() * newHeight.toDouble()))
+            newWidth = maxOf(floor(newWidth * budgetScale / 32.0).toInt() * 32, 32)
+            newHeight = maxOf(floor(newHeight * budgetScale / 32.0).toInt() * 32, 32)
+            while (newWidth.toLong() * newHeight.toLong() > config.detMaxDetectionPixels && (newWidth > 32 || newHeight > 32)) {
+                if (newWidth >= newHeight && newWidth > 32) {
+                    newWidth -= 32
+                } else if (newHeight > 32) {
+                    newHeight -= 32
+                } else {
+                    newWidth -= 32
+                }
+            }
+        }
         return Pair(newWidth, newHeight)
     }
 }

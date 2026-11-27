@@ -192,10 +192,47 @@ data class PdfExtractionRequest(
 object TextExtractHashes {
     fun sha256Hex(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+        return hex(digest)
     }
 
-    fun sha256Hex(image: ArgbImage): String = sha256Hex(image.canonicalBytes())
+    /** 与 canonicalBytes 相同的字节序列，但分块流式计算，避免大图再复制一份 4 B/px 哈希缓冲。 */
+    fun sha256Hex(image: ArgbImage): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(8192)
+        var offset = 0
+
+        fun flush() {
+            if (offset > 0) {
+                digest.update(buffer, 0, offset)
+                offset = 0
+            }
+        }
+        fun put(value: Byte) {
+            if (offset == buffer.size) flush()
+            buffer[offset++] = value
+        }
+        fun putInt(value: Int) {
+            put((value ushr 24).toByte())
+            put((value ushr 16).toByte())
+            put((value ushr 8).toByte())
+            put(value.toByte())
+        }
+
+        putInt(image.width)
+        putInt(image.height)
+        for (pixel in image.pixels) {
+            put((pixel ushr 24).toByte())
+            put((pixel ushr 16).toByte())
+            put((pixel ushr 8).toByte())
+            put(pixel.toByte())
+        }
+        flush()
+        return hex(digest.digest())
+    }
+
+    private fun hex(bytes: ByteArray): String {
+        return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
 }
 
 internal fun extractionProvenance(

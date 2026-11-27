@@ -4,6 +4,8 @@ import cn.edu.haut.campus.core.textextract.internal.FPoint
 import cn.edu.haut.campus.core.textextract.internal.Geometry
 import cn.edu.haut.campus.core.textextract.ocr.CtcDecoder
 import cn.edu.haut.campus.core.textextract.ocr.DbPostProcessor
+import cn.edu.haut.campus.core.textextract.ocr.DetPreprocessor
+import cn.edu.haut.campus.core.textextract.ocr.PaddleOcrConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +39,21 @@ class OcrPostProcessTest {
         val ordered = Geometry.orderQuadPoints(rect.corners)
         assertEquals(2.0, ordered[0].x, 0.001)
         assertEquals(2.0, ordered[0].y, 0.001)
+    }
+
+    @Test
+    fun detectionPreprocessorHonorsPixelBudget() {
+        val image = ArgbImage(128, 128, IntArray(128 * 128) { 0xFFFFFFFF.toInt() })
+        val input = DetPreprocessor.preprocess(
+            image,
+            PaddleOcrConfig(numThreads = 1, detMaxDetectionPixels = 1024)
+        )
+
+        val height = input.shape[2]
+        val width = input.shape[3]
+        assertTrue(width * height <= 1024)
+        assertEquals(0L, width % 32)
+        assertEquals(0L, height % 32)
     }
 
     @Test
