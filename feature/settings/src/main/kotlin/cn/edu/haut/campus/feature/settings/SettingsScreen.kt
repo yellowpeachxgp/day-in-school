@@ -409,13 +409,15 @@ fun SettingsScreen(
                     repository = repository,
                     onNavigateToImporter = onNavigateToImporter,
                     onFeedback = { feedbackText = it },
-                    onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
+                    onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) },
+                    viewModelStoreOwner = rootViewModelStoreOwner
                 )
 
             SettingsThemeRouteSection(
                 repository = repository,
                 onFeedback = { feedbackText = it },
-                onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
+                onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) },
+                viewModelStoreOwner = rootViewModelStoreOwner
             )
 
             SettingsDataRouteSection(
@@ -423,13 +425,15 @@ fun SettingsScreen(
                 onBack = onBack,
                 isHautCampus = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID,
                 onFeedback = { feedbackText = it },
-                onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
+                onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) },
+                viewModelStoreOwner = rootViewModelStoreOwner
             )
 
             // 8.5 网络代理与云服务加速配置
             SettingsNetworkRouteSection(
                 repository = repository,
-                onFeedback = { feedbackText = it }
+                onFeedback = { feedbackText = it },
+                viewModelStoreOwner = rootViewModelStoreOwner
             )
 
             SettingsUpdateRouteSection(

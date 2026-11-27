@@ -3,6 +3,7 @@ package cn.edu.haut.campus.feature.settings.root.network
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.CampusRepository
@@ -14,9 +15,11 @@ import cn.edu.haut.campus.feature.settings.root.ui.NetworkProxyAndCloudConfigSec
 @Composable
 fun SettingsNetworkRouteSection(
     repository: CampusRepository,
-    onFeedback: (String) -> Unit
+    onFeedback: (String) -> Unit,
+    viewModelStoreOwner: ViewModelStoreOwner
 ) {
     val viewModel: SettingsNetworkViewModel = viewModel(
+        viewModelStoreOwner = viewModelStoreOwner,
         key = "settings-network-" + repository.profileId + "-" + repository.sessionGeneration,
         factory = SettingsNetworkViewModel.factory(repository)
     )

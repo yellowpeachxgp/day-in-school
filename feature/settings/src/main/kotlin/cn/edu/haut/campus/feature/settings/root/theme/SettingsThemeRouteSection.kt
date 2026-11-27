@@ -153,6 +153,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.feature.settings.root.theme.SettingsThemeViewModel
@@ -163,9 +164,11 @@ import cn.edu.haut.campus.feature.settings.root.theme.SettingsThemeViewModel
 fun SettingsThemeRouteSection(
     repository: CampusRepository,
     onFeedback: (String) -> Unit,
-    onRefreshWidgets: () -> Unit
+    onRefreshWidgets: () -> Unit,
+    viewModelStoreOwner: ViewModelStoreOwner
 ) {
     val viewModel: SettingsThemeViewModel = viewModel(
+        viewModelStoreOwner = viewModelStoreOwner,
         key = "settings-theme-" + repository.profileId + "-" + repository.sessionGeneration,
         factory = SettingsThemeViewModel.factory(repository)
     )

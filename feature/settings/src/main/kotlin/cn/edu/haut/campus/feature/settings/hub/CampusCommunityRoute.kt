@@ -6,6 +6,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.feature.settings.hub.ui.CampusCommunityScreenContent
+import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
+import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
 
 /** 校园社区页 Route。 */
 @Composable
@@ -15,8 +17,11 @@ fun CampusCommunityRoute(
     onOpenMoments: () -> Unit = {},
     onBack: () -> Unit
 ) {
+    val sessionKey = "campus-community-" + settingsSessionKey(repository.profileId, repository.sessionGeneration)
+    val viewModelStoreOwner = rememberSettingsSessionViewModelStoreOwner(sessionKey)
     val viewModel: CampusCommunityViewModel = viewModel(
-        key = "campus-community-" + repository.profileId + "-" + repository.sessionGeneration,
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = sessionKey,
         factory = CampusCommunityViewModel.factory(repository)
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()

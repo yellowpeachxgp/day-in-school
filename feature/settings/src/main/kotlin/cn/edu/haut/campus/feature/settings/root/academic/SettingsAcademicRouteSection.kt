@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.CampusRepository
@@ -16,11 +17,13 @@ fun SettingsAcademicRouteSection(
     repository: CampusRepository,
     onNavigateToImporter: () -> Unit,
     onFeedback: (String) -> Unit,
-    onRefreshWidgets: () -> Unit
+    onRefreshWidgets: () -> Unit,
+    viewModelStoreOwner: ViewModelStoreOwner
 ) {
     val context = LocalContext.current
     val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
     val viewModel: SettingsAcademicViewModel = viewModel(
+        viewModelStoreOwner = viewModelStoreOwner,
         key = "settings-academic-" + repository.profileId + "-" + repository.sessionGeneration,
         factory = SettingsAcademicViewModel.factory(repository, reminderCoordinator)
     )
