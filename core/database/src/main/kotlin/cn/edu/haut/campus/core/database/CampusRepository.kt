@@ -37,7 +37,6 @@ import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
 import cn.edu.haut.campus.core.campusservices.LibraryStudyRegionItem
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
-import cn.edu.haut.campus.core.campusservices.ParcelHubEngine
 import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
@@ -49,8 +48,6 @@ import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountSecureVault
 import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
-import cn.edu.haut.campus.core.campusservices.XiaomiExpressApi
-import cn.edu.haut.campus.core.campusservices.XiaomiPassportClient
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
 import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
@@ -261,6 +258,53 @@ class CampusRepository internal constructor(
             this@CampusRepository.cloudHttpTransportForTest
     }
     private val momentsRepository = MomentsRepository(repositoryEnvironment, momentsRuntimePort)
+    private val campusServicesRuntimePort = object : CampusServicesRuntimePort {
+        override val preferencesFlow: Flow<AppPreferencesState>
+            get() = this@CampusRepository.preferencesFlow
+        override val activeSessionGeneration: Long?
+            get() = this@CampusRepository.activeSessionGeneration
+
+        override suspend fun migrateLegacyAcademicCredentialsIfNeeded() =
+            this@CampusRepository.migrateLegacyAcademicCredentialsIfNeeded()
+
+        override fun readAcademicCredential(accountId: String): AcademicCredentialReadResult =
+            this@CampusRepository.academicCredentialVault.read(
+                this@CampusRepository.academicCredentialScope(accountId)
+            )
+
+        override suspend fun <T> withCloudIdentityBarrier(block: suspend () -> T): T =
+            bookingPlanStateMutex.withLock {
+                cloudIdentityMutex.withLock {
+                    block()
+                }
+            }
+
+        override suspend fun bumpCloudIdentityGenerationForBaseUrlChange(cloudUserId: String?): Long =
+            this@CampusRepository.bumpCloudIdentityGenerationLocked(
+                cloudUserId = cloudUserId,
+                markUnlinkTombstone = false
+            )
+
+        override suspend fun currentCloudUserIdInBarrier(): String? =
+            this@CampusRepository.cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId
+    }
+    private val campusServicesRepository = CampusServicesRepository(
+        environment = repositoryEnvironment,
+        appContext = appContext,
+        utilityAccountStore = utilityAccountStore,
+        runtimePort = campusServicesRuntimePort
+    )
+    private val parcelHubRuntimePort = object : ParcelHubRuntimePort {
+        override fun launchCloudSync() {
+            repoScope.launch { runCatching { syncWithCampusCloud() } }
+        }
+    }
+    private val parcelHubRepository = ParcelHubRepository(
+        environment = repositoryEnvironment,
+        appContext = appContext,
+        xiaomiAccountVault = xiaomiAccountVault,
+        runtimePort = parcelHubRuntimePort
+    )
 
     @Volatile
     private var activeSessionGeneration: Long? = null
@@ -447,182 +491,8 @@ class CampusRepository internal constructor(
         }
     }
 
-    val preferencesFlow: Flow<AppPreferencesState> = preferences.data
-        .onStart { migrateLegacyAcademicCredentialsIfNeeded() }
-        .map { prefs ->
-        val credentialResult = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
-            academicCredentialVault.read(academicCredentialScope(accountId))
-        } ?: AcademicCredentialReadResult.Empty
-        val savedStudentId = (credentialResult as? AcademicCredentialReadResult.Available)
-            ?.credentials?.use { it.studentId }
-        val requiresReauthentication = prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] == true ||
-            credentialResult == AcademicCredentialReadResult.ReauthenticationRequired ||
-            (prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] != null && savedStudentId == null)
-        val reminderConfig = extractReminderConfig(prefs)
-        val rawOrder = prefs[CampusRepositoryPrefKeys.HOME_CARD_ORDER]
-            ?.split(",")
-            ?.map { it.trim() }
-            .orEmpty()
-        val normalizedOrder = HomeCardModule.normalizeOrderIds(rawOrder)
-        val hiddenSet = HomeCardModule.normalizeHiddenIds(
-            prefs[CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS]
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-                ?.toSet()
-                ?: emptySet()
-        )
-        val fullWidthSet = HomeCardModule.normalizeFullWidthIds(
-            prefs[CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS]
-                ?.let { raw ->
-                    if (raw == HomeCardModule.EMPTY_SET_SENTINEL) setOf(HomeCardModule.EMPTY_SET_SENTINEL)
-                    else raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
-                }
-        )
-
-        AppPreferencesState(
-            gpaPrivacyShieldEnabled = prefs[CampusRepositoryPrefKeys.GPA_PRIVACY] ?: false,
-            useDynamicColor = prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] ?: false,
-            themeMode = prefs[CampusRepositoryPrefKeys.THEME_MODE] ?: "SYSTEM",
-            uiDesignStyle = prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE]
-                ?: if (prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] == "LIQUID_GLASS") "LIQUID_GLASS" else "FRESH_BREEZE",
-            themePaletteKey = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE",
-            customThemeSeedArgb = run {
-                val paletteKey = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
-                val storedSeed = prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB]
-                when {
-                    paletteKey == "HAUT_BLUE" && (storedSeed == null || storedSeed == 0xFF0066CCL) -> 0xFF053968L
-                    storedSeed != null -> storedSeed
-                    else -> 0xFF053968L
-                }
-            },
-            customWallpaperPath = prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH]?.takeIf { it.isNotBlank() },
-            wallpaperAlpha = ThemeVisualDefaults.clampWallpaperAlpha(
-                prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
-            ),
-            wallpaperBlurDp = ThemeVisualDefaults.clampWallpaperBlurDp(
-                prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-            ),
-            wallpaperCardAlpha = ThemeVisualDefaults.clampWallpaperCardAlpha(
-                prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] ?: ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
-            ),
-            extractedWallpaperColors = prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS]
-                ?.split(",")
-                ?.mapNotNull { it.trim().toLongOrNull() }
-                .orEmpty(),
-            homeCardOrder = normalizedOrder,
-            hiddenHomeCards = hiddenSet,
-            fullWidthHomeCards = fullWidthSet,
-            timelineZoomScale = ThemeVisualDefaults.clampTimelineZoomScale(
-                prefs[CampusRepositoryPrefKeys.TIMELINE_SCALE] ?: ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE
-            ),
-            widgetDefaultCompact = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
-            widgetDefaultPrivacyMode = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false,
-            officialGpaValuePlain = prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA],
-            officialGpaNote = prefs[CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE],
-            hasSeededInitialMockData = prefs[CampusRepositoryPrefKeys.SEEDED] ?: false,
-            hasCompletedOnboarding = prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] ?: false,
-            autoSyncEnabled = prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] ?: true,
-            autoCheckUpdateEnabled = prefs[CampusRepositoryPrefKeys.AUTO_CHECK_UPDATE] ?: true,
-            savedStudentId = savedStudentId,
-            hasSavedCredentials = savedStudentId != null && !requiresReauthentication,
-            academicReauthenticationRequired = requiresReauthentication,
-            syncXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: AcademicTermResolver.defaultAcademicYearCode(),
-            syncXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: AcademicTermResolver.defaultSemesterCode(),
-            lastAutoSyncEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS],
-            customChannelUrls = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]),
-            customClubGroupNumbers = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]),
-            campusCommunityCatalog = CampusCloudOidcHelper.parseCampusContentJsonString(
-                prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON]
-            ) ?: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
-            lastCampusContentSyncEpochMillis = prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS],
-            reminderConfig = reminderConfig,
-            reminderPolicyRevision = prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION]
-                ?: ReminderRevision.computePolicyRevision(
-                    enabled = reminderConfig.enabled,
-                    classLeadMinutes = reminderConfig.classLeadMinutes,
-                    maxSnoozes = reminderConfig.classSnoozeMaxCount,
-                    cutoffMinutesBeforeStart = reminderConfig.classSnoozeCutoffMinutes,
-                    examDayEnabled = reminderConfig.examDayBeforeEnabled,
-                    examHourEnabled = reminderConfig.examHourBeforeEnabled
-                ),
-            lastReminderReconcileEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS],
-            lastReminderReconcileSummary = prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY],
-            reminderDiagnosticLogs = prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS]
-                ?.split("\n")
-                ?.filter { it.isNotBlank() }
-                .orEmpty(),
-            utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true),
-            libraryNativeEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_LIBRARY_NATIVE_ENABLED] ?: true),
-            librarySeatEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_LIBRARY_SEAT_ENABLED] ?: true),
-            focusEnabled = prefs[CampusRepositoryPrefKeys.FF_FOCUS_ENABLED] ?: true,
-            showTodayFocusQuickPill = prefs[CampusRepositoryPrefKeys.FF_TODAY_FOCUS_PILL] ?: true,
-            timetableInterchangeEnabled = prefs[CampusRepositoryPrefKeys.FF_TIMETABLE_INTERCHANGE] ?: true,
-            allowUnverifiedUtilityTransport = prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false,
-            lastUtilitySampleEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS],
-            utilityDailyNotifyEnabled = prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true,
-            utilityDailyNotifyHour = (prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23),
-            utilityLowBalanceThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).coerceIn(5f, 100f),
-            lastUtilityDailyNotifyDate = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE],
-            mealRecommendEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] ?: true),
-            lastMealRecommendBlockKey = prefs[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY],
-            canteenDishReviews = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
-            ),
-            campusMomentsSnapshot = run {
-                val rawSnap = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(
-                    prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
-                ) ?: cn.edu.haut.campus.core.model.CampusMomentsSnapshot()
-                val hasCloudSessionToken = !prefs[CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN].isNullOrBlank()
-                val baseSnap = if (hasCloudSessionToken) {
-                    rawSnap
-                } else {
-                    CampusCloudOidcHelper.sanitizeMomentsSnapshotForViewerReset(rawSnap)
-                }
-                baseSnap.copy(
-                    favoritePostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS]) else emptySet(),
-                    favoriteBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS]) else emptySet(),
-                    myPostIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS]) else emptySet(),
-                    myBookIds = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS]) else emptySet(),
-                    myTagCodes = if (hasCloudSessionToken) decodeCsvSet(prefs[CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES]) else emptySet()
-                )
-            },
-            selectedFocusMinutes = (prefs[CampusRepositoryPrefKeys.SELECTED_FOCUS_MINUTES] ?: 25).coerceIn(1, 180),
-            networkProxyConfig = extractNetworkProxyConfig(prefs),
-            selectedCampusId = prefs[CampusRepositoryPrefKeys.SELECTED_CAMPUS_ID] ?: "auto",
-            customCampusZonesJson = prefs[CampusRepositoryPrefKeys.CUSTOM_CAMPUS_ZONES_JSON] ?: "[]"
-        )
-    }.flowOn(Dispatchers.IO)
-
-    private fun extractNetworkProxyConfig(prefs: androidx.datastore.preferences.core.Preferences): NetworkProxyConfig {
-        return NetworkProxyConfig(
-            mode = ProxyMode.fromKey(prefs[CampusRepositoryPrefKeys.PROXY_MODE]),
-            presetMirrorKey = prefs[CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY] ?: PresetMirrorNode.GHFAST_TOP.key,
-            customReverseProxyPrefix = prefs[CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX] ?: "",
-            proxyHost = prefs[CampusRepositoryPrefKeys.PROXY_HOST]?.takeIf { it.isNotBlank() } ?: "127.0.0.1",
-            proxyPort = (prefs[CampusRepositoryPrefKeys.PROXY_PORT] ?: 7890).coerceIn(1, 65535),
-            autoFallbackMirror = prefs[CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK] ?: true,
-            customCloudApiBaseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
-        )
-    }
-
-    private fun extractReminderConfig(prefs: androidx.datastore.preferences.core.Preferences): ReminderGlobalConfig {
-        val quietMode = prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] ?: "FOLLOW_SYSTEM"
-        return ReminderGlobalConfig(
-            enabled = prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] ?: true,
-            classLeadMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] ?: 20).coerceIn(5, 120),
-            classSnoozeDefaultMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] ?: 5).coerceIn(5, 30),
-            classSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            classSnoozeCutoffMinutes = (prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] ?: 2).coerceIn(1, 15),
-            examDayBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] ?: true,
-            examHourBeforeEnabled = prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] ?: true,
-            examSnoozeMaxCount = (prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] ?: 2).coerceIn(0, 5),
-            preciseReminderPreferred = prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] ?: true,
-            liveProgressRefreshMinutes = (prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] ?: 5).takeIf { it in setOf(1, 5, 10) } ?: 5,
-            lockscreenPrivate = prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] ?: true,
-            quietMode = quietMode
-        )
-    }
+    val preferencesFlow: Flow<AppPreferencesState> =
+        campusServicesRepository.preferencesFlow
 
     val studentProfileFlow: Flow<StudentProfile?> =
         gradesRepository.studentProfileFlow
@@ -658,7 +528,7 @@ class CampusRepository internal constructor(
         timetableRepository.buildingAliasesFlow
 
     val widgetConfigsFlow: Flow<List<WidgetInstanceConfig>> =
-        dao.observeWidgetConfigs().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.widgetConfigsFlow
 
     val importAuditsFlow: Flow<List<ImportAudit>> =
         dao.observeImportAudits().map { list -> list.map { it.toDomain() } }
@@ -674,37 +544,35 @@ class CampusRepository internal constructor(
         timetableRepository.unscheduledCoursesFlow
 
     val activeReminderTasksFlow: Flow<List<ReminderTaskDomain>> =
-        reminderDao.observeActiveTasks().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.activeReminderTasksFlow
 
     val reminderEventOverridesFlow: Flow<List<ReminderEventOverride>> =
-        reminderDao.observeEventPrefs().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.reminderEventOverridesFlow
 
     fun observeReminderTasksInWindow(windowStartMs: Long, windowEndMs: Long): Flow<List<ReminderTaskDomain>> =
-        reminderDao.observeTasksInEventWindow(windowStartMs, windowEndMs).map { list ->
-            list.map { it.toDomain() }
-        }
+        campusServicesRepository.observeReminderTasksInWindow(windowStartMs, windowEndMs)
 
-    fun reminderDao(): ReminderDao = reminderDao
-    fun utilityAndFocusDao(): UtilityAndFocusDao = utilityAndFocusDao
-    fun utilityAccountSecureStore(): UtilityAccountSecureStore = utilityAccountStore
+    fun reminderDao(): ReminderDao = campusServicesRepository.reminderDao()
+    fun utilityAndFocusDao(): UtilityAndFocusDao = campusServicesRepository.utilityAndFocusDao()
+    fun utilityAccountSecureStore(): UtilityAccountSecureStore = campusServicesRepository.utilityAccountSecureStore()
 
     val utilityDailySamplesFlow: Flow<List<UtilityDailySample>> =
-        utilityAndFocusDao.observeDailySamples().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.utilityDailySamplesFlow
 
     val utilityOnlineRoomsFlow: Flow<List<UtilityOnlineRoomDomain>> =
-        utilityAndFocusDao.observeOnlineRooms().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.utilityOnlineRoomsFlow
 
     val utilityMetersFlow: Flow<List<UtilityMeterDomain>> =
-        utilityAndFocusDao.observeMeters().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.utilityMetersFlow
 
     val utilityReadingsFlow: Flow<List<UtilityReadingDomain>> =
-        utilityAndFocusDao.observeReadings().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.utilityReadingsFlow
 
     val activeFocusSessionFlow: Flow<FocusSessionDomain?> =
-        utilityAndFocusDao.observeActiveRunningFocusSession().map { it?.toDomain() }
+        campusServicesRepository.activeFocusSessionFlow
 
     val completedFocusSessionsFlow: Flow<List<FocusSessionDomain>> =
-        utilityAndFocusDao.observeCompletedFocusSessions().map { list -> list.map { it.toDomain() } }
+        campusServicesRepository.completedFocusSessionsFlow
 
     private suspend fun notifyScheduleOrPolicyChanged(reason: String) {
         runCatching { onScheduleOrPolicyChangedListener?.invoke(reason) }
@@ -722,18 +590,11 @@ class CampusRepository internal constructor(
     internal suspend fun ensureSeasonalTermRolloverIfNeeded(today: LocalDate = LocalDate.now(timeZone)) =
         termRepository.ensureSeasonalTermRolloverIfNeeded(today)
 
-    suspend fun completeOnboarding() {
-        preferences.edit {
-            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
-            it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
-        }
-    }
+    suspend fun completeOnboarding() =
+        campusServicesRepository.completeOnboarding()
 
-    suspend fun resetOnboardingForGuide() {
-        preferences.edit {
-            it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
-        }
-    }
+    suspend fun resetOnboardingForGuide() =
+        campusServicesRepository.resetOnboardingForGuide()
 
     suspend fun resetToDemoSeedData() =
         timetableRepository.resetToDemoSeedData()
@@ -1661,348 +1522,92 @@ class CampusRepository internal constructor(
     suspend fun setGpaPrivacyShield(enabled: Boolean) =
         gradesRepository.setGpaPrivacyShield(enabled)
 
-    suspend fun setUseDynamicColor(enabled: Boolean) {
-        preferences.edit { it[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = enabled }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun setUseDynamicColor(enabled: Boolean) =
+        campusServicesRepository.setUseDynamicColor(enabled)
 
-    suspend fun setThemeMode(mode: String) {
-        preferences.edit { it[CampusRepositoryPrefKeys.THEME_MODE] = mode }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun setThemeMode(mode: String) =
+        campusServicesRepository.setThemeMode(mode)
 
-    suspend fun setUiDesignStyle(styleKey: String) {
-        val normalized = when {
-            styleKey.equals("LIQUID_GLASS", ignoreCase = true) -> "LIQUID_GLASS"
-            styleKey.equals("FRESH_BREEZE", ignoreCase = true) -> "FRESH_BREEZE"
-            styleKey.equals("CREAM_PASTEL", ignoreCase = true) -> "CREAM_PASTEL"
-            else -> "FLUTTER_M3"
-        }
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = normalized
-            val currentPalette = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY]
-            when (normalized) {
-                "FRESH_BREEZE" -> {
-                    if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE") {
-                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "MINT_BREEZE"
-                    }
-                }
-                "CREAM_PASTEL" -> {
-                    if (currentPalette == null || currentPalette == "LIQUID_GLASS" || currentPalette == "HAUT_BLUE" || currentPalette == "MINT_BREEZE") {
-                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "PEACH_OOLONG"
-                    }
-                }
-                "FLUTTER_M3" -> {
-                    if (currentPalette == "LIQUID_GLASS") {
-                        prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "HAUT_BLUE"
-                    }
-                }
-                "LIQUID_GLASS" -> {
-                    if (prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                        prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
-                    }
-                    if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
-                        prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-                    }
-                }
-            }
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun setUiDesignStyle(styleKey: String) =
+        campusServicesRepository.setUiDesignStyle(styleKey)
 
     suspend fun applyCuratedThemePreset(
         designStyleKey: String,
         paletteKey: String,
         clearWallpaper: Boolean = false
-    ) {
-        val normalizedStyle = when {
-            designStyleKey.equals("LIQUID_GLASS", ignoreCase = true) -> "LIQUID_GLASS"
-            designStyleKey.equals("FRESH_BREEZE", ignoreCase = true) -> "FRESH_BREEZE"
-            designStyleKey.equals("CREAM_PASTEL", ignoreCase = true) -> "CREAM_PASTEL"
-            else -> "FLUTTER_M3"
-        }
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = normalizedStyle
-            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = paletteKey
-            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
-            if (normalizedStyle == "LIQUID_GLASS") {
-                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] == null) {
-                    prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
-                }
-                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
-                    prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-                }
-            }
-            if (clearWallpaper) {
-                prefs.remove(CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH)
-            }
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    ) = campusServicesRepository.applyCuratedThemePreset(
+        designStyleKey = designStyleKey,
+        paletteKey = paletteKey,
+        clearWallpaper = clearWallpaper
+    )
 
-    suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = paletteKey
-            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
-            if (paletteKey == "LIQUID_GLASS") {
-                prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
-                val curCardAlpha = prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA]
-                if (curCardAlpha == null || curCardAlpha > 0.85f) {
-                    prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
-                }
-                if (prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] == null) {
-                    prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-                }
-            }
-            if (customSeedArgb != null) {
-                prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = customSeedArgb
-            }
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun setThemePalette(paletteKey: String, customSeedArgb: Long? = null) =
+        campusServicesRepository.setThemePalette(paletteKey, customSeedArgb)
 
     suspend fun saveCustomWallpaperTheme(
         localPath: String,
         primarySeedArgb: Long,
         extractedSwatches: List<Long>,
         enableLiquidGlass: Boolean = false
-    ) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH] = localPath
-            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
-            prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
-            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
-            prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
-            if (enableLiquidGlass) {
-                prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] = "LIQUID_GLASS"
-            }
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    ) = campusServicesRepository.saveCustomWallpaperTheme(
+        localPath = localPath,
+        primarySeedArgb = primarySeedArgb,
+        extractedSwatches = extractedSwatches,
+        enableLiquidGlass = enableLiquidGlass
+    )
 
     suspend fun saveExtractedDesktopSwatches(
         primarySeedArgb: Long,
         extractedSwatches: List<Long>
-    ) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] = "CUSTOM"
-            prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] = primarySeedArgb
-            prefs[CampusRepositoryPrefKeys.DYNAMIC_COLOR] = false
-            prefs[CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS] = extractedSwatches.joinToString(",")
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    ) = campusServicesRepository.saveExtractedDesktopSwatches(primarySeedArgb, extractedSwatches)
 
     suspend fun updateWallpaperVisualParams(
         alpha: Float? = null,
         blurDp: Float? = null,
         cardAlpha: Float? = null
-    ) {
-        preferences.edit { prefs ->
-            alpha?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.clampWallpaperAlpha(it) }
-            blurDp?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.clampWallpaperBlurDp(it) }
-            cardAlpha?.let { prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.clampWallpaperCardAlpha(it) }
-        }
-    }
+    ) = campusServicesRepository.updateWallpaperVisualParams(alpha, blurDp, cardAlpha)
 
-    suspend fun resetWallpaperVisualParams() {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.WALLPAPER_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA
-            prefs[CampusRepositoryPrefKeys.WALLPAPER_BLUR_DP] = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP
-            prefs[CampusRepositoryPrefKeys.WALLPAPER_CARD_ALPHA] = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun resetWallpaperVisualParams() =
+        campusServicesRepository.resetWallpaperVisualParams()
 
-    suspend fun clearCustomWallpaperTheme() {
-        preferences.edit { prefs ->
-            val oldPath = prefs[CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH]
-            if (!oldPath.isNullOrBlank()) {
-                runCatching { java.io.File(oldPath).delete() }
-            }
-            prefs.remove(CampusRepositoryPrefKeys.CUSTOM_WALLPAPER_PATH)
-            prefs.remove(CampusRepositoryPrefKeys.EXTRACTED_WALLPAPER_COLORS)
-            if (prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] == "CUSTOM") {
-                prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] =
-                    if (prefs[CampusRepositoryPrefKeys.UI_DESIGN_STYLE] == "LIQUID_GLASS") "LIQUID_GLASS" else "HAUT_BLUE"
-            }
-        }
-        notifyScheduleOrPolicyChanged("THEME_UPDATED")
-    }
+    suspend fun clearCustomWallpaperTheme() =
+        campusServicesRepository.clearCustomWallpaperTheme()
 
     suspend fun updateHomeCardLayout(
         order: List<String>,
         hidden: Set<String>,
         fullWidth: Set<String>
-    ) {
-        val normalizedOrder = HomeCardModule.normalizeOrderIds(order)
-        val normalizedHidden = HomeCardModule.normalizeHiddenIds(hidden)
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.HOME_CARD_ORDER] = normalizedOrder.joinToString(",")
-            prefs[CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS] = normalizedHidden.joinToString(",")
-            prefs[CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS] =
-                if (fullWidth.isEmpty()) HomeCardModule.EMPTY_SET_SENTINEL else fullWidth.joinToString(",")
-        }
-    }
+    ) = campusServicesRepository.updateHomeCardLayout(order, hidden, fullWidth)
 
-    suspend fun resetHomeCardLayout() {
-        preferences.edit { prefs ->
-            prefs.remove(CampusRepositoryPrefKeys.HOME_CARD_ORDER)
-            prefs.remove(CampusRepositoryPrefKeys.HIDDEN_HOME_CARDS)
-            prefs.remove(CampusRepositoryPrefKeys.FULL_WIDTH_HOME_CARDS)
-        }
-    }
+    suspend fun resetHomeCardLayout() =
+        campusServicesRepository.resetHomeCardLayout()
 
-    suspend fun getActiveThemeAccentArgb(): Int {
-        val prefs = preferences.data.first()
-        val key = prefs[CampusRepositoryPrefKeys.THEME_PALETTE_KEY] ?: "HAUT_BLUE"
-        val custom = prefs[CampusRepositoryPrefKeys.CUSTOM_THEME_SEED_ARGB] ?: 0xFF053968
-        val seedLong = when (key) {
-            "MINT_BREEZE" -> 0xFF10B981
-            "SKY_SODA" -> 0xFF0EA5E9
-            "PEACH_OOLONG" -> 0xFFF472B6
-            "MATCHA_CREAM" -> 0xFF22C55E
-            "LAVENDER_MIST" -> 0xFF8B5CF6
-            "POMELO_SUN" -> 0xFFFB7185
-            "LIQUID_GLASS" -> 0xFF0EA5E9
-            "HAUT_BLUE" -> 0xFF053968
-            "PINE_TEAL" -> 0xFF0D9488
-            "JADE_GREEN" -> 0xFF16A34A
-            "AMBER_GOLD" -> 0xFFD97706
-            "CORAL_RED" -> 0xFFE11D48
-            "IRIS_PURPLE" -> 0xFF7C3AED
-            "SAKURA_PINK" -> 0xFFDB2777
-            "SLATE_INK" -> 0xFF334155
-            "CUSTOM" -> custom
-            else -> 0xFF053968
-        }
-        return seedLong.toInt()
-    }
+    suspend fun getActiveThemeAccentArgb(): Int =
+        campusServicesRepository.getActiveThemeAccentArgb()
 
-    suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) {
-        preferences.edit { it[CampusRepositoryPrefKeys.AUTO_CHECK_UPDATE] = enabled }
-    }
+    suspend fun setAutoCheckUpdateEnabled(enabled: Boolean) =
+        campusServicesRepository.setAutoCheckUpdateEnabled(enabled)
 
-    suspend fun getNetworkProxyConfigSnapshot(): NetworkProxyConfig {
-        val prefs = preferences.data.first()
-        return extractNetworkProxyConfig(prefs)
-    }
+    suspend fun getNetworkProxyConfigSnapshot(): NetworkProxyConfig =
+        campusServicesRepository.getNetworkProxyConfigSnapshot()
 
-    suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) {
-        // CLOUD_API_BASE_URL 属于身份会话快照成分：其变更必须过提交屏障（全局锁序 booking→identity），
-        // 保证同步在锁内复核身份/世代/base-url 后，不存在"复核通过→写入前"间被换址的窗口。
-        // 真实换址（同一规范化口径下 old != new）还必须在同一锁内推进身份世代：
-        // 仅有 base-url 相等性复核挡不住 A→B→A——回到原址后迟到的在途响应会误判快照仍有效。
-        // 世代推进即令在途会话全部失效（非解绑，不留 tombstone）；同值保存、仅改代理选项绝不推进。
-        bookingPlanStateMutex.withLock {
-            cloudIdentityMutex.withLock {
-                var baseUrlChanged = false
-                preferences.edit { prefs ->
-                    // 与身份快照同一规范化口径（normalizeCloudApiBaseUrl 幂等，等价于快照读到的 apiBaseUrl）
-                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
-                    val newBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(config.customCloudApiBaseUrl)
-                    baseUrlChanged = oldBase != newBase
-                    prefs[CampusRepositoryPrefKeys.PROXY_MODE] = config.mode.key
-                    prefs[CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY] = config.presetMirrorKey
-                    prefs[CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX] = config.customReverseProxyPrefix.trim()
-                    prefs[CampusRepositoryPrefKeys.PROXY_HOST] = config.proxyHost.trim().ifBlank { "127.0.0.1" }
-                    prefs[CampusRepositoryPrefKeys.PROXY_PORT] = config.proxyPort.coerceIn(1, 65535)
-                    prefs[CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK] = config.autoFallbackMirror
-                    prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL] = newBase
-                }
-                if (baseUrlChanged) {
-                    // 同一 owner 保留：这是"换址失效"而非解绑，绝不写 tombstone
-                    bumpCloudIdentityGenerationLocked(
-                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
-                        markUnlinkTombstone = false
-                    )
-                }
-            }
-        }
-    }
+    suspend fun updateNetworkProxyConfig(config: NetworkProxyConfig) =
+        campusServicesRepository.updateNetworkProxyConfig(config)
 
-    suspend fun resetNetworkProxyConfig() {
-        // 同上：reset 会清除 CLOUD_API_BASE_URL（生效值回落默认网关），同样属于身份会话变更，
-        // 须过提交屏障；仅当规范化后的生效 base-url 真实变化时才推进世代
-        bookingPlanStateMutex.withLock {
-            cloudIdentityMutex.withLock {
-                var baseUrlChanged = false
-                preferences.edit { prefs ->
-                    val oldBase = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL])
-                    baseUrlChanged = oldBase != NetworkProxyConfig.normalizeCloudApiBaseUrl(null)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_MODE)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_PRESET_MIRROR_KEY)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_CUSTOM_PREFIX)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_HOST)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_PORT)
-                    prefs.remove(CampusRepositoryPrefKeys.PROXY_AUTO_FALLBACK)
-                    prefs.remove(CampusRepositoryPrefKeys.CLOUD_API_BASE_URL)
-                }
-                if (baseUrlChanged) {
-                    bumpCloudIdentityGenerationLocked(
-                        cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
-                        markUnlinkTombstone = false
-                    )
-                }
-            }
-        }
-    }
+    suspend fun resetNetworkProxyConfig() =
+        campusServicesRepository.resetNetworkProxyConfig()
 
-    suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) {
-        preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]).toMutableMap()
-            if (inviteUrl.isBlank()) {
-                current.remove(channelId)
-            } else {
-                current[channelId] = inviteUrl.trim()
-            }
-            prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS] = encodeKeyValueMap(current)
-        }
-    }
+    suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) =
+        campusServicesRepository.saveCustomChannelUrl(channelId, inviteUrl)
 
-    suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) {
-        preferences.edit { prefs ->
-            val current = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]).toMutableMap()
-            if (groupNumber.isBlank()) {
-                current.remove(clubId)
-            } else {
-                current[clubId] = groupNumber.trim()
-            }
-            prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS] = encodeKeyValueMap(current)
-        }
-    }
+    suspend fun saveCustomClubGroupNumber(clubId: String, groupNumber: String) =
+        campusServicesRepository.saveCustomClubGroupNumber(clubId, groupNumber)
 
     /**
-     * 从云端控制平面 (`GET /api/v1/campus-content?school_id=haut`) 实时拉取最新的校园频道与学生社团名录，
-     * 并持久化到本地 DataStore 供全端响应式渲染。
+     * 拉取最新校园频道与学生社团名录；行为委托 CampusServicesRepository，语义不变。
      */
     suspend fun refreshCampusCommunityContent(): Result<cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val baseUrl = NetworkProxyConfig.normalizeCloudApiBaseUrl(
-                    preferencesFlow.first().networkProxyConfig.customCloudApiBaseUrl
-                )
-                val (catalog, rawJson) = CampusCloudOidcHelper.fetchPublicCampusContent(
-                    schoolId = schoolId,
-                    cloudBaseUrl = baseUrl
-                ) ?: throw IllegalStateException("无法连接云端获取最新校园频道与社团内容")
-                val now = System.currentTimeMillis()
-                preferences.edit { prefs ->
-                    prefs.remove(CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1)
-                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_JSON] = rawJson
-                    prefs[CampusRepositoryPrefKeys.CLOUD_CAMPUS_CONTENT_SYNCED_MS] = now
-                }
-                catalog
-            }
-        }
-
-    private fun decodeKeyValueMap(raw: String?): Map<String, String> {
-        if (raw.isNullOrBlank()) return emptyMap()
-        return raw.split("\n").mapNotNull { line ->
-            val idx = line.indexOf('\t')
-            if (idx <= 0) null else line.substring(0, idx) to line.substring(idx + 1)
-        }.toMap()
-    }
+        campusServicesRepository.refreshCampusCommunityContent()
 
     /**
      * 刷新校园互助广场云端快照；行为委托 MomentsRepository，语义不变。
@@ -2184,119 +1789,40 @@ class CampusRepository internal constructor(
         message = message
     )
 
-    private fun encodeKeyValueMap(map: Map<String, String>): String {
-        return map.entries.joinToString("\n") { (k, v) ->
-            "${k.replace("\t", " ").replace("\n", " ")}\t${v.replace("\n", "").trim()}"
-        }
-    }
+    suspend fun setTimelineZoomScale(scale: Float) =
+        campusServicesRepository.setTimelineZoomScale(scale)
 
-    suspend fun setTimelineZoomScale(scale: Float) {
-        preferences.edit { it[CampusRepositoryPrefKeys.TIMELINE_SCALE] = ThemeVisualDefaults.clampTimelineZoomScale(scale) }
-    }
+    suspend fun saveWidgetConfig(config: WidgetInstanceConfig) =
+        campusServicesRepository.saveWidgetConfig(config)
 
-    suspend fun saveWidgetConfig(config: WidgetInstanceConfig) {
-        dao.upsertWidgetConfig(config.toEntity())
-    }
-
-    suspend fun getWidgetConfigOrDefault(appWidgetId: Int, defaultType: cn.edu.haut.campus.core.model.WidgetType): WidgetInstanceConfig {
-        dao.getWidgetConfig(appWidgetId)?.toDomain()?.let { return it }
-        val prefs = preferences.data.first()
-        return WidgetInstanceConfig(
-            appWidgetId = appWidgetId,
-            widgetType = defaultType,
-            compact = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] ?: false,
-            privacyMode = prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] ?: false
-        )
-    }
+    suspend fun getWidgetConfigOrDefault(appWidgetId: Int, defaultType: cn.edu.haut.campus.core.model.WidgetType): WidgetInstanceConfig =
+        campusServicesRepository.getWidgetConfigOrDefault(appWidgetId, defaultType)
 
     suspend fun updateAllWidgetDefaults(
         compact: Boolean? = null,
         privacyMode: Boolean? = null
-    ) {
-        preferences.edit { prefs ->
-            compact?.let { prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_COMPACT] = it }
-            privacyMode?.let { prefs[CampusRepositoryPrefKeys.WIDGET_DEFAULT_PRIVACY_MODE] = it }
-        }
-        when {
-            compact != null && privacyMode != null -> dao.updateAllWidgetConfigsDefaults(compact, privacyMode)
-            compact != null -> dao.updateAllWidgetConfigsCompact(compact)
-            privacyMode != null -> dao.updateAllWidgetConfigsPrivacyMode(privacyMode)
-        }
-        notifyScheduleOrPolicyChanged("WIDGET_CONFIG_UPDATED")
-    }
+    ) = campusServicesRepository.updateAllWidgetDefaults(compact, privacyMode)
 
-    suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig {
-        val prefs = preferences.data.first()
-        return extractReminderConfig(prefs)
-    }
-
+    suspend fun getReminderConfigSnapshot(): ReminderGlobalConfig =
+        campusServicesRepository.getReminderConfigSnapshot()
 
     suspend fun getExamSchedulesSnapshot(): List<ExamScheduleItem> =
         examRepository.getExamSchedulesSnapshot()
 
-    suspend fun getReminderEventOverridesSnapshot(): List<ReminderEventOverride> {
-        return reminderDao.getEventPrefsSnapshot().map { it.toDomain() }
-    }
+    suspend fun getReminderEventOverridesSnapshot(): List<ReminderEventOverride> =
+        campusServicesRepository.getReminderEventOverridesSnapshot()
 
-    suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) {
-        preferences.edit { prefs ->
-            val current = extractReminderConfig(prefs)
-            val updated = transform(current)
-            prefs[CampusRepositoryPrefKeys.REMINDERS_ENABLED] = updated.enabled
-            prefs[CampusRepositoryPrefKeys.CLASS_LEAD_MINUTES] = updated.classLeadMinutes.coerceIn(5, 120)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_DEFAULT_MINUTES] = updated.classSnoozeDefaultMinutes.coerceIn(5, 30)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_MAX_COUNT] = updated.classSnoozeMaxCount.coerceIn(0, 5)
-            prefs[CampusRepositoryPrefKeys.CLASS_SNOOZE_CUTOFF_MINUTES] = updated.classSnoozeCutoffMinutes.coerceIn(1, 15)
-            prefs[CampusRepositoryPrefKeys.EXAM_DAY_BEFORE_ENABLED] = updated.examDayBeforeEnabled
-            prefs[CampusRepositoryPrefKeys.EXAM_HOUR_BEFORE_ENABLED] = updated.examHourBeforeEnabled
-            prefs[CampusRepositoryPrefKeys.EXAM_SNOOZE_MAX_COUNT] = updated.examSnoozeMaxCount.coerceIn(0, 5)
-            prefs[CampusRepositoryPrefKeys.PRECISE_REMINDER_PREFERRED] = updated.preciseReminderPreferred
-            prefs[CampusRepositoryPrefKeys.LIVE_PROGRESS_REFRESH_MINUTES] = updated.liveProgressRefreshMinutes.takeIf { it in setOf(1, 5, 10) } ?: 5
-            prefs[CampusRepositoryPrefKeys.REMINDER_LOCKSCREEN_PRIVATE] = updated.lockscreenPrivate
-            prefs[CampusRepositoryPrefKeys.REMINDER_QUIET_MODE] = updated.quietMode
-            prefs[CampusRepositoryPrefKeys.REMINDER_POLICY_REVISION] = ReminderRevision.computePolicyRevision(
-                enabled = updated.enabled,
-                classLeadMinutes = updated.classLeadMinutes,
-                maxSnoozes = updated.classSnoozeMaxCount,
-                cutoffMinutesBeforeStart = updated.classSnoozeCutoffMinutes,
-                examDayEnabled = updated.examDayBeforeEnabled,
-                examHourEnabled = updated.examHourBeforeEnabled
-            )
-        }
-        notifyScheduleOrPolicyChanged("REMINDER_GLOBAL_CONFIG_UPDATED")
-    }
+    suspend fun updateReminderGlobalConfig(transform: (ReminderGlobalConfig) -> ReminderGlobalConfig) =
+        campusServicesRepository.updateReminderGlobalConfig(transform)
 
-    suspend fun upsertReminderEventOverride(override: ReminderEventOverride) {
-        reminderDao.upsertEventPref(override.toEntity())
-        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_UPSERTED:${override.eventScopeKey}")
-    }
+    suspend fun upsertReminderEventOverride(override: ReminderEventOverride) =
+        campusServicesRepository.upsertReminderEventOverride(override)
 
-    suspend fun removeReminderEventOverride(scopeKey: String) {
-        reminderDao.deleteEventPref(scopeKey)
-        notifyScheduleOrPolicyChanged("REMINDER_EVENT_OVERRIDE_REMOVED:$scopeKey")
-    }
+    suspend fun removeReminderEventOverride(scopeKey: String) =
+        campusServicesRepository.removeReminderEventOverride(scopeKey)
 
-    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) {
-        val nowMs = System.currentTimeMillis()
-        val timeText = java.time.Instant.ofEpochMilli(nowMs)
-            .atZone(HAUT_ZONE_ID)
-            .toLocalTime()
-            .withNano(0)
-            .toString()
-        val formatted = "[$timeText] $message"
-        preferences.edit { prefs ->
-            val existing = prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS]
-                ?.split("\n")
-                ?.filter { it.isNotBlank() }
-                .orEmpty()
-            val updated = (listOf(formatted) + existing).take(30)
-            prefs[CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS] = updated.joinToString("\n")
-            if (reconcileSummary != null) {
-                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS] = nowMs
-                prefs[CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY] = reconcileSummary
-            }
-        }
-    }
+    suspend fun appendReminderDiagnosticLog(message: String, reconcileSummary: String? = null) =
+        campusServicesRepository.appendReminderDiagnosticLog(message, reconcileSummary)
 
     suspend fun setCampusServiceFeatureFlag(
         utilitiesEnabled: Boolean? = null,
@@ -2305,48 +1831,32 @@ class CampusRepository internal constructor(
         focusEnabled: Boolean? = null,
         showTodayFocusQuickPill: Boolean? = null,
         timetableInterchangeEnabled: Boolean? = null
-    ) {
-        preferences.edit { prefs ->
-            utilitiesEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] = it }
-            libraryNativeEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_LIBRARY_NATIVE_ENABLED] = it }
-            librarySeatEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_LIBRARY_SEAT_ENABLED] = it }
-            focusEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_FOCUS_ENABLED] = it }
-            showTodayFocusQuickPill?.let { prefs[CampusRepositoryPrefKeys.FF_TODAY_FOCUS_PILL] = it }
-            timetableInterchangeEnabled?.let { prefs[CampusRepositoryPrefKeys.FF_TIMETABLE_INTERCHANGE] = it }
-        }
-    }
+    ) = campusServicesRepository.setCampusServiceFeatureFlag(
+        utilitiesEnabled = utilitiesEnabled,
+        libraryNativeEnabled = libraryNativeEnabled,
+        librarySeatEnabled = librarySeatEnabled,
+        focusEnabled = focusEnabled,
+        showTodayFocusQuickPill = showTodayFocusQuickPill,
+        timetableInterchangeEnabled = timetableInterchangeEnabled
+    )
 
-    suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = allowed
-        }
-    }
+    suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) =
+        campusServicesRepository.setAllowUnverifiedUtilityTransport(allowed)
 
-    suspend fun setMealRecommendEnabled(enabled: Boolean) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] = enabled
-        }
-        notifyScheduleOrPolicyChanged("MEAL_RECOMMEND_CONFIG_CHANGED")
-    }
+    suspend fun setMealRecommendEnabled(enabled: Boolean) =
+        campusServicesRepository.setMealRecommendEnabled(enabled)
 
-    suspend fun isMealRecommendEnabledSnapshot(): Boolean {
-        val prefs = preferences.data.first()
-        return supportsHautServices && (prefs[CampusRepositoryPrefKeys.MEAL_RECOMMEND_ENABLED] ?: true)
-    }
+    suspend fun isMealRecommendEnabledSnapshot(): Boolean =
+        campusServicesRepository.isMealRecommendEnabledSnapshot()
 
     suspend fun getLastMealRecommendBlockKeySnapshot(): String? =
-        preferences.data.first()[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY]
+        campusServicesRepository.getLastMealRecommendBlockKeySnapshot()
 
-    suspend fun markMealRecommendNotified(blockKey: String) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.LAST_MEAL_RECOMMEND_BLOCK_KEY] = blockKey
-        }
-    }
+    suspend fun markMealRecommendNotified(blockKey: String) =
+        campusServicesRepository.markMealRecommendNotified(blockKey)
 
-    suspend fun getCanteenDishReviewsSnapshot(): List<cn.edu.haut.campus.core.domain.CanteenDishReview> {
-        val raw = preferences.data.first()[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
-        return cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(raw)
-    }
+    suspend fun getCanteenDishReviewsSnapshot(): List<cn.edu.haut.campus.core.domain.CanteenDishReview> =
+        campusServicesRepository.getCanteenDishReviewsSnapshot()
 
     suspend fun saveCanteenDishReview(
         canteenBuildingId: String,
@@ -2356,283 +1866,59 @@ class CampusRepository internal constructor(
         stars: Int,
         tags: List<String> = emptyList(),
         comment: String = ""
-    ) {
-        val cleanCanteen = canteenBuildingId.trim().ifBlank { "b_canteen1" }
-        val cleanDish = dishName.trim().take(36)
-        require(cleanDish.isNotEmpty()) { "请输入菜品或档口名称" }
-        val safeStars = stars.coerceIn(1, 5)
-        val nowMs = System.currentTimeMillis()
-        preferences.edit { prefs ->
-            val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
-            )
-            val filtered = existing.filterNot {
-                it.canteenBuildingId == cleanCanteen && it.dishName.equals(cleanDish, ignoreCase = true)
-            }
-            val newReview = cn.edu.haut.campus.core.domain.CanteenDishReview(
-                id = "$cleanCanteen:$cleanDish",
-                canteenBuildingId = cleanCanteen,
-                dishName = cleanDish,
-                stallLocation = stallLocation.trim().take(24),
-                priceYuan = priceYuan?.coerceIn(1, 200),
-                stars = safeStars,
-                tags = tags.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(4),
-                comment = comment.trim().take(80),
-                updatedAtEpochMs = nowMs
-            )
-            val updated = listOf(newReview) + filtered
-            prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS] =
-                cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated.take(120))
-        }
-    }
+    ) = campusServicesRepository.saveCanteenDishReview(
+        canteenBuildingId = canteenBuildingId,
+        dishName = dishName,
+        stallLocation = stallLocation,
+        priceYuan = priceYuan,
+        stars = stars,
+        tags = tags,
+        comment = comment
+    )
 
-    suspend fun deleteCanteenDishReview(canteenBuildingId: String, dishName: String) {
-        preferences.edit { prefs ->
-            val existing = cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.decodeList(
-                prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS]
-            )
-            val updated = existing.filterNot {
-                it.canteenBuildingId == canteenBuildingId && it.dishName.equals(dishName.trim(), ignoreCase = true)
-            }
-            prefs[CampusRepositoryPrefKeys.CANTEEN_DISH_REVIEWS] =
-                cn.edu.haut.campus.core.domain.CanteenDishReviewCodec.encodeList(updated)
-        }
-    }
+    suspend fun deleteCanteenDishReview(canteenBuildingId: String, dishName: String) =
+        campusServicesRepository.deleteCanteenDishReview(canteenBuildingId, dishName)
 
-    suspend fun setSelectedFocusMinutes(minutes: Int) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.SELECTED_FOCUS_MINUTES] = minutes.coerceIn(1, 180)
-        }
-    }
+    suspend fun setSelectedFocusMinutes(minutes: Int) =
+        campusServicesRepository.setSelectedFocusMinutes(minutes)
 
     fun readUtilityAccountResult(): UtilityAccountReadResult =
-        utilityAccountStore.readAccountResult()
+        campusServicesRepository.readUtilityAccountResult()
 
     /**
-     * 在线查询本人已绑定房间水电并同步更新缓存与每日电表采样。
+     * 在线查询本人已绑定房间水电并同步缓存；行为委托 CampusServicesRepository，语义不变。
      */
     suspend fun saveAndRefreshOnlineUtilities(
         rawAccount: String? = null,
         allowUnverified: Boolean = false
-    ): Result<List<OnlineUtilityRoomSnapshot>> = runCatching {
-        val accountToUse = if (!rawAccount.isNullOrBlank()) {
-            val clean = UtilityAccountSecureStore.validateAccountFormat(rawAccount)
-            var switched = false
-            utilityAccountStore.saveOrSwitchAccount(clean) {
-                switched = true
-            }
-            preferences.edit { prefs ->
-                prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] = true
-            }
-            if (switched) {
-                database.withTransaction {
-                    utilityAndFocusDao.clearAllOnlineRooms()
-                    utilityAndFocusDao.clearAllDailySamples()
-                }
-            }
-            clean
-        } else {
-            when (val saved = utilityAccountStore.readAccountResult()) {
-                is UtilityAccountReadResult.Active -> saved.plainAccount
-                is UtilityAccountReadResult.InvalidatedAndReset ->
-                    throw IllegalStateException("安全密钥已重置，请重新输入本人校园卡账号")
-                is UtilityAccountReadResult.Empty ->
-                    throw IllegalArgumentException("请先填写本人校园卡账号（通常为学号）")
-            }
-        }
+    ): Result<List<OnlineUtilityRoomSnapshot>> = campusServicesRepository.saveAndRefreshOnlineUtilities(
+        rawAccount = rawAccount,
+        allowUnverified = allowUnverified
+    )
 
-        val startedAtMs = System.currentTimeMillis()
-        val effectiveAllowOnline = allowUnverified || !rawAccount.isNullOrBlank() ||
-            (preferences.data.first()[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false)
-        val snapshots = wanxiaoUtilityClient.queryOwnBoundRooms(
-            account = accountToUse,
-            allowUnverifiedTransport = effectiveAllowOnline
-        )
-        val finishedAtMs = System.currentTimeMillis()
-
-        database.withTransaction {
-            val existingRooms = utilityAndFocusDao.getOnlineRoomsSnapshot().associateBy { it.roomId }
-            val updatedEntities = snapshots.map { snap ->
-                val prev = existingRooms[snap.roomId]
-                if (snap.failed && prev != null) {
-                    prev.copy(failed = true)
-                } else {
-                    UtilityOnlineRoomEntity(
-                        roomId = snap.roomId,
-                        roomName = snap.roomName,
-                        campusCode = prev?.campusCode,
-                        devicesJson = encodeOnlineDevicesJson(snap.devices),
-                        updatedAtEpochMs = if (snap.fetchedAtEpochMs > 0L) snap.fetchedAtEpochMs else finishedAtMs,
-                        failed = snap.failed
-                    )
-                }
-            }
-            utilityAndFocusDao.clearAllOnlineRooms()
-            utilityAndFocusDao.upsertOnlineRooms(updatedEntities)
-
-            val existingSamples = utilityAndFocusDao.getDailySamplesSnapshot().map { it.toDomain() }
-            val mergedSamples = UtilitySamplingPolicy.mergeDailySamples(
-                existingSamples = existingSamples,
-                rooms = snapshots,
-                startedAtEpochMs = startedAtMs,
-                finishedAtEpochMs = finishedAtMs
-            )
-            utilityAndFocusDao.clearAllDailySamples()
-            utilityAndFocusDao.upsertDailySamples(mergedSamples.map { it.toEntity() })
-        }
-
-        if (snapshots.any { !it.failed }) {
-            preferences.edit { prefs ->
-                prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS] = finishedAtMs
-            }
-        }
-        runCatching { notifyDailyUtilitySummaryIfEligible(finishedAtMs) }
-        snapshots
-    }
-
-    /**
-     * 供后台周期 Worker 或前台恢复时调用的按需水电采样：
-     * 仅在已开启水电功能、已开启在线传输许可、存在有效加密账号且满足采样间隔时触发。
-     */
     suspend fun performPeriodicUtilitySampleIfEligible(
         nowEpochMs: Long = System.currentTimeMillis()
-    ): Boolean {
-        val prefs = preferences.data.first()
-        val utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true)
-        val allowUnverified = prefs[CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT] ?: false
-        if (!utilitiesEnabled || !allowUnverified) {
-            runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
-            return false
-        }
-
-        val lastSampleMs = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS] ?: 0L
-        if (!UtilitySamplingPolicy.shouldSample(lastSampleMs, nowEpochMs)) {
-            runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
-            return false
-        }
-
-        val activeAccount = (utilityAccountStore.readAccountResult() as? UtilityAccountReadResult.Active)
-            ?.plainAccount ?: run {
-                runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
-                return false
-            }
-
-        val sampled = saveAndRefreshOnlineUtilities(
-            rawAccount = activeAccount,
-            allowUnverified = true
-        ).isSuccess
-        runCatching { notifyDailyUtilitySummaryIfEligible(nowEpochMs) }
-        return sampled
-    }
+    ): Boolean = campusServicesRepository.performPeriodicUtilitySampleIfEligible(nowEpochMs)
 
     suspend fun updateUtilityNotificationConfig(
         enabled: Boolean? = null,
         dailyHour: Int? = null,
         lowBalanceThreshold: Float? = null
-    ) {
-        preferences.edit { prefs ->
-            enabled?.let { prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] = it }
-            dailyHour?.let { prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] = it.coerceIn(8, 23) }
-            lowBalanceThreshold?.let { prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] = it.coerceIn(5f, 100f) }
-        }
-    }
+    ) = campusServicesRepository.updateUtilityNotificationConfig(enabled, dailyHour, lowBalanceThreshold)
 
     suspend fun notifyDailyUtilitySummaryIfEligible(
         nowEpochMs: Long = System.currentTimeMillis()
-    ): Boolean {
-        val prefs = preferences.data.first()
-        val utilitiesEnabled = supportsHautServices && (prefs[CampusRepositoryPrefKeys.FF_UTILITIES_ENABLED] ?: true)
-        if (!utilitiesEnabled) return false
-
-        val notifyEnabled = prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_ENABLED] ?: true
-        if (!notifyEnabled) return false
-
-        val zdt = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID)
-        val todayDateText = zdt.toLocalDate().toString()
-        val currentHour = zdt.hour
-        val targetHour = (prefs[CampusRepositoryPrefKeys.UTILITY_DAILY_NOTIFY_HOUR] ?: 20).coerceIn(8, 23)
-        val lowThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
-        val lastNotifiedDate = prefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE]
-
-        val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
-            onlineRooms = utilityOnlineRoomsFlow.first(),
-            dailySamples = utilityDailySamplesFlow.first(),
-            manualMeters = utilityMetersFlow.first(),
-            manualReadings = utilityReadingsFlow.first(),
-            todayDateText = todayDateText,
-            lowThreshold = lowThreshold
-        ) ?: return false
-
-        val shouldSend = DormElectricityNotificationSubsystem.shouldTriggerAutoNotify(
-            enabled = notifyEnabled,
-            lastNotifiedDate = lastNotifiedDate,
-            todayDateText = todayDateText,
-            currentHourInShanghai = currentHour,
-            targetHour = targetHour,
-            isLowBalance = payload.isLowBalance
-        )
-        if (!shouldSend) return false
-
-        val posted = DormElectricityNotificationSubsystem.postNotification(
-            context = appContext,
-            notificationId = DormElectricityNotificationSubsystem.NOTIFICATION_ID_DAILY,
-            title = payload.title,
-            body = payload.body,
-            profileId = profileId,
-            generation = activeSessionGeneration
-        )
-        if (posted) {
-            preferences.edit { editPrefs ->
-                editPrefs[CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE] = todayDateText
-            }
-        }
-        return posted
-    }
+    ): Boolean = campusServicesRepository.notifyDailyUtilitySummaryIfEligible(nowEpochMs)
 
     suspend fun sendTestUtilityNotification(
         nowEpochMs: Long = System.currentTimeMillis()
-    ): Boolean {
-        val prefs = preferences.data.first()
-        val todayDateText = Instant.ofEpochMilli(nowEpochMs).atZone(HAUT_ZONE_ID).toLocalDate().toString()
-        val lowThreshold = (prefs[CampusRepositoryPrefKeys.UTILITY_LOW_BALANCE_THRESHOLD] ?: 15f).toDouble()
-        val payload = DormElectricityNotificationSubsystem.buildNotificationPayload(
-            onlineRooms = utilityOnlineRoomsFlow.first(),
-            dailySamples = utilityDailySamplesFlow.first(),
-            manualMeters = utilityMetersFlow.first(),
-            manualReadings = utilityReadingsFlow.first(),
-            todayDateText = todayDateText,
-            lowThreshold = lowThreshold
-        ) ?: DormElectricityNotificationPayload(
-            title = "今日宿舍用电 · 通知预览",
-            body = "今日用电 3.20度 · 剩余电量 28.50度",
-            isLowBalance = false,
-            primaryRoomName = "宿舍"
-        )
-        return DormElectricityNotificationSubsystem.postNotification(
-            context = appContext,
-            notificationId = DormElectricityNotificationSubsystem.NOTIFICATION_ID_TEST,
-            title = payload.title,
-            body = payload.body,
-            profileId = profileId,
-            generation = activeSessionGeneration
-        )
-    }
+    ): Boolean = campusServicesRepository.sendTestUtilityNotification(nowEpochMs)
 
-    suspend fun updateOnlineRoomCampus(roomId: String, campusCode: String?) {
-        utilityAndFocusDao.updateOnlineRoomCampus(roomId, campusCode)
-    }
+    suspend fun updateOnlineRoomCampus(roomId: String, campusCode: String?) =
+        campusServicesRepository.updateOnlineRoomCampus(roomId, campusCode)
 
-    suspend fun clearUtilityAccountAndOnlineCache() {
-        runCatching { utilityAccountStore.wipeAll() }
-        database.withTransaction {
-            utilityAndFocusDao.clearAllOnlineRooms()
-            utilityAndFocusDao.clearAllDailySamples()
-        }
-        preferences.edit { prefs ->
-            prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS)
-            prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_DAILY_NOTIFY_DATE)
-        }
-    }
+    suspend fun clearUtilityAccountAndOnlineCache() =
+        campusServicesRepository.clearUtilityAccountAndOnlineCache()
 
     suspend fun saveUtilityMeter(
         name: String,
@@ -2640,58 +1926,20 @@ class CampusRepository internal constructor(
         roomName: String,
         unit: String,
         lowThreshold: Double
-    ) {
-        val cleanName = name.trim()
-        val cleanRoom = roomName.trim()
-        val cleanUnit = unit.trim()
-        require(cleanName.isNotEmpty() && cleanRoom.isNotEmpty() && cleanUnit.isNotEmpty()) {
-            "请完整填写表计名称、房间号与单位"
-        }
-        require(lowThreshold.isFinite() && lowThreshold >= 0.0) {
-            "低量提醒阈值不能为负数"
-        }
-        val entity = UtilityMeterEntity(
-            id = UUID.randomUUID().toString(),
-            name = cleanName.take(40),
-            campusName = campusName.trim().ifBlank { "莲花街校区" },
-            roomName = cleanRoom.take(40),
-            unit = cleanUnit.take(12),
-            lowThreshold = lowThreshold,
-            createdAtEpochMs = System.currentTimeMillis()
-        )
-        utilityAndFocusDao.upsertMeter(entity)
-    }
+    ) = campusServicesRepository.saveUtilityMeter(name, campusName, roomName, unit, lowThreshold)
 
-    suspend fun deleteUtilityMeter(meterId: String) {
-        database.withTransaction {
-            utilityAndFocusDao.deleteReadingsByMeterId(meterId)
-            utilityAndFocusDao.deleteMeterById(meterId)
-        }
-    }
+    suspend fun deleteUtilityMeter(meterId: String) =
+        campusServicesRepository.deleteUtilityMeter(meterId)
 
     suspend fun addUtilityReading(
         meterId: String,
         value: Double,
         topUpValue: Double = 0.0,
         note: String = ""
-    ) {
-        require(value.isFinite() && value >= 0.0) { "当前读数不能为负数" }
-        require(topUpValue.isFinite() && topUpValue >= 0.0) { "充值/购入量不能为负数" }
-        val entity = UtilityReadingEntity(
-            id = UUID.randomUUID().toString(),
-            meterId = meterId,
-            value = value,
-            topUpValue = topUpValue,
-            recordedAtEpochMs = System.currentTimeMillis(),
-            note = note.trim().take(80)
-        )
-        utilityAndFocusDao.upsertReading(entity)
-        runCatching { notifyDailyUtilitySummaryIfEligible(entity.recordedAtEpochMs) }
-    }
+    ) = campusServicesRepository.addUtilityReading(meterId, value, topUpValue, note)
 
-    suspend fun deleteUtilityReading(readingId: String) {
-        utilityAndFocusDao.deleteReadingById(readingId)
-    }
+    suspend fun deleteUtilityReading(readingId: String) =
+        campusServicesRepository.deleteUtilityReading(readingId)
 
     suspend fun applyInterchangeCalendarMetadata(
         termId: String,
@@ -2804,17 +2052,11 @@ class CampusRepository internal constructor(
     suspend fun getDirectScheduleDataSnapshot(): DirectScheduleData =
         timetableRepository.getDirectScheduleDataSnapshot()
 
-    suspend fun setSelectedCampusId(campusId: String) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.SELECTED_CAMPUS_ID] = campusId.trim().ifBlank { "auto" }
-        }
-    }
+    suspend fun setSelectedCampusId(campusId: String) =
+        campusServicesRepository.setSelectedCampusId(campusId)
 
-    suspend fun saveCustomCampusZonesJson(json: String) {
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.CUSTOM_CAMPUS_ZONES_JSON] = json.trim().ifBlank { "[]" }
-        }
-    }
+    suspend fun saveCustomCampusZonesJson(json: String) =
+        campusServicesRepository.saveCustomCampusZonesJson(json)
 
     // --- XPEACH SSO Cloud Account & Wallet Binding (Optional; Zero-SSO Local Mode Preserved) ---
     val cloudIdentityBindingFlow: Flow<CloudIdentityBindingEntity?> =
@@ -5957,10 +5199,10 @@ class CampusRepository internal constructor(
 
     // --- Parcel Hub (Multi-Source Express Aggregation, OTP Filter & Provenance Merge) ---
     val parcelItemsFlow: Flow<List<ParcelItemEntity>> =
-        cloudAndParcelDao.observeParcelItems()
+        parcelHubRepository.parcelItemsFlow
 
     val parcelSourceConnectionsFlow: Flow<List<ParcelSourceConnectionEntity>> =
-        cloudAndParcelDao.observeParcelSourceConnections()
+        parcelHubRepository.parcelSourceConnectionsFlow
 
     suspend fun upsertParcelItemFromInput(
         trackingNumberRaw: String,
@@ -5970,438 +5212,96 @@ class CampusRepository internal constructor(
         stationNameInput: String? = null,
         itemTitleInput: String? = null,
         rawNotificationText: String? = null
-    ): Result<ParcelItemEntity> = runCatching {
-        val spec = ParcelHubEngine.enforceProviderAuthority(providerId)
-        val normalizedTracking = ParcelHubEngine.normalizeTrackingNumber(trackingNumberRaw)
-        val extracted = ParcelHubEngine.resolvePickupCodeFromText(rawNotificationText)
-        val effectivePickup = pickupCodeInput.cleanNullableLiteral() ?: extracted?.pickupCode.cleanNullableLiteral()
-        val effectiveStation = stationNameInput.cleanNullableLiteral() ?: extracted?.stationName.cleanNullableLiteral()
-        val effectiveTitle = itemTitleInput.cleanNullableLiteral()
-        val now = System.currentTimeMillis()
+    ): Result<ParcelItemEntity> = parcelHubRepository.upsertParcelItemFromInput(
+        trackingNumberRaw = trackingNumberRaw,
+        carrierName = carrierName,
+        providerId = providerId,
+        pickupCodeInput = pickupCodeInput,
+        stationNameInput = stationNameInput,
+        itemTitleInput = itemTitleInput,
+        rawNotificationText = rawNotificationText
+    )
 
-        val existing = cloudAndParcelDao.getParcelByTrackingNumber(normalizedTracking)
-        val cleanExistingPickup = existing?.pickupCode.cleanNullableLiteral()
-        val mergedPickup = effectivePickup ?: cleanExistingPickup
-        val nextStatus = if (!mergedPickup.isNullOrBlank()) {
-            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
-        } else {
-            existing?.status?.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName) ?: ParcelLifecycleStatus.IN_TRANSIT.wireName
-        }
+    suspend fun markParcelPickedUp(parcelId: String) =
+        parcelHubRepository.markParcelPickedUp(parcelId)
 
-        val cleanCarrier = carrierName.cleanNullLiteral(existing?.carrierName.cleanNullLiteral("校园快递"))
-        val entity = ParcelItemEntity(
-            id = existing?.id ?: "prc_${UUID.randomUUID().toString().replace("-", "").take(12)}",
-            trackingNumber = normalizedTracking,
-            carrierCode = cleanCarrier.uppercase().take(8),
-            carrierName = cleanCarrier,
-            status = nextStatus,
-            pickupCode = mergedPickup,
-            stationName = effectiveStation ?: existing?.stationName.cleanNullableLiteral() ?: "莲花街北苑菜鸟驿站",
-            itemTitle = effectiveTitle ?: existing?.itemTitle.cleanNullableLiteral(),
-            estimatedDeliveryText = if (nextStatus == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName) {
-                "已到达驿站/快递柜，请凭取件码取件"
-            } else {
-                "运输中，预计 1-2 日送达校园驿站"
-            },
-            sourcesJson = """[{"provider_id":"${spec.providerId}","priority":${spec.sourcePriority}}]""",
-            fieldProvenanceJson = """{"provider_id":"${spec.providerId}","updated_at":$now}""",
-            checkpointsJson = existing?.checkpointsJson ?: "[]",
-            createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
-            updatedAtEpochMillis = now
-        )
-        cloudAndParcelDao.upsertParcelItem(entity)
-        notifyScheduleOrPolicyChanged("PARCEL_UPSERTED")
-        repoScope.launch { runCatching { syncWithCampusCloud() } }
-        entity
-    }
+    suspend fun markAllStationParcelsPickedUp(stationName: String) =
+        parcelHubRepository.markAllStationParcelsPickedUp(stationName)
 
-    suspend fun markParcelPickedUp(parcelId: String) {
-        val list = cloudAndParcelDao.getParcelItemsSnapshot()
-        val found = list.firstOrNull { it.id == parcelId } ?: return
-        cloudAndParcelDao.upsertParcelItem(
-            found.copy(
-                status = ParcelLifecycleStatus.PICKED_UP.wireName,
-                estimatedDeliveryText = "本人已取件签收",
-                updatedAtEpochMillis = System.currentTimeMillis()
-            )
-        )
-        notifyScheduleOrPolicyChanged("PARCEL_PICKED_UP")
-        repoScope.launch { runCatching { syncWithCampusCloud() } }
-    }
-
-    suspend fun markAllStationParcelsPickedUp(stationName: String) {
-        val now = System.currentTimeMillis()
-        val list = cloudAndParcelDao.getParcelItemsSnapshot()
-        var updatedCount = 0
-        for (item in list) {
-            if (item.status != ParcelLifecycleStatus.PICKED_UP.wireName &&
-                (item.stationName ?: "校内菜鸟驿站") == stationName
-            ) {
-                cloudAndParcelDao.upsertParcelItem(
-                    item.copy(
-                        status = ParcelLifecycleStatus.PICKED_UP.wireName,
-                        estimatedDeliveryText = "本人已取件签收",
-                        updatedAtEpochMillis = now
-                    )
-                )
-                updatedCount++
-            }
-        }
-        if (updatedCount > 0) {
-            notifyScheduleOrPolicyChanged("PARCEL_STATION_BATCH_PICKED_UP")
-            repoScope.launch { runCatching { syncWithCampusCloud() } }
-        }
-    }
-
-    suspend fun deleteParcelById(parcelId: String) {
-        cloudAndParcelDao.deleteParcelItemById(parcelId)
-        notifyScheduleOrPolicyChanged("PARCEL_DELETED")
-    }
+    suspend fun deleteParcelById(parcelId: String) =
+        parcelHubRepository.deleteParcelById(parcelId)
 
     // --- Xiaomi Smart Assistant Account, Phone Number SMS Binding & Express Sync ---
     fun getXiaomiAccounts(): List<XiaomiAccountCredential> =
-        xiaomiAccountVault.readAccounts()
+        parcelHubRepository.getXiaomiAccounts()
 
     suspend fun saveXiaomiAccountFromWebLogin(
         token: String,
         cUserId: String,
         accountId: String,
         detectedPhones: List<String>
-    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
-        runCatching {
-            require(token.isNotBlank()) { "小米 serviceToken 不能为空" }
-            val effectiveAccountId = accountId.trim().ifBlank { cUserId.trim() }
-            require(effectiveAccountId.isNotBlank()) { "小米账号标识不能为空" }
-            val oaid = XiaomiExpressApi.resolveOaid(appContext, effectiveAccountId)
-            val vaid = XiaomiExpressApi.resolveVaid(appContext, effectiveAccountId)
-            val credId = "xiaomi_$effectiveAccountId"
-            val cleanPhones = detectedPhones
-                .map { it.trim() }
-                .filter { XiaomiPassportClient.isValidMainlandPhone(it) }
-                .distinct()
-            val list = xiaomiAccountVault.upsertAccount(
-                XiaomiAccountCredential(
-                    id = credId,
-                    label = "小米账号",
-                    token = token.trim(),
-                    cUserId = cUserId.trim().ifBlank { effectiveAccountId },
-                    accountId = effectiveAccountId,
-                    oaid = oaid,
-                    vaid = vaid,
-                    phones = cleanPhones,
-                    enabled = true,
-                    updatedAtEpochMillis = System.currentTimeMillis()
-                )
-            )
-            val saved = list.first { it.id == credId || it.accountId == effectiveAccountId }
-            cloudAndParcelDao.upsertParcelSourceConnection(
-                ParcelSourceConnectionEntity(
-                    id = saved.id,
-                    providerId = "parcel.xiaomi.personal-assistant",
-                    accountAlias = "${saved.label} · ${saved.maskedPhonesSummary}",
-                    authorityStatus = "PRODUCTION_ENABLED",
-                    status = "ACTIVE",
-                    updatedAtEpochMillis = System.currentTimeMillis()
-                )
-            )
-            saved
-        }
-    }
+    ): Result<XiaomiAccountCredential> = parcelHubRepository.saveXiaomiAccountFromWebLogin(
+        token = token,
+        cUserId = cUserId,
+        accountId = accountId,
+        detectedPhones = detectedPhones
+    )
 
     suspend fun sendXiaomiPhoneVerificationCode(
         accountIdOrId: String,
         phone: String
-    ): Result<XiaomiApiSimpleResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            val cred = xiaomiAccountVault.readAccounts()
-                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
-                ?: throw IllegalStateException("未找到对应的小米登录账号，请先完成小米账号登录")
-            XiaomiExpressApi.sendVerificationCode(appContext, cred, phone)
-        }
-    }
+    ): Result<XiaomiApiSimpleResult> = parcelHubRepository.sendXiaomiPhoneVerificationCode(
+        accountIdOrId = accountIdOrId,
+        phone = phone
+    )
 
     suspend fun verifyAndBindXiaomiPhone(
         accountIdOrId: String,
         phone: String,
         verificationCode: String
-    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
-        runCatching {
-            val cleanPhone = phone.trim()
-            require(XiaomiPassportClient.isValidMainlandPhone(cleanPhone)) {
-                "请输入有效的 11 位中国大陆手机号"
-            }
-            require(verificationCode.trim().isNotEmpty()) {
-                "请输入短信验证码"
-            }
-            val cred = xiaomiAccountVault.readAccounts()
-                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
-                ?: throw IllegalStateException("未找到对应的小米登录账号")
-            val checkRes = XiaomiExpressApi.checkVerificationCode(
-                appContext,
-                cred,
-                cleanPhone,
-                verificationCode.trim()
-            )
-            if (!checkRes.ok) {
-                throw IllegalStateException("验证码校验失败: ${checkRes.message}")
-            }
-            val nextPhones = (cred.phones + cleanPhone).distinct()
-            val bindRes = XiaomiExpressApi.bindPhone(
-                appContext,
-                cred,
-                cleanPhone,
-                nextPhones,
-                bind = true
-            )
-            if (!bindRes.ok) {
-                throw IllegalStateException("绑定手机号失败: ${bindRes.message}")
-            }
-            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, nextPhones)
-                ?: throw IllegalStateException("更新本地手机号列表失败")
-            cloudAndParcelDao.upsertParcelSourceConnection(
-                ParcelSourceConnectionEntity(
-                    id = updated.id,
-                    providerId = "parcel.xiaomi.personal-assistant",
-                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
-                    authorityStatus = "PRODUCTION_ENABLED",
-                    status = "ACTIVE",
-                    updatedAtEpochMillis = System.currentTimeMillis()
-                )
-            )
-            updated
-        }
-    }
+    ): Result<XiaomiAccountCredential> = parcelHubRepository.verifyAndBindXiaomiPhone(
+        accountIdOrId = accountIdOrId,
+        phone = phone,
+        verificationCode = verificationCode
+    )
 
     suspend fun addXiaomiPhoneDirectly(
         accountIdOrId: String,
         phone: String
-    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
-        runCatching {
-            val cleanPhone = phone.trim()
-            require(XiaomiPassportClient.isValidMainlandPhone(cleanPhone)) {
-                "请输入有效的 11 位中国大陆手机号"
-            }
-            val cred = xiaomiAccountVault.readAccounts()
-                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
-                ?: throw IllegalStateException("未找到对应的小米登录账号")
-            val nextPhones = (cred.phones + cleanPhone).distinct()
-            runCatching {
-                XiaomiExpressApi.bindPhone(appContext, cred, cleanPhone, nextPhones, bind = true)
-            }
-            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, nextPhones)
-                ?: throw IllegalStateException("保存收件手机号失败")
-            cloudAndParcelDao.upsertParcelSourceConnection(
-                ParcelSourceConnectionEntity(
-                    id = updated.id,
-                    providerId = "parcel.xiaomi.personal-assistant",
-                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
-                    authorityStatus = "PRODUCTION_ENABLED",
-                    status = "ACTIVE",
-                    updatedAtEpochMillis = System.currentTimeMillis()
-                )
-            )
-            updated
-        }
-    }
+    ): Result<XiaomiAccountCredential> = parcelHubRepository.addXiaomiPhoneDirectly(
+        accountIdOrId = accountIdOrId,
+        phone = phone
+    )
 
     suspend fun unbindXiaomiPhone(
         accountIdOrId: String,
         phone: String
-    ): Result<XiaomiAccountCredential> = withContext(Dispatchers.IO) {
-        runCatching {
-            val cleanPhone = phone.trim()
-            val cred = xiaomiAccountVault.readAccounts()
-                .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
-                ?: throw IllegalStateException("未找到对应的小米登录账号")
-            val remaining = cred.phones.filterNot { it == cleanPhone }
-            runCatching {
-                XiaomiExpressApi.bindPhone(appContext, cred, cleanPhone, remaining, bind = false)
-            }
-            val updated = xiaomiAccountVault.updateAccountPhones(cred.id, remaining)
-                ?: throw IllegalStateException("解绑手机号更新失败")
-            cloudAndParcelDao.upsertParcelSourceConnection(
-                ParcelSourceConnectionEntity(
-                    id = updated.id,
-                    providerId = "parcel.xiaomi.personal-assistant",
-                    accountAlias = "${updated.label} · ${updated.maskedPhonesSummary}",
-                    authorityStatus = "PRODUCTION_ENABLED",
-                    status = "ACTIVE",
-                    updatedAtEpochMillis = System.currentTimeMillis()
-                )
-            )
-            updated
-        }
-    }
+    ): Result<XiaomiAccountCredential> = parcelHubRepository.unbindXiaomiPhone(
+        accountIdOrId = accountIdOrId,
+        phone = phone
+    )
 
-    suspend fun removeXiaomiAccount(accountIdOrId: String) = withContext(Dispatchers.IO) {
-        val current = xiaomiAccountVault.readAccounts()
-            .firstOrNull { it.id == accountIdOrId || it.accountId == accountIdOrId }
-        xiaomiAccountVault.removeAccount(accountIdOrId)
-        if (current != null) {
-            cloudAndParcelDao.deleteParcelSourceConnection(current.id)
-        } else {
-            cloudAndParcelDao.deleteParcelSourceConnection(accountIdOrId)
-        }
-    }
+    suspend fun removeXiaomiAccount(accountIdOrId: String) =
+        parcelHubRepository.removeXiaomiAccount(accountIdOrId)
 
-    suspend fun syncXiaomiExpressPackages(): Result<XiaomiSyncSummary> = withContext(Dispatchers.IO) {
-        runCatching {
-            val accounts = xiaomiAccountVault.readAccounts().filter { it.enabled }
-            if (accounts.isEmpty()) {
-                throw IllegalStateException("尚未登录小米账号，请先点击「手机号/扫码登录小米账号」")
-            }
-            val activeWithPhones = accounts.filter { it.phones.isNotEmpty() }
-            if (activeWithPhones.isEmpty()) {
-                throw IllegalStateException("已登录小米账号，但尚未绑定收件手机号。请点击「绑定/管理收件手机号」添加手机号后再同步")
-            }
-            var totalFetched = 0
-            var readyCount = 0
-            val now = System.currentTimeMillis()
-            for (cred in activeWithPhones) {
-                val remoteItems = XiaomiExpressApi.fetchExpressList(appContext, cred)
-                for (dto in remoteItems) {
-                    val normalizedTracking = runCatching {
-                        ParcelHubEngine.normalizeTrackingNumber(dto.mailNo)
-                    }.getOrElse { dto.mailNo.trim().uppercase() }
-                    val existing = cloudAndParcelDao.getParcelByTrackingNumber(normalizedTracking)
-                    val mergedPickup = dto.pickupCode.cleanNullableLiteral() ?: existing?.pickupCode.cleanNullableLiteral()
-                    val mergedStation = dto.stationName.cleanNullableLiteral()
-                        ?: existing?.stationName.cleanNullableLiteral()
-                        ?: "校园快递服务点"
-                    val effectiveStatus = when {
-                        existing?.status == ParcelLifecycleStatus.PICKED_UP.wireName ->
-                            ParcelLifecycleStatus.PICKED_UP.wireName
-                        !mergedPickup.isNullOrBlank() && dto.lifecycleStatus != ParcelLifecycleStatus.PICKED_UP ->
-                            ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
-                        else -> dto.lifecycleStatus.wireName
-                    }
-                    if (effectiveStatus == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName) {
-                        readyCount++
-                    }
-                    val checkpointsArr = org.json.JSONArray()
-                    for (pt in dto.checkpoints) {
-                        checkpointsArr.put(
-                            org.json.JSONObject()
-                                .put("desc", pt.desc.cleanNullLiteral())
-                                .put("time", pt.time.cleanNullLiteral())
-                        )
-                    }
-                    val provenanceObj = org.json.JSONObject()
-                        .put("provider_id", "parcel.xiaomi.personal-assistant")
-                        .put("xiaomi_account_id", cred.id)
-                        .put("cp_code", dto.cpCode.cleanNullLiteral())
-                        .put("provider", dto.provider.cleanNullLiteral())
-                        .put("state_num", dto.stateNum)
-                        .put("latest_time", dto.latestTime.cleanNullLiteral())
-                        .put("phone", dto.phone.cleanNullableLiteral() ?: cred.phones.firstOrNull().orEmpty())
-                        .put("query_channel", dto.queryChannel.cleanNullLiteral())
-                        .put("updated_at", now)
+    suspend fun syncXiaomiExpressPackages(): Result<XiaomiSyncSummary> =
+        parcelHubRepository.syncXiaomiExpressPackages()
 
-                    val cleanCompany = dto.companyName.cleanNullLiteral(existing?.carrierName.cleanNullLiteral("校园快递"))
-                    val cleanStateLabel = dto.stateName.cleanNullLiteral(dto.lifecycleStatus.label)
-                    val entity = ParcelItemEntity(
-                        id = existing?.id ?: "prc_${UUID.randomUUID().toString().replace("-", "").take(12)}",
-                        trackingNumber = normalizedTracking,
-                        carrierCode = dto.cpCode.cleanNullLiteral("XIAOMI").uppercase().take(12),
-                        carrierName = cleanCompany,
-                        status = effectiveStatus,
-                        pickupCode = mergedPickup,
-                        stationName = mergedStation,
-                        itemTitle = existing?.itemTitle.cleanNullableLiteral() ?: "$cleanCompany · $cleanStateLabel",
-                        estimatedDeliveryText = dto.latestText.cleanNullLiteral().ifBlank {
-                            if (dto.latestTime.cleanNullLiteral().isNotBlank()) "更新于 ${dto.latestTime.cleanNullLiteral()}" else "来自小米智能助理"
-                        },
-                        sourcesJson = """[{"provider_id":"parcel.xiaomi.personal-assistant","priority":95,"account":"${cred.id}"}]""",
-                        fieldProvenanceJson = provenanceObj.toString(),
-                        checkpointsJson = if (checkpointsArr.length() > 0) checkpointsArr.toString() else (existing?.checkpointsJson ?: "[]"),
-                        createdAtEpochMillis = existing?.createdAtEpochMillis ?: now,
-                        updatedAtEpochMillis = now
-                    )
-                    cloudAndParcelDao.upsertParcelItem(entity)
-                    totalFetched++
-                }
-            }
-            val totalPhones = activeWithPhones.sumOf { it.phones.size }
-            notifyScheduleOrPolicyChanged("XIAOMI_PARCEL_SYNCED")
-            repoScope.launch { runCatching { syncWithCampusCloud() } }
-            XiaomiSyncSummary(
-                accountCount = activeWithPhones.size,
-                phoneCount = totalPhones,
-                fetchedParcelCount = totalFetched,
-                readyPickupCount = readyCount,
-                message = "小米智能助理同步成功：已查询 ${activeWithPhones.size} 个账号（共 $totalPhones 个手机号），同步 $totalFetched 件快递（待取 $readyCount 件）"
-            )
-        }
-    }
-
-    suspend fun fetchXiaomiParcelDetail(parcelId: String): Result<List<XiaomiTrackPoint>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val parcel = cloudAndParcelDao.getParcelItemsSnapshot().firstOrNull { it.id == parcelId }
-                ?: throw IllegalArgumentException("未找到该包裹记录")
-            val prov = runCatching { org.json.JSONObject(parcel.fieldProvenanceJson) }.getOrNull()
-            val accountId = prov?.optString("xiaomi_account_id").orEmpty()
-            val accounts = xiaomiAccountVault.readAccounts()
-            val cred = accounts.firstOrNull { it.id == accountId || it.accountId == accountId }
-                ?: accounts.firstOrNull { it.enabled && it.phones.isNotEmpty() }
-                ?: throw IllegalStateException("未找到可用的小米登录账号")
-            val detail = XiaomiExpressApi.fetchExpressDetail(
-                context = appContext,
-                cred = cred,
-                mailNo = parcel.trackingNumber,
-                cpCode = prov?.optString("cp_code")?.takeIf { it.isNotBlank() } ?: parcel.carrierCode,
-                companyName = parcel.carrierName,
-                provider = prov?.optString("provider"),
-                stateNum = prov?.optInt("state_num", 0) ?: 0,
-                latestTime = prov?.optString("latest_time"),
-                phone = prov?.optString("phone")?.takeIf { it.isNotBlank() } ?: cred.phones.firstOrNull(),
-                queryChannel = prov?.optString("query_channel")
-            )
-            if (detail.points.isNotEmpty()) {
-                val arr = org.json.JSONArray()
-                for (pt in detail.points) {
-                    arr.put(org.json.JSONObject().put("desc", pt.desc).put("time", pt.time))
-                }
-                val latestDesc = detail.points.firstOrNull()?.desc ?: parcel.estimatedDeliveryText
-                val extracted = ParcelHubEngine.resolvePickupCodeFromText(
-                    detail.points.joinToString(" ") { it.desc }
-                )
-                cloudAndParcelDao.upsertParcelItem(
-                    parcel.copy(
-                        pickupCode = extracted?.pickupCode ?: parcel.pickupCode,
-                        stationName = extracted?.stationName ?: parcel.stationName,
-                        status = when {
-                            detail.isReceived -> ParcelLifecycleStatus.PICKED_UP.wireName
-                            extracted != null -> ParcelLifecycleStatus.READY_FOR_PICKUP.wireName
-                            else -> parcel.status
-                        },
-                        estimatedDeliveryText = latestDesc,
-                        checkpointsJson = arr.toString(),
-                        updatedAtEpochMillis = System.currentTimeMillis()
-                    )
-                )
-            }
-            detail.points
-        }
-    }
+    suspend fun fetchXiaomiParcelDetail(parcelId: String): Result<List<XiaomiTrackPoint>> =
+        parcelHubRepository.fetchXiaomiParcelDetail(parcelId)
 
     // --- Unified Extension Plugins (dis-extension/v2 + dis-campus-plugin/v1) ---
     val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =
-        cloudAndParcelDao.observeInstalledExtensionPlugins()
+        campusServicesRepository.installedExtensionPluginsFlow
 
-    suspend fun ensureDefaultReferencePluginsInstalled() {
-        runCatching {
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.hello-campus")
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.parcel-station")
-        }
-    }
+    suspend fun ensureDefaultReferencePluginsInstalled() =
+        campusServicesRepository.ensureDefaultReferencePluginsInstalled()
 
-    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) {
-        cloudAndParcelDao.upsertInstalledExtensionPlugin(entity)
-    }
+    suspend fun upsertExtensionPlugin(entity: InstalledExtensionPluginEntity) =
+        campusServicesRepository.upsertExtensionPlugin(entity)
 
-    suspend fun removeExtensionPlugin(pluginId: String) {
-        cloudAndParcelDao.deleteInstalledExtensionPlugin(pluginId)
-    }
+    suspend fun removeExtensionPlugin(pluginId: String) =
+        campusServicesRepository.removeExtensionPlugin(pluginId)
 
     companion object {
         private const val LOG_TAG = "CampusRepository"

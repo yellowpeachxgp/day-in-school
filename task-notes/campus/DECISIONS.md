@@ -52,6 +52,14 @@
 | AUTO-017 | 2026-11-27 | `file-line-gate` 不把 `contracts/**` 纳入源代码棘轮；契约文件的规模与演进由契约线、contract parity 和专门 CI 治理；自主决策，待用户复核 | 主代理门禁边界裁决：`contracts/**` 包含契约 YAML/JSON 与同步副本，不是应用源代码棘轮对象，避免契约补全文档时被错误拦截 | 待用户复核 |
 | AUTO-018 | 2026-11-27 | 允许 PR#58 为 acceptance 合成 fixture 增加精确 allowlist 条目；仅限合成测试样例的精确值，不放宽真实秘密、生产凭据或通用模式；自主决策，待用户复核 | 主代理最小例外裁决：验收合成 fixture 需要可重复示例，但 scanner 例外必须精确、可审计、可过期 | 待用户复核 |
 | AUTO-019 | 2026-11-27 | W0-05 按 a/b/c/d 分批拆分 `CampusRepository`；每批独立 PR、行为不变、特征测试一致，公开 API 外观先保持兼容；自主决策，待用户复核 | 主代理拆分节奏裁决：巨型 Repository 一次拆分风险过高，分批可降低冲突并让每批可编译、可审阅、可回退 | 待用户复核 |
+| AUTO-020 | 2026-11-27 | INF-02 成对契约列车存在循环依赖（两仓 contracts 同步副本互相依赖对方先合入）；以两仓 train 分支 contracts 逐字节 diff 一致加内层 contract-ci PASS 作为列车合并证据，合入后 main 必须重跑 contracts 全绿作为强制补偿；自主决策，待用户复核 | 主代理循环依赖裁决：成对契约 PR 互相校验对方 main 未更新时无法先绿，列车级字节一致加 main 重跑等价于双边门禁且不放松最终约束 | 待用户复核 |
+| AUTO-021 | 2026-11-27 | CT 系列 planned 契约机制：OpenAPI 操作标 `x-dis-status: planned`，endpoint inventory 标 `status: planned` 并记 `contract_card`；active 端点仍保持 100% 双向 parity，planned 显式计数且唯一，runtime 出现未登记 active 路由必须失败；实现卡合入时同一 PR 把 planned 转 active；自主决策，待用户复核 | 主代理契约演进裁决：契约先行（contract-first）需要不落地的登记位，planned 语义既阻止 runtime 偷跑又避免 active parity 被未实现端点破坏 | 待用户复核 |
+| AUTO-022 | 2026-11-27 | W6-00 契约面（plugin schema snake_case/6 槽位/host-api-matrix/contracts fixtures）因 CT 契约线独占 `contracts/**` 而 deferred；W6-00 首批 PR 只做非契约面收敛，AC-01/02/03 契约字面项如实标注部分满足，契约线空闲后以契约面微切片补齐；禁止用非 contracts 镜像夹具冒充契约共享夹具验收；自主决策，待用户复核 | 主代理冲突回避裁决：contracts 单线修改规则（D15）优先于单卡字面完整性，诚实标注部分满足优于夹具冒充 | 待用户复核 |
+| AUTO-023 | 2026-11-27 | W0-06 系列拆分允许在本模块自身 `build.gradle.kts` 追加最小必要的 viewmodel/roborazzi 测试接线（不得改 root 或其他模块构建文件），与 AUTO-011 一致；自主决策，待用户复核 | 主代理接缝裁决：拆分需要的 ViewModel/Roborazzi 依赖接线是必要最小改动，逐一返工不划算 | 待用户复核 |
+| AUTO-024 | 2026-11-27 | AUTO-020 的成对契约循环依赖处置推广适用于全部 CT 系列成对契约 PR：两仓 contracts 逐字节 diff 一致（tree_sha256 双侧相同）+ 两仓内层 contract-ci PASS 即可先行成对合并（先云端权威、后 Android 副本），合并后立即重跑两仓 main contracts 至 exit 0 作为强制补偿；CT-01 为首个适用实例；自主决策，待用户复核 | 主代理流程裁决：成对契约的循环依赖是结构性的，逐案重复裁决无意义，统一机制+强制补偿门禁更安全 | 待用户复核 |
+| AUTO-025 | 2026-11-27 | 契约 planned→active 翻转与契约线并行修改存在文件级冲突；W4 系列实现卡先只实现运行时，planned→active 的契约翻转在契约线空闲时以独立微 PR 执行或并入后续契约卡同 PR；自主决策，待用户复核 | 主代理排序裁决：避免实现卡与契约卡并发改 contracts/** 造成必然冲突，运行时实现先行不违反 runtime-inert 约束 | 待用户复核 |
+| AUTO-026 | 2026-11-27 | W0-10 第二切片 #6 视口数学测试缝（`core/location/CampusMapViewportMath.kt` 纯抽取）经独立审阅逐行验证行为不变，批准作为 `src/test/**` 字面范围的例外；自主决策，待用户复核 | 主代理最小接缝裁决：与 AUTO-013/014 一致，纯抽取且行为逐行不变的测试缝可接受 | 待用户复核 |
+| AUTO-027 | 2026-11-27 | W0-06b 地图拆分不引入 ViewModel 的 §10.2 偏离经审阅验证后批准：瓦片/定位/跟随语义逐字一致、Profile 切换随 composition 销毁重建无串账号路径、生命周期与拆前完全一致；地图画布手势状态不适配 VM，纯搬移优先，架构演进留待后续；自主决策，待用户复核 | 主代理架构裁决：纯搬移的行为保真优先于结构统一，VM 化留待功能演进时一并处理 | 待用户复核 |
 
 ## 追加规则
 

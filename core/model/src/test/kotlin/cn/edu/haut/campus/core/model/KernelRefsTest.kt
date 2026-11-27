@@ -271,6 +271,35 @@ class KernelRefsTest {
         )
     }
 
+    @Test
+    fun `字段差异快照不受 hostile backing array 构造后改写`() {
+        val original = FieldChange(
+            path = "/room",
+            kind = FieldChangeKind.MODIFIED,
+            before = JsonValue.Str("W111"),
+            after = JsonValue.Str("W112")
+        )
+        val hostile = HostileBackingArrayList(listOf(original))
+
+        val diff = FieldDiff(hostile)
+
+        assertEquals(0, hostile.toArrayCalls)
+
+        hostile.overwrite(
+            0,
+            FieldChange(
+                path = "/injectedAfterConstruction",
+                kind = FieldChangeKind.ADDED,
+                before = null,
+                after = JsonValue.Str("must-not-enter-diff")
+            )
+        )
+
+        assertEquals(1, diff.changes.size)
+        assertEquals("/room", diff.changes.single().path)
+        assertEquals(JsonValue.Str("W112"), diff.changes.single().after)
+    }
+
     private fun provenance(): DataProvenance = DataProvenance(
         providerId = "official-academic",
         schoolId = scope.schoolId,
@@ -280,4 +309,40 @@ class KernelRefsTest {
         completeness = SnapshotCompleteness.COMPLETE,
         trust = VerificationLevel.MOCK_TESTED
     )
+}
+
+/**
+ * toArray() 违反约定返回自有 backing array 的自定义 Collection 探针。
+ *
+ * 快照边界若退回 ArrayList(Collection)（或经 toMutableList/toList 等间接使用同一构造），
+ * 构造过程必然会调用 source.toArray()：在仍共享数组的运行时（如 Android 12/13）上，
+ * 构造后 overwrite 即可改写快照。逐元素复制的快照边界完全不消费 toArray() 结果，
+ * toArrayCalls 保持为 0，该断言不依赖任何 JDK/Android 版本实现细节。
+ */
+private class HostileBackingArrayList<T>(elements: List<T>) : AbstractList<T>() {
+    private val backing: Array<Any?> = arrayOfNulls(elements.size)
+
+    var toArrayCalls: Int = 0
+        private set
+
+    init {
+        elements.forEachIndexed { index, element -> backing[index] = element }
+    }
+
+    override val size: Int
+        get() = backing.size
+
+    override fun get(index: Int): T {
+        @Suppress("UNCHECKED_CAST")
+        return backing[index] as T
+    }
+
+    override fun toArray(): Array<Any?> {
+        toArrayCalls++
+        return backing
+    }
+
+    fun overwrite(index: Int, value: T) {
+        backing[index] = value
+    }
 }
