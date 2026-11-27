@@ -162,6 +162,7 @@ import cn.edu.haut.campus.core.model.CustomCampusZone
 import cn.edu.haut.campus.core.model.CustomCampusZoneCodec
 import cn.edu.haut.campus.core.model.GeoPoint
 import cn.edu.haut.campus.core.model.SchoolProfile
+import cn.edu.haut.campus.feature.map.ui.indoor.BuildingIndoorMapDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
