@@ -73,8 +73,15 @@ data class RunContext(
     val firedAt: Instant,
     val now: Instant,
     val dryRun: Boolean,
+    val runId: String,
+    val dedupeKey: String,
     val triggerEvent: DomainEvent? = null,
     val timelineService: TimelineService? = null,
     val domainEventBus: DomainEventBus? = null,
     val confirmation: ActionConfirmation? = null
-)
+) {
+    init {
+        requireAutomationToken(runId, "runId")
+        requireAutomationToken(dedupeKey, "dedupeKey", 1024)
+    }
+}

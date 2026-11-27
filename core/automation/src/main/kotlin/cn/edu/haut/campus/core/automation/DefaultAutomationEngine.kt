@@ -112,6 +112,8 @@ class DefaultAutomationEngine(
             firedAt = instance.firedAt,
             now = startedAt,
             dryRun = dryRun,
+            runId = runId,
+            dedupeKey = dedupeKey,
             triggerEvent = instance.event,
             timelineService = timelineService,
             domainEventBus = domainEventBus

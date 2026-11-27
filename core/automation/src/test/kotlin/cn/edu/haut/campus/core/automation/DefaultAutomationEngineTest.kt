@@ -53,6 +53,8 @@ class DefaultAutomationEngineTest {
         assertEquals(1, condition.calls.size)
         assertEquals(1, action.calls.size)
         assertEquals(rule.scope, action.contexts.single().scope)
+        assertEquals(run.runId, action.contexts.single().runId)
+        assertEquals(run.dedupeKey, action.contexts.single().dedupeKey)
     }
 
     @Test
