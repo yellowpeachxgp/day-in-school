@@ -66,8 +66,21 @@ class ExtensionUiPackageLoaderTest {
         assertTrue(contribution.card?.nodes.orEmpty().any { it is FeatureUiNode.ActionButtonNode })
     }
 
+    @Test
+    fun normalizedCardIdCollisionFailsClosedForEveryConflictingCard() = withInstalledPlugin(
+        cardJson = validCardJson(),
+        slots = listOf("home.cards" to "demo.card", "home.cards" to "demo-card")
+    ) { _, loader ->
+        val contributions = loader.loadContributions()
+
+        assertEquals(2, contributions.size)
+        assertTrue(contributions.all { it.status == ExtensionContributionStatus.ERROR })
+        assertTrue(contributions.all { it.errorMessage.orEmpty().contains("冲突") })
+    }
+
     private fun withInstalledPlugin(
         cardJson: String?,
+        slots: List<Pair<String, String>> = listOf("home.cards" to "demo.card"),
         block: (ExtensionPluginInstaller, ExtensionUiPackageLoader) -> Unit
     ) {
         val root = Files.createTempDirectory("ui-runtime-loader-test")
@@ -78,7 +91,7 @@ class ExtensionUiPackageLoaderTest {
             val artifacts = linkedMapOf<String, ByteArray>()
             if (cardJson != null) artifacts["cards/demo-card.json"] = cardJson.toByteArray(Charsets.UTF_8)
             artifacts["assets/data.json"] = """{"items":[]}""".toByteArray(Charsets.UTF_8)
-            val manifest = signedManifest(keyPair, artifacts)
+            val manifest = signedManifest(keyPair, artifacts, slots)
             installer.install(manifest.toByteArray(Charsets.UTF_8), artifacts, "schoolx")
             block(installer, ExtensionUiPackageLoader(installer, "schoolx"))
         } finally {
@@ -99,7 +112,7 @@ class ExtensionUiPackageLoaderTest {
         }
     """.trimIndent()
 
-    private fun signedManifest(keyPair: KeyPair, artifacts: Map<String, ByteArray>): String {
+    private fun signedManifest(keyPair: KeyPair, artifacts: Map<String, ByteArray>, slots: List<Pair<String, String>>): String {
         val artifactRows = artifacts.entries.sortedBy { it.key }.map { (path, bytes) ->
             JsonValue.Obj(mapOf(
                 "path" to JsonValue.Str(path),
@@ -116,13 +129,15 @@ class ExtensionUiPackageLoaderTest {
             "max_host_api" to JsonValue.Num("2"),
             "permissions" to JsonValue.Arr(listOf(JsonValue.Str("ui.slot.render"))),
             "allowed_origins" to JsonValue.Arr(emptyList()),
-            "ui_slots" to JsonValue.Arr(listOf(JsonValue.Obj(mapOf(
-                "slot_id" to JsonValue.Str("home.cards"),
-                "card_id" to JsonValue.Str("demo.card"),
-                "title" to JsonValue.Str("合成服务"),
-                "subtitle" to JsonValue.Str("W111 示例窗口"),
-                "action_command" to JsonValue.Str("show")
-            )))),
+            "ui_slots" to JsonValue.Arr(slots.map { (slotId, cardId) ->
+                JsonValue.Obj(mapOf(
+                    "slot_id" to JsonValue.Str(slotId),
+                    "card_id" to JsonValue.Str(cardId),
+                    "title" to JsonValue.Str("合成服务"),
+                    "subtitle" to JsonValue.Str("W111 示例窗口"),
+                    "action_command" to JsonValue.Str("show")
+                ))
+            }),
             "commands" to JsonValue.Arr(listOf(JsonValue.Obj(mapOf(
                 "name" to JsonValue.Str("show"),
                 "description" to JsonValue.Str("show synthetic data"),

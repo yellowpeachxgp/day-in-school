@@ -39,8 +39,8 @@ object PluginManagementPreviewFixtures {
         previousVersion = "0.9.0",
         pendingVersion = "1.1.0",
         status = "PENDING_PERMISSION_REVIEW",
-        declaredPermissions = listOf("ui.slot.render"),
-        grantedPermissions = setOf("ui.slot.render"),
+        declaredPermissions = listOf("ui.slot.render", "parcel.ai.invoke"),
+        grantedPermissions = setOf("ui.slot.render", "parcel.ai.invoke"),
         pendingPermissionDiff = PluginPermissionDiff(
             added = listOf("network.request"),
             removed = listOf("parcel.ai.invoke")
