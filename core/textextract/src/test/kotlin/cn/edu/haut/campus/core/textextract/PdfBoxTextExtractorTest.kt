@@ -223,7 +223,10 @@ class PdfBoxTextExtractorTest {
             return drafts.joinToString(prefix = "drafts=", separator = "|") { draft ->
                 val pieces = readField(draft!!, "pieces") as List<*>
                 val text = pieces.joinToString("") { piece -> readField(piece!!, "text") as String }
-                "o" + readField(draft, "order") + "/a" + readField(draft, "articleIndex") + "/p" + readField(draft, "paragraphIndex") + ":" + text
+                val glyphs = pieces.flatMap { piece -> readField(piece!!, "glyphs") as List<*> }
+                val xs = glyphs.flatMap { glyph -> listOf(readField(glyph!!, "displayStartX") as Float, readField(glyph, "displayEndX") as Float) }
+                val ys = glyphs.flatMap { glyph -> listOf(readField(glyph!!, "displayStartY") as Float, readField(glyph, "displayEndY") as Float) }
+                "o" + readField(draft, "order") + "/a" + readField(draft, "articleIndex") + "/p" + readField(draft, "paragraphIndex") + ":" + text + "@x" + (xs.minOrNull() ?: 0f) + ".." + (xs.maxOrNull() ?: 0f) + ",y" + (ys.minOrNull() ?: 0f) + ".." + (ys.maxOrNull() ?: 0f)
             }
         } finally {
             document.close()
