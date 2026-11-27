@@ -149,10 +149,10 @@ class PeriodTimeSchemeRepositoryTest {
 
     @Test
     fun wipeAllPersonalDataClearsSchemesAndRestoresReferencePeriods() = runBlocking {
-        repo.termRepository.saveBasePeriodTimes(
-            timeTableId = term.timeTableId,
-            periods = listOf(draftPeriod(1, "07:50", "08:35"))
-        )
+        // 模拟 v10 老库：用户可能已改第 1 节，但迁移无法反证编辑史，userModified 仍为 false。
+        val legacyEdited = HautMockSeedData.defaultPeriodTimes.first { it.periodNo == 1 }
+            .copy(startLocalTime = LocalTime.of(7, 50), endLocalTime = LocalTime.of(8, 35), userModified = false)
+        dao.upsertPeriodTimes(listOf(legacyEdited.toEntity()))
         repo.termRepository.savePeriodTimeScheme(
             term = term,
             name = "擦除测试",
