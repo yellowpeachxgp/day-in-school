@@ -206,6 +206,36 @@ interface CloudAndParcelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLibraryBookingPlan(plan: LibraryBookingPlanEntity)
 
+    /**
+     * null-literal 启动清洗的条件回写：只写清洗字段，并以读取快照的世代/状态版本/更新时间为守卫。
+     * 返回 0 表示清洗快照与并发写入发生过交错，调用方必须放弃该行本轮清洗（安全优先）。
+     */
+    @Query(
+        """
+        UPDATE library_booking_plans
+        SET preferredAreaName = :preferredAreaName,
+            preferredSeatLabel = :preferredSeatLabel,
+            externalBookingId = :externalBookingId,
+            evidenceSha256 = :evidenceSha256,
+            lastDiagnosticMessage = :lastDiagnosticMessage
+        WHERE id = :id
+          AND stateVersion = :expectedStateVersion
+          AND generation = :expectedGeneration
+          AND updatedAtEpochMillis = :expectedUpdatedAtEpochMillis
+        """
+    )
+    suspend fun updateLibraryBookingPlanNullLiteralFieldsIfVersionUnchanged(
+        id: String,
+        expectedStateVersion: Int,
+        expectedGeneration: Int,
+        expectedUpdatedAtEpochMillis: Long,
+        preferredAreaName: String,
+        preferredSeatLabel: String,
+        externalBookingId: String?,
+        evidenceSha256: String?,
+        lastDiagnosticMessage: String?
+    ): Int
+
     @Query(
         """
         UPDATE library_booking_plans

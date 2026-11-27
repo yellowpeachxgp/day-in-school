@@ -183,7 +183,8 @@ class CampusRepository internal constructor(
     private val database: HautDatabase,
     private val preferences: DataStore<Preferences>,
     private val accountProfile: AccountProfileEntity,
-    academicCredentialVaultOverride: AcademicCredentialVault? = null
+    academicCredentialVaultOverride: AcademicCredentialVault? = null,
+    sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null
 ) {
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
@@ -450,11 +451,11 @@ class CampusRepository internal constructor(
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
         repoScope.launch {
-            runCatching { sanitizePersistedNullLiterals() }
+            runCatching { sanitizePersistedNullLiterals(sanitizeBookingPlanWriteHookForTest) }
         }
     }
 
-    private suspend fun sanitizePersistedNullLiterals() {
+    private suspend fun sanitizePersistedNullLiterals(sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null) {
         val parcels = cloudAndParcelDao.getParcelItemsSnapshot()
         for (p in parcels) {
             val cleanPickup = p.pickupCode.cleanNullableLiteral()
@@ -500,21 +501,18 @@ class CampusRepository internal constructor(
             val cleanExtId = plan.externalBookingId.cleanNullableLiteral()
             val cleanEvidence = plan.evidenceSha256.cleanNullableLiteral()
             val cleanDiag = plan.lastDiagnosticMessage.cleanNullLiteral()
-            if (plan.preferredAreaName != cleanArea ||
-                plan.preferredSeatLabel != cleanSeat ||
-                plan.externalBookingId != cleanExtId ||
-                plan.evidenceSha256 != cleanEvidence ||
+            if (plan.preferredAreaName != cleanArea || plan.preferredSeatLabel != cleanSeat ||
+                plan.externalBookingId != cleanExtId || plan.evidenceSha256 != cleanEvidence ||
                 plan.lastDiagnosticMessage != cleanDiag
             ) {
-                cloudAndParcelDao.upsertLibraryBookingPlan(
-                    plan.copy(
-                        preferredAreaName = cleanArea,
-                        preferredSeatLabel = cleanSeat,
-                        externalBookingId = cleanExtId,
-                        evidenceSha256 = cleanEvidence,
-                        lastDiagnosticMessage = cleanDiag
-                    )
+                sanitizeBookingPlanWriteHookForTest?.invoke("before_write")
+                cloudAndParcelDao.updateLibraryBookingPlanNullLiteralFieldsIfVersionUnchanged(
+                    id = plan.id, expectedStateVersion = plan.stateVersion, expectedGeneration = plan.generation,
+                    expectedUpdatedAtEpochMillis = plan.updatedAtEpochMillis,
+                    preferredAreaName = cleanArea, preferredSeatLabel = cleanSeat, externalBookingId = cleanExtId,
+                    evidenceSha256 = cleanEvidence, lastDiagnosticMessage = cleanDiag
                 )
+                sanitizeBookingPlanWriteHookForTest?.invoke("after_write")
             }
         }
 
