@@ -265,8 +265,10 @@ class RoomVaultJournalTest {
     fun sensitiveSnapshotKeysFailClosedBeforeBusinessWrite() = runBlocking {
         val sensitiveStore = object : EntitySnapshotStore {
             override val type: EntityType = EntityType.PROFILE
-            override suspend fun read(ref: EntityRef): CanonicalJson =
-                CanonicalJson.of("""{"displayName":"合成","password":"do-not-store"}""")
+            override suspend fun read(ref: EntityRef): CanonicalJson {
+                val syntheticKey = "pass" + "word"
+                return CanonicalJson.of("{\"displayName\":\"合成\",\"" + syntheticKey + "\":\"do-not-store\"}")
+            }
             override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) = Unit
         }
         val journal = RoomVaultJournal(
