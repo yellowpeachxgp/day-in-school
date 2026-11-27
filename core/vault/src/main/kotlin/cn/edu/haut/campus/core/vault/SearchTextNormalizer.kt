@@ -98,12 +98,7 @@ object SearchTextNormalizer {
                         if (run.codePoints.size == 1) {
                             fallbacks += run.text
                         } else {
-                            val bigrams = overlappingBigrams(run.codePoints)
-                            if (bigrams.size == 1) {
-                                fragments += bigrams.first()
-                            } else {
-                                fragments += """ + bigrams.joinToString(" ") + """
-                            }
+                            fragments += ftsQuoted(overlappingBigrams(run.codePoints).joinToString(" "))
                         }
                     }
                     ScriptKind.WORD -> {
@@ -111,7 +106,7 @@ object SearchTextNormalizer {
                         fragments += if (isQueryTail && run.text.length >= 3) {
                             run.text + "*"
                         } else {
-                            '"' + run.text + '"'
+                            ftsQuoted(run.text)
                         }
                     }
                 }
@@ -195,6 +190,12 @@ object SearchTextNormalizer {
             Character.UnicodeScript.HANGUL -> ScriptKind.CJK
             else -> ScriptKind.WORD
         }
+    }
+
+    private fun ftsQuoted(value: String): String = buildString(value.length + 2) {
+        append('"')
+        append(value)
+        append('"')
     }
 
     private fun isInvisible(codePoint: Int): Boolean {
