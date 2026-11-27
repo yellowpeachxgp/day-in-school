@@ -198,12 +198,23 @@ private fun PendingUpgradeCard(
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
+                "恢复授权：" + (plugin.pendingPermissionDiff.restored.joinToString("、").ifBlank { "无" }),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
                 "移除权限：" + (plugin.pendingPermissionDiff.removed.joinToString("、").ifBlank { "无" }),
                 style = MaterialTheme.typography.bodySmall
             )
+            if (plugin.status == "DISABLED") {
+                Text(
+                    "插件当前停用；先启用进入权限复核，再确认升级。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Button(
                 onClick = { onAction(PluginManagementUiAction.ConfirmUpgrade(plugin.pluginId)) },
-                enabled = actionsEnabled,
+                enabled = actionsEnabled && plugin.status == "PENDING_PERMISSION_REVIEW",
                 modifier = Modifier.testTag("confirm-upgrade")
             ) { Text("确认升级权限") }
         }

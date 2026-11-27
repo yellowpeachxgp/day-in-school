@@ -92,6 +92,21 @@ class DeclarativeCommandGateTest {
     }
 
     @Test
+    fun openUrlAlwaysRequiresNetworkPermissionEvenWhenManifestOmitsIt() {
+        val withoutRequiredPermission = openUrl.copy(requiredPermission = null)
+        val decision = DeclarativeCommandGate.resolve(
+            pluginId = "org.example.demo",
+            commandName = "open",
+            declarations = listOf(withoutRequiredPermission),
+            grantedPermissions = setOf("ui.slot.render"),
+            allowedOrigins = setOf("https://club.example.com"),
+            allowedHostRoutes = emptySet()
+        )
+
+        assertEquals(DeclarativeCommandGate.PERMISSION_DENIED, (decision as DeclarativeCommandDecision.Blocked).errorCode)
+    }
+
+    @Test
     fun duplicateCommandOrBlankRequiredPermissionFailsClosed() {
         val duplicate = DeclarativeCommandGate.resolve(
             pluginId = "org.example.demo",

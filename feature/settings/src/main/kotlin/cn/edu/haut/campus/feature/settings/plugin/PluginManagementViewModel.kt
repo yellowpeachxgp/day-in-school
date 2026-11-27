@@ -125,7 +125,8 @@ class PluginManagementViewModel(
             } else if (pendingVerified != null && activeVerified != null) {
                 PluginPermissionDiff(
                     added = (pendingPermissions - activePermissions).sorted(),
-                    removed = (activePermissions - pendingPermissions).sorted()
+                    removed = (activePermissions - pendingPermissions).sorted(),
+                    restored = ((pendingPermissions intersect activePermissions) - installation.grantedPermissions.toSet()).sorted()
                 )
             } else {
                 // 目标版本损坏时不得把“无法验证”误报成“全部权限被移除”。

@@ -224,8 +224,10 @@ internal fun SchoolCenterScreenContent(
                             }
                         }
                     }
-                    item(key = "extension-campus-services") {
-                        extensionSlotContent()
+                    if (selectedSchool?.let { it.id == activeSession?.school?.id } == true) {
+                        item(key = "extension-campus-services") {
+                            extensionSlotContent()
+                        }
                     }
                     if (onSelectSchool != null) {
                         item(key = "select") {

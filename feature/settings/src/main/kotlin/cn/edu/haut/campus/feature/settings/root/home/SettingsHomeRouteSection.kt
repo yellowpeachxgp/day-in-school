@@ -72,11 +72,13 @@ fun SettingsHomeRouteSection(
             schoolId = repository.schoolId,
             sessionGeneration = repository.sessionGeneration,
             slotId = "settings.entries",
+            allowedHostRoutes = setOf("settings.extensions", "parcel.hub", "library.seats", "library.catalog", "campus.services"),
             onOpenHostRoute = { route ->
                 when (route) {
                     "settings.extensions" -> onNavigateToXpeachCloud()
                     "parcel.hub" -> onNavigateToParcelHub()
                     "library.seats" -> onNavigateToLibrarySeats()
+                    "library.catalog" -> onNavigateToLibraryCatalog()
                     "campus.services" -> onNavigateToSchoolCenter()
                 }
             }

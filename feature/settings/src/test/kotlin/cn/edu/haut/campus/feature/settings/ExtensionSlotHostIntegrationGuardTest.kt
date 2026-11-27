@@ -19,6 +19,13 @@ class ExtensionSlotHostIntegrationGuardTest {
         assertTrue(parcel.contains("parcel.cards"))
         assertTrue(parcel.contains("parcel.providers"))
         assertTrue(text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeRouteSection.kt").contains("settings.entries"))
+
+        val today = text("feature/today/src/main/kotlin/cn/edu/haut/campus/feature/today/TodayExtensionSlot.kt")
+        assertTrue(today.contains("allowedHostRoutes = setOf"))
+        assertTrue(!today.contains("settings.extensions"))
+        val settingsHome = text("feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeRouteSection.kt")
+        assertTrue(settingsHome.contains("library.catalog"))
+        assertTrue(settingsHome.contains("settings.extensions"))
     }
 
     @Test

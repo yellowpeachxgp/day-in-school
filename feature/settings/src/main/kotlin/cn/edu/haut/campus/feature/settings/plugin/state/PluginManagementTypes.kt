@@ -6,7 +6,8 @@ import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
 @Immutable
 data class PluginPermissionDiff(
     val added: List<String> = emptyList(),
-    val removed: List<String> = emptyList()
+    val removed: List<String> = emptyList(),
+    val restored: List<String> = emptyList()
 )
 
 @Immutable

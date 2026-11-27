@@ -453,7 +453,7 @@ fun TodayScreen(
                     onOpenParcelHub = onNavigateToParcelHub
                 )
             }
-            TodayExtensionSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, onNavigateToParcelHub, onNavigateToSettings, onNavigateToLibrarySeats, onNavigateToLibraryCatalog)
+            TodayExtensionSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, onNavigateToParcelHub, onNavigateToLibrarySeats, onNavigateToLibraryCatalog)
             // 1.6 动态今日图书馆座位 / 自动抢座状态卡（有已约座位或待执行抢座计划时自动展示）
             val activeSeatPlans = remember(bookingPlans) {
                 bookingPlans.filter {

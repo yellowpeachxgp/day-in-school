@@ -22,7 +22,6 @@ fun TodayExtensionSlot(
     schoolId: String,
     sessionGeneration: Long?,
     onNavigateToParcelHub: () -> Unit,
-    onNavigateToSettings: () -> Unit,
     onNavigateToLibrarySeats: () -> Unit,
     onNavigateToLibraryCatalog: () -> Unit
 ) {
@@ -47,13 +46,12 @@ fun TodayExtensionSlot(
             }
         }
     }
-    val commandHandler = remember(context, installer, showData, onNavigateToParcelHub, onNavigateToSettings) {
+    val commandHandler = remember(context, installer, showData, onNavigateToParcelHub) {
         androidDeclarativeCommandHandler(
             context = context,
             onOpenHostRoute = { route ->
                 when (route) {
                     "parcel.hub" -> onNavigateToParcelHub()
-                    "settings.extensions" -> onNavigateToSettings()
                     "library.seats" -> onNavigateToLibrarySeats()
                     "library.catalog" -> onNavigateToLibraryCatalog()
                 }
@@ -64,6 +62,7 @@ fun TodayExtensionSlot(
     ExtensionSlotHost(
         slotId = "home.cards",
         contributions = contributions,
+        allowedHostRoutes = setOf("parcel.hub", "library.seats", "library.catalog"),
         onCommand = commandHandler
     )
 }

@@ -47,6 +47,11 @@ fun LibrarySeatRoute(
                 schoolId = repository.schoolId,
                 sessionGeneration = repository.sessionGeneration,
                 slotId = "library.actions",
+                allowedHostRoutes = if (onNavigateToXpeachCloud == null) {
+                    emptySet()
+                } else {
+                    setOf("settings.extensions")
+                },
                 onOpenHostRoute = { route ->
                     if (route == "settings.extensions") onNavigateToXpeachCloud?.invoke()
                 }

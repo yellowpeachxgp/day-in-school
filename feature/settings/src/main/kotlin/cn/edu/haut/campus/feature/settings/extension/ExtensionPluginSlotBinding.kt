@@ -28,6 +28,7 @@ fun ExtensionPluginSlot(
     slotId: String,
     modifier: Modifier = Modifier,
     showEmptyState: Boolean = false,
+    allowedHostRoutes: Set<String> = emptySet(),
     onOpenHostRoute: (String) -> Unit = {}
 ) {
     if (profileId.isBlank() || schoolId.isBlank() || sessionGeneration == null) return
@@ -63,6 +64,7 @@ fun ExtensionPluginSlot(
         contributions = contributions,
         modifier = modifier,
         showEmptyState = showEmptyState,
+        allowedHostRoutes = allowedHostRoutes,
         onCommand = commandHandler
     )
 }

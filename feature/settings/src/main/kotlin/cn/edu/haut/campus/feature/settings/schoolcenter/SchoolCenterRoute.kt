@@ -70,7 +70,8 @@ fun SchoolCenterRoute(
             profileId = activeSession?.repository?.profileId.orEmpty(),
             schoolId = activeSession?.repository?.schoolId.orEmpty(),
             sessionGeneration = activeSession?.repository?.sessionGeneration,
-            slotId = "campus.services"
+            slotId = "campus.services",
+            allowedHostRoutes = emptySet()
         )
     }
     SchoolCenterScreenContent(

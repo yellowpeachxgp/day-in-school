@@ -48,6 +48,9 @@ object DeclarativeCommandGate {
         if (!requiredPermission.isNullOrBlank() && requiredPermission !in grantedPermissions) {
             return DeclarativeCommandDecision.Blocked(PERMISSION_DENIED, "命令缺少已授予权限：" + requiredPermission)
         }
+        if (declaration.type == "open_url" && "network.request" !in grantedPermissions) {
+            return DeclarativeCommandDecision.Blocked(PERMISSION_DENIED, "open_url 缺少已授予权限：network.request")
+        }
         return when (declaration.type) {
             "open_url" -> resolveOpenUrl(pluginId, declaration, allowedOrigins)
             "open_host_route" -> resolveHostRoute(pluginId, declaration, allowedHostRoutes)
