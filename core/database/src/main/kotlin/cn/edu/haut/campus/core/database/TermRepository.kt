@@ -176,6 +176,9 @@ class TermRepository internal constructor(
 
         for ((ttId, list) in byTimetable) {
             if (ttId.isBlank()) continue
+            // 用户显式编辑/删除过的默认作息属于个人覆盖，不能再被升级种子悄悄补回 11–12 节；
+            // 否则“删除节次”会在下次初始化时失效。v10 迁移行无法反证用户编辑，仍保持 false 原样。
+            if (list.any { it.userModified }) continue
             val existingNos = list.map { it.periodNo }.toSet()
             if (11 in existingNos && 12 in existingNos) continue
             val p10End = list.filter { it.periodNo <= 10 }.maxByOrNull { it.periodNo }?.endLocalTime
@@ -586,7 +589,14 @@ class TermRepository internal constructor(
             }
             if (sectionTimes.isNotEmpty()) {
                 val normalized = PeriodTimeEditor.requireValidPeriods(sectionTimes).map { period ->
-                    period.copy(schemeId = null, termId = null, validStartDate = null, validEndDate = null)
+                    period.copy(
+                        schemeId = null,
+                        termId = null,
+                        validStartDate = null,
+                        validEndDate = null,
+                        userModified = true,
+                        updatedAtEpochMillis = System.currentTimeMillis()
+                    )
                 }
                 dao.upsertPeriodTimes(normalized.map { it.toEntity() })
             }

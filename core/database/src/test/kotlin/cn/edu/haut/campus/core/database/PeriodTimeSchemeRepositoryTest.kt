@@ -133,6 +133,21 @@ class PeriodTimeSchemeRepositoryTest {
     }
 
     @Test
+    fun userEditedBasePeriodsAreNotReexpandedByLegacySeedRepair() = runBlocking {
+        repo.termRepository.saveBasePeriodTimes(
+            timeTableId = term.timeTableId,
+            periods = listOf(draftPeriod(1, "08:00", "08:45"))
+        )
+        repo.termRepository.ensureExtendedPeriodTimes11To12IfNeeded()
+        val baseRows = dao.getPeriodTimesSnapshot().filter {
+            it.timeTableId == term.timeTableId && it.schemeId == null
+        }
+        assertEquals(1, baseRows.size)
+        assertEquals(1, baseRows.single().periodNo)
+        assertTrue(baseRows.single().userModified)
+    }
+
+    @Test
     fun wipeAllPersonalDataClearsSchemeMetadataAndSchemeRows() = runBlocking {
         repo.termRepository.savePeriodTimeScheme(
             term = term,
