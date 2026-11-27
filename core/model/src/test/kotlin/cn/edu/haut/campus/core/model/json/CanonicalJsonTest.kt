@@ -70,7 +70,7 @@ class CanonicalJsonTest {
     }
 
     @Test
-    fun 数组快照不受 hostile backing array 构造后改写() {
+    fun `数组快照不受 hostile backing array 构造后改写`() {
         val hostile = HostileBackingArrayList<JsonValue>(listOf(JsonValue.Str("original")))
 
         val arr = JsonValue.Arr(hostile)
