@@ -358,8 +358,8 @@ interface CloudAndParcelDao {
     @Query("SELECT * FROM installed_extension_plugins ORDER BY pluginId ASC")
     suspend fun getInstalledExtensionPluginsSnapshot(): List<InstalledExtensionPluginEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertInstalledExtensionPlugin(plugin: InstalledExtensionPluginEntity)
+    @Query("DELETE FROM installed_extension_plugins")
+    suspend fun clearInstalledExtensionPlugins()
 
     @Query("DELETE FROM installed_extension_plugins WHERE pluginId = :pluginId")
     suspend fun deleteInstalledExtensionPlugin(pluginId: String)

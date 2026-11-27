@@ -314,7 +314,7 @@ class ExtensionPackZipVerificationTest {
     }
 
     /** Ed25519 SPKI DER（44 字节）的最后 32 字节即 RFC 8032 原始公钥。 */
-    private fun extractRawPublicKey(spkiBase64: String): java.security.PublicKey {
+    private fun extractRawPublicKey(spkiBase64: String): ByteArray {
         val spki = Base64.getDecoder().decode(spkiBase64)
         val expectedPrefix = byteArrayOf(
             0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
@@ -322,7 +322,7 @@ class ExtensionPackZipVerificationTest {
         if (spki.size != 44 || !spki.copyOfRange(0, expectedPrefix.size).contentEquals(expectedPrefix)) {
             error("embedded key is not an Ed25519 SPKI DER public key")
         }
-        return Ed25519.toPublicKey(spki.copyOfRange(spki.size - 32, spki.size))
+        return spki.copyOfRange(spki.size - 32, spki.size)
     }
 
     private fun fixtureZipBytes(): ByteArray {
