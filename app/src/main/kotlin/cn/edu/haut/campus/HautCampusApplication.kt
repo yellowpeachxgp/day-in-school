@@ -35,7 +35,10 @@ class HautCampusApplication : Application() {
             key = "extension_plugin_security_wipe",
             beforeSwitch = { },
             afterSwitch = { active ->
-                ExtensionPluginWipeRegistration.register(active.repository)
+                ExtensionPluginWipeRegistration.register(
+                    active.repository,
+                    ExtensionPluginWipeRegistration.rootForProfile(filesDir, active.profileId)
+                )
             }
         )
         sessions.registerLifecycleHook(

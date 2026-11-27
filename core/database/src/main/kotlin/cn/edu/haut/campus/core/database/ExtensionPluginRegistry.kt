@@ -33,9 +33,9 @@ internal class ExtensionPluginRegistry(
     private val schoolId = environment.accountProfile.schoolId
     private val installer = ExtensionPluginInstaller(
         store = ExtensionPluginFileStore(
-            File(
+            ExtensionPluginWipeRegistration.rootForProfile(
                 appContext.filesDir,
-                "extension-plugin-packages/" + environment.accountProfile.databaseName.removeSuffix(".db")
+                environment.accountProfile.id
             ).toPath()
         ),
         keys = ExtensionPublisherTrustRoots.officialExamplesRegistry()

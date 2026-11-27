@@ -34,10 +34,7 @@ class ExtensionPluginWipeTest {
                 ") VALUES ('org.example.legacy', 'legacy', '1.0.0', NULL, 'dis-extension/v2', 'ENABLED', '[\"ui.slot.render\"]', '[]', 1)"
         )
         val context = RuntimeEnvironment.getApplication()
-        val root = File(
-            context.filesDir,
-            "extension-plugin-packages/" + fixture.profile.databaseName.removeSuffix(".db")
-        )
+        val root = ExtensionPluginWipeRegistration.rootForProfile(context.filesDir, fixture.profile.id)
         val installFile = File(root, "installations/school/plugin.json")
         val storageFile = File(root, "storage/school/plugin/value.bin")
         val cacheFile = File(root, "cache/school/plugin/value.bin")
@@ -46,7 +43,7 @@ class ExtensionPluginWipeTest {
             it.writeBytes(byteArrayOf(1))
         }
 
-        ExtensionPluginWipeRegistration.register(fixture.repository)
+        ExtensionPluginWipeRegistration.register(fixture.repository, root)
         fixture.repository.wipeAllPersonalData()
 
         db.query("SELECT COUNT(*) FROM installed_extension_plugins").use { cursor ->
