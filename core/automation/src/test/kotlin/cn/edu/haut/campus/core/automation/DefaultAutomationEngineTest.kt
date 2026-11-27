@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.automation
 
 import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
@@ -482,7 +483,7 @@ class DefaultAutomationEngineTest {
             eventId = "geo-event-type-mismatch",
             scope = AutomationTestFixtures.scope,
             occurredAt = firedAt,
-            campusId = AutomationTestFixtures.scope.campusId,
+            campusId = CampusId("campus"),
             enter = true,
             accuracyMeters = 15f
         )
