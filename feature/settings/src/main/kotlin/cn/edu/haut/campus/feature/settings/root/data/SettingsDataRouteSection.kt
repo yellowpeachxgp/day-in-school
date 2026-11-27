@@ -12,6 +12,7 @@ import cn.edu.haut.campus.feature.settings.root.data.ui.SettingsDataSectionConte
 fun SettingsDataRouteSection(
     repository: CampusRepository,
     onBack: (() -> Unit)?,
+    isHautCampus: Boolean,
     onFeedback: (String) -> Unit,
     onRefreshWidgets: () -> Unit
 ) {
@@ -24,6 +25,7 @@ fun SettingsDataRouteSection(
         state = state,
         actions = viewModel,
         onBack = onBack,
+        isHautCampus = isHautCampus,
         onFeedback = onFeedback,
         onRefreshWidgets = onRefreshWidgets
     )

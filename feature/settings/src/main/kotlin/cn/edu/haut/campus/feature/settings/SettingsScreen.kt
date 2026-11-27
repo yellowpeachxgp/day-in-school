@@ -141,6 +141,7 @@ import cn.edu.haut.campus.feature.settings.root.ui.ProfileDisclaimerSection
 import cn.edu.haut.campus.feature.settings.root.ui.ProfileMetricItem
 import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
+import cn.edu.haut.campus.feature.settings.root.ui.SyncHistoryDialog
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
 import cn.edu.haut.campus.feature.settings.root.home.SettingsHomeRouteSection
 import cn.edu.haut.campus.feature.settings.root.academic.SettingsAcademicRouteSection
@@ -189,7 +190,6 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val isHautCampus = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID
     val scrollState = rememberScrollState()
     var showSystemSettingsMenu by remember { mutableStateOf(onBack != null) }
 
@@ -204,55 +204,9 @@ fun SettingsScreen(
         }
     }
 
-    val studentProfile by repository.studentProfileFlow.collectAsState(initial = null)
-    val terms by repository.termsFlow.collectAsState(initial = emptyList())
-    val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
-    val courses by repository.coursesFlow.collectAsState(initial = emptyList())
-    val rules by repository.rulesFlow.collectAsState(initial = emptyList())
-    val attempts by repository.gradeAttemptsFlow.collectAsState(initial = emptyList())
-    val periodTimes by repository.periodTimesFlow.collectAsState(initial = emptyList())
-    val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
-    val occurrenceOverrides by repository.occurrenceOverridesFlow.collectAsState(initial = emptyList())
-    val buildings by repository.buildingsFlow.collectAsState(initial = emptyList())
     val importAudits by repository.importAuditsFlow.collectAsState(initial = emptyList())
-    val examSchedules by repository.examSchedulesFlow.collectAsState(initial = emptyList())
-    val prefs by repository.preferencesFlow.collectAsState(initial = AppPreferencesState())
-    val activeReminderTasks by repository.activeReminderTasksFlow.collectAsState(initial = emptyList())
-    val activeFocusSession by repository.activeFocusSessionFlow.collectAsState(initial = null)
-    val completedFocusSessions by repository.completedFocusSessionsFlow.collectAsState(initial = emptyList())
-    val onlineRooms by repository.utilityOnlineRoomsFlow.collectAsState(initial = emptyList())
-    val utilityMeters by repository.utilityMetersFlow.collectAsState(initial = emptyList())
-    val utilityReadings by repository.utilityReadingsFlow.collectAsState(initial = emptyList())
-    val libraryBookingPlans by repository.libraryBookingPlansFlow.collectAsState(initial = emptyList())
-    val reminderCoordinator = remember(context) { ReminderCoordinator.getInstance(context) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var reminderPermSnapshot by remember(context) {
-        mutableStateOf(ReminderPermissions.inspect(context))
-    }
-    var expandReminderDiagnostics by remember { mutableStateOf(false) }
-
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        reminderPermSnapshot = ReminderPermissions.inspect(context)
-        scope.launch {
-            if (granted) {
-                reminderCoordinator.reconcileNow("NOTIFICATION_PERMISSION_GRANTED", forceRescheduleAlarms = true)
-            }
-        }
-    }
-
-    DisposableEffect(lifecycleOwner, context) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                reminderPermSnapshot = ReminderPermissions.inspect(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    var isDynamicSyncing by remember { mutableStateOf(false) }
+    val currentTerm by repository.currentTermFlow.collectAsState(initial = null)
+    val calendarOverrides by repository.calendarOverridesFlow.collectAsState(initial = emptyList())
 
     val today = remember { ZonedDateTime.now(HAUT_ZONE_ID).toLocalDate() }
     val resolvedWeekInfo = remember(today, currentTerm, calendarOverrides) {
@@ -260,60 +214,9 @@ fun SettingsScreen(
     }
     val currentTeachingWeek = resolvedWeekInfo?.teachingWeek ?: 1
 
-    // 本周总课时计算
-    val thisWeekClassCount = remember(
-        currentTeachingWeek,
-        currentTerm,
-        courses,
-        rules,
-        periodTimes,
-        calendarOverrides,
-        occurrenceOverrides,
-        buildings
-    ) {
-        val activeTerm = currentTerm ?: return@remember 0
-        val map = ScheduleEngine.resolveOccurrencesForTeachingWeek(
-            teachingWeek = currentTeachingWeek,
-            term = activeTerm,
-            courses = courses,
-            rules = rules,
-            periodTimes = periodTimes,
-            calendarOverrides = calendarOverrides,
-            occurrenceOverrides = occurrenceOverrides,
-            buildings = buildings
-        )
-        map.values.sumOf { it.size }
-    }
-
-    // 学业 GPA 报告
-    val officialSnapshot = remember(prefs.officialGpaValuePlain, prefs.officialGpaNote) {
-        prefs.officialGpaValuePlain?.toBigDecimalOrNull()?.let { valBd ->
-            OfficialGpaSnapshot(
-                cumulativeGpa = valBd,
-                fetchedAt = Instant.now(),
-                fieldDefinitionNote = prefs.officialGpaNote ?: "教务系统平均绩点"
-            )
-        }
-    }
-    val latestTermId = remember(attempts) { attempts.firstOrNull()?.termId }
-    val latestAcademicYear = remember(attempts) { attempts.firstOrNull()?.academicYear }
-    val gpaReport = remember(attempts, latestTermId, latestAcademicYear, officialSnapshot) {
-        GpaCalculator.calculateReport(
-            attempts = attempts,
-            currentTermId = latestTermId,
-            currentAcademicYear = latestAcademicYear,
-            officialSnapshot = officialSnapshot
-        )
-    }
-
     // 各类弹窗与折叠状态
-    var showEditProfileDialog by remember { mutableStateOf(false) }
     var showImportHistoryDialog by remember { mutableStateOf(false) }
-    var showAddCalendarOverrideDialog by remember { mutableStateOf(false) }
-    var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
-    var showWipeConfirmDialog by remember { mutableStateOf(false) }
     var feedbackText by remember { mutableStateOf<String?>(null) }
-    var expandPeriodTable by remember { mutableStateOf(false) }
 
     // GitHub Release 自动版本检测与在线拉取直装状态
     val currentInstalledVersion = remember(context) {
@@ -486,6 +389,7 @@ fun SettingsScreen(
             SettingsDataRouteSection(
                 repository = repository,
                 onBack = onBack,
+                isHautCampus = activeSchool.id == SchoolDirectory.HAUT_SCHOOL_ID,
                 onFeedback = { feedbackText = it },
                 onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) }
             )
@@ -507,6 +411,13 @@ fun SettingsScreen(
             // 预留底部悬浮胶囊导航栏高度
             Spacer(modifier = Modifier.height(96.dp))
         }
+    }
+
+    if (showImportHistoryDialog) {
+        SyncHistoryDialog(
+            importAudits = importAudits,
+            onDismiss = { showImportHistoryDialog = false }
+        )
     }
 
 }

@@ -159,6 +159,7 @@ internal fun SettingsDataSectionContent(
     state: SettingsDataUiState,
     actions: SettingsDataUiAction,
     onBack: (() -> Unit)?,
+    isHautCampus: Boolean,
     onFeedback: (String) -> Unit,
     onRefreshWidgets: () -> Unit
 ) {
@@ -216,11 +217,13 @@ internal fun SettingsDataSectionContent(
                                 )
                                 onRefreshWidgets()
                                 animeLauncherAliasEnabled = enabled
-                                onFeedback(if (enabled) {)
-                                    "已切换为二次元猫娘桌面图标（返回桌面稍等片刻即可刷新）"
-                                } else {
-                                    "已恢复默认工大深蓝钟楼桌面图标"
-                                }
+                                onFeedback(
+                                    if (enabled) {
+                                        "已切换为二次元猫娘桌面图标（返回桌面稍等片刻即可刷新）"
+                                    } else {
+                                        "已恢复默认工大深蓝钟楼桌面图标"
+                                    }
+                                )
                             }.onFailure {
                                 onFeedback("当前系统桌面不支持动态切换应用图标别名")
                             }

@@ -140,6 +140,7 @@ import cn.edu.haut.campus.feature.settings.root.ui.ProfileDisclaimerSection
 import cn.edu.haut.campus.feature.settings.root.ui.ProfileMetricItem
 import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
+import cn.edu.haut.campus.feature.settings.root.ui.SyncHistoryDialog
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
 import cn.edu.haut.campus.feature.settings.root.network.SettingsNetworkRouteSection
 import kotlinx.coroutines.launch
@@ -920,49 +921,9 @@ internal fun SettingsHomeSectionContent(
 
     // 弹窗 3：历史同步审计记录
     if (state.showImportHistoryDialog) {
-        XPeachAlertDialog(
-            onDismissRequest = { onAction(SettingsHomeUiAction.HideImportHistoryDialog) },
-            title = { Text("教务与课表同步记录") },
-            text = {
-                if (importAudits.isEmpty()) {
-                    Text(
-                        text = "暂无同步记录。点击右上角同步图标可从正方教务系统导入课表与成绩。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    val audits = importAudits.take(8)
-                    Column {
-                        audits.forEachIndexed { index, audit ->
-                            if (index > 0) {
-                                XPeachInsetDivider(verticalPadding = 6.dp)
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    text = "${AUDIT_TIME_FMT.format(audit.importedAt)} · ${audit.termId}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = audit.outcome,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { onAction(SettingsHomeUiAction.HideImportHistoryDialog) }) {
-                    Text("关闭")
-                }
-            }
+        SyncHistoryDialog(
+            importAudits = importAudits,
+            onDismiss = { onAction(SettingsHomeUiAction.HideImportHistoryDialog) }
         )
     }
 
