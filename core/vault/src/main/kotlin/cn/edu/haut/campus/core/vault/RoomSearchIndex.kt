@@ -195,11 +195,9 @@ class RoomSearchIndex(
             fromWhere.append(")")
         }
         val candidateLimit = max((query.offset + query.limit) * 4, 100).coerceAtMost(500)
-        val order = if (ftsQuery != null) {
-            " ORDER BY bm25(search_fts) ASC, search_docs.updatedAtEpochMs DESC, search_docs.rowid ASC"
-        } else {
-            " ORDER BY search_docs.updatedAtEpochMs DESC, search_docs.rowid ASC"
-        }
+        // bm25/matchinfo 在 Android FTS4/Robolectric 组合中不是可移植能力（实测 no such function）。
+        // 首版按 R01 采用确定性 SQL 顺序 + Kotlin title/alias/code/body 二级排序。
+        val order = " ORDER BY search_docs.updatedAtEpochMs DESC, search_docs.rowid ASC"
         val selectSql = "SELECT search_docs.* " + fromWhere + order + " LIMIT " + candidateLimit
         val countSql = "SELECT COUNT(*) " + fromWhere
         return SearchSql(selectSql = selectSql, args = args, countSql = countSql, countArgs = countArgs)
