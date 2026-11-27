@@ -391,8 +391,21 @@ class CampusRepository internal constructor(
 
 
     private val profileDataWiper = ProfileDataWiper(
+        appContext = appContext,
+        database = database,
         preferences = preferences,
-        cloudAndParcelDao = cloudAndParcelDao
+        dao = dao,
+        reminderDao = reminderDao,
+        utilityAndFocusDao = utilityAndFocusDao,
+        cloudAndParcelDao = cloudAndParcelDao,
+        academicCredentialVault = academicCredentialVault,
+        academicCredentialMutex = academicCredentialMutex,
+        cloudIdentityMutex = cloudIdentityMutex,
+        cloudTokenMutex = cloudTokenMutex,
+        bookingPlanStateMutex = bookingPlanStateMutex,
+        cloudIdentityRepository = cloudIdentityRepository,
+        syncOrchestrator = syncOrchestrator,
+        beforeWipeHooks = beforeWipeHooks
     )
 
     init {
@@ -1433,96 +1446,8 @@ class CampusRepository internal constructor(
     /**
      * 完全清除本地个人课程、成绩、导入审计、水电账号与历史、自习专注及学校网页会话（保留公开的校区建筑字典与节次模板）。
      */
-    suspend fun wipeAllPersonalData() {
-        academicCredentialMutex.withLock {
-            val prefs = preferences.data.first()
-            prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
-                withContext(Dispatchers.IO) { academicCredentialVault.delete(syncOrchestrator.academicCredentialScopeForFacade(accountId)) }
-            }
-            preferences.edit {
-                it.remove(CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
-                it.remove(CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED)
-                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
-            }
-        }
-        for (hook in beforeWipeHooks.values) {
-            runCatching { hook.invoke() }
-        }
-        runCatching {
-            cloudAndParcelDao.getLibraryBookingPlansSnapshot().forEach { plan ->
-                LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
-            }
-        }
-        runCatching {
-            java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
-        }
-        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回。
-        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
-        // 世代推进先于 Room 事务执行（避免在事务内嵌套身份锁），
-        // 整个擦除事务与同步的"复核→写入"临界区互斥——在途同步要么整体先落库、要么在复核处失败。
-        bookingPlanStateMutex.withLock {
-            cloudIdentityMutex.withLock {
-                cloudIdentityRepository.bumpCloudIdentityGenerationLocked(
-                    cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
-                    markUnlinkTombstone = true
-                )
-            }
-            database.withTransaction {
-                dao.clearStudentProfile()
-                dao.clearCourses()
-                dao.clearRules()
-                dao.clearOccurrenceOverrides()
-                dao.clearGradeAttempts()
-                dao.clearExamSchedules()
-                dao.clearExamTermRepairAudits()
-                dao.clearUnscheduledCourses()
-                dao.clearImportAudits()
-                dao.clearWidgetConfigs()
-                reminderDao.clearAllTasks()
-                reminderDao.clearAllEventPrefs()
-                utilityAndFocusDao.clearAllDailySamples()
-                utilityAndFocusDao.clearAllOnlineRooms()
-                utilityAndFocusDao.clearAllReadings()
-                utilityAndFocusDao.clearAllMeters()
-                utilityAndFocusDao.clearAllFocusSessions()
-                cloudAndParcelDao.clearCloudIdentityBinding()
-                cloudAndParcelDao.clearLibraryBookingPlans()
-                cloudAndParcelDao.clearParcelItems()
-            }
-        }
-        cloudTokenMutex.withLock {
-            cloudIdentityRepository.clearCachedCloudTokensLocked()
-            preferences.edit { prefs ->
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XNM)
-                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XQM)
-                prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
-                prefs.remove(CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS)
-                prefs.remove(CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
-                prefs[CampusRepositoryPrefKeys.SEEDED] = true
-                prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
-                prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
-            }
-        }
-    }
+    suspend fun wipeAllPersonalData() =
+        profileDataWiper.wipeAllPersonalData()
 
     suspend fun getDirectScheduleDataSnapshot(): DirectScheduleData =
         timetableRepository.getDirectScheduleDataSnapshot()
