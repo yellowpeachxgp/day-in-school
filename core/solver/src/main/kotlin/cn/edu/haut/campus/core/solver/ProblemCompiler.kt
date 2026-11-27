@@ -1,7 +1,6 @@
 package cn.edu.haut.campus.core.solver
 
 import cn.edu.haut.campus.core.selection.CapacityVerdict
-import java.time.Duration
 import java.util.BitSet
 
 internal const val SKIP_VALUE: Int = -1
@@ -107,10 +106,21 @@ internal object ProblemCompiler {
             )
         }
 
+        val travel = CachingTravelTimeMatrix(problem.travel)
         val excluded = HashMap<Int, MutableList<String>>()
         for (option in options) {
             val reasons = ArrayList<String>()
             if (option.timeBits.intersects(fixedBusy)) reasons += "fixed-occupancy"
+            if (commutePolicy != null) {
+                val fixedCommuteViolation = option.source.slots.any { candidateSlot ->
+                    fixedProjected.any { fixed ->
+                        fixed.slots.any { fixedSlot ->
+                            CommuteRules.violates(problem.timeGrid, candidateSlot, fixedSlot, commutePolicy, travel)
+                        }
+                    }
+                }
+                if (fixedCommuteViolation) reasons += commutePolicy.ref.id
+            }
             if (capacityPolicy != null) {
                 if (capacityPolicy.excludeFull && option.capacityVerdict == CapacityVerdict.FULL) reasons += capacityPolicy.ref.id
                 if (!capacityPolicy.allowUnknown && option.capacityVerdict == CapacityVerdict.UNKNOWN) reasons += capacityPolicy.ref.id
@@ -129,7 +139,6 @@ internal object ProblemCompiler {
         }
 
         val incompatible = List(options.size) { BitSet(options.size) }
-        val travel = CachingTravelTimeMatrix(problem.travel)
         for (left in options) {
             for (right in options) {
                 if (left.index >= right.index) continue
@@ -271,42 +280,10 @@ internal object ProblemCompiler {
         if (left.source.offeringId == right.source.offeringId) return false
         for (a in left.source.slots) {
             for (b in right.source.slots) {
-                if (a.weekday != b.weekday || !a.weeks.intersects(b.weeks)) continue
-                if (a.sharesSectionWith(b)) continue
-                val earlier = if (a.endSection < b.startSection) a else b
-                val later = if (earlier === a) b else a
-                if (earlier.endSection >= later.startSection) continue
-                val gap = gapMinutes(problem.timeGrid, earlier.endSection, later.startSection)
-                val estimate = estimateFor(earlier, later, travel)
-                when (estimate) {
-                    is TravelTimeEstimate.Reachable -> {
-                        if (gap < estimate.minutes.toLong() + policy.bufferMinutes) return true
-                    }
-                    TravelTimeEstimate.NotWithinBreak -> return true
-                    TravelTimeEstimate.Unknown -> {
-                        if (policy.unknownTravel == UnknownTravelPolicy.REJECT) return true
-                    }
-                }
+                if (CommuteRules.violates(problem.timeGrid, a, b, policy, travel)) return true
             }
         }
         return false
-    }
-
-    private fun estimateFor(
-        earlier: SolverClassSlot,
-        later: SolverClassSlot,
-        travel: TravelTimeMatrix
-    ): TravelTimeEstimate {
-        val from = earlier.location
-        val to = later.location
-        if (from == null || to == null) return TravelTimeEstimate.Unknown
-        return travel.estimate(from, to)
-    }
-
-    private fun gapMinutes(grid: TeachingTimeGrid, endSection: Int, startSection: Int): Long {
-        val end = grid.period(endSection).end
-        val start = grid.period(startSection).start
-        return Duration.between(end, start).toMinutes()
     }
 }
 

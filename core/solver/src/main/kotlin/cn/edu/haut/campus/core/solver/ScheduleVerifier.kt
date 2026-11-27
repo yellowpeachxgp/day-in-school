@@ -1,7 +1,6 @@
 package cn.edu.haut.campus.core.solver
 
 import cn.edu.haut.campus.core.selection.CapacityVerdict
-import java.time.Duration
 
 data class ScheduleVerificationReport(
     val violations: List<String>
@@ -70,10 +69,19 @@ object ScheduleVerifier {
         }
 
         val fixed = problem.fixedOccupancy + TimelineOccupancyProjector.project(problem.fixedEvents, problem.timeGrid)
+        val commutePolicy = problem.hard.filterIsInstance<HardConstraint.CommutePolicy>().firstOrNull()
         for (option in selected) {
             for (occupancy in fixed) {
                 if (overlapsAny(option.slots, occupancy.slots)) {
                     violations += "教学班 " + option.id + " 与固定占用 " + occupancy.label + " 时间冲突"
+                }
+                if (commutePolicy != null) {
+                    val badCommute = option.slots.any { candidateSlot ->
+                        occupancy.slots.any { fixedSlot ->
+                            CommuteRules.violates(problem.timeGrid, candidateSlot, fixedSlot, commutePolicy, problem.travel)
+                        }
+                    }
+                    if (badCommute) violations += "教学班 " + option.id + " 与固定占用 " + occupancy.label + " 课间通勤不可行或证据不足"
                 }
             }
         }
@@ -85,8 +93,7 @@ object ScheduleVerifier {
                 if (overlapsAny(left.slots, right.slots)) {
                     violations += "教学班 " + left.id + " 与 " + right.id + " 时间重叠"
                 }
-                val policy = problem.hard.filterIsInstance<HardConstraint.CommutePolicy>().firstOrNull()
-                if (policy != null && commuteViolation(problem, left, right, policy)) {
+                if (commutePolicy != null && commuteViolation(problem, left, right, commutePolicy)) {
                     violations += "教学班 " + left.id + " 与 " + right.id + " 课间通勤不可行或证据不足"
                 }
             }
@@ -114,25 +121,7 @@ object ScheduleVerifier {
     ): Boolean {
         for (a in left.slots) {
             for (b in right.slots) {
-                if (a.weekday != b.weekday || !a.weeks.intersects(b.weeks) || a.sharesSectionWith(b)) continue
-                val earlier = if (a.endSection < b.startSection) a else b
-                val later = if (earlier === a) b else a
-                if (earlier.endSection >= later.startSection) continue
-                val end = problem.timeGrid.period(earlier.endSection).end
-                val start = problem.timeGrid.period(later.startSection).start
-                val gap = Duration.between(end, start).toMinutes()
-                val from = earlier.location
-                val to = later.location
-                val estimate = if (from == null || to == null) TravelTimeEstimate.Unknown else problem.travel.estimate(from, to)
-                when (estimate) {
-                    is TravelTimeEstimate.Reachable -> {
-                        if (gap < estimate.minutes.toLong() + policy.bufferMinutes) return true
-                    }
-                    TravelTimeEstimate.NotWithinBreak -> return true
-                    TravelTimeEstimate.Unknown -> {
-                        if (policy.unknownTravel == UnknownTravelPolicy.REJECT) return true
-                    }
-                }
+                if (CommuteRules.violates(problem.timeGrid, a, b, policy, problem.travel)) return true
             }
         }
         return false

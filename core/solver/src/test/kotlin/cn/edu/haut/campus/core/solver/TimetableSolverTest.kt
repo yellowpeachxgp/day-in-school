@@ -296,4 +296,38 @@ class TimetableSolverTest {
         assertEquals(listOf("m2"), result.ranked.single().selections.map { it.option.id })
     }
 
+    @Test
+    fun commuteToFixedOccupancyIsAlsoChecked() {
+        val fixed = FixedOccupancy(
+            id = "fixed-commute",
+            label = "已有跨校区课程",
+            slots = listOf(
+                SolverTestFixtures.slot(1, 1, 2, location = SolverTestFixtures.location(SolverTestFixtures.south, "B01"))
+            ),
+            provenance = SolverTestFixtures.provenance("fixed-commute")
+        )
+        val problem = SolverTestFixtures.problem(
+            candidates = listOf(
+                SolverTestFixtures.option(
+                    "near1", "M",
+                    slots = listOf(SolverTestFixtures.slot(1, 3, 4, location = SolverTestFixtures.location(SolverTestFixtures.north, "A01")))
+                ),
+                SolverTestFixtures.option(
+                    "safe1", "M",
+                    slots = listOf(SolverTestFixtures.slot(2, 5, 6, location = SolverTestFixtures.location(SolverTestFixtures.north, "A01")))
+                )
+            ),
+            hard = listOf(
+                HardConstraint.RequireOffering("M"),
+                HardConstraint.CommutePolicy(bufferMinutes = 0)
+            ),
+            fixed = listOf(fixed)
+        )
+        val result = solver.solve(problem, budget = Duration.ofSeconds(2))
+        assertTrue(result is SolveResult.Solutions)
+        result as SolveResult.Solutions
+        assertEquals(listOf("safe1"), result.ranked.single().selections.map { it.option.id })
+        assertTrue(ScheduleVerifier.verify(problem, result.ranked.single()).isValid)
+    }
+
 }
