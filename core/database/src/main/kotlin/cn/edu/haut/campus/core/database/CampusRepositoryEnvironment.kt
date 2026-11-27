@@ -13,6 +13,7 @@ internal class CampusRepositoryEnvironment(
     val database: HautDatabase,
     val preferences: DataStore<Preferences>,
     val accountProfile: AccountProfileEntity,
+    val academicEntityWritePort: AcademicEntityWritePort,
     private val scheduleOrPolicyChangedNotifier: suspend (String) -> Unit
 ) {
     val dao: CampusDao = database.campusDao()

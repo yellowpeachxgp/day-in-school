@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.vault
 
 import androidx.room.withTransaction
+import cn.edu.haut.campus.core.database.AcademicEntityWritePort
 import cn.edu.haut.campus.core.database.EntityJournalEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalJson
@@ -34,7 +35,7 @@ class RoomVaultJournal(
     snapshotStores: Map<EntityType, EntitySnapshotStore>,
     private val clock: () -> Instant = Instant::now,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() }
-) : EntityWriter, ChangeJournal {
+) : EntityWriter, ChangeJournal, AcademicEntityWritePort {
     private val dao = database.vaultDao()
     private val snapshotStores = snapshotStores.toMap()
 
@@ -59,28 +60,57 @@ class RoomVaultJournal(
         source: SourceRef?,
         writeGroupId: String?,
         block: suspend () -> T
+    ): T = writeMany(
+        refsProvider = { listOf(ref) },
+        actor = actor,
+        actorDetail = actorDetail,
+        source = source,
+        writeGroupId = writeGroupId,
+        block = block
+    )
+
+    override suspend fun <T> writeMany(
+        refsProvider: suspend () -> List<EntityRef>,
+        actor: Actor,
+        actorDetail: String?,
+        source: SourceRef?,
+        writeGroupId: String?,
+        block: suspend () -> T
     ): T {
-        validateSourceScope(ref, source)
-        val store = snapshotStores[ref.type] ?: throw UnsupportedVaultEntityException(ref.type)
+        val groupId = writeGroupId ?: idGenerator()
         return database.withTransaction {
-            val before = store.read(ref)
-            validateSnapshotSafety(before)
+            val refs = refsProvider().distinct()
+            val beforeByRef = LinkedHashMap<EntityRef, CanonicalJson?>(refs.size)
+            refs.forEach { ref ->
+                validateSourceScope(ref, source)
+                val store = snapshotStores[ref.type] ?: throw UnsupportedVaultEntityException(ref.type)
+                val before = store.read(ref)
+                validateSnapshotSafety(before)
+                beforeByRef[ref] = before
+            }
+
             val result = block()
-            val after = store.read(ref)
-            validateSnapshotSafety(after)
-            val op = inferChangeKind(before, after)
-            if (op != null) {
-                recordChange(
-                    ref = ref,
-                    op = op,
-                    before = before,
-                    after = after,
-                    actor = actor,
-                    actorDetail = actorDetail,
-                    at = clock(),
-                    source = source,
-                    writeGroupId = writeGroupId ?: idGenerator()
-                )
+            val occurredAt = clock()
+
+            refs.forEach { ref ->
+                val store = snapshotStores.getValue(ref.type)
+                val after = store.read(ref)
+                validateSnapshotSafety(after)
+                val before = beforeByRef[ref]
+                val op = inferChangeKind(before, after)
+                if (op != null) {
+                    recordChange(
+                        ref = ref,
+                        op = op,
+                        before = before,
+                        after = after,
+                        actor = actor,
+                        actorDetail = actorDetail,
+                        at = occurredAt,
+                        source = source,
+                        writeGroupId = groupId
+                    )
+                }
             }
             result
         }

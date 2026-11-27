@@ -2,9 +2,11 @@ package cn.edu.haut.campus.core.vault
 
 import androidx.room.Room
 import cn.edu.haut.campus.core.database.CourseEntity
+import cn.edu.haut.campus.core.database.CourseScheduleRuleEntity
 import cn.edu.haut.campus.core.database.ExamScheduleEntity
 import cn.edu.haut.campus.core.database.GradeAttemptEntity
 import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.OccurrenceOverrideEntity
 import cn.edu.haut.campus.core.events.CanonicalJson
 import cn.edu.haut.campus.core.events.InMemoryEventOutbox
 import cn.edu.haut.campus.core.model.AccountId
@@ -179,6 +181,56 @@ class RoomVaultJournalTest {
     }
 
     @Test
+    fun writeManyCapturesAtomicBatchWithSharedWriteGroup() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        val gradeRef = EntityRef(EntityType.GRADE_ATTEMPT, "grade-1", scope)
+        val examRef = EntityRef(EntityType.EXAM, "exam-1", scope)
+
+        journal.writeMany(
+            refsProvider = { listOf(gradeRef, examRef) },
+            actor = Actor.SYNC,
+            actorDetail = "batch-test",
+            writeGroupId = "group-grade-exam"
+        ) {
+            database.campusDao().upsertGradeAttempts(listOf(gradeRow()))
+            database.campusDao().upsertExamSchedules(listOf(examRow()))
+        }
+
+        val rows = database.vaultDao().getJournalGroup("group-grade-exam")
+        assertEquals(2, rows.size)
+        assertTrue(rows.all { it.actorDetail == "batch-test" })
+        assertEquals(setOf("GRADE_ATTEMPT", "EXAM"), rows.map { it.entityType }.toSet())
+        assertEquals(2, outbox.pendingUnacked("automation").size)
+    }
+
+    @Test
+    fun courseAggregateRevertExcludesAndRenewsOccurrenceMutationToken() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        val original = courseRow()
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(original)
+            database.campusDao().upsertRule(ruleRow())
+            database.campusDao().upsertOccurrenceOverrides(listOf(overrideRow(mutationToken = "frozen-token")))
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(original.copy(name = "误改课程名"))
+        }
+        val update = journal.history(courseRef).first().first { it.op == ChangeKind.UPDATED }
+
+        val result = journal.revert(update.changeId, Actor.USER)
+
+        assertEquals(RevertStatus.APPLIED, result.status)
+        assertEquals(original.name, database.campusDao().getCourseById(courseRef.id)?.name)
+        val restoredOverride = database.campusDao().getOccurrenceOverridesSnapshot().first { it.id == "ov-1" }
+        assertTrue(restoredOverride.mutationToken.isNotBlank())
+        assertFalse(restoredOverride.mutationToken == "frozen-token")
+        assertFalse(update.after?.text?.contains("mutationToken") == true)
+        assertFalse(update.after?.text?.contains("frozen-token") == true)
+    }
+
+    @Test
     fun sensitiveSnapshotKeysFailClosedBeforeBusinessWrite() = runBlocking {
         val sensitiveStore = object : EntitySnapshotStore {
             override val type: EntityType = EntityType.PROFILE
@@ -230,6 +282,40 @@ class RoomVaultJournalTest {
         source = "OFFICIAL_JW",
         userModified = false,
         lastSyncEpochMilli = 100L
+    )
+
+    private fun ruleRow() = CourseScheduleRuleEntity(
+        id = "rule-1",
+        courseId = courseRef.id,
+        termId = "2025-2026-1",
+        weekdayIso = 1,
+        startPeriod = 1,
+        endPeriod = 2,
+        weeksCsv = "1,2,3",
+        rawRoom = "W111",
+        buildingId = null,
+        customStartTimeIso = null,
+        customEndTimeIso = null,
+        userModified = false
+    )
+
+    private fun overrideRow(mutationToken: String) = OccurrenceOverrideEntity(
+        id = "ov-1",
+        termId = "2025-2026-1",
+        courseRuleId = "rule-1",
+        courseId = courseRef.id,
+        dateIso = "2026-01-05",
+        startPeriod = 1,
+        endPeriod = 2,
+        startAtIso = null,
+        endAtIso = null,
+        room = "W111",
+        buildingId = null,
+        canceled = true,
+        reason = "合成停课",
+        moveId = null,
+        moveRole = null,
+        mutationToken = mutationToken
     )
 
     private fun gradeRow() = GradeAttemptEntity(

@@ -10,6 +10,7 @@ import cn.edu.haut.campus.core.events.CanonicalJson
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.json.JsonValue
+import java.util.UUID
 
 /** 课程聚合快照：课程行只是入口，排课规则与单次覆盖同属该课程可撤销聚合。 */
 class CourseEntitySnapshotStore(
@@ -73,7 +74,13 @@ class CourseEntitySnapshotStore(
             dao.upsertCourse(course)
         }
         if (rules.isNotEmpty()) dao.upsertRules(rules)
-        if (overrides.isNotEmpty()) dao.upsertOccurrenceOverrides(overrides)
+        if (overrides.isNotEmpty()) {
+            // mutationToken 是并发身份令牌而非用户内容：撤销属于真实重写，必须换发新令牌，
+            // 同时不得把该令牌纳入 canonical 快照（否则会造成敏感字段误报与令牌复用）。
+            dao.upsertOccurrenceOverrides(
+                overrides.map { it.copy(mutationToken = UUID.randomUUID().toString()) }
+            )
+        }
     }
 
     private companion object {
@@ -222,8 +229,7 @@ private fun encodeOccurrenceOverride(row: OccurrenceOverrideEntity): JsonValue.O
     "canceled" to JsonValue.Bool(row.canceled),
     "reason" to jsonString(row.reason),
     "moveId" to jsonString(row.moveId),
-    "moveRole" to jsonString(row.moveRole),
-    "mutationToken" to JsonValue.Str(row.mutationToken)
+    "moveRole" to jsonString(row.moveRole)
 )
 
 private fun decodeOccurrenceOverride(obj: JsonValue.Obj): OccurrenceOverrideEntity = OccurrenceOverrideEntity(
@@ -241,8 +247,7 @@ private fun decodeOccurrenceOverride(obj: JsonValue.Obj): OccurrenceOverrideEnti
     canceled = obj.requiredBoolean("canceled"),
     reason = obj.nullableString("reason"),
     moveId = obj.nullableString("moveId"),
-    moveRole = obj.nullableString("moveRole"),
-    mutationToken = obj.nullableString("mutationToken") ?: ""
+    moveRole = obj.nullableString("moveRole")
 )
 
 private fun encodeGrade(row: GradeAttemptEntity): JsonValue.Obj = jsonObjectOf(

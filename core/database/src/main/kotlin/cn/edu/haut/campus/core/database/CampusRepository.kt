@@ -77,7 +77,8 @@ class CampusRepository internal constructor(
     private val preferences: DataStore<Preferences>,
     private val accountProfile: AccountProfileEntity,
     academicCredentialVaultOverride: AcademicCredentialVault? = null,
-    sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null
+    sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null,
+    academicEntityWritePort: AcademicEntityWritePort = DirectAcademicEntityWritePort
 ) {
     private val dao = database.campusDao()
     private val reminderDao = database.reminderDao()
@@ -117,6 +118,7 @@ class CampusRepository internal constructor(
         database = database,
         preferences = preferences,
         accountProfile = accountProfile,
+        academicEntityWritePort = academicEntityWritePort,
         scheduleOrPolicyChangedNotifier = { reason -> notifyScheduleOrPolicyChanged(reason) }
     )
     val examRepository = ExamRepository(repositoryEnvironment)

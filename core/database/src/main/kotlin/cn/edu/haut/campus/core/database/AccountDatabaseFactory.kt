@@ -67,7 +67,13 @@ internal class AccountDatabaseFactory(private val context: Context) {
             val preferences = PreferenceDataStoreFactory.create(
                 produceFile = { context.preferencesDataStoreFile(profile.preferencesName) }
             )
-            CampusRepository(context, database, preferences, profile)
+            CampusRepository(
+                context,
+                database,
+                preferences,
+                profile,
+                academicEntityWritePort = AcademicEntityWritePortRegistry.create(database, profile)
+            )
         }
     }
 
