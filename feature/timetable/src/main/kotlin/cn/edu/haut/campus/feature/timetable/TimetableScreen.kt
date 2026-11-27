@@ -931,10 +931,11 @@ fun TimetableScreen(
                         }
                         val displayedPeriodMap = remember(activeWeekDates, term, periodTimes) {
                             val weekStart = activeWeekDates.firstOrNull()
-                            if (term == null || weekStart == null) {
+                            val activeTerm = term
+                            if (activeTerm == null || weekStart == null) {
                                 emptyMap()
                             } else {
-                                ScheduleEngine.periodMapForDate(weekStart, term, periodTimes)
+                                ScheduleEngine.periodMapForDate(weekStart, activeTerm, periodTimes)
                             }
                         }
                         val maxPeriods = maxOf(
