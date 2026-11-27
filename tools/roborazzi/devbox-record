@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# tools/roborazzi/devbox-record — 在 devbox 录制 Roborazzi 基线并取回本机 worktree。
+# 不写死开发机地址或校园根路径：优先读 CIS_DEVBOX/CIS_CAMPUS_ROOT，缺省时从 git devbox remote 解析。
+set -Eeuo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage: tools/roborazzi/devbox-record [branch] [module]
+
+Defaults: branch=current branch, module=:app
+
+The branch must be committed. The script pushes it to the devbox bare repository,
+uses cis-gate quick to materialize and compile the exact checkout, runs the module's
+recordRoborazziDebug through cis-gradle on the devbox, then rsyncs only
+src/test/roborazzi/debug/ back into this local worktree.
+USAGE
+}
+
+die() {
+  printf 'devbox-record: ERROR: %s\n' "$*" >&2
+  exit 2
+}
+
+if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then
+  usage
+  exit 0
+fi
+
+branch=${1:-$(git branch --show-current)}
+module=${2:-:app}
+[ -n "$branch" ] || die '无法确定当前分支；请显式传入 branch'
+git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "非法分支名: $branch"
+case "$branch" in
+  *[!A-Za-z0-9._/-]*) die '分支名含本脚本不支持的 shell 特殊字符' ;;
+esac
+case "$module" in
+  :*) ;;
+  *) module=":$module" ;;
+esac
+case "$module" in
+  *[!A-Za-z0-9._:-]*) die '模块名含本脚本不支持的 shell 特殊字符' ;;
+esac
+
+if [ -n "$(git status --porcelain)" ]; then
+  die '工作树必须是干净且已提交的状态；录制应对应确切 SHA'
+fi
+
+if [ -n "${CIS_DEVBOX:-}" ] && [ -n "${CIS_CAMPUS_ROOT:-}" ]; then
+  target=$CIS_DEVBOX
+  root=${CIS_CAMPUS_ROOT%/}
+else
+  remote=$(git remote get-url devbox 2>/dev/null) || die '缺少 devbox git remote，且 CIS_DEVBOX/CIS_CAMPUS_ROOT 未同时提供'
+  case "$remote" in
+    *:*) ;;
+    *) die 'devbox remote 不是 scp-like 形式；请改用 CIS_DEVBOX/CIS_CAMPUS_ROOT' ;;
+  esac
+  target=${remote%%:*}
+  rpath=${remote#*:}
+  root=${rpath%/repos/day-in-school.git}
+  [ "$root" != "$rpath" ] || die 'devbox remote 路径不是 repos/day-in-school.git'
+fi
+
+case "$target" in
+  ''|*@|*[!A-Za-z0-9._@-]*) die 'devbox SSH target 格式不被本脚本接受' ;;
+esac
+case "$root" in
+  /*) ;;
+  *) die 'campus root 必须是绝对路径' ;;
+esac
+case "$root" in
+  *[!A-Za-z0-9._/-]*) die 'campus root 含本脚本不支持的 shell 特殊字符' ;;
+esac
+
+command -v rsync >/dev/null 2>&1 || die '需要 rsync 将基线从 devbox 取回本机'
+
+module_path=$(printf '%s' "${module#:}" | tr ':' '/')
+build_dir="$root/build/day-in-school/$branch"
+remote_golden_dir="$build_dir/$module_path/src/test/roborazzi/debug"
+local_golden_dir="$module_path/src/test/roborazzi/debug"
+
+printf 'devbox-record: 推送 %s 到 <devbox>\n' "$branch"
+git push devbox "$branch"
+
+printf 'devbox-record: 通过 cis-gate quick 物化并编译精确 SHA（日志细节由 cis-gate 回传）\n'
+ssh -o BatchMode=yes "$target" "$root/bin/cis-gate" day-in-school "$branch" quick "$module"
+
+printf 'devbox-record: 在 <devbox> 的 cis-gradle 资源守卫下执行 %s:recordRoborazziDebug\n' "$module"
+ssh -o BatchMode=yes "$target" "cd '$build_dir' && '$root/bin/cis-gradle' '$module:recordRoborazziDebug'"
+
+mkdir -p "$local_golden_dir"
+printf 'devbox-record: 取回 %s 基线到本地源码树\n' "$module"
+rsync -az "$target:$remote_golden_dir/" "$local_golden_dir/"
+
+printf 'devbox-record: 完成；请检查 git status 并提交 %s 下的基线 PNG\n' "$local_golden_dir"

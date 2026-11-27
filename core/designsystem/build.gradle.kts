@@ -43,5 +43,5 @@ dependencies {
     api(libs.androidx.compose.material3)
     api(libs.androidx.compose.material.icons.extended)
     testImplementation(libs.junit)
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation(libs.robolectric)
 }
