@@ -89,6 +89,7 @@ internal class ExtensionPluginRegistry(
                 "扩展插件兼容写入口只接受 ENABLED/DISABLED 生命周期状态"
             )
         }
+        Unit
     }
 
     suspend fun installSignedExtensionPackageZip(zipBytes: ByteArray) = withContext(Dispatchers.IO) {
@@ -116,9 +117,9 @@ internal class ExtensionPluginRegistry(
     }
 
     suspend fun removeExtensionPlugin(pluginId: String) = withContext(Dispatchers.IO) {
-        val cleanup = installer.uninstall(schoolId, pluginId)
+        installer.uninstall(schoolId, pluginId)
         runCatching { cloudAndParcelDao.deleteInstalledExtensionPlugin(pluginId) }
-        cleanup
+        Unit
     }
 
     suspend fun wipeExtensionPluginData(reason: String) = withContext(Dispatchers.IO) {
