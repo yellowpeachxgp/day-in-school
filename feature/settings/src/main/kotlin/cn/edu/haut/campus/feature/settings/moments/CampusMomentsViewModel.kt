@@ -1,11 +1,10 @@
 package cn.edu.haut.campus.feature.settings.moments
 
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
+import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.model.AntiLostTagItem
 import cn.edu.haut.campus.core.model.CampusMajorTrack
@@ -15,26 +14,28 @@ import cn.edu.haut.campus.core.model.MomentsPostType
 import cn.edu.haut.campus.core.model.MomentsTextbookListing
 import cn.edu.haut.campus.feature.settings.moments.state.CampusMomentsUiAction
 import cn.edu.haut.campus.feature.settings.moments.state.CampusMomentsUiState
+import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Moments 状态 holder：聚合快照输入并委托全部写动作。 */
 class CampusMomentsViewModel(
-    private val repository: CampusRepository
-) : ViewModel(), CampusMomentsUiAction {
+    private val repository: CampusRepository,
+    sessionStates: Flow<AccountSessionState>
+) : ProfileSessionScopedViewModel(repository, sessionStates), CampusMomentsUiAction {
     private val mutableUiState = MutableStateFlow(CampusMomentsUiState())
     val uiState: StateFlow<CampusMomentsUiState> = mutableUiState.asStateFlow()
 
     init {
-        viewModelScope.launch { repository.preferencesFlow.collectLatest { value -> mutableUiState.update { it.copy(prefs = value) } } }
-        viewModelScope.launch { repository.coursesFlow.collectLatest { value -> mutableUiState.update { it.copy(courses = value) } } }
-        viewModelScope.launch { repository.studentProfileFlow.collectLatest { value -> mutableUiState.update { it.copy(studentProfile = value) } } }
-        viewModelScope.launch { repository.cloudIdentityBindingFlow.collectLatest { value -> mutableUiState.update { it.copy(cloudBinding = value) } } }
+        launchSessionCollect(repository.preferencesFlow) { value -> mutableUiState.update { it.copy(prefs = value) } }
+        launchSessionCollect(repository.coursesFlow) { value -> mutableUiState.update { it.copy(courses = value) } }
+        launchSessionCollect(repository.studentProfileFlow) { value -> mutableUiState.update { it.copy(studentProfile = value) } }
+        launchSessionCollect(repository.cloudIdentityBindingFlow) { value -> mutableUiState.update { it.copy(cloudBinding = value) } }
     }
 
     override suspend fun currentCloudUserId(): String =
@@ -108,9 +109,16 @@ class CampusMomentsViewModel(
         message: String
     ): Result<Boolean> = repository.reportAntiLostTagFound(tagCode, finderName, foundLocation, finderContact, message)
 
+    override fun resetStateForInvalidSession() {
+        mutableUiState.value = CampusMomentsUiState()
+    }
+
     companion object {
-        fun factory(repository: CampusRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { CampusMomentsViewModel(repository) }
+        fun factory(
+            repository: CampusRepository,
+            sessionStates: Flow<AccountSessionState>
+        ): ViewModelProvider.Factory = viewModelFactory {
+            initializer { CampusMomentsViewModel(repository, sessionStates) }
         }
     }
 }

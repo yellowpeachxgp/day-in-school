@@ -9,6 +9,7 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.feature.settings.focus.state.StudyFocusUiAction
 import cn.edu.haut.campus.feature.settings.focus.state.StudyFocusUiState
+import cn.edu.haut.campus.feature.settings.state.resetTransientForExit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -121,6 +122,17 @@ class StudyFocusViewModel(
             StudyFocusUiAction.ShowInvalidMinutesError -> mutableUiState.update {
                 it.copy(statusBanner = "请输入 1 至 180 之间的整数分钟数。")
             }
+        }
+    }
+
+    /** 拆分前输入、提示与诊断都是 Composition remember；离开页面时恢复初始快照。 */
+    fun resetTransientStateOnExit() {
+        restoredTickerKey = null
+        mutableUiState.update {
+            it.resetTransientForExit(
+                diagnosticSummary = diagnosticSummaryProvider(),
+                nowMs = System.currentTimeMillis()
+            )
         }
     }
 

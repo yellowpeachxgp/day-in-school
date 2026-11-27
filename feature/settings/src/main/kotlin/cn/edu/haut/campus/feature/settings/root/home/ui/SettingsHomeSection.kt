@@ -140,7 +140,6 @@ import cn.edu.haut.campus.feature.settings.root.ui.ProfileDisclaimerSection
 import cn.edu.haut.campus.feature.settings.root.ui.ProfileMetricItem
 import cn.edu.haut.campus.feature.settings.root.ui.StudentDigitalIdHeader
 import cn.edu.haut.campus.feature.settings.root.ui.ThemePaletteAndCardLayoutSection
-import cn.edu.haut.campus.feature.settings.root.ui.SyncHistoryDialog
 import cn.edu.haut.campus.feature.settings.root.update.SettingsUpdateRouteSection
 import cn.edu.haut.campus.feature.settings.root.network.SettingsNetworkRouteSection
 import kotlinx.coroutines.launch
@@ -177,7 +176,8 @@ internal fun SettingsHomeSectionContent(
     onNavigateToMoments: () -> Unit,
     onNavigateToSchoolCenter: () -> Unit,
     onNavigateToParcelHub: () -> Unit,
-    onNavigateToXpeachCloud: () -> Unit
+    onNavigateToXpeachCloud: () -> Unit,
+    onShowImportHistory: () -> Unit
 ) {
     val studentProfile = state.studentProfile
     val terms = state.terms
@@ -813,7 +813,7 @@ internal fun SettingsHomeSectionContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
-                            .clickable { onAction(SettingsHomeUiAction.ShowImportHistoryDialog) }
+                            .clickable(onClick = onShowImportHistory)
                             .padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -916,14 +916,6 @@ internal fun SettingsHomeSectionContent(
                     Text("取消")
                 }
             }
-        )
-    }
-
-    // 弹窗 3：历史同步审计记录
-    if (state.showImportHistoryDialog) {
-        SyncHistoryDialog(
-            importAudits = importAudits,
-            onDismiss = { onAction(SettingsHomeUiAction.HideImportHistoryDialog) }
         )
     }
 

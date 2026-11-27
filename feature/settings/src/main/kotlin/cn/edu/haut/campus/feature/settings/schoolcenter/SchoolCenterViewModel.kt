@@ -9,7 +9,9 @@ import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiAction
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiEffect
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiState
+import cn.edu.haut.campus.feature.settings.state.resetTransientForExit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -31,10 +33,13 @@ class SchoolCenterViewModel(
 
     private val mutableEffects = MutableSharedFlow<SchoolCenterUiEffect>(extraBufferCapacity = 4)
     val effects: SharedFlow<SchoolCenterUiEffect> = mutableEffects.asSharedFlow()
+    private var createProfileJob: Job? = null
 
     init {
         if (sessions != null) {
             viewModelScope.launch {
+                // 有意收集全局 profiles：学校中心本身就是跨账号目录/创建/切换管理页，
+                // 不按当前 Profile 过滤；这不向普通账号数据页扩散。
                 sessions.profiles.collectLatest { profiles ->
                     mutableUiState.update { it.copy(profiles = profiles) }
                 }
@@ -75,7 +80,8 @@ class SchoolCenterViewModel(
     private fun createOfflineProfile(action: SchoolCenterUiAction.CreateOfflineProfile) {
         val coordinator = sessions ?: return
         if (mutableUiState.value.creatingProfile) return
-        viewModelScope.launch {
+        createProfileJob?.cancel()
+        createProfileJob = viewModelScope.launch {
             mutableUiState.update { it.copy(creatingProfile = true, profileFeedback = null) }
             try {
                 coordinator.createOfflineProfile(action.school, action.label)
@@ -96,6 +102,13 @@ class SchoolCenterViewModel(
                 mutableUiState.update { it.copy(creatingProfile = false) }
             }
         }
+    }
+
+    /** 查询、选中学校、建身份与复制反馈在拆分前都随页面退出消失。 */
+    fun resetTransientStateOnExit() {
+        createProfileJob?.cancel()
+        createProfileJob = null
+        mutableUiState.update { it.resetTransientForExit() }
     }
 
     companion object {

@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.feature.settings.focus
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +27,9 @@ fun StudyFocusRoute(
         key = "study-focus-" + repository.profileId + "-" + repository.sessionGeneration,
         factory = StudyFocusViewModel.factory(repository, focusCoordinator, diagnosticProvider)
     )
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.resetTransientStateOnExit() }
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     StudyFocusScreenContent(state = state, onBack = onBack, onAction = viewModel::onAction)
 }

@@ -11,6 +11,7 @@ import cn.edu.haut.campus.core.campusservices.LibrarySearchField
 import cn.edu.haut.campus.feature.settings.library.catalog.state.LibraryCatalogUiAction
 import cn.edu.haut.campus.feature.settings.library.catalog.state.LibraryCatalogUiEffect
 import cn.edu.haut.campus.feature.settings.library.catalog.state.LibraryCatalogUiState
+import cn.edu.haut.campus.feature.settings.state.resetTransientForExit
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -175,6 +176,15 @@ class LibraryCatalogViewModel : ViewModel() {
             }
             mutableUiState.update { it.copy(isDetailLoading = false) }
         }
+    }
+
+    /** 恢复拆分前 remember/rememberSaveable 草稿、检索结果与详情随页面退出重置的生命周期。 */
+    fun resetTransientStateOnExit() {
+        searchJob?.cancel()
+        detailJob?.cancel()
+        searchJob = null
+        detailJob = null
+        mutableUiState.update { it.resetTransientForExit() }
     }
 
     override fun onCleared() {

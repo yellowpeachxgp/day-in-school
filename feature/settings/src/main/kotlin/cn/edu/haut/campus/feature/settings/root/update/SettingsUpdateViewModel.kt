@@ -11,7 +11,9 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.feature.settings.root.update.state.SettingsUpdateUiAction
 import cn.edu.haut.campus.feature.settings.root.update.state.SettingsUpdateUiState
+import cn.edu.haut.campus.feature.settings.state.resetTransientForExit
 import java.io.File
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,18 +32,14 @@ class SettingsUpdateViewModel(
         SettingsUpdateUiState(currentInstalledVersion = currentInstalledVersion)
     )
     val uiState: StateFlow<SettingsUpdateUiState> = mutableUiState.asStateFlow()
-    private var lastAutoCheckKey: String? = null
+    private var checkJob: Job? = null
+    private var downloadJob: Job? = null
+    private var transientEpoch: Long = 0L
 
     init {
         viewModelScope.launch {
             repository.preferencesFlow.collectLatest { prefs ->
-                val key = prefs.networkProxyConfig.mode.key + ":" + prefs.networkProxyConfig.presetMirrorKey
-                val shouldCheck = key != lastAutoCheckKey
-                lastAutoCheckKey = key
                 mutableUiState.update { it.copy(prefs = prefs) }
-                if (shouldCheck) {
-                    checkLatestRelease(manual = false)
-                }
             }
         }
     }
@@ -58,11 +56,21 @@ class SettingsUpdateViewModel(
         }
     }
 
+    private fun updateIfCurrent(
+        epoch: Long,
+        transform: (SettingsUpdateUiState) -> SettingsUpdateUiState
+    ) {
+        if (epoch == transientEpoch) {
+            mutableUiState.update(transform)
+        }
+    }
+
     private fun checkLatestRelease(manual: Boolean) {
         if (mutableUiState.value.isCheckingRelease) return
-        viewModelScope.launch {
+        val epoch = transientEpoch
+        checkJob = viewModelScope.launch {
             val proxyConfig = mutableUiState.value.prefs.networkProxyConfig
-            mutableUiState.update {
+            updateIfCurrent(epoch) {
                 it.copy(
                     isCheckingRelease = true,
                     releaseStatusMessage = if (manual) {
@@ -76,9 +84,9 @@ class SettingsUpdateViewModel(
                 currentVersionName = currentInstalledVersion,
                 proxyConfig = proxyConfig
             )
-            mutableUiState.update { it.copy(isCheckingRelease = false) }
+            updateIfCurrent(epoch) { it.copy(isCheckingRelease = false) }
             checkRes.onSuccess { info ->
-                mutableUiState.update {
+                updateIfCurrent(epoch) {
                     it.copy(
                         releaseInfo = info,
                         showReleaseNotesDialog = if (manual) true else it.showReleaseNotesDialog,
@@ -97,7 +105,7 @@ class SettingsUpdateViewModel(
                 }
             }.onFailure { err ->
                 if (manual) {
-                    mutableUiState.update {
+                    updateIfCurrent(epoch) {
                         it.copy(releaseStatusMessage = "检查失败：" + (err.message ?: "请尝试在上方切换加速镜像或代理"))
                     }
                 }
@@ -125,9 +133,10 @@ class SettingsUpdateViewModel(
             return
         }
         if (mutableUiState.value.isDownloadingApk) return
-        viewModelScope.launch {
+        val epoch = transientEpoch
+        downloadJob = viewModelScope.launch {
             val proxyConfig = mutableUiState.value.prefs.networkProxyConfig
-            mutableUiState.update {
+            updateIfCurrent(epoch) {
                 it.copy(
                     isDownloadingApk = true,
                     apkDownloadProgress = 0f,
@@ -140,7 +149,7 @@ class SettingsUpdateViewModel(
                     proxyConfig = proxyConfig
                 ).getOrNull()
             if (targetInfo == null) {
-                mutableUiState.update {
+                updateIfCurrent(epoch) {
                     it.copy(
                         isDownloadingApk = false,
                         releaseStatusMessage = "获取版本信息失败，请在上方切换代理线路后重试。"
@@ -148,13 +157,13 @@ class SettingsUpdateViewModel(
                 }
                 return@launch
             }
-            mutableUiState.update { it.copy(releaseInfo = targetInfo) }
+            updateIfCurrent(epoch) { it.copy(releaseInfo = targetInfo) }
             val dlRes = apkDownloader(targetInfo, proxyConfig) { dl, total ->
                 if (total > 0L) {
                     val progress = dl.toFloat() / total.toFloat()
                     val dlMb = String.format("%.1f", dl / (1024.0 * 1024.0))
                     val totalMb = String.format("%.1f", total / (1024.0 * 1024.0))
-                    mutableUiState.update {
+                    updateIfCurrent(epoch) {
                         it.copy(
                             apkDownloadProgress = progress,
                             releaseStatusMessage = "正在加速下载 " + targetInfo.tagName + "：" + (progress * 100).toInt() + "% (" + dlMb + " / " + totalMb + " MB)"
@@ -162,11 +171,12 @@ class SettingsUpdateViewModel(
                     }
                 }
             }
-            mutableUiState.update { it.copy(isDownloadingApk = false) }
+            updateIfCurrent(epoch) { it.copy(isDownloadingApk = false) }
             dlRes.onSuccess { apkFile ->
-                mutableUiState.update { it.copy(downloadedApkFile = apkFile) }
+                updateIfCurrent(epoch) { it.copy(downloadedApkFile = apkFile) }
+                if (epoch != transientEpoch) return@onSuccess
                 apkInstaller(apkFile).onSuccess { installed ->
-                    mutableUiState.update {
+                    updateIfCurrent(epoch) {
                         it.copy(
                             releaseStatusMessage = if (installed) {
                                 "下载完成，正在打开安装界面。"
@@ -176,14 +186,33 @@ class SettingsUpdateViewModel(
                         )
                     }
                 }.onFailure { err ->
-                    mutableUiState.update { it.copy(releaseStatusMessage = "打开安装失败：" + err.message) }
+                    updateIfCurrent(epoch) { it.copy(releaseStatusMessage = "打开安装失败：" + err.message) }
                 }
             }.onFailure { err ->
-                mutableUiState.update {
+                updateIfCurrent(epoch) {
                     it.copy(releaseStatusMessage = "下载失败：" + (err.message ?: "请检查网络或切换代理线路"))
                 }
             }
         }
+    }
+
+    /**
+     * 根设置页随底栏离开时调用。拆分前下载协程由 rememberCoroutineScope 取消，
+     * 没有任何 singleton service/coordinator 会让它跨组合存活；因此这里取消检查/下载并防止迟到回调复活旧状态。
+     */
+    fun resetTransientStateOnExit() {
+        transientEpoch += 1L
+        checkJob?.cancel()
+        downloadJob?.cancel()
+        checkJob = null
+        downloadJob = null
+        mutableUiState.update { it.resetTransientForExit() }
+    }
+
+    override fun onCleared() {
+        checkJob?.cancel()
+        downloadJob?.cancel()
+        super.onCleared()
     }
 
     companion object {

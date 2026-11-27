@@ -51,6 +51,5 @@ data class SettingsHomeUiState(
     val parcelItems: List<ParcelItemEntity> = emptyList(),
     val extensionPlugins: List<InstalledExtensionPluginEntity> = emptyList(),
     val isDynamicSyncing: Boolean = false,
-    val showEditProfileDialog: Boolean = false,
-    val showImportHistoryDialog: Boolean = false
+    val showEditProfileDialog: Boolean = false
 )

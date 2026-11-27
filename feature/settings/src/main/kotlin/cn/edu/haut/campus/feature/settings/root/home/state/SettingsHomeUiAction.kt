@@ -9,6 +9,4 @@ sealed interface SettingsHomeUiAction {
     data class SaveStudentProfile(val profile: StudentProfile) : SettingsHomeUiAction
     data object ShowEditProfileDialog : SettingsHomeUiAction
     data object HideEditProfileDialog : SettingsHomeUiAction
-    data object ShowImportHistoryDialog : SettingsHomeUiAction
-    data object HideImportHistoryDialog : SettingsHomeUiAction
 }

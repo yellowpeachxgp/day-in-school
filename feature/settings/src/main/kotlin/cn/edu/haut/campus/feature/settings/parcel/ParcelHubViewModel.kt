@@ -1,35 +1,36 @@
 package cn.edu.haut.campus.feature.settings.parcel
 
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
 import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
+import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.feature.settings.parcel.state.ParcelHubUiAction
 import cn.edu.haut.campus.feature.settings.parcel.state.ParcelHubUiState
+import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** 快递聚合页状态 holder。 */
 class ParcelHubViewModel(
-    private val repository: CampusRepository
-) : ViewModel(), ParcelHubUiAction {
+    private val repository: CampusRepository,
+    sessionStates: Flow<AccountSessionState>
+) : ProfileSessionScopedViewModel(repository, sessionStates), ParcelHubUiAction {
     private val mutableUiState = MutableStateFlow(ParcelHubUiState())
     val uiState: StateFlow<ParcelHubUiState> = mutableUiState.asStateFlow()
 
     init {
-        viewModelScope.launch { repository.parcelItemsFlow.collectLatest { value -> mutableUiState.update { it.copy(parcels = value) } } }
-        viewModelScope.launch { repository.installedExtensionPluginsFlow.collectLatest { value -> mutableUiState.update { it.copy(plugins = value) } } }
+        launchSessionCollect(repository.parcelItemsFlow) { value -> mutableUiState.update { it.copy(parcels = value) } }
+        launchSessionCollect(repository.installedExtensionPluginsFlow) { value -> mutableUiState.update { it.copy(plugins = value) } }
     }
 
     override suspend fun ensureDefaultReferencePluginsInstalled() = repository.ensureDefaultReferencePluginsInstalled()
@@ -67,9 +68,16 @@ class ParcelHubViewModel(
     override suspend fun fetchXiaomiParcelDetail(parcelId: String): Result<List<XiaomiTrackPoint>> =
         repository.fetchXiaomiParcelDetail(parcelId)
 
+    override fun resetStateForInvalidSession() {
+        mutableUiState.value = ParcelHubUiState()
+    }
+
     companion object {
-        fun factory(repository: CampusRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { ParcelHubViewModel(repository) }
+        fun factory(
+            repository: CampusRepository,
+            sessionStates: Flow<AccountSessionState>
+        ): ViewModelProvider.Factory = viewModelFactory {
+            initializer { ParcelHubViewModel(repository, sessionStates) }
         }
     }
 }

@@ -1,14 +1,19 @@
 package cn.edu.haut.campus.feature.settings.root.home
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiEffect
 import cn.edu.haut.campus.feature.settings.root.home.ui.SettingsHomeSectionContent
+import cn.edu.haut.campus.feature.settings.state.SettingsTransientResetRegistry
 
 /** 设置一级「我的」页分区 Route；根壳只传入导航与共享反馈回调。 */
 @Composable
@@ -30,12 +35,21 @@ fun SettingsHomeRouteSection(
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
     onFeedback: (String) -> Unit,
-    onRefreshWidgets: () -> Unit
+    onRefreshWidgets: () -> Unit,
+    onShowImportHistory: () -> Unit,
+    transientResetRegistry: SettingsTransientResetRegistry
 ) {
+    val context = LocalContext.current
+    val sessionStates = remember(context) { AccountSessionCoordinator.getInstance(context).states }
     val viewModel: SettingsHomeViewModel = viewModel(
         key = "settings-home-" + repository.profileId + "-" + repository.sessionGeneration,
-        factory = SettingsHomeViewModel.factory(repository)
+        factory = SettingsHomeViewModel.factory(repository, sessionStates)
     )
+    // 拆分前这些 remember 挂在根 SettingsScreen；这里只登记重置，二级页内部切换不触发。
+    DisposableEffect(transientResetRegistry, viewModel) {
+        transientResetRegistry.register(viewModel) { viewModel.resetTransientStateOnExit() }
+        onDispose { }
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel, onFeedback, onRefreshWidgets, onNavigateToImporter) {
         viewModel.effects.collect { effect ->
@@ -63,6 +77,7 @@ fun SettingsHomeRouteSection(
         onNavigateToMoments = onNavigateToMoments,
         onNavigateToSchoolCenter = onNavigateToSchoolCenter,
         onNavigateToParcelHub = onNavigateToParcelHub,
-        onNavigateToXpeachCloud = onNavigateToXpeachCloud
+        onNavigateToXpeachCloud = onNavigateToXpeachCloud,
+        onShowImportHistory = onShowImportHistory
     )
 }

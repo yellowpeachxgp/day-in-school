@@ -1,8 +1,6 @@
 package cn.edu.haut.campus.feature.settings.library.seat
 
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
@@ -15,30 +13,33 @@ import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibraryStudyRegionItem
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
+import cn.edu.haut.campus.core.database.AccountSessionState
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.feature.settings.library.seat.state.BookingSubmissionIdentity
 import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiAction
 import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiState
+import cn.edu.haut.campus.feature.settings.state.ProfileSessionScopedViewModel
 import java.time.LocalDate
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** 图书馆选座状态 holder：聚合偏好/计划/云身份，并委托全部既有座位动作。 */
 class LibrarySeatViewModel(
-    private val repository: CampusRepository
-) : ViewModel(), LibrarySeatUiAction {
+    private val repository: CampusRepository,
+    sessionStates: Flow<AccountSessionState>
+) : ProfileSessionScopedViewModel(repository, sessionStates), LibrarySeatUiAction {
     private val mutableUiState = MutableStateFlow(LibrarySeatUiState())
     val uiState: StateFlow<LibrarySeatUiState> = mutableUiState.asStateFlow()
 
     init {
-        viewModelScope.launch { repository.preferencesFlow.collectLatest { value -> mutableUiState.update { it.copy(prefs = value) } } }
-        viewModelScope.launch { repository.libraryBookingPlansFlow.collectLatest { value -> mutableUiState.update { it.copy(bookingPlans = value) } } }
-        viewModelScope.launch { repository.cloudIdentityBindingFlow.collectLatest { value -> mutableUiState.update { it.copy(cloudBinding = value) } } }
+        launchSessionCollect(repository.preferencesFlow) { value -> mutableUiState.update { it.copy(prefs = value) } }
+        launchSessionCollect(repository.libraryBookingPlansFlow) { value -> mutableUiState.update { it.copy(bookingPlans = value) } }
+        launchSessionCollect(repository.cloudIdentityBindingFlow) { value -> mutableUiState.update { it.copy(cloudBinding = value) } }
     }
 
     override fun readCachedLibrarySeatSession(): LibrarySeatSessionSnapshot? = repository.readCachedLibrarySeatSession()
@@ -83,9 +84,16 @@ class LibrarySeatViewModel(
     override suspend fun refreshXpeachWalletBalance(): Double? = repository.refreshXpeachWalletBalance()
     override suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> = repository.syncWithCampusCloud()
 
+    override fun resetStateForInvalidSession() {
+        mutableUiState.value = LibrarySeatUiState()
+    }
+
     companion object {
-        fun factory(repository: CampusRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { LibrarySeatViewModel(repository) }
+        fun factory(
+            repository: CampusRepository,
+            sessionStates: Flow<AccountSessionState>
+        ): ViewModelProvider.Factory = viewModelFactory {
+            initializer { LibrarySeatViewModel(repository, sessionStates) }
         }
     }
 }

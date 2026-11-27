@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -17,7 +18,12 @@ import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiActi
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiEffect
 import cn.edu.haut.campus.feature.settings.schoolcenter.ui.SchoolCenterScreenContent
 
-/** 学校中心 Route：只负责装配 ViewModel、导航回调与剪贴板平台事件。 */
+/**
+ * 学校中心 Route：只负责装配 ViewModel、导航回调与剪贴板平台事件。
+ *
+ * 例外说明：这里有意使用静态 key，因为本页是跨账号管理面，必须持续展示全局身份列表；
+ * 普通账号数据页不得复用此例外。纯界面瞬态仍在退出时显式重置。
+ */
 @Composable
 fun SchoolCenterRoute(
     onBack: () -> Unit,
@@ -32,6 +38,9 @@ fun SchoolCenterRoute(
         key = "school-center",
         factory = SchoolCenterViewModel.factory(sessions)
     )
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.resetTransientStateOnExit() }
+    }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
