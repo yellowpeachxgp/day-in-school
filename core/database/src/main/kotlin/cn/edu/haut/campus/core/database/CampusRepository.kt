@@ -1,63 +1,34 @@
 package cn.edu.haut.campus.core.database
 
 import android.content.Context
-import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.floatPreferencesKey
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.room.migration.Migration
-import androidx.room.withTransaction
-import androidx.sqlite.db.SupportSQLiteDatabase
-import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
-import cn.edu.haut.campus.core.academic.HautLiveAcademicClient
 import cn.edu.haut.campus.core.academic.HautLiveSyncResult
-import cn.edu.haut.campus.core.academic.AcademicReadException
-import cn.edu.haut.campus.core.campusservices.AutomatedSeatBookingResult
 import cn.edu.haut.campus.core.campusservices.BookingExecutionMode
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.campusservices.CloudSyncSnapshotResult
 import cn.edu.haut.campus.core.campusservices.CloudTokenSecureVault
-import cn.edu.haut.campus.core.campusservices.CloudSyncedParcelDto
-import cn.edu.haut.campus.core.campusservices.DualEngineReservationPlanner
-import cn.edu.haut.campus.core.campusservices.HautLibrarySeatAuthClient
 import cn.edu.haut.campus.core.campusservices.LibraryRegionSeatsSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionOutcome
 import cn.edu.haut.campus.core.campusservices.LibrarySeatActionType
 import cn.edu.haut.campus.core.campusservices.LibrarySeatOverviewSnapshot
-import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionExpiredException
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionSnapshot
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionState
 import cn.edu.haut.campus.core.campusservices.LibrarySeatSessionVault
 import cn.edu.haut.campus.core.campusservices.LibraryStudyRegionItem
 import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
-import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.SchoolWebSessionManager
 import cn.edu.haut.campus.core.campusservices.TripleScheduleStage
 import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
 import cn.edu.haut.campus.core.campusservices.UtilityAccountSecureStore
 import cn.edu.haut.campus.core.campusservices.UtilityDailySample
-import cn.edu.haut.campus.core.campusservices.UtilitySamplingPolicy
 import cn.edu.haut.campus.core.campusservices.WanxiaoUtilityClient
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountCredential
 import cn.edu.haut.campus.core.campusservices.XiaomiAccountSecureVault
 import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
-import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
-import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
-import cn.edu.haut.campus.core.campusservices.optCleanString
-import cn.edu.haut.campus.core.campusservices.optNullableCleanString
-import cn.edu.haut.campus.core.domain.CampusDiningRecommender
-import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
-import cn.edu.haut.campus.core.domain.ImportDiffEngine
-import cn.edu.haut.campus.core.domain.ReminderRevision
 import cn.edu.haut.campus.core.domain.SchoolDirectory
-import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -67,24 +38,17 @@ import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.FocusSessionDomain
 import cn.edu.haut.campus.core.model.GradeAttempt
-import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
-import cn.edu.haut.campus.core.model.HomeCardModule
 import cn.edu.haut.campus.core.model.ImportAudit
-import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.ImportDiffPreview
 import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.core.model.OccurrenceOverride
-import cn.edu.haut.campus.core.model.OfficialGpaSnapshot
 import cn.edu.haut.campus.core.model.PeriodTime
-import cn.edu.haut.campus.core.model.PresetMirrorNode
-import cn.edu.haut.campus.core.model.ProxyMode
 import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ReminderGlobalConfig
 import cn.edu.haut.campus.core.model.ReminderTaskDomain
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.Term
-import cn.edu.haut.campus.core.model.ThemeVisualDefaults
 import cn.edu.haut.campus.core.model.UtilityMeterDomain
 import cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain
 import cn.edu.haut.campus.core.model.UtilityReadingDomain
@@ -93,86 +57,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.time.DayOfWeek
-import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
-val DEFAULT_HOME_CARD_ORDER: List<String> = HomeCardModule.defaultOrderIds
-
-data class AppPreferencesState(
-    val gpaPrivacyShieldEnabled: Boolean = false,
-    val useDynamicColor: Boolean = false,
-    val themeMode: String = "SYSTEM",
-    val uiDesignStyle: String = "FLUTTER_M3",
-    val themePaletteKey: String = "HAUT_BLUE",
-    val customThemeSeedArgb: Long = 0xFF053968,
-    val customWallpaperPath: String? = null,
-    val wallpaperAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_ALPHA,
-    val wallpaperBlurDp: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_BLUR_DP,
-    val wallpaperCardAlpha: Float = ThemeVisualDefaults.DEFAULT_WALLPAPER_CARD_ALPHA,
-    val extractedWallpaperColors: List<Long> = emptyList(),
-    val homeCardOrder: List<String> = HomeCardModule.defaultOrderIds,
-    val hiddenHomeCards: Set<String> = HomeCardModule.defaultHiddenIds,
-    val fullWidthHomeCards: Set<String> = HomeCardModule.defaultFullWidthIds,
-    val timelineZoomScale: Float = ThemeVisualDefaults.DEFAULT_TIMELINE_ZOOM_SCALE,
-    val widgetDefaultCompact: Boolean = false,
-    val widgetDefaultPrivacyMode: Boolean = false,
-    val officialGpaValuePlain: String? = null,
-    val officialGpaNote: String? = null,
-    val hasSeededInitialMockData: Boolean = false,
-    val hasCompletedOnboarding: Boolean = false,
-    val autoSyncEnabled: Boolean = true,
-    val autoCheckUpdateEnabled: Boolean = true,
-    val savedStudentId: String? = null,
-    val hasSavedCredentials: Boolean = false,
-    val academicReauthenticationRequired: Boolean = false,
-    val syncXnm: String = AcademicTermResolver.defaultAcademicYearCode(),
-    val syncXqm: String = AcademicTermResolver.defaultSemesterCode(),
-    val lastAutoSyncEpochMillis: Long? = null,
-    val customChannelUrls: Map<String, String> = emptyMap(),
-    val customClubGroupNumbers: Map<String, String> = emptyMap(),
-    val campusCommunityCatalog: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog = cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
-    val lastCampusContentSyncEpochMillis: Long? = null,
-    val reminderConfig: ReminderGlobalConfig = ReminderGlobalConfig(),
-    val reminderPolicyRevision: String = "v1",
-    val lastReminderReconcileEpochMillis: Long? = null,
-    val lastReminderReconcileSummary: String? = null,
-    val reminderDiagnosticLogs: List<String> = emptyList(),
-    val utilitiesEnabled: Boolean = true,
-    val libraryNativeEnabled: Boolean = true,
-    val librarySeatEnabled: Boolean = true,
-    val focusEnabled: Boolean = true,
-    val showTodayFocusQuickPill: Boolean = true,
-    val timetableInterchangeEnabled: Boolean = true,
-    val allowUnverifiedUtilityTransport: Boolean = false,
-    val lastUtilitySampleEpochMillis: Long? = null,
-    val utilityDailyNotifyEnabled: Boolean = true,
-    val utilityDailyNotifyHour: Int = 20,
-    val utilityLowBalanceThreshold: Float = 15f,
-    val lastUtilityDailyNotifyDate: String? = null,
-    val mealRecommendEnabled: Boolean = true,
-    val lastMealRecommendBlockKey: String? = null,
-    val canteenDishReviews: List<cn.edu.haut.campus.core.domain.CanteenDishReview> = emptyList(),
-    val campusMomentsSnapshot: cn.edu.haut.campus.core.model.CampusMomentsSnapshot = cn.edu.haut.campus.core.model.CampusMomentsSnapshot(),
-    val selectedFocusMinutes: Int = 25,
-    val networkProxyConfig: NetworkProxyConfig = NetworkProxyConfig(),
-    val selectedCampusId: String = "auto",
-    val customCampusZonesJson: String = "[]"
-)
 
 
 @Deprecated(
@@ -435,22 +328,32 @@ class CampusRepository internal constructor(
             timetableRepository.occurrenceWriteContext.occurrenceCommandWriteProgressHook = value
         }
 
-    private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
-
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
-        get() = beforeWipeHooks["reminder_coordinator_hook"]
+        get() = profileDataWiper.onBeforeWipePersonalDataHook
         set(value) {
-            if (value == null) {
-                beforeWipeHooks.remove("reminder_coordinator_hook")
-            } else {
-                beforeWipeHooks["reminder_coordinator_hook"] = value
-            }
+            profileDataWiper.onBeforeWipePersonalDataHook = value
         }
 
-    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) {
-        beforeWipeHooks[key] = hook
-    }
+    fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) =
+        profileDataWiper.registerBeforeWipeHook(key, hook)
 
+
+    private val profileDataWiper = ProfileDataWiper(
+        appContext = appContext,
+        database = database,
+        preferences = preferences,
+        dao = dao,
+        reminderDao = reminderDao,
+        utilityAndFocusDao = utilityAndFocusDao,
+        cloudAndParcelDao = cloudAndParcelDao,
+        academicCredentialVault = academicCredentialVault,
+        academicCredentialMutex = academicCredentialMutex,
+        cloudIdentityMutex = cloudIdentityMutex,
+        cloudTokenMutex = cloudTokenMutex,
+        bookingPlanStateMutex = bookingPlanStateMutex,
+        cloudIdentityRepository = cloudIdentityRepository,
+        syncOrchestrator = syncOrchestrator
+    )
 
     init {
         registerBeforeWipeHook("campus_services_account_and_web_wipe") {
@@ -460,103 +363,10 @@ class CampusRepository internal constructor(
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
         repoScope.launch {
-            runCatching { sanitizePersistedNullLiterals(sanitizeBookingPlanWriteHookForTest) }
+            runCatching { profileDataWiper.sanitizePersistedNullLiteralsForFacade(sanitizeBookingPlanWriteHookForTest) }
         }
     }
 
-    private suspend fun sanitizePersistedNullLiterals(sanitizeBookingPlanWriteHookForTest: (suspend (String) -> Unit)? = null) {
-        val parcels = cloudAndParcelDao.getParcelItemsSnapshot()
-        for (p in parcels) {
-            val cleanPickup = p.pickupCode.cleanNullableLiteral()
-            val cleanStation = p.stationName.cleanNullableLiteral() ?: "莲花街北苑菜鸟驿站"
-            val cleanCarrier = p.carrierName.cleanNullLiteral("校园快递")
-            val cleanTitle = p.itemTitle.cleanNullableLiteral()
-            val nextStatus = if (p.pickupCode != null && cleanPickup == null && p.status == ParcelLifecycleStatus.READY_FOR_PICKUP.wireName) {
-                ParcelLifecycleStatus.IN_TRANSIT.wireName
-            } else {
-                p.status.cleanNullLiteral(ParcelLifecycleStatus.IN_TRANSIT.wireName)
-            }
-            val cleanEstimated = p.estimatedDeliveryText.cleanNullLiteral(
-                when (nextStatus) {
-                    ParcelLifecycleStatus.PICKED_UP.wireName -> "本人已取件签收"
-                    ParcelLifecycleStatus.READY_FOR_PICKUP.wireName -> "已到达驿站/快递柜，请凭取件码取件"
-                    else -> "运输中，预计 1-2 日送达校园驿站"
-                }
-            )
-            if (p.pickupCode != cleanPickup ||
-                p.stationName != cleanStation ||
-                p.carrierName != cleanCarrier ||
-                p.itemTitle != cleanTitle ||
-                p.status != nextStatus ||
-                p.estimatedDeliveryText != cleanEstimated
-            ) {
-                cloudAndParcelDao.upsertParcelItem(
-                    p.copy(
-                        carrierName = cleanCarrier,
-                        status = nextStatus,
-                        pickupCode = cleanPickup,
-                        stationName = cleanStation,
-                        itemTitle = cleanTitle,
-                        estimatedDeliveryText = cleanEstimated
-                    )
-                )
-            }
-        }
-
-        val plans = cloudAndParcelDao.getLibraryBookingPlansSnapshot()
-        for (plan in plans) {
-            val cleanArea = plan.preferredAreaName.cleanNullLiteral("五层中区")
-            val cleanSeat = plan.preferredSeatLabel.cleanNullLiteral("001")
-            val cleanExtId = plan.externalBookingId.cleanNullableLiteral()
-            val cleanEvidence = plan.evidenceSha256.cleanNullableLiteral()
-            val cleanDiag = plan.lastDiagnosticMessage.cleanNullLiteral()
-            if (plan.preferredAreaName != cleanArea || plan.preferredSeatLabel != cleanSeat ||
-                plan.externalBookingId != cleanExtId || plan.evidenceSha256 != cleanEvidence ||
-                plan.lastDiagnosticMessage != cleanDiag
-            ) {
-                sanitizeBookingPlanWriteHookForTest?.invoke("before_write")
-                cloudAndParcelDao.updateLibraryBookingPlanNullLiteralFieldsIfVersionUnchanged(
-                    id = plan.id, expectedStateVersion = plan.stateVersion, expectedGeneration = plan.generation,
-                    expectedUpdatedAtEpochMillis = plan.updatedAtEpochMillis,
-                    preferredAreaName = cleanArea, preferredSeatLabel = cleanSeat, externalBookingId = cleanExtId,
-                    evidenceSha256 = cleanEvidence, lastDiagnosticMessage = cleanDiag
-                )
-                sanitizeBookingPlanWriteHookForTest?.invoke("after_write")
-            }
-        }
-
-        // Purge any legacy sample plugins or unapproved sample moments records
-        runCatching {
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.hello-campus")
-            cloudAndParcelDao.deleteInstalledExtensionPlugin("org.example.parcel-station")
-        }
-        val legacyMomentsSampleIds = setOf(
-            "mp_found_card_01",
-            "mp_lost_airpods_02",
-            "mp_found_keys_03",
-            "mp_lost_cup_04",
-            "mb_math_01",
-            "mb_ds_02",
-            "mb_circuit_03",
-            "mb_food_04",
-            "tag_default_01"
-        )
-        preferences.edit { prefs ->
-            val rawMoments = prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON]
-            if (!rawMoments.isNullOrBlank()) {
-                val parsed = CampusCloudOidcHelper.parseMomentsSnapshotJsonString(rawMoments)
-                if (parsed != null) {
-                    val cleanedSnap = parsed.copy(
-                        posts = parsed.posts.filterNot { it.id in legacyMomentsSampleIds },
-                        bookListings = parsed.bookListings.filterNot { it.id in legacyMomentsSampleIds },
-                        antiLostTags = parsed.antiLostTags.filterNot { it.id in legacyMomentsSampleIds || it.tagCode == "HAUT-TAG-7E2A9B" }
-                    )
-                    prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] =
-                        CampusCloudOidcHelper.encodeMomentsSnapshotJsonString(cleanedSnap)
-                }
-            }
-        }
-    }
 
     val preferencesFlow: Flow<AppPreferencesState> =
         campusServicesRepository.preferencesFlow
@@ -1583,96 +1393,8 @@ class CampusRepository internal constructor(
     /**
      * 完全清除本地个人课程、成绩、导入审计、水电账号与历史、自习专注及学校网页会话（保留公开的校区建筑字典与节次模板）。
      */
-    suspend fun wipeAllPersonalData() {
-        academicCredentialMutex.withLock {
-            val prefs = preferences.data.first()
-            prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
-                withContext(Dispatchers.IO) { academicCredentialVault.delete(syncOrchestrator.academicCredentialScopeForFacade(accountId)) }
-            }
-            preferences.edit {
-                it.remove(CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
-                it.remove(CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED)
-                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                it.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
-            }
-        }
-        for (hook in beforeWipeHooks.values) {
-            runCatching { hook.invoke() }
-        }
-        runCatching {
-            cloudAndParcelDao.getLibraryBookingPlansSnapshot().forEach { plan ->
-                LibrarySeatAlarmSubsystem.cancelPlanAlarms(appContext, plan.id)
-            }
-        }
-        runCatching {
-            java.io.File(appContext.filesDir, "cloud_auth_provenance").deleteRecursively()
-        }
-        // 全量清除同样推进世代并留存 tombstone，阻断清除前发出的在途响应写回。
-        // 身份变更必须先过提交屏障（全局锁序 booking→identity）：
-        // 世代推进先于 Room 事务执行（避免在事务内嵌套身份锁），
-        // 整个擦除事务与同步的"复核→写入"临界区互斥——在途同步要么整体先落库、要么在复核处失败。
-        bookingPlanStateMutex.withLock {
-            cloudIdentityMutex.withLock {
-                cloudIdentityRepository.bumpCloudIdentityGenerationLocked(
-                    cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId,
-                    markUnlinkTombstone = true
-                )
-            }
-            database.withTransaction {
-                dao.clearStudentProfile()
-                dao.clearCourses()
-                dao.clearRules()
-                dao.clearOccurrenceOverrides()
-                dao.clearGradeAttempts()
-                dao.clearExamSchedules()
-                dao.clearExamTermRepairAudits()
-                dao.clearUnscheduledCourses()
-                dao.clearImportAudits()
-                dao.clearWidgetConfigs()
-                reminderDao.clearAllTasks()
-                reminderDao.clearAllEventPrefs()
-                utilityAndFocusDao.clearAllDailySamples()
-                utilityAndFocusDao.clearAllOnlineRooms()
-                utilityAndFocusDao.clearAllReadings()
-                utilityAndFocusDao.clearAllMeters()
-                utilityAndFocusDao.clearAllFocusSessions()
-                cloudAndParcelDao.clearCloudIdentityBinding()
-                cloudAndParcelDao.clearLibraryBookingPlans()
-                cloudAndParcelDao.clearParcelItems()
-            }
-        }
-        cloudTokenMutex.withLock {
-            cloudIdentityRepository.clearCachedCloudTokensLocked()
-            preferences.edit { prefs ->
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
-                prefs.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XNM)
-                prefs.remove(CampusRepositoryPrefKeys.SAVED_SYNC_XQM)
-                prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
-                prefs.remove(CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS)
-                prefs.remove(CampusRepositoryPrefKeys.LAST_UTILITY_SAMPLE_MS)
-                prefs.remove(CampusRepositoryPrefKeys.ALLOW_UNVERIFIED_UTILITY_TRANSPORT)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN)
-                prefs.remove(CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
-                prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
-                prefs[CampusRepositoryPrefKeys.SEEDED] = true
-                prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
-                prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
-            }
-        }
-    }
+    suspend fun wipeAllPersonalData() =
+        profileDataWiper.wipeAllPersonalData()
 
     suspend fun getDirectScheduleDataSnapshot(): DirectScheduleData =
         timetableRepository.getDirectScheduleDataSnapshot()
@@ -2033,91 +1755,9 @@ class CampusRepository internal constructor(
         /** 考试学期修复规则版本：审计行按 (ruleVersion, examRowId) 幂等。 */
         internal val EXAM_TERM_REPAIR_RULE_V2 = ExamRepository.EXAM_TERM_REPAIR_RULE_V2
 
-        internal val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS `exam_schedules` (
-                        `id` TEXT NOT NULL,
-                        `termId` TEXT NOT NULL,
-                        `courseCode` TEXT NOT NULL,
-                        `courseName` TEXT NOT NULL,
-                        `examBatchName` TEXT NOT NULL,
-                        `examStageLabel` TEXT NOT NULL,
-                        `examFormat` TEXT NOT NULL,
-                        `rawTimeText` TEXT NOT NULL,
-                        `examDateIso` TEXT,
-                        `startTimeIso` TEXT,
-                        `endTimeIso` TEXT,
-                        `rawRoom` TEXT NOT NULL,
-                        `seatNumber` TEXT,
-                        `campusName` TEXT NOT NULL,
-                        `isRetake` INTEGER NOT NULL,
-                        `syncedAtEpochMilli` INTEGER NOT NULL,
-                        PRIMARY KEY(`id`)
-                    )
-                    """.trimIndent()
-                )
-            }
-        }
+        internal val MIGRATION_1_2 = CampusRepositoryMigrations.MIGRATION_1_2
 
-        internal val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS `reminder_tasks` (
-                        `id` TEXT NOT NULL,
-                        `taskKey` TEXT NOT NULL,
-                        `eventKey` TEXT NOT NULL,
-                        `eventType` TEXT NOT NULL,
-                        `reminderKind` TEXT NOT NULL,
-                        `eventRevision` TEXT NOT NULL,
-                        `policyRevision` TEXT NOT NULL,
-                        `eventStartAtEpochMs` INTEGER NOT NULL,
-                        `originalScheduledAtEpochMs` INTEGER NOT NULL,
-                        `scheduledAtEpochMs` INTEGER NOT NULL,
-                        `status` TEXT NOT NULL,
-                        `schedulerState` TEXT NOT NULL,
-                        `generation` INTEGER NOT NULL,
-                        `snoozeCount` INTEGER NOT NULL,
-                        `maxSnoozes` INTEGER NOT NULL,
-                        `claimedAtEpochMs` INTEGER,
-                        `deliveredAtEpochMs` INTEGER,
-                        `lastActionAtEpochMs` INTEGER,
-                        `scheduleMode` TEXT NOT NULL,
-                        `lastErrorCode` TEXT,
-                        `createdAtEpochMs` INTEGER NOT NULL,
-                        `updatedAtEpochMs` INTEGER NOT NULL,
-                        PRIMARY KEY(`id`)
-                    )
-                    """.trimIndent()
-                )
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_reminder_tasks_taskKey` ON `reminder_tasks` (`taskKey`)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_status_scheduledAtEpochMs` ON `reminder_tasks` (`status`, `scheduledAtEpochMs`)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_eventKey_status` ON `reminder_tasks` (`eventKey`, `status`)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_reminder_tasks_schedulerState_scheduledAtEpochMs` ON `reminder_tasks` (`schedulerState`, `scheduledAtEpochMs`)"
-                )
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS `reminder_event_prefs` (
-                        `eventScopeKey` TEXT NOT NULL,
-                        `enabledOverride` INTEGER,
-                        `leadMinutesOverride` INTEGER,
-                        `maxSnoozesOverride` INTEGER,
-                        `updatedAtEpochMs` INTEGER NOT NULL,
-                        PRIMARY KEY(`eventScopeKey`)
-                    )
-                    """.trimIndent()
-                )
-            }
-        }
+        internal val MIGRATION_2_3 = CampusRepositoryMigrations.MIGRATION_2_3
 
         fun getInstance(context: Context): CampusRepository =
             checkNotNull(AccountSessionCoordinator.getInstance(context).currentSnapshot()?.repository) {
@@ -2126,13 +1766,3 @@ class CampusRepository internal constructor(
 
     }
 }
-
-data class DirectScheduleData(
-    val term: Term?,
-    val courses: List<Course>,
-    val rules: List<CourseScheduleRule>,
-    val periodTimes: List<PeriodTime>,
-    val calendarOverrides: List<CalendarOverride>,
-    val occurrenceOverrides: List<OccurrenceOverride>,
-    val buildings: List<Building>
-)
