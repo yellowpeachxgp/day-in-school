@@ -157,7 +157,11 @@ class TodayWriteExecutorRaceTest {
     }
 
     @Test
-    fun realAccountSessionSwitchIsMutexedWithWritesAndStaleWriteFailsClosed() = runBlocking {
+    fun realAccountSessionSwitchIsMutexedWithWritesAndStaleWriteFailsClosed() {
+        val failure = AtomicReference<Throwable?>(null)
+        val worker = Thread {
+            try {
+                runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val sessions = AccountSessionCoordinator.getInstance(context)
         val first = withTimeout(10_000) { sessions.initialize() }
@@ -280,5 +284,15 @@ class TodayWriteExecutorRaceTest {
         } finally {
             writeScope.cancel()
         }
+                }
+            } catch (error: Throwable) {
+                failure.set(error)
+            }
+        }
+        worker.isDaemon = true
+        worker.start()
+        worker.join(30_000)
+        assertFalse("真实会话竞态测试不得挂死；超时线程已按 daemon 隔离", worker.isAlive)
+        failure.get()?.let { throw it }
     }
 }
