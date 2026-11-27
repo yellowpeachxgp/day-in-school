@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 val appVersionName = rootProject.extra["appVersionName"] as String
@@ -86,7 +87,17 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
             it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+            it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
         }
+    }
+}
+
+roborazzi {
+    // 版本化基线放在源码树。1.60 尚无内建 separateOutputDirs，因此显式按变体分目录。
+    outputDir.set(file("src/test/roborazzi/debug"))
+    compare {
+        // 比对实际图、diff 图和失败产物只留在 build/，不污染已提交基线。
+        outputDir.set(file("build/outputs/roborazzi-compare/debug"))
     }
 }
 
@@ -119,6 +130,11 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.work.runtime.ktx)
 
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui)
+    testImplementation(libs.androidx.compose.material3)
     testImplementation(libs.junit)
-    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi.core)
+    testImplementation(libs.roborazzi.compose)
 }
