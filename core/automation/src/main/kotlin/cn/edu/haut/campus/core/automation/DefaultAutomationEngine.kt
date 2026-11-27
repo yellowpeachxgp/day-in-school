@@ -5,7 +5,6 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.timeline.TimelineService
 import java.time.Clock
 import java.time.Instant
-import java.time.LocalTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
@@ -319,6 +318,7 @@ class DefaultAutomationEngine(
         val quietActive = isQuietHoursActive(rule, context.firedAt)
         return rule.actions.map { spec ->
             val executor = registry.requireActionExecutor(spec.type)
+            val actionContext = context.copy(now = clock.instant())
             when {
                 executor.risk == ActionRisk.EXTERNAL_WRITE_FORBIDDEN -> ActionOutcome(
                     actionType = spec.type,
@@ -333,7 +333,7 @@ class DefaultAutomationEngine(
                     detail = "quietHours 生效，通知动作已抑制"
                 )
                 executor.risk == ActionRisk.NEEDS_USER_CONFIRM -> {
-                    val confirmation = validConfirmation(rule, spec, context)
+                    val confirmation = validConfirmation(rule, spec, actionContext)
                     if (confirmation == null) {
                         ActionOutcome(
                             actionType = spec.type,
@@ -342,10 +342,10 @@ class DefaultAutomationEngine(
                             detail = "缺少有效的一次性用户确认，动作未执行"
                         )
                     } else {
-                        invokeExecutor(spec, executor, context.copy(confirmation = confirmation))
+                        invokeExecutor(spec, executor, actionContext.copy(confirmation = confirmation))
                     }
                 }
-                else -> invokeExecutor(spec, executor, context)
+                else -> invokeExecutor(spec, executor, actionContext)
             }
         }
     }
@@ -367,7 +367,7 @@ class DefaultAutomationEngine(
             it.ruleId == rule.id &&
                 it.actionType == spec.type &&
                 it.configDigest == digest &&
-                it.isValidAt(context.now)
+                it.isValidAt(clock.instant())
         }
     }
 
@@ -378,7 +378,7 @@ class DefaultAutomationEngine(
     ): ActionOutcome {
         val startedAt = clock.instant()
         return try {
-            val raw = executor.execute(spec, context)
+            val raw = executor.execute(spec, context.copy(now = startedAt))
             normalizeActionOutcome(spec, executor, raw, startedAt, clock.instant())
         } catch (error: Throwable) {
             if (error is CancellationException || error is Error) throw error
@@ -400,11 +400,19 @@ class DefaultAutomationEngine(
         startedAt: Instant,
         finishedAt: Instant
     ): ActionOutcome {
+        val executorStart = raw.startedAt
+        val executorFinish = raw.finishedAt
+        val normalizedTimes = when {
+            executorStart != null && executorFinish != null -> executorStart to executorFinish
+            executorStart != null && !finishedAt.isBefore(executorStart) -> executorStart to finishedAt
+            executorFinish != null && !executorFinish.isBefore(startedAt) -> startedAt to executorFinish
+            else -> startedAt to finishedAt
+        }
         var outcome = raw.copy(
             actionType = spec.type,
             risk = executor.risk,
-            startedAt = raw.startedAt ?: startedAt,
-            finishedAt = raw.finishedAt ?: finishedAt,
+            startedAt = normalizedTimes.first,
+            finishedAt = normalizedTimes.second,
             evidence = raw.evidence.take(MAX_EVIDENCE_PER_STEP)
         )
         if (outcome.status == ActionOutcomeStatus.DRY_RUN_PREVIEW) {

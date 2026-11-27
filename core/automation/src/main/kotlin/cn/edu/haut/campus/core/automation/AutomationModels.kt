@@ -147,18 +147,12 @@ data class ActionSpec(
 }
 
 /**
- * 去重策略。无论选择哪种策略，同一个 triggerInstanceKey 都不会被执行两次；
- * OncePerRuleWindow 只是把不同触发实例进一步合并到同一时间桶。
+ * 去重策略。首期只开放 OncePerTriggerInstance：triggerInstanceKey 是触发实例身份，
+ * 同一实例无论是否重投、何时补处理，都只能执行一次。未来新增更粗粒度策略时，
+ * 必须先保留这一实例级不变量，再叠加额外合并键。
  */
 sealed interface DedupePolicy {
     data object OncePerTriggerInstance : DedupePolicy
-
-    data class OncePerRuleWindow(val window: Duration) : DedupePolicy {
-        init {
-            require(!window.isZero && !window.isNegative) { "去重窗口必须为正时长" }
-            require(window <= Duration.ofDays(366)) { "去重窗口过长" }
-        }
-    }
 }
 
 /** quietHours 只抑制 LOCAL_NOTIFY 动作；LOCAL_SILENT 的本地数据动作仍可执行。 */

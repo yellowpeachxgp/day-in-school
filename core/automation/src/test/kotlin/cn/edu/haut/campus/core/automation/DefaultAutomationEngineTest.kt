@@ -108,6 +108,25 @@ class DefaultAutomationEngineTest {
     }
 
     @Test
+    fun sameTriggerKeyRemainsDuplicateEvenWhenRedeliveryTimeDiffers() = runTest {
+        val action = AutomationTestFixtures.RecordingActionExecutor()
+        val harness = newHarness(actionExecutor = action)
+        val rule = AutomationTestFixtures.rule()
+        harness.ruleStore.upsert(rule)
+        val firstInstance = TriggerInstance(rule.id, "stable-instance", firedAt)
+        val redelivered = firstInstance.copy(firedAt = firedAt.plusSeconds(120))
+
+        val first = harness.engine.executeTrigger(firstInstance)
+        val second = harness.engine.executeTrigger(redelivered)
+
+        assertTrue(first is TriggerExecutionResult.Executed)
+        assertTrue(second is TriggerExecutionResult.Duplicate)
+        assertEquals(1, action.calls.size)
+        assertEquals(1, harness.dedupeStore.count())
+        assertEquals(1, harness.engine.runs(rule.id).first().size)
+    }
+
+    @Test
     fun dryRunPreviewsActionsWithoutExecutorDedupeOrRunStoreSideEffects() = runTest {
         val condition = AutomationTestFixtures.RecordingConditionEvaluator()
         val action = AutomationTestFixtures.RecordingActionExecutor()

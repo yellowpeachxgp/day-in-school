@@ -34,4 +34,21 @@ class AutomationRegistryTest {
             registry.registerConditionEvaluator(AutomationTestFixtures.RecordingConditionEvaluator(type = "BadType"))
         }
     }
+
+    @Test
+    fun constructorRegistrationUsesSameSafetyBoundary() {
+        val executor = AutomationTestFixtures.RecordingActionExecutor(
+            type = "test.constructor-external-write",
+            risk = ActionRisk.EXTERNAL_WRITE_FORBIDDEN
+        )
+
+        assertThrows(ExternalWriteForbiddenActionException::class.java) {
+            AutomationExtensionRegistry(initialActionExecutors = listOf(executor))
+        }
+
+        val registry = AutomationExtensionRegistry(
+            initialConditionEvaluators = listOf(AutomationTestFixtures.RecordingConditionEvaluator())
+        )
+        assertTrue(registry.conditionTypes().contains("test.condition"))
+    }
 }

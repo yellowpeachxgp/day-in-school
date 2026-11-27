@@ -24,16 +24,16 @@ class AutomationModelsTest {
     }
 
     @Test
-    fun dedupeKeysDoNotCollideAndWindowPolicySharesBucket() {
+    fun dedupeKeysDoNotCollideAndRemainStableAcrossReDeliveryTime() {
         val at = Instant.parse("2026-03-02T08:00:00Z")
         val first = AutomationKeys.dedupeKey("ab", "c", DedupePolicy.OncePerTriggerInstance, at)
         val second = AutomationKeys.dedupeKey("a", "bc", DedupePolicy.OncePerTriggerInstance, at)
         assertNotEquals(first, second)
 
-        val window = DedupePolicy.OncePerRuleWindow(Duration.ofHours(1))
-        val keyA = AutomationKeys.dedupeKey("rule", "trigger-a", window, at)
-        val keyB = AutomationKeys.dedupeKey("rule", "trigger-b", window, at.plusSeconds(60))
-        assertEquals(keyA, keyB)
+        assertEquals(
+            AutomationKeys.dedupeKey("rule", "trigger-a", DedupePolicy.OncePerTriggerInstance, at),
+            AutomationKeys.dedupeKey("rule", "trigger-a", DedupePolicy.OncePerTriggerInstance, at.plusSeconds(60))
+        )
     }
 
     @Test

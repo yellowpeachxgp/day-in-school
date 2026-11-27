@@ -13,16 +13,10 @@ object AutomationKeys {
     ): String = when (policy) {
         DedupePolicy.OncePerTriggerInstance ->
             "once-per-trigger/v1/" + lengthPrefixed(ruleId) + "/" + lengthPrefixed(triggerInstanceKey)
-        is DedupePolicy.OncePerRuleWindow -> {
-            val windowMillis = policy.window.toMillis()
-            val bucket = Math.floorDiv(firedAt.toEpochMilli(), windowMillis)
-            "window/v1/" + windowMillis + "/" + bucket + "/" + lengthPrefixed(ruleId)
-        }
     }
 
     fun policyFingerprint(policy: DedupePolicy): String = when (policy) {
         DedupePolicy.OncePerTriggerInstance -> "once-per-trigger-instance"
-        is DedupePolicy.OncePerRuleWindow -> "once-per-rule-window:" + policy.window.toMillis()
     }
 
     fun runId(ruleId: String, triggerInstanceKey: String, firedAt: Instant): String {

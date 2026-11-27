@@ -18,18 +18,18 @@ class ExternalWriteForbiddenActionException(type: String) :
  * ConcurrentHashMap 快照语义允许插件在运行期间注册/卸载，引擎每次运行读取当前快照，不缓存执行器。
  */
 class AutomationExtensionRegistry(
-    triggerProviders: List<TriggerProvider> = emptyList(),
-    conditionEvaluators: List<ConditionEvaluator> = emptyList(),
-    actionExecutors: List<ActionExecutor> = emptyList()
+    initialTriggerProviders: List<TriggerProvider> = emptyList(),
+    initialConditionEvaluators: List<ConditionEvaluator> = emptyList(),
+    initialActionExecutors: List<ActionExecutor> = emptyList()
 ) {
     private val triggerProviders = ConcurrentHashMap<String, TriggerProvider>()
     private val conditionEvaluators = ConcurrentHashMap<String, ConditionEvaluator>()
     private val actionExecutors = ConcurrentHashMap<String, ActionExecutor>()
 
     init {
-        triggerProviders.forEach(::registerTriggerProvider)
-        conditionEvaluators.forEach(::registerConditionEvaluator)
-        actionExecutors.forEach(::registerActionExecutor)
+        initialTriggerProviders.forEach(::registerTriggerProvider)
+        initialConditionEvaluators.forEach(::registerConditionEvaluator)
+        initialActionExecutors.forEach(::registerActionExecutor)
     }
 
     fun registerTriggerProvider(provider: TriggerProvider) {
