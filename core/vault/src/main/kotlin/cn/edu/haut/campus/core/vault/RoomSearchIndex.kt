@@ -223,8 +223,9 @@ class RoomSearchIndex(
     }
 
     private fun querySingleLong(sql: String, args: List<Any?>): Long {
-        val bindArgs = args.map<Any?> { value ->
-            when (value) {
+        val bindArgs = arrayOfNulls<Any?>(args.size)
+        args.forEachIndexed { index, value ->
+            bindArgs[index] = when (value) {
                 null -> null
                 is String -> value
                 is Int -> value.toLong()
@@ -232,7 +233,7 @@ class RoomSearchIndex(
                 is Boolean -> if (value) 1L else 0L
                 else -> value.toString()
             }
-        }.toTypedArray()
+        }
         database.openHelper.writableDatabase.query(sql, bindArgs).use { cursor ->
             return if (cursor.moveToFirst()) cursor.getLong(0) else 0L
         }
