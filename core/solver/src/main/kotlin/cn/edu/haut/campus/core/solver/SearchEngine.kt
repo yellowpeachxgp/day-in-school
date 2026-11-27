@@ -78,6 +78,7 @@ internal object SearchEngine {
         private val incumbents = ArrayList<ScheduleSolution>()
         private val signatures = HashSet<String>()
         private var timedOut = false
+        private var terminated = false
 
         fun search(): SearchOutcome {
             val root = initialNode()
@@ -86,7 +87,7 @@ internal object SearchEngine {
             }
             searchNode(root)
             val ranked = incumbents.sortedWith(compareBy<ScheduleSolution> { it.totalCostMilli })
-            return SearchOutcome(ranked, exhaustive = !timedOut)
+            return SearchOutcome(ranked, exhaustive = !timedOut && !terminated)
         }
 
         private inner class Node(
@@ -128,6 +129,7 @@ internal object SearchEngine {
         }
 
         private fun searchNode(node: Node) {
+            if (terminated) return
             if (budget.expired() || (nodeLimit != null && stats.nodes >= nodeLimit)) {
                 timedOut = true
                 return
@@ -135,6 +137,7 @@ internal object SearchEngine {
             stats.nodes++
             if (node.assignedCount == variableCount) {
                 considerSolution(node)
+                if (!optimize && incumbents.isNotEmpty()) terminated = true
                 return
             }
             if (optimize && incumbents.size >= maxSolutions) {
@@ -158,7 +161,7 @@ internal object SearchEngine {
                 } else {
                     stats.prunedBranches++
                 }
-                if (timedOut) return
+                if (timedOut || terminated) return
             }
         }
 
