@@ -161,7 +161,8 @@ internal fun LibrarySeatBookingScreenContent(
     actions: LibrarySeatUiAction?,
     onBack: () -> Unit,
     initialViewMode: Int = 1,
-    onNavigateToXpeachCloud: (() -> Unit)? = null
+    onNavigateToXpeachCloud: (() -> Unit)? = null,
+    extensionSlotContent: @Composable () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -442,6 +443,10 @@ internal fun LibrarySeatBookingScreenContent(
                     onSelect = { tabIdx -> selectedBookingViewMode = if (tabIdx == 0) 1 else 0 }
                 )
             }
+        }
+
+        Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+            extensionSlotContent()
         }
 
         if (actions != null) {

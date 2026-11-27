@@ -8,6 +8,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.feature.settings.extension.ExtensionPluginSlot
 import cn.edu.haut.campus.feature.settings.library.seat.state.LibrarySeatUiState
 import cn.edu.haut.campus.feature.settings.library.seat.ui.LibrarySeatBookingScreenContent
 import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
@@ -40,12 +41,22 @@ fun LibrarySeatRoute(
             factory = LibrarySeatViewModel.factory(repository, sessionStates)
         )
         val state by viewModel.uiState.collectAsStateWithLifecycle()
+        val extensionSlotContent: @Composable () -> Unit = {
+            ExtensionPluginSlot(
+                repository = repository,
+                slotId = "library.actions",
+                onOpenHostRoute = { route ->
+                    if (route == "settings.extensions") onNavigateToXpeachCloud?.invoke()
+                }
+            )
+        }
         LibrarySeatBookingScreenContent(
             state = state,
             actions = viewModel,
             onBack = onBack,
             initialViewMode = initialViewMode,
-            onNavigateToXpeachCloud = onNavigateToXpeachCloud
+            onNavigateToXpeachCloud = onNavigateToXpeachCloud,
+            extensionSlotContent = extensionSlotContent
         )
     }
 }

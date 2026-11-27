@@ -47,6 +47,7 @@ dependencies {
     api(project(":core:school-packages"))
     api(project(":core:designsystem"))
     implementation(libs.androidx.core.ktx)
+    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi.core)

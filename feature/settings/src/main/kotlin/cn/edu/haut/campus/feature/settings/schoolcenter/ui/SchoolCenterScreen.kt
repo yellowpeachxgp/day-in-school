@@ -88,7 +88,8 @@ internal fun SchoolCenterScreenContent(
     onSelectSchool: ((SchoolProfile) -> Unit)? = null,
     activeSession: ActiveSession? = null,
     onSwitchProfile: ((String) -> Unit)? = null,
-    onAction: (SchoolCenterUiAction) -> Unit = {}
+    onAction: (SchoolCenterUiAction) -> Unit = {},
+    extensionSlotContent: @Composable () -> Unit = {}
 ) {
     val query = state.query
     val selectedSchoolId = state.selectedSchoolId
@@ -222,6 +223,9 @@ internal fun SchoolCenterScreenContent(
                                 )
                             }
                         }
+                    }
+                    item(key = "extension-campus-services") {
+                        extensionSlotContent()
                     }
                     if (onSelectSchool != null) {
                         item(key = "select") {
