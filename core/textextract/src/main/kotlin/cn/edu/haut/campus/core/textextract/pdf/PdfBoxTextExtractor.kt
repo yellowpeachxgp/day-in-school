@@ -145,6 +145,7 @@ class PdfBoxTextExtractor(
     private data class PdfGlyph(
         val height: Float,
         val widthDir: Float,
+        val spaceWidth: Float,
         val readingX: Float,
         val readingY: Float,
         val displayStartX: Float,
@@ -161,6 +162,9 @@ class PdfBoxTextExtractor(
 
     private data class PdfLineDraft(
         val pageIndex: Int,
+        val articleIndex: Int,
+        val paragraphIndex: Int,
+        val order: Int,
         val pieces: List<PdfLinePiece>
     )
 
@@ -179,15 +183,40 @@ class PdfBoxTextExtractor(
         val lineDrafts = mutableListOf<PdfLineDraft>()
         private val currentPieces = mutableListOf<PdfLinePiece>()
         private var currentPageIndex = 0
+        private var currentArticleIndex = 0
+        private var currentParagraphIndex = 0
+        private var paragraphOpen = false
+        private var nextDraftOrder = 0
         private var pendingWordSeparator = false
 
         override fun startPage(page: PDPage) {
             // PDFTextStripper.currentPageNo 是物理 1-based 页号；无内容空白页即使不触发 startPage，
             // 后续页仍按这个物理页号对齐，不能用“已处理内容页”计数。
             currentPageIndex = getCurrentPageNo() - 1
+            currentArticleIndex = 0
+            currentParagraphIndex = 0
+            paragraphOpen = false
             currentPieces.clear()
             pendingWordSeparator = false
             super.startPage(page)
+        }
+
+        override fun startArticle() {
+            currentArticleIndex++
+            super.startArticle()
+        }
+
+        override fun writeParagraphStart() {
+            if (!paragraphOpen) {
+                currentParagraphIndex++
+                paragraphOpen = true
+            }
+            super.writeParagraphStart()
+        }
+
+        override fun writeParagraphEnd() {
+            paragraphOpen = false
+            super.writeParagraphEnd()
         }
 
         override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
@@ -225,7 +254,15 @@ class PdfBoxTextExtractor(
 
         private fun flushCurrentLine() {
             if (currentPieces.isNotEmpty()) {
-                lineDrafts.add(PdfLineDraft(currentPageIndex, currentPieces.toList()))
+                lineDrafts.add(
+                    PdfLineDraft(
+                        pageIndex = currentPageIndex,
+                        articleIndex = currentArticleIndex,
+                        paragraphIndex = currentParagraphIndex,
+                        order = nextDraftOrder++,
+                        pieces = currentPieces.toList()
+                    )
+                )
                 currentPieces.clear()
             }
             pendingWordSeparator = false
@@ -249,6 +286,7 @@ class PdfBoxTextExtractor(
             return PdfGlyph(
                 height = heightDir,
                 widthDir = widthDirAdj,
+                spaceWidth = widthOfSpace,
                 readingX = xDirAdj,
                 readingY = yDirAdj,
                 displayStartX = displayStart.first,
@@ -274,69 +312,166 @@ class PdfBoxTextExtractor(
         }
     }
 
-    private fun buildLines(drafts: List<PdfLineDraft>): List<ExtractedTextLine> {
-        val orderedPieces = mutableListOf<OrderedPdfLinePiece>()
-        var order = 0
-        for (draft in drafts) {
-            for (piece in draft.pieces) {
-                orderedPieces.add(OrderedPdfLinePiece(order++, draft.pageIndex, piece))
-            }
-        }
-        val output = mutableListOf<ExtractedTextLine>()
-        val pageIndexes = orderedPieces.map { it.pageIndex }.distinct().sorted()
-        for (pageIndex in pageIndexes) {
-            val pagePieces = orderedPieces.filter { it.pageIndex == pageIndex }
-            val sortedByBaseline = pagePieces.sortedWith(
-                compareBy<OrderedPdfLinePiece> { baselineY(it.piece) }
-                    .thenBy { readingX(it.piece) }
-                    .thenBy { it.order }
-            )
-            val groups = mutableListOf<MutableList<OrderedPdfLinePiece>>()
-            for (piece in sortedByBaseline) {
-                val current = groups.lastOrNull()
-                val pieceY = baselineY(piece.piece)
-                val pieceHeight = piece.piece.glyphs.maxOf { it.height }
-                if (current == null) {
-                    groups.add(mutableListOf(piece))
-                } else {
-                    val referenceY = current.map { baselineY(it.piece) }.average().toFloat()
-                    val referenceHeight = current.maxOf { ordered -> ordered.piece.glyphs.maxOf { glyph -> glyph.height } }
-                    val threshold = maxOf(2.0f, maxOf(pieceHeight, referenceHeight) * 0.45f)
-                    if (kotlin.math.abs(pieceY - referenceY) <= threshold) {
-                        current.add(piece)
-                    } else {
-                        groups.add(mutableListOf(piece))
-                    }
-                }
-            }
+    private data class PdfLineGeometry(
+        val unitX: Float,
+        val unitY: Float,
+        val minU: Float,
+        val maxU: Float,
+        val centerV: Float,
+        val maxHeight: Float,
+        val maxSpaceWidth: Float
+    )
 
-            for (group in groups) {
-                val pieces = group.sortedBy { it.order }.map { it.piece }
-                val text = buildLineText(pieces).trim()
-                if (text.isBlank()) continue
-                val glyphs = pieces.flatMap { it.glyphs }
-                if (glyphs.isEmpty()) continue
-                output.add(
-                    ExtractedTextLine(
-                        lineIndex = output.size,
-                        pageIndex = pageIndex,
-                        text = text,
-                        confidence = null,
-                        box = lineBoundingBox(glyphs),
-                        coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
+    private data class PdfMergedLine(
+        val pageIndex: Int,
+        val articleIndex: Int,
+        val paragraphIndex: Int,
+        val pieces: MutableList<PdfLinePiece>,
+        var geometry: PdfLineGeometry?
+    )
+
+    private data class PdfMergeDecision(
+        val merge: Boolean,
+        val inferSpace: Boolean
+    )
+
+    /** 保留 PDFBox draft/article/paragraph 边界；只在旋转断行碎片有明确几何证据时合并。 */
+    private fun buildLines(drafts: List<PdfLineDraft>): List<ExtractedTextLine> {
+        val mergedLines = mutableListOf<PdfMergedLine>()
+        for (draft in drafts.sortedBy { it.order }) {
+            val geometry = lineGeometry(draft.pieces.flatMap { it.glyphs })
+            val current = mergedLines.lastOrNull()
+            val decision = if (current == null) {
+                PdfMergeDecision(merge = false, inferSpace = false)
+            } else {
+                mergeDecision(current, draft, geometry)
+            }
+            if (decision.merge && current != null) {
+                if (decision.inferSpace && draft.pieces.firstOrNull()?.separatorBefore != true) {
+                    current.pieces.add(PdfLinePiece(" ", separatorBefore = false, glyphs = emptyList()))
+                }
+                current.pieces.addAll(draft.pieces)
+                current.geometry = lineGeometry(current.pieces.flatMap { it.glyphs })
+            } else {
+                mergedLines.add(
+                    PdfMergedLine(
+                        pageIndex = draft.pageIndex,
+                        articleIndex = draft.articleIndex,
+                        paragraphIndex = draft.paragraphIndex,
+                        pieces = draft.pieces.toMutableList(),
+                        geometry = geometry
                     )
                 )
             }
         }
+
+        val output = mutableListOf<ExtractedTextLine>()
+        for (line in mergedLines) {
+            val pieces = line.pieces
+            val text = buildLineText(pieces).trim()
+            if (text.isBlank()) continue
+            val glyphs = pieces.flatMap { it.glyphs }
+            if (glyphs.isEmpty()) continue
+            output.add(
+                ExtractedTextLine(
+                    lineIndex = output.size,
+                    pageIndex = line.pageIndex,
+                    text = text,
+                    confidence = null,
+                    box = lineBoundingBox(glyphs),
+                    coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
+                )
+            )
+        }
         return output
     }
 
-    private fun baselineY(piece: PdfLinePiece): Float {
-        return piece.glyphs.map { it.readingY }.average().toFloat()
+    private fun mergeDecision(
+        current: PdfMergedLine,
+        next: PdfLineDraft,
+        nextGeometry: PdfLineGeometry?
+    ): PdfMergeDecision {
+        val currentGeometry = current.geometry ?: return PdfMergeDecision(false, false)
+        val nextGeom = nextGeometry ?: return PdfMergeDecision(false, false)
+        if (current.pageIndex != next.pageIndex || current.articleIndex != next.articleIndex ||
+            current.paragraphIndex != next.paragraphIndex
+        ) {
+            return PdfMergeDecision(false, false)
+        }
+
+        // 普通横排信任 PDFBox draft，不做二次重聚；只有明显非横排方向才考察旋转断行碎片。
+        val currentHorizontal = kotlin.math.abs(currentGeometry.unitY) < 0.35f
+        val nextHorizontal = kotlin.math.abs(nextGeom.unitY) < 0.35f
+        if (currentHorizontal && nextHorizontal) return PdfMergeDecision(false, false)
+
+        val directionDot = currentGeometry.unitX * nextGeom.unitX + currentGeometry.unitY * nextGeom.unitY
+        if (directionDot < 0.96f) return PdfMergeDecision(false, false)
+
+        val maxHeight = maxOf(currentGeometry.maxHeight, nextGeom.maxHeight).coerceAtLeast(1f)
+        val perpendicularDistance = kotlin.math.abs(currentGeometry.centerV - nextGeom.centerV)
+        if (perpendicularDistance > maxOf(2.0f, maxHeight * 0.5f)) return PdfMergeDecision(false, false)
+
+        val left: PdfLineGeometry
+        val right: PdfLineGeometry
+        if (currentGeometry.minU <= nextGeom.minU) {
+            left = currentGeometry
+            right = nextGeom
+        } else {
+            left = nextGeom
+            right = currentGeometry
+        }
+        val gap = right.minU - left.maxU
+        val spaceWidth = maxOf(currentGeometry.maxSpaceWidth, nextGeom.maxSpaceWidth).coerceAtLeast(2.0f)
+        val directJoinGap = maxOf(1.0f, spaceWidth * 0.6f)
+        val wordJoinGap = maxOf(spaceWidth * 2.75f, maxHeight * 1.1f)
+        return when {
+            gap <= directJoinGap -> PdfMergeDecision(merge = true, inferSpace = false)
+            gap <= wordJoinGap -> PdfMergeDecision(merge = true, inferSpace = true)
+            else -> PdfMergeDecision(false, false)
+        }
     }
 
-    private fun readingX(piece: PdfLinePiece): Float {
-        return piece.glyphs.minOf { it.readingX }
+    private fun lineGeometry(glyphs: List<PdfGlyph>): PdfLineGeometry? {
+        var unitX = 0f
+        var unitY = 0f
+        for (glyph in glyphs) {
+            val dx = glyph.displayEndX - glyph.displayStartX
+            val dy = glyph.displayEndY - glyph.displayStartY
+            val length = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            if (length >= 0.5f) {
+                unitX = dx / length
+                unitY = dy / length
+                break
+            }
+        }
+        if (unitX == 0f && unitY == 0f) return null
+        val normalX = -unitY
+        val normalY = unitX
+        var minU = Float.POSITIVE_INFINITY
+        var maxU = Float.NEGATIVE_INFINITY
+        var minV = Float.POSITIVE_INFINITY
+        var maxV = Float.NEGATIVE_INFINITY
+        fun include(x: Float, y: Float) {
+            val u = x * unitX + y * unitY
+            val v = x * normalX + y * normalY
+            minU = minOf(minU, u)
+            maxU = maxOf(maxU, u)
+            minV = minOf(minV, v)
+            maxV = maxOf(maxV, v)
+        }
+        for (glyph in glyphs) {
+            include(glyph.displayStartX, glyph.displayStartY)
+            include(glyph.displayEndX, glyph.displayEndY)
+        }
+        return PdfLineGeometry(
+            unitX = unitX,
+            unitY = unitY,
+            minU = minU,
+            maxU = maxU,
+            centerV = (minV + maxV) / 2.0f,
+            maxHeight = glyphs.maxOf { it.height }.coerceAtLeast(1f),
+            maxSpaceWidth = glyphs.maxOf { it.spaceWidth }.coerceAtLeast(2.0f)
+        )
     }
 
     private fun buildLineText(pieces: List<PdfLinePiece>): String {
