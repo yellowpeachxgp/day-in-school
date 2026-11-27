@@ -303,37 +303,39 @@ class TripleScheduleChainOverlapTest {
 
     @Test
     fun nextClassDayHint_skipsFullyCanceledDayAndLandsOnNextClassDay() {
-        // 周一唯一一节课被停 → hint 必须越过周一，落到周二第一节课
+        // 周二唯一一节课被停 → 扫描必须越过周二（不产生事件的停课日不算有课日），落到周三；
+        // 若停课被误当作出课，hint 会错误停在周二
+        val tuesday = monday.plusDays(1)
         val rules = listOf(
-            rule("r_mono", courseA.id, 1, 2, DayOfWeek.MONDAY),
-            rule("r_tue", courseB.id, 3, 4, DayOfWeek.TUESDAY)
+            rule("r_tue", courseB.id, 3, 4, DayOfWeek.TUESDAY),
+            rule("r_wed", courseC.id, 1, 2, DayOfWeek.WEDNESDAY)
         )
-        val cancelMonday = OccurrenceOverride(
-            id = "ov_cancel_mon",
+        val cancelTuesday = OccurrenceOverride(
+            id = "ov_cancel_tue",
             termId = term.id,
-            courseRuleId = "r_mono",
-            date = monday,
+            courseRuleId = "r_tue",
+            date = tuesday,
             canceled = true,
             reason = "单次停课"
         )
-        val nowAfterMondayClass = ZonedDateTime.of(monday, LocalTime.of(20, 0), HAUT_ZONE_ID)
+        val nowMondayEvening = ZonedDateTime.of(monday, LocalTime.of(20, 0), HAUT_ZONE_ID)
         val snapshot = ScheduleEngine.buildDayTimelineSnapshot(
             date = monday,
-            now = nowAfterMondayClass,
+            now = nowMondayEvening,
             term = term,
             courses = courses,
             rules = rules,
             periodTimes = periods,
-            occurrenceOverrides = listOf(cancelMonday)
+            occurrenceOverrides = listOf(cancelTuesday)
         )
 
         assertNull(snapshot.activeOrNextClass)
         val hint = snapshot.nextClassDayHint
         assertNotNull(hint)
-        assertEquals(monday.plusDays(1), hint!!.nextDate)
-        assertEquals(1L, hint.daysUntil)
-        assertEquals(courseB.name, hint.firstCourseName)
-        assertEquals(LocalTime.of(10, 10), hint.firstCourseStartTime)
+        assertEquals(monday.plusDays(2), hint!!.nextDate)
+        assertEquals(2L, hint.daysUntil)
+        assertEquals(courseC.name, hint.firstCourseName)
+        assertEquals(LocalTime.of(8, 0), hint.firstCourseStartTime)
     }
 
     @Test

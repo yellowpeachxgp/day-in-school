@@ -26,7 +26,9 @@ class WidgetRoomFormatterTest {
 
     @Test
     fun fullRoom_specialBuildingsKeepRoomSuffix() {
-        assertEquals("钟楼报告厅 A101", WidgetRoomFormatter.formatFullRoom("钟楼报告厅A101"))
+        // 数字开头的房号插入空格分隔；字母开头的房号不匹配拆分正则，原样保留绝不截断
+        assertEquals("钟楼报告厅 101", WidgetRoomFormatter.formatFullRoom("钟楼报告厅101"))
+        assertEquals("钟楼报告厅A101", WidgetRoomFormatter.formatFullRoom("钟楼报告厅A101"))
         assertEquals("实验楼 3-204", WidgetRoomFormatter.formatFullRoom("实验楼3-204"))
     }
 
