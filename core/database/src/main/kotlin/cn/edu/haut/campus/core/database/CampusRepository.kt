@@ -250,11 +250,11 @@ class CampusRepository internal constructor(
             get() = this@CampusRepository.activeSessionGeneration
 
         override suspend fun migrateLegacyAcademicCredentialsIfNeeded() =
-            this@CampusRepository.migrateLegacyAcademicCredentialsIfNeeded()
+            syncOrchestrator.migrateLegacyAcademicCredentialsIfNeededForFacade()
 
         override fun readAcademicCredential(accountId: String): AcademicCredentialReadResult =
             this@CampusRepository.academicCredentialVault.read(
-                this@CampusRepository.academicCredentialScope(accountId)
+                syncOrchestrator.academicCredentialScopeForFacade(accountId)
             )
 
         override suspend fun <T> withCloudIdentityBarrier(block: suspend () -> T): T =
@@ -299,7 +299,7 @@ class CampusRepository internal constructor(
             this@CampusRepository.requireActiveSession()
 
         override suspend fun migrateLegacyAcademicCredentialsIfNeeded() =
-            this@CampusRepository.migrateLegacyAcademicCredentialsIfNeeded()
+            syncOrchestrator.migrateLegacyAcademicCredentialsIfNeededForFacade()
 
         override suspend fun saveAuthorizedSyncCredentials(
             studentId: String,
@@ -357,11 +357,20 @@ class CampusRepository internal constructor(
 
         override suspend fun notifyScheduleOrPolicyChanged(reason: String) =
             this@CampusRepository.notifyScheduleOrPolicyChanged(reason)
+
+        override fun requireActiveSession() =
+            this@CampusRepository.requireActiveSession()
     }
     private val syncOrchestrator = SyncOrchestrator(
         environment = repositoryEnvironment,
         appContext = appContext,
         cloudIdentityRepository = cloudIdentityRepository,
+        termRepository = termRepository,
+        gradesRepository = gradesRepository,
+        examRepository = examRepository,
+        timetableRepository = timetableRepository,
+        academicCredentialVault = academicCredentialVault,
+        academicCredentialMutex = academicCredentialMutex,
         cloudSyncMutex = cloudSyncMutex,
         bookingPlanStateMutex = bookingPlanStateMutex,
         runtimePort = syncOrchestratorRuntimePort
@@ -395,7 +404,7 @@ class CampusRepository internal constructor(
 
     internal suspend fun initializeForSession() {
         database.openHelper.writableDatabase
-        migrateLegacyAcademicCredentialsIfNeeded()
+        syncOrchestrator.migrateLegacyAcademicCredentialsIfNeededForFacade()
         ensureInitialSeedIfNeeded()
         runCatching { rescheduleActiveLocalBookingPlans() }
     }
@@ -1058,291 +1067,34 @@ class CampusRepository internal constructor(
         completedTermIds = completedTermIds
     )
 
-    suspend fun setAutoSyncEnabled(enabled: Boolean) {
-        preferences.edit { it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = enabled }
-    }
+    suspend fun setAutoSyncEnabled(enabled: Boolean) =
+        syncOrchestrator.setAutoSyncEnabled(enabled)
 
     suspend fun saveAuthorizedSyncCredentials(
         studentId: String,
         passwordPlain: String,
         xnm: String,
         xqm: String
-    ) = withContext(Dispatchers.IO) {
-        requireActiveSession()
-        check(supportsHautServices) { "当前学校教务登录尚未适配，可使用离线导入" }
-        academicCredentialMutex.withLock {
-            val previousId = preferences.data.first()[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]
-            val accountId = UUID.randomUUID().toString()
-            val scope = academicCredentialScope(accountId)
-            try {
-                val previousStudentId = previousId?.let { prevAccId ->
-                    (academicCredentialVault.read(academicCredentialScope(prevAccId)) as? AcademicCredentialReadResult.Available)
-                        ?.credentials?.use { it.studentId }
-                }?.trim().orEmpty()
-                academicCredentialVault.save(scope, studentId, passwordPlain)
-                preferences.edit { prefs ->
-                    prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
-                    prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = false
-                    prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                    prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                    prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = xnm
-                    prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = xqm
-                    prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
-                }
-                val nextStudentId = studentId.trim()
-                if (previousStudentId.isNotEmpty() && previousStudentId != nextStudentId) {
-                    cloudIdentityRepository.isolateBookingPlansForStudentSwitch(previousStudentId, System.currentTimeMillis())
-                }
-            } catch (error: Exception) {
-                runCatching { academicCredentialVault.delete(scope) }
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                throw IllegalStateException("教务凭据无法安全保存，请重新登录；本地课表和成绩已保留")
-            }
-            previousId?.let { runCatching { academicCredentialVault.delete(academicCredentialScope(it)) } }
-        }
-    }
-
-    private fun academicCredentialScope(accountId: String) = AcademicCredentialScope(
-        schoolId = schoolId,
-        accountId = accountId,
-        providerId = if (supportsHautServices) "haut-zf-modern" else "offline"
+    ) = syncOrchestrator.saveAuthorizedSyncCredentials(
+        studentId = studentId,
+        passwordPlain = passwordPlain,
+        xnm = xnm,
+        xqm = xqm
     )
 
-    /** 先保留稳定迁移引用；AES-GCM 密文回读成功后，在同一 DataStore 写入中删除旧学号和 Base64。 */
-    private suspend fun migrateLegacyAcademicCredentialsIfNeeded() = withContext(Dispatchers.IO) {
-        val current = preferences.data.first()
-        if (current[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
-            current[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID] == null
-        ) {
-            return@withContext
-        }
-        academicCredentialMutex.withLock {
-            val original = preferences.data.first()
-            if (original[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64] == null &&
-                original[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID] == null
-            ) {
-                return@withLock
-            }
-            val accountId = original[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: UUID.randomUUID().toString()
-            preferences.edit { prefs ->
-                prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] = accountId
-            }
-            val migrated = migrateLegacyAcademicCredentials(
-                vault = academicCredentialVault,
-                scope = academicCredentialScope(accountId),
-                studentId = original[CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID],
-                encodedPassword = original[CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64]
-            )
-            preferences.edit { prefs ->
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_STUDENT_ID)
-                prefs.remove(CampusRepositoryPrefKeys.LEGACY_SAVED_PASSWORD_BASE64)
-                prefs[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = !migrated
-                if (!migrated) prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
-            }
-        }
-    }
-
     /**
-     * 应用全部实时教务同步数据（学籍名片 + 课表差异合并 + 成绩明细 + 期初/期中/期末全部考试安排）。
+     * 应用全部实时教务同步数据。实现已迁至 SyncOrchestrator，门面仅立即委托。
      */
     suspend fun applyLiveSyncData(
         syncData: HautLiveSyncResult,
         overwriteUserConflicts: Boolean = false
-    ) {
-        requireActiveSession()
-        check(supportsHautServices) { "当前学校不接受工大教务同步数据" }
-        syncData.studentProfile?.let { profile ->
-            saveStudentProfile(profile)
-        }
-        if (syncData.gradesComplete) {
-            saveImportedGrades(
-                attempts = syncData.gradeAttempts,
-                replaceExisting = true
-            )
-        }
-        if (syncData.examsComplete || syncData.targetTermExamsComplete) {
-            saveImportedExams(
-                exams = syncData.examItems,
-                replaceExisting = true,
-                targetTermId = syncData.termId,
-                targetTermComplete = syncData.targetTermExamsComplete,
-                completedTermIds = syncData.completedExamTermIds
-            )
-        }
-        for ((sibTermId, sibCandidates) in syncData.additionalTermTimetables) {
-            if (sibTermId == syncData.termId) continue
-            val sibCal = syncData.additionalTermCalendars[sibTermId]
-            ensureTermExistsAndUpdateCalendar(
-                termId = sibTermId,
-                semesterStart = sibCal?.first,
-                totalWeeks = sibCal?.second,
-                setCurrent = false
-            )
-            val sibDiff = previewCourseImportDiff(
-                termId = sibTermId,
-                source = CourseSource.OFFICIAL_JW,
-                candidates = sibCandidates
-            )
-            commitCourseImportDiff(
-                preview = sibDiff,
-                overwriteUserConflicts = overwriteUserConflicts,
-                setAsCurrentTerm = false
-            )
-        }
-        val targetTermId = syncData.termId
-        database.withTransaction {
-            val allRules = dao.getRulesSnapshot()
-            val allCourses = dao.getCoursesSnapshot()
-            if (overwriteUserConflicts) {
-                val oldPracticalCourses = allCourses.filter {
-                    it.source == CourseSource.OFFICIAL_JW.name &&
-                        it.externalId?.startsWith("sjk:$targetTermId:") == true
-                }
-                val oldPracticalCourseIds = oldPracticalCourses.map { it.id }.toSet()
-                val oldPracticalRules = allRules.filter {
-                    it.termId == targetTermId && (it.id.startsWith("r_prac_") || it.courseId in oldPracticalCourseIds)
-                }
-                oldPracticalRules.forEach { r ->
-                    dao.deleteRuleById(r.id)
-                    dao.deleteOccurrenceOverridesByRuleId(r.id)
-                }
-                oldPracticalCourses.forEach { c ->
-                    dao.deleteCourseById(c.id)
-                }
-            }
-            val scheduledUserCourseIds = dao.getRulesSnapshot()
-                .filter { it.termId == targetTermId && it.userModified }
-                .map { it.courseId }
-                .toSet()
-            val scheduledPracticalExternalIds = dao.getCoursesSnapshot()
-                .filter {
-                    it.id in scheduledUserCourseIds &&
-                        it.source == CourseSource.OFFICIAL_JW.name &&
-                        it.userModified &&
-                        it.externalId?.startsWith("sjk:$targetTermId:") == true
-                }
-                .mapNotNull { it.externalId }
-                .toSet()
-            val incomingUnscheduledEntities = syncData.unscheduledCourses.toUnscheduledEntities(targetTermId)
-            val remainingUnscheduledEntities = if (overwriteUserConflicts) {
-                incomingUnscheduledEntities
-            } else {
-                incomingUnscheduledEntities.filter {
-                    "sjk:$targetTermId:${it.sourceKey}" !in scheduledPracticalExternalIds
-                }
-            }
-            dao.clearUnscheduledCoursesForTerm(targetTermId)
-            dao.upsertUnscheduledCourses(remainingUnscheduledEntities)
-        }
-        val seasonalTermId = AcademicTermResolver.defaultTermId(LocalDate.now(timeZone))
-        val targetHasAnyAcademicContent = syncData.timetableCandidates.isNotEmpty() ||
-            syncData.unscheduledCourses.isNotEmpty() ||
-            syncData.examItems.any { it.termId == targetTermId } ||
-            targetTermId == seasonalTermId
-        val fallbackPopulatedSiblingTermId = if (!targetHasAnyAcademicContent) {
-            syncData.additionalTermTimetables.entries.firstOrNull { (sibId, cands) ->
-                sibId != targetTermId && cands.isNotEmpty() && !termRepository.isTermOlderThan(sibId, targetTermId)
-            }?.key
-        } else null
-        val activateTargetTerm = fallbackPopulatedSiblingTermId == null
-
-        ensureTermExistsAndUpdateCalendar(
-            termId = targetTermId,
-            semesterStart = syncData.semesterStart,
-            totalWeeks = syncData.totalWeeks,
-            setCurrent = activateTargetTerm
-        )
-        val diff = previewCourseImportDiff(
-            termId = targetTermId,
-            source = CourseSource.OFFICIAL_JW,
-            candidates = syncData.timetableCandidates
-        )
-        commitCourseImportDiff(
-            preview = diff,
-            overwriteUserConflicts = overwriteUserConflicts,
-            setAsCurrentTerm = activateTargetTerm
-        )
-        if (fallbackPopulatedSiblingTermId != null) {
-            ensureTermExistsAndUpdateCalendar(termId = fallbackPopulatedSiblingTermId, setCurrent = true)
-        }
-        val (syncXnm, syncXqm) = HautAcademicEndpoints.fromTermId(targetTermId)
-        preferences.edit { prefs ->
-            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = syncXnm
-            prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] = syncXqm
-            prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] = System.currentTimeMillis()
-        }
-    }
+    ) = syncOrchestrator.applyLiveSyncData(syncData, overwriteUserConflicts)
 
     /**
-     * 后台或一键动态刷新：使用本地已授权保存的教务凭据，从正方教务系统拉取最新课表、期初/期中/期末考试安排与成绩。
-     * @param force 若为 false，则距离上次自动同步不足 15 分钟时跳过，避免频繁请求。
+     * 后台或一键动态刷新。实现已迁至 SyncOrchestrator，门面仅立即委托。
      */
-    suspend fun performDynamicAcademicSync(force: Boolean = false): Result<HautLiveSyncResult>? = withContext(Dispatchers.IO) {
-        requireActiveSession()
-        if (!supportsHautServices) return@withContext Result.failure(IllegalStateException("当前学校教务登录尚未适配，可使用离线导入"))
-        migrateLegacyAcademicCredentialsIfNeeded()
-        ensureSeasonalTermRolloverIfNeeded()
-        academicCredentialMutex.withLock {
-        val prefs = preferences.data.first()
-        val autoEnabled = prefs[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] ?: true
-        if (!force && !autoEnabled) return@withLock null
-
-        val lastSyncMs = prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS] ?: 0L
-        val nowMs = System.currentTimeMillis()
-        if (!force && (nowMs - lastSyncMs) < 15 * 60 * 1000L) {
-            return@withLock null
-        }
-
-        val accountId = prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID] ?: return@withLock null
-        val credentialResult = academicCredentialVault.read(academicCredentialScope(accountId))
-        if (credentialResult !is AcademicCredentialReadResult.Available) {
-            preferences.edit {
-                it[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
-                it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
-            }
-            return@withLock Result.failure(IllegalStateException("安全凭据已失效，请重新登录；本地课表和成绩已保留"))
-        }
-
-        val currentTermEntity = dao.getCurrentTerm()
-        val defaultPair = currentTermEntity?.id?.let { HautAcademicEndpoints.fromTermId(it) }
-            ?: (AcademicTermResolver.defaultAcademicYearCode() to AcademicTermResolver.defaultSemesterCode())
-        val xnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: defaultPair.first
-        val xqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: defaultPair.second
-
-        credentialResult.credentials.use { credentials ->
-            val result = HautLiveAcademicClient.fetchLiveAcademicData(
-                studentId = credentials.studentId,
-                passwordPlain = credentials.passwordPlain,
-                xnm = xnm,
-                xqm = xqm
-            )
-            val failure = result.exceptionOrNull()
-            if (failure is AcademicReadException && failure.code in setOf(
-                    "AUTH_REJECTED", "CAPTCHA_REQUIRED", "SESSION_EXPIRED", "MANUAL_VERIFICATION"
-                )) {
-                preferences.edit {
-                    it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
-                    it[CampusRepositoryPrefKeys.ACADEMIC_REAUTH_REQUIRED] = true
-                }
-            }
-            result.fold(
-                onSuccess = { syncData ->
-                    try {
-                        applyLiveSyncData(syncData, overwriteUserConflicts = false)
-                        Result.success(syncData)
-                    } catch (error: Exception) {
-                        if (error is kotlinx.coroutines.CancellationException) throw error
-                        Result.failure(IllegalStateException("教务数据保存失败，请稍后重试；已保留尚未完成更新的数据"))
-                    }
-                },
-                onFailure = { error ->
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    Result.failure(error)
-                }
-            )
-        }
-        }
-    }
+    suspend fun performDynamicAcademicSync(force: Boolean = false): Result<HautLiveSyncResult>? =
+        syncOrchestrator.performDynamicAcademicSync(force)
 
     /**
      * 读取本地加密持久化的图书馆座位预约会话快照（不发起网络请求）。
@@ -1835,7 +1587,7 @@ class CampusRepository internal constructor(
         academicCredentialMutex.withLock {
             val prefs = preferences.data.first()
             prefs[CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID]?.let { accountId ->
-                withContext(Dispatchers.IO) { academicCredentialVault.delete(academicCredentialScope(accountId)) }
+                withContext(Dispatchers.IO) { academicCredentialVault.delete(syncOrchestrator.academicCredentialScopeForFacade(accountId)) }
             }
             preferences.edit {
                 it.remove(CampusRepositoryPrefKeys.ACADEMIC_CREDENTIAL_ACCOUNT_ID)
