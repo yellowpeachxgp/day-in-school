@@ -29,7 +29,7 @@ class Issue13SongshanluStudyRoomsRegressionTest {
         assertEquals(17, rooms.toSet().size)
         assertEquals(rooms, CampusStudyRoomCatalog.ALL_SONGSHANLU_CANDIDATE_ROOMS)
         assertTrue(rooms.all { it.startsWith("嵩山") })
-        assertTrue("嵩山路房间不得退化成裸数字编号而跨校区串线", rooms.none { it.matches(Regex("\d{3,5}")) })
+        assertTrue("嵩山路房间不得退化成裸数字编号而跨校区串线", rooms.none { it.matches(Regex("\\d{3,5}")) })
 
         val resolverBuildingNames = ClassroomBuildingResolver.HAUT_SONGSHANLU_BUILDINGS.map { it.name }.toSet()
         assertTrue(map.keys.all { it in resolverBuildingNames })
