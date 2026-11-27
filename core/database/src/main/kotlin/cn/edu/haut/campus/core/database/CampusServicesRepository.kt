@@ -1,7 +1,14 @@
 package cn.edu.haut.campus.core.database
 
 import android.content.Context
+import cn.edu.haut.campus.core.campusservices.OnlineUtilityRoomSnapshot
+import cn.edu.haut.campus.core.campusservices.UtilityAccountReadResult
 import cn.edu.haut.campus.core.campusservices.UtilityAccountSecureStore
+import cn.edu.haut.campus.core.campusservices.UtilityDailySample
+import cn.edu.haut.campus.core.model.FocusSessionDomain
+import cn.edu.haut.campus.core.model.UtilityMeterDomain
+import cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain
+import cn.edu.haut.campus.core.model.UtilityReadingDomain
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -19,6 +26,7 @@ class CampusServicesRepository internal constructor(
     private val extensionPluginRegistry = ExtensionPluginRegistry(environment)
     private val reminderSettingsStore = ReminderSettingsStore(environment)
     private val appPreferencesStore = AppPreferencesStore(environment, runtimePort)
+    private val utilityService = UtilityService(environment, appContext, utilityAccountStore, runtimePort)
 
     suspend fun saveCustomChannelUrl(channelId: String, inviteUrl: String) =
         campusContentService.saveCustomChannelUrl(channelId, inviteUrl)
@@ -225,4 +233,76 @@ class CampusServicesRepository internal constructor(
 
     suspend fun saveCustomCampusZonesJson(json: String) =
         appPreferencesStore.saveCustomCampusZonesJson(json)
+
+    val utilityDailySamplesFlow: Flow<List<UtilityDailySample>> = utilityService.utilityDailySamplesFlow
+
+    val utilityOnlineRoomsFlow: Flow<List<UtilityOnlineRoomDomain>> = utilityService.utilityOnlineRoomsFlow
+
+    val utilityMetersFlow: Flow<List<UtilityMeterDomain>> = utilityService.utilityMetersFlow
+
+    val utilityReadingsFlow: Flow<List<UtilityReadingDomain>> = utilityService.utilityReadingsFlow
+
+    val activeFocusSessionFlow: Flow<FocusSessionDomain?> = utilityService.activeFocusSessionFlow
+
+    val completedFocusSessionsFlow: Flow<List<FocusSessionDomain>> = utilityService.completedFocusSessionsFlow
+
+    fun utilityAndFocusDao(): UtilityAndFocusDao = utilityService.utilityAndFocusDao()
+
+    fun utilityAccountSecureStore(): UtilityAccountSecureStore = utilityService.utilityAccountSecureStore()
+
+    suspend fun setAllowUnverifiedUtilityTransport(allowed: Boolean) =
+        utilityService.setAllowUnverifiedUtilityTransport(allowed)
+
+    fun readUtilityAccountResult(): UtilityAccountReadResult = utilityService.readUtilityAccountResult()
+
+    suspend fun saveAndRefreshOnlineUtilities(
+        rawAccount: String? = null,
+        allowUnverified: Boolean = false
+    ): Result<List<OnlineUtilityRoomSnapshot>> = utilityService.saveAndRefreshOnlineUtilities(
+        rawAccount = rawAccount,
+        allowUnverified = allowUnverified
+    )
+
+    suspend fun performPeriodicUtilitySampleIfEligible(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean = utilityService.performPeriodicUtilitySampleIfEligible(nowEpochMs)
+
+    suspend fun updateUtilityNotificationConfig(
+        enabled: Boolean? = null,
+        dailyHour: Int? = null,
+        lowBalanceThreshold: Float? = null
+    ) = utilityService.updateUtilityNotificationConfig(enabled, dailyHour, lowBalanceThreshold)
+
+    suspend fun notifyDailyUtilitySummaryIfEligible(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean = utilityService.notifyDailyUtilitySummaryIfEligible(nowEpochMs)
+
+    suspend fun sendTestUtilityNotification(
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): Boolean = utilityService.sendTestUtilityNotification(nowEpochMs)
+
+    suspend fun updateOnlineRoomCampus(roomId: String, campusCode: String?) =
+        utilityService.updateOnlineRoomCampus(roomId, campusCode)
+
+    suspend fun clearUtilityAccountAndOnlineCache() =
+        utilityService.clearUtilityAccountAndOnlineCache()
+
+    suspend fun saveUtilityMeter(
+        name: String,
+        campusName: String,
+        roomName: String,
+        unit: String,
+        lowThreshold: Double
+    ) = utilityService.saveUtilityMeter(name, campusName, roomName, unit, lowThreshold)
+
+    suspend fun deleteUtilityMeter(meterId: String) = utilityService.deleteUtilityMeter(meterId)
+
+    suspend fun addUtilityReading(
+        meterId: String,
+        value: Double,
+        topUpValue: Double = 0.0,
+        note: String = ""
+    ) = utilityService.addUtilityReading(meterId, value, topUpValue, note)
+
+    suspend fun deleteUtilityReading(readingId: String) = utilityService.deleteUtilityReading(readingId)
 }
