@@ -185,7 +185,7 @@ class DefaultAutomationEngineTest {
     fun validOneTimeConfirmationAllowsNeedsConfirmAction() = runTest {
         val action = AutomationTestFixtures.RecordingActionExecutor(risk = ActionRisk.NEEDS_USER_CONFIRM)
         val confirmationPort = object : ActionConfirmationPort {
-            override suspend fun confirmationFor(
+            override suspend fun consumeConfirmation(
                 rule: AutomationRule,
                 actionSpec: ActionSpec,
                 ctx: RunContext

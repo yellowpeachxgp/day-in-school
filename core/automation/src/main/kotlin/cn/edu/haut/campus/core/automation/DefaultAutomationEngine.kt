@@ -357,7 +357,7 @@ class DefaultAutomationEngine(
     ): ActionConfirmation? {
         val port = confirmationPort ?: return null
         val confirmation = try {
-            port.confirmationFor(rule, spec, context)
+            port.consumeConfirmation(rule, spec, context)
         } catch (error: Throwable) {
             if (error is CancellationException || error is Error) throw error
             null

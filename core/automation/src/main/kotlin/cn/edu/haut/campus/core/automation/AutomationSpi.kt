@@ -53,9 +53,12 @@ interface ActionExecutor {
     suspend fun execute(spec: ActionSpec, ctx: RunContext): ActionOutcome
 }
 
-/** NEEDS_USER_CONFIRM 动作的确认端口；UI/通知确认链路在后续卡实现，本核心只做校验。 */
+/**
+ * NEEDS_USER_CONFIRM 动作的确认端口；UI/通知确认链路在后续卡实现，本核心只做绑定与有效期校验。
+ * 实现必须原子消费确认凭证：同一 confirmationId 第二次调用必须返回 null，避免自动触发重复使用“一次性”确认。
+ */
 interface ActionConfirmationPort {
-    suspend fun confirmationFor(
+    suspend fun consumeConfirmation(
         rule: AutomationRule,
         action: ActionSpec,
         ctx: RunContext
