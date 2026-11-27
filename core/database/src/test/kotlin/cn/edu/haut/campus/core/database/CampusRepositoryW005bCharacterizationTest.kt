@@ -7,7 +7,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -215,6 +217,16 @@ class CampusRepositoryW005bCharacterizationTest {
         )
     }
 
+    private suspend fun writeRawMomentsSnapshotForOfflineTest(rawJson: String) {
+        fixture.dataStore.edit { prefs ->
+            prefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON] = rawJson
+            // 非授权域名在云端 HTTP helper 的域名栅栏处即失败：测试永不进行真实网络连接。
+            prefs[CampusRepositoryPrefKeys.CLOUD_API_BASE_URL] = "https://unauthorized.example.com"
+            prefs.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
+            prefs.remove(CampusRepositoryPrefKeys.CLOUD_REFRESH_TOKEN)
+        }
+    }
+
     @Test
     fun w005b_moments_local_favorite_snapshot_and_no_notification() = runBlocking {
         fixture.dataStore.edit { prefs ->
@@ -226,13 +238,179 @@ class CampusRepositoryW005bCharacterizationTest {
         repo.toggleMomentsPostFavorite("post_w005b")
         repo.toggleMomentsBookFavorite("book_w005b")
         val afterAdd = repo.preferencesFlow.first().campusMomentsSnapshot
-        repo.toggleMomentsPostFavorite("post_w005b")
-        val afterRemove = repo.preferencesFlow.first().campusMomentsSnapshot
 
         assertEquals(setOf("post_w005b"), afterAdd.favoritePostIds)
         assertEquals(setOf("book_w005b"), afterAdd.favoriteBookIds)
+
+        // 游客态读取时隐藏登录态 viewer 集合，但原始本地 CSV 不丢失；重新出现会话标记后仍可恢复并继续切换。
+        fixture.dataStore.edit { prefs ->
+            prefs.remove(CampusRepositoryPrefKeys.CLOUD_ACCESS_TOKEN)
+        }
+        val guestSnapshot = repo.preferencesFlow.first().campusMomentsSnapshot
+        val rawAfterLogout = fixture.dataStore.data.first()
+        assertTrue(guestSnapshot.favoritePostIds.isEmpty())
+        assertTrue(guestSnapshot.favoriteBookIds.isEmpty())
+        assertEquals("post_w005b", rawAfterLogout[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS])
+        assertEquals("book_w005b", rawAfterLogout[CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS])
+
+        fixture.dataStore.edit { prefs ->
+            prefs[stringPreferencesKey("cloud_access_token_v1")] = "test-cloud-token"
+        }
+        repo.toggleMomentsPostFavorite("post_w005b")
+        val afterRemove = repo.preferencesFlow.first().campusMomentsSnapshot
+
         assertTrue(afterRemove.favoritePostIds.isEmpty())
         assertEquals(setOf("book_w005b"), afterRemove.favoriteBookIds)
         assertTrue(notifications.isEmpty())
+    }
+
+    @Test
+    fun w005b_moments_offline_refresh_guest_snapshot_scrubs_identity_and_contact() = runBlocking {
+        writeRawMomentsSnapshotForOfflineTest(
+            """
+            {
+              "updated_at": "2026-11-10T01:30:00Z",
+              "posts": [
+                {
+                  "id": "mp_w005b_secret",
+                  "type": "LOST",
+                  "title": "遗失校园一卡通",
+                  "category": "证件",
+                  "campus": "莲花街校区",
+                  "location": "31号楼",
+                  "description": "蓝色卡套",
+                  "contact": "微信: secret_wx_w005b",
+                  "contact_visibility": "ON_REQUEST",
+                  "has_protected_contact": false,
+                  "is_owner": true,
+                  "can_manage": true,
+                  "can_claim_legacy": true,
+                  "viewer_role": "OWNER",
+                  "pending_contact_requests_count": 2,
+                  "has_my_contact_request": true,
+                  "my_contact_request_status": "PENDING",
+                  "comments": []
+                },
+                {
+                  "id": "mp_w005b_public",
+                  "type": "FOUND",
+                  "title": "招领雨伞",
+                  "category": "水杯雨伞",
+                  "campus": "莲花街校区",
+                  "location": "二楼大厅",
+                  "description": "灰色折叠伞",
+                  "contact": "QQ: 66778899",
+                  "contact_visibility": "PUBLIC",
+                  "is_owner": false,
+                  "can_manage": false,
+                  "viewer_role": "AUTHENTICATED",
+                  "comments": []
+                }
+              ],
+              "book_listings": [
+                {
+                  "id": "mb_w005b_secret",
+                  "title": "高等数学教材",
+                  "contact": "QQ: 11223344",
+                  "status": "AVAILABLE",
+                  "is_owner": true,
+                  "can_manage": true
+                }
+              ],
+              "anti_lost_tags": [
+                {
+                  "id": "tag_w005b_secret",
+                  "tag_code": "HAUT-TAG-W005B",
+                  "item_name": "黑色水杯",
+                  "owner_contact": "13900009999",
+                  "is_owner": true,
+                  "can_manage": true
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        fixture.dataStore.edit { prefs ->
+            prefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS] = "mp_w005b_secret"
+            prefs[CampusRepositoryPrefKeys.MOMENTS_MY_BOOK_IDS] = "mb_w005b_secret"
+            prefs[CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES] = "HAUT-TAG-W005B"
+        }
+
+        val result = repo.refreshCampusMomentsSnapshot()
+
+        assertTrue(result.isSuccess)
+        val snapshot = result.getOrThrow()
+        val protectedPost = snapshot.posts.single { it.id == "mp_w005b_secret" }
+        val publicPost = snapshot.posts.single { it.id == "mp_w005b_public" }
+        assertEquals(cn.edu.haut.campus.core.model.MASKED_ON_REQUEST_MOMENTS_CONTACT, protectedPost.contact)
+        assertTrue(protectedPost.hasProtectedContact)
+        assertFalse(protectedPost.isOwner)
+        assertFalse(protectedPost.canManage)
+        assertFalse(protectedPost.canClaimLegacy)
+        assertEquals("GUEST", protectedPost.viewerRole)
+        assertEquals(0, protectedPost.pendingContactRequestsCount)
+        assertFalse(protectedPost.hasMyContactRequest)
+        assertEquals("", protectedPost.myContactRequestStatus)
+        assertEquals("QQ: 66778899", publicPost.contact)
+        assertTrue(publicPost.canViewerReadRealContact)
+        val book = snapshot.bookListings.single { it.id == "mb_w005b_secret" }
+        assertFalse(book.isOwner)
+        assertFalse(book.canManage)
+        assertEquals("AVAILABLE", book.status)
+        assertTrue(snapshot.antiLostTags.isEmpty())
+        assertTrue(snapshot.myPostIds.isEmpty())
+        assertTrue(snapshot.myBookIds.isEmpty())
+        assertTrue(snapshot.myTagCodes.isEmpty())
+
+        val rawPrefs = fixture.dataStore.data.first()
+        val storedJson = rawPrefs[CampusRepositoryPrefKeys.CLOUD_MOMENTS_SNAPSHOT_JSON].orEmpty()
+        assertFalse(storedJson.contains("secret_wx_w005b"))
+        assertFalse(storedJson.contains("HAUT-TAG-W005B"))
+        assertFalse(storedJson.contains("13900009999"))
+        assertNull(rawPrefs[CampusRepositoryPrefKeys.MOMENTS_MY_POST_IDS])
+    }
+
+    @Test
+    fun w005b_moments_auth_guarded_mutations_fail_without_local_write() = runBlocking {
+        writeRawMomentsSnapshotForOfflineTest(
+            """
+            {
+              "updated_at": "2026-11-10T01:30:00Z",
+              "posts": [
+                {
+                  "id": "mp_w005b_guarded",
+                  "type": "LOST",
+                  "title": "遗失钥匙",
+                  "category": "钥匙配饰",
+                  "location": "图书馆",
+                  "description": "蓝色钥匙扣",
+                  "contact": "QQ: 55667788",
+                  "status": "OPEN",
+                  "comments": []
+                }
+              ],
+              "book_listings": [
+                {
+                  "id": "mb_w005b_guarded",
+                  "title": "线性代数教材",
+                  "contact": "QQ: 55667788",
+                  "status": "AVAILABLE"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val before = repo.preferencesFlow.first().campusMomentsSnapshot
+
+        val outcomes = listOf(
+            repo.toggleMomentsPostResolved("mp_w005b_guarded"),
+            repo.deleteMomentsPost("mp_w005b_guarded"),
+            repo.toggleMomentsBookSold("mb_w005b_guarded"),
+            repo.deleteMomentsBookListing("mb_w005b_guarded")
+        )
+
+        assertTrue(outcomes.all { it.isFailure })
+        assertTrue(outcomes.all { it.exceptionOrNull()?.message?.contains("登录云端账号") == true })
+        assertEquals(before, repo.preferencesFlow.first().campusMomentsSnapshot)
     }
 }
