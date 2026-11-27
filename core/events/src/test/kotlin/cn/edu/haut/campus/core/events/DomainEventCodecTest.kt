@@ -439,6 +439,30 @@ class DomainEventCodecTest {
         assertTrue(wrongScope is IllegalArgumentException)
     }
 
+    @Test
+    fun hostileBackingArrayCannotRewriteCreatedRefsAfterConstruction() {
+        val validRef = DomainEventTestFixtures.ref(EntityType.PERSONAL_EVENT, "personal-event-valid")
+        val hostile = HostileBackingArrayList(listOf(validRef))
+        val event = DomainEvent.NoticeConfirmed(
+            eventId = "event-created-refs-hostile-array",
+            scope = DomainEventTestFixtures.scope,
+            occurredAt = DomainEventTestFixtures.occurredAt,
+            inboxItemId = "inbox-item-created-refs",
+            createdRefs = hostile
+        )
+        val foreignScopeRef = DomainEventTestFixtures.ref(
+            EntityType.PERSONAL_EVENT,
+            "personal-event-foreign",
+            DomainEventTestFixtures.scope.copy(campusId = null)
+        )
+
+        hostile.overwrite(0, foreignScopeRef)
+
+        assertEquals(listOf(validRef), event.createdRefs)
+        val encoded = registry.encode(event)
+        assertFalse(encoded.payload.text.contains("personal-event-foreign"))
+    }
+
     private fun courseChanged(eventId: String, diff: FieldDiff): DomainEvent.CourseChanged =
         DomainEvent.CourseChanged(
             eventId = eventId,
@@ -448,4 +472,33 @@ class DomainEventCodecTest {
             change = ChangeKind.UPDATED,
             diff = diff
         )
+}
+
+/**
+ * toArray() 违反约定返回自有 backing array 的自定义 Collection 探针。
+ *
+ * 主流 JDK/Android 运行时的 ArrayList(Collection) 构造直接采用该数组而不复制，
+ * 因此若快照边界退回使用 ArrayList(Collection)，构造后 overwrite 即可改写快照；
+ * 逐元素复制的快照边界不消费 toArray() 结果，与运行时版本实现细节无关。
+ */
+private class HostileBackingArrayList<T>(elements: List<T>) : AbstractList<T>() {
+    private val backing: Array<Any?> = arrayOfNulls(elements.size)
+
+    init {
+        elements.forEachIndexed { index, element -> backing[index] = element }
+    }
+
+    override val size: Int
+        get() = backing.size
+
+    override fun get(index: Int): T {
+        @Suppress("UNCHECKED_CAST")
+        return backing[index] as T
+    }
+
+    override fun toArray(): Array<Any?> = backing
+
+    fun overwrite(index: Int, value: T) {
+        backing[index] = value
+    }
 }

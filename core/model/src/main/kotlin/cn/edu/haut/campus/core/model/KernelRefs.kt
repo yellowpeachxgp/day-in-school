@@ -151,10 +151,11 @@ data class FieldChange(
  */
 class FieldDiff(changes: List<FieldChange>) {
     /**
-     * 构造时复制输入 list，并用不可修改视图保存。调用方即使保留 MutableList 别名，
-     * 也不能在校验或事件编码之后追加、替换差异项。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+     * 构造时逐元素复制输入 list，并用不可修改视图保存。调用方即使保留 MutableList 别名，
+     * 也不能在校验或事件编码之后追加、替换差异项；自定义 Collection 即使让 toArray() 返回自有
+     * backing array，也无法在构造后改写快照。手动实现数据类语义是为了让 copy 也经过同一快照边界。
      */
-    val changes: List<FieldChange> = java.util.Collections.unmodifiableList(ArrayList(changes))
+    val changes: List<FieldChange> = snapshotElementCopy(changes)
 
     init {
         validateInvariant()
@@ -197,6 +198,22 @@ enum class Actor {
     PLUGIN,
     RESTORE,
     INBOX
+}
+
+/**
+ * 逐元素复制到新建 ArrayList，再包不可修改视图。
+ *
+ * 不能使用 ArrayList(Collection) 构造复制：其内部直接采用 collection.toArray() 返回的数组，
+ * 当调用方传入自定义 Collection 且 toArray() 违反约定返回自有 backing array 时，快照与调用方
+ * 共享同一数组，构造后仍可被改写；该行为随 JDK/Android 版本不同而不可依赖。逐元素 add 只依赖
+ * 迭代器语义，backing array 始终由这里新建的 ArrayList 自己持有，调用方无法取得引用。
+ */
+private fun <T> snapshotElementCopy(source: List<T>): List<T> {
+    val copy = ArrayList<T>(source.size)
+    for (element in source) {
+        copy.add(element)
+    }
+    return java.util.Collections.unmodifiableList(copy)
 }
 
 private fun requireStableReferenceId(value: String, label: String) {

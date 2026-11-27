@@ -271,6 +271,33 @@ class KernelRefsTest {
         )
     }
 
+    @Test
+    fun `字段差异快照不受 hostile backing array 构造后改写`() {
+        val original = FieldChange(
+            path = "/room",
+            kind = FieldChangeKind.MODIFIED,
+            before = JsonValue.Str("W111"),
+            after = JsonValue.Str("W112")
+        )
+        val hostile = HostileBackingArrayList(listOf(original))
+
+        val diff = FieldDiff(hostile)
+
+        hostile.overwrite(
+            0,
+            FieldChange(
+                path = "/injectedAfterConstruction",
+                kind = FieldChangeKind.ADDED,
+                before = null,
+                after = JsonValue.Str("must-not-enter-diff")
+            )
+        )
+
+        assertEquals(1, diff.changes.size)
+        assertEquals("/room", diff.changes.single().path)
+        assertEquals(JsonValue.Str("W112"), diff.changes.single().after)
+    }
+
     private fun provenance(): DataProvenance = DataProvenance(
         providerId = "official-academic",
         schoolId = scope.schoolId,
@@ -280,4 +307,33 @@ class KernelRefsTest {
         completeness = SnapshotCompleteness.COMPLETE,
         trust = VerificationLevel.MOCK_TESTED
     )
+}
+
+/**
+ * toArray() 违反约定返回自有 backing array 的自定义 Collection 探针。
+ *
+ * 主流 JDK/Android 运行时的 ArrayList(Collection) 构造直接采用该数组而不复制，
+ * 因此若快照边界退回使用 ArrayList(Collection)，构造后 overwrite 即可改写快照；
+ * 逐元素复制的快照边界不消费 toArray() 结果，与运行时版本实现细节无关。
+ */
+private class HostileBackingArrayList<T>(elements: List<T>) : AbstractList<T>() {
+    private val backing: Array<Any?> = arrayOfNulls(elements.size)
+
+    init {
+        elements.forEachIndexed { index, element -> backing[index] = element }
+    }
+
+    override val size: Int
+        get() = backing.size
+
+    override fun get(index: Int): T {
+        @Suppress("UNCHECKED_CAST")
+        return backing[index] as T
+    }
+
+    override fun toArray(): Array<Any?> = backing
+
+    fun overwrite(index: Int, value: T) {
+        backing[index] = value
+    }
 }

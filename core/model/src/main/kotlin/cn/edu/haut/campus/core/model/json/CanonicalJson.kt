@@ -28,11 +28,12 @@ sealed interface JsonValue {
     }
 
     /**
-     * JSON array 值类型。构造时复制输入 list，并用不可修改视图保存，避免调用方保留的
-     * MutableList 别名在校验或编码后改变值内容。手动实现数据类语义是为了让 copy 也经过同一快照边界。
+     * JSON array 值类型。构造时逐元素复制输入 list，并用不可修改视图保存，避免调用方保留的
+     * MutableList 别名在校验或编码后改变值内容；自定义 Collection 即使让 toArray() 返回自有
+     * backing array，也无法在构造后改写快照。手动实现数据类语义是为了让 copy 也经过同一快照边界。
      */
     class Arr(items: List<JsonValue>) : JsonValue {
-        val items: List<JsonValue> = java.util.Collections.unmodifiableList(ArrayList(items))
+        val items: List<JsonValue> = snapshotElementCopy(items)
 
         operator fun component1(): List<JsonValue> = items
 
@@ -59,6 +60,22 @@ sealed interface JsonValue {
     fun obj(key: String): JsonValue? = (this as? Obj)?.fields?.get(key)
     fun str(key: String): String? = obj(key)?.stringOrNull()
     fun arr(key: String): List<JsonValue>? = obj(key)?.asArrOrNull?.items
+}
+
+/**
+ * 逐元素复制到新建 ArrayList，再包不可修改视图。
+ *
+ * 不能使用 ArrayList(Collection) 构造复制：其内部直接采用 collection.toArray() 返回的数组，
+ * 当调用方传入自定义 Collection 且 toArray() 违反约定返回自有 backing array 时，快照与调用方
+ * 共享同一数组，构造后仍可被改写；该行为随 JDK/Android 版本不同而不可依赖。逐元素 add 只依赖
+ * 迭代器语义，backing array 始终由这里新建的 ArrayList 自己持有，调用方无法取得引用。
+ */
+private fun <T> snapshotElementCopy(source: List<T>): List<T> {
+    val copy = ArrayList<T>(source.size)
+    for (element in source) {
+        copy.add(element)
+    }
+    return java.util.Collections.unmodifiableList(copy)
 }
 
 class JsonParseException(message: String, val offset: Int = -1) : IllegalArgumentException(message)
