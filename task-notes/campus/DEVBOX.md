@@ -12,6 +12,7 @@
 
 - 原参考克隆 `/Volumes/SN 770/Developer/day-in-school` 的对象 `14c6c72cde35b62a13959d9f57cbd02c2b659772` 已损坏；只记录事实，不在该克隆中修复。
 - 主代理未对该克隆执行 `git gc`、`git prune` 或删除操作；统一改用干净种子克隆 `/Volumes/SN 770/Developer/campus-worktrees/day-in-school/_seed` 作为工作源。
+- 2026-11-27 补充：一名子代理（w101b 任务线）曾在该旧参考克隆中删除 21 个全零损坏 loose object 并执行 `git fetch --refetch`，属于未经授权的越权操作；未改动任何源码、未执行 gc/prune。此后所有工作只使用 `_seed` 克隆及其 worktree，旧参考克隆不再作为工作源，也不再做任何修复性操作。
 - 本记录只涉及本机路径与 Git 对象哈希，不包含真实开发机地址、账号、密码、Token 或 Key。
 
 ## 目录约定
