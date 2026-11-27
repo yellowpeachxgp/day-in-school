@@ -31,8 +31,6 @@ android {
         unitTests.all {
             it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
             it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
-            // Timetable 11 状态网格截图在同一 test worker 内连续渲染；512m 默认堆在 devbox 录制时无法写完 XML。
-            it.maxHeapSize = "1g"
         }
     }
 }
