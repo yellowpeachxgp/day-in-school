@@ -119,10 +119,10 @@ class CampusRepository internal constructor(
         accountProfile = accountProfile,
         scheduleOrPolicyChangedNotifier = { reason -> notifyScheduleOrPolicyChanged(reason) }
     )
-    private val examRepository = ExamRepository(repositoryEnvironment)
-    private val gradesRepository = GradesRepository(repositoryEnvironment)
-    private val termRepository = TermRepository(repositoryEnvironment, examRepository)
-    private val timetableRepository = TimetableRepository(repositoryEnvironment, termRepository)
+    val examRepository = ExamRepository(repositoryEnvironment)
+    val gradesRepository = GradesRepository(repositoryEnvironment)
+    val termRepository = TermRepository(repositoryEnvironment, examRepository)
+    val timetableRepository = TimetableRepository(repositoryEnvironment, termRepository)
     private val momentsRuntimePort = object : MomentsRuntimePort {
         override val preferencesFlow: Flow<AppPreferencesState>
             get() = this@CampusRepository.preferencesFlow
@@ -166,7 +166,7 @@ class CampusRepository internal constructor(
         override suspend fun currentCloudUserIdInBarrier(): String? =
             this@CampusRepository.cloudAndParcelDao.getCloudIdentityBindingSnapshot()?.cloudUserId
     }
-    private val campusServicesRepository = CampusServicesRepository(
+    val campusServicesRepository = CampusServicesRepository(
         environment = repositoryEnvironment,
         appContext = appContext,
         utilityAccountStore = utilityAccountStore,
