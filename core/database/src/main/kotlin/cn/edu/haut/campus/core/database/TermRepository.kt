@@ -5,7 +5,9 @@ import androidx.room.withTransaction
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.model.AcademicTermResolver
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CalendarOverride
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.Term
 import kotlinx.coroutines.flow.Flow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
+import java.util.UUID
 
 /**
  * 学期、当前学期、开学日期、节次时间、校历调休/停课、学期 rollover 与初始校历种子。
@@ -79,15 +82,29 @@ class TermRepository internal constructor(
             return
         }
         if (prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] != true) {
-            database.withTransaction {
-                if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] != true) {
-                    dao.clearStudentProfile()
-                    dao.clearCourses()
-                    dao.clearRules()
-                    dao.clearOccurrenceOverrides()
-                    dao.clearGradeAttempts()
+            environment.academicEntityWritePort.writeMany(
+                refsProvider = {
+                    if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] == true) {
+                        emptyList()
+                    } else {
+                        dao.getCoursesSnapshot().map { environment.academicRef(EntityType.COURSE, it.id) } +
+                            dao.getGradeAttemptsSnapshot().map { environment.academicRef(EntityType.GRADE_ATTEMPT, it.id) }
+                    }
+                },
+                actor = Actor.SYNC,
+                actorDetail = "legacy-initial-academic-clean",
+                writeGroupId = "legacy-initial-academic-clean:" + UUID.randomUUID().toString()
+            ) {
+                database.withTransaction {
+                    if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] != true) {
+                        dao.clearStudentProfile()
+                        dao.clearCourses()
+                        dao.clearRules()
+                        dao.clearOccurrenceOverrides()
+                        dao.clearGradeAttempts()
+                    }
+                    seedBaseCampusDictionaryInternal()
                 }
-                seedBaseCampusDictionaryInternal()
             }
             preferences.edit {
                 it[CampusRepositoryPrefKeys.SEEDED] = true
