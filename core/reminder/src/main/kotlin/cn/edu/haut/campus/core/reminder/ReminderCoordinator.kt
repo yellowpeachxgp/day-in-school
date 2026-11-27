@@ -54,6 +54,7 @@ class ReminderCoordinator internal constructor(
     }
     private val coordinatorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val reconcileMutex = Mutex()
+    private val liveCourseTicker = LiveCourseTicker(alarmScheduler)
     private val timeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
 
     fun initialize() {
@@ -232,15 +233,25 @@ class ReminderCoordinator internal constructor(
     suspend fun onAlarmFired(
         taskId: String,
         expectedGeneration: Int,
-        now: Instant = Instant.now()
+        now: Instant = Instant.now(),
+        expectedEventKey: String? = null,
+        expectedEventRevision: String? = null,
+        expectedPolicyRevision: String? = null
     ) {
-        if (taskId == LIVE_COURSE_BOUNDARY_TASK_ID) {
+        if (taskId == LIVE_COURSE_BOUNDARY_TASK_ID || taskId == LiveCourseTicker.TASK_ID) {
             runCatching {
                 val scheduleSnapshot = repository.getDirectScheduleDataSnapshot()
                 val exams = repository.getExamSchedulesSnapshot()
                 val globalConfig = repository.getReminderConfigSnapshot()
                 val currentEvents = buildCurrentWindowEvents(now, scheduleSnapshot, exams)
-                syncLiveCourseNotification(now, currentEvents, globalConfig)
+                syncLiveCourseNotification(
+                    now = now,
+                    currentEvents = currentEvents,
+                    globalConfig = globalConfig,
+                    expectedEventKey = expectedEventKey,
+                    expectedEventRevision = expectedEventRevision,
+                    expectedPolicyRevision = expectedPolicyRevision
+                )
             }
             return
         }
@@ -696,59 +707,99 @@ class ReminderCoordinator internal constructor(
     }
 
     /**
-     * 同步刷新「课程实时实况通知」：
-     * - 若当前有正在进行的课程（startAt <= now < endAt）或即将开始的课程（距离 startAt <= max(45min, classLeadMinutes)），
-     *   调用原生 Notification Chronometer 发布/更新实时倒计时实况卡片，并在边界点（startAt / endAt）注册精确切换闹钟。
+     * 同步刷新「课程实时实况通知」。
+     *
+     * 每次唤醒都重新读取调用方传入的最新课程快照；extras 中的 eventKey/revision/frequency 仅用于
+     * 识别并丢弃过期节拍，绝不作为课程内容信任来源。进度快照只有在下一次节拍注册成功后才传给通知，
+     * 调度失败时通知只保留系统 Chronometer 倒计时。
      */
     private fun syncLiveCourseNotification(
         now: Instant,
         currentEvents: List<ReminderEvent>,
-        globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig
+        globalConfig: cn.edu.haut.campus.core.model.ReminderGlobalConfig,
+        expectedEventKey: String? = null,
+        expectedEventRevision: String? = null,
+        expectedPolicyRevision: String? = null
     ) {
         if (!globalConfig.enabled) {
-            ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
-            alarmScheduler.cancel(LIVE_COURSE_BOUNDARY_TASK_ID, 1)
+            cancelLiveCourseAlarmsAndNotification()
             return
         }
         val leadWindowMinutes = maxOf(45L, globalConfig.classLeadMinutes.toLong())
+        val leadWindow = Duration.ofMinutes(leadWindowMinutes)
         val activeOrUpcoming = currentEvents
             .filter { !it.isCancelled }
             .sortedBy { it.startAt }
-            .firstOrNull { event ->
+            .mapNotNull { event ->
                 val endAt = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
-                val inClass = !now.isBefore(event.startAt) && now.isBefore(endAt)
-                val preClass = now.isBefore(event.startAt) &&
-                    Duration.between(now, event.startAt).toMinutes() <= leadWindowMinutes
-                inClass || preClass
+                LiveProgressModel.compute(
+                    now = now,
+                    startAt = event.startAt,
+                    endAt = endAt,
+                    leadWindow = leadWindow
+                )?.let { progress -> event to progress }
             }
+            .firstOrNull()
 
         if (activeOrUpcoming == null) {
-            ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
-            alarmScheduler.cancel(LIVE_COURSE_BOUNDARY_TASK_ID, 1)
+            cancelLiveCourseAlarmsAndNotification()
             return
         }
 
+        val (event, progressSnapshot) = activeOrUpcoming
+        if (expectedEventKey != null) {
+            val frequencyMatches = if (expectedPolicyRevision?.startsWith("live-progress-frequency-") == true) {
+                expectedPolicyRevision == LiveCourseTicker.policyRevisionFor(globalConfig.liveProgressRefreshMinutes)
+            } else {
+                true
+            }
+            val bindingMatches = event.eventKey == expectedEventKey &&
+                (expectedEventRevision == null || event.revision == expectedEventRevision) &&
+                frequencyMatches
+            if (!bindingMatches) {
+                // 旧 revision 或旧频率的闹钟已经触发但不得续链；新 reconciliation 会以最新令牌重建节拍。
+                return
+            }
+        }
+
         val nextCourse = currentEvents
-            .filter { !it.isCancelled && it.startAt.isAfter(activeOrUpcoming.startAt) }
+            .filter { !it.isCancelled && it.startAt.isAfter(event.startAt) }
             .minByOrNull { it.startAt }
             ?.let { nxt ->
                 val t = nxt.startAt.atZone(HAUT_ZONE_ID).toLocalTime()
                 val rm = nxt.locationText?.takeIf { it.isNotBlank() } ?: "教室待定"
-                "${nxt.displayTitle} (${"%02d:%02d".format(t.hour, t.minute)} · $rm)"
+                nxt.displayTitle + " (" + "%02d:%02d".format(t.hour, t.minute) + " · " + rm + ")"
             }
 
-        ReminderNotificationFactory.postOrUpdateLiveCourseNotification(
+        // stable synthetic id 使 revision/frequency 变化后的重建天然覆盖旧 PendingIntent；
+        // 每次同步仍显式取消一次，保证关闭、结束、切身份和频率变化路径没有第二条链。
+        liveCourseTicker.cancel()
+        val tickOutcome = liveCourseTicker.scheduleNext(
+            event = event,
+            now = now,
+            requestedFrequencyMinutes = globalConfig.liveProgressRefreshMinutes
+        )
+        val progressForNotification = if (tickOutcome is ScheduleOutcome.Scheduled) {
+            progressSnapshot
+        } else {
+            null
+        }
+        val posted = ReminderNotificationFactory.postOrUpdateLiveCourseNotification(
             context = appContext,
             accountScope = accountScope,
-            event = activeOrUpcoming,
+            event = event,
             nextEventTitleAndRoom = nextCourse,
             lockscreenPrivate = globalConfig.lockscreenPrivate,
-            now = now
+            now = now,
+            progressSnapshot = progressForNotification
         )
+        if (!posted) {
+            liveCourseTicker.cancel()
+        }
 
-        val endInstant = activeOrUpcoming.endAt ?: activeOrUpcoming.startAt.plus(Duration.ofMinutes(95))
-        val nextBoundaryInstant = if (now.isBefore(activeOrUpcoming.startAt)) {
-            activeOrUpcoming.startAt
+        val endInstant = event.endAt ?: event.startAt.plus(Duration.ofMinutes(95))
+        val nextBoundaryInstant = if (now.isBefore(event.startAt)) {
+            event.startAt
         } else {
             endInstant
         }
@@ -756,12 +807,12 @@ class ReminderCoordinator internal constructor(
             val boundaryTask = ReminderTaskDomain(
                 id = LIVE_COURSE_BOUNDARY_TASK_ID,
                 taskKey = LIVE_COURSE_BOUNDARY_TASK_ID,
-                eventKey = activeOrUpcoming.eventKey,
-                eventType = activeOrUpcoming.type,
+                eventKey = event.eventKey,
+                eventType = event.type,
                 reminderKind = ReminderKind.CLASS_BEFORE,
-                eventRevision = activeOrUpcoming.revision,
-                policyRevision = "v1",
-                eventStartAtEpochMs = activeOrUpcoming.startAt.toEpochMilli(),
+                eventRevision = event.revision,
+                policyRevision = "live-course-boundary-v1",
+                eventStartAtEpochMs = event.startAt.toEpochMilli(),
                 originalScheduledAtEpochMs = nextBoundaryInstant.toEpochMilli(),
                 scheduledAtEpochMs = nextBoundaryInstant.toEpochMilli(),
                 status = ReminderTaskStatus.PENDING,
@@ -774,6 +825,21 @@ class ReminderCoordinator internal constructor(
             )
             alarmScheduler.schedule(boundaryTask, preferExact = globalConfig.preciseReminderPreferred)
         }
+    }
+
+    private fun cancelLiveCourseAlarmsAndNotification() {
+        cancelLiveCourseAlarms()
+        ReminderNotificationFactory.cancelLiveCourseNotification(appContext)
+    }
+
+    private fun cancelLiveCourseAlarms() {
+        alarmScheduler.cancel(LIVE_COURSE_BOUNDARY_TASK_ID, 1)
+        liveCourseTicker.cancel()
+    }
+
+    /** 用户从通知动作关闭当前实况卡片：同时停止边界与进度节拍链。 */
+    fun dismissLiveCourseNotification() {
+        cancelLiveCourseAlarmsAndNotification()
     }
 
     /**
@@ -900,6 +966,7 @@ class ReminderCoordinator internal constructor(
             alarmScheduler.cancel(task.id, task.generation)
             ReminderNotificationFactory.cancelNotificationForTask(appContext, task.id)
         }
+        cancelLiveCourseAlarms()
         ReminderNotificationFactory.cancelAllNotifications(appContext)
         reminderDao.cancelAllActiveTasks(
             reason = "WIPED_OR_CANCELLED_ALL",
@@ -951,6 +1018,7 @@ class ReminderCoordinator internal constructor(
             repository.reminderDao().getAllActiveTasksSnapshot().forEach { task ->
                 alarmScheduler.cancel(task.id, task.generation)
             }
+            cancelLiveCourseAlarms()
             ReminderNotificationFactory.cancelAllNotifications(appContext)
         }
     }

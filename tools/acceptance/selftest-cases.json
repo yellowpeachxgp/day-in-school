@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "cis-acceptance-selftest/v1",
+  "positive": [
+    "command-devbox",
+    "github-ci-run",
+    "manual-device-note",
+    "source-audit-note",
+    "screenshot-or-recording"
+  ],
+  "negative": [
+    "type-mismatch",
+    "unix-home-path-note",
+    "mac-users-path-note",
+    "absolute-command",
+    "absolute-log-path",
+    "school-verified-fail-closed",
+    "artifact-query",
+    "runtime-sensitive"
+  ]
+}
