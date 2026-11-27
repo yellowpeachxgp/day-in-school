@@ -55,7 +55,7 @@ class DomainEventCodecTest {
         val second = registry.encode(event)
 
         assertEquals(
-            "{"capability":"TIMETABLE_READ","since":"2026-01-02T02:00:00Z"}",
+            """{"capability":"TIMETABLE_READ","since":"2026-01-02T02:00:00Z"}""",
             first.payload.text
         )
         assertEquals(first.payload.text, second.payload.text)
@@ -86,7 +86,7 @@ class DomainEventCodecTest {
         val original = registry.encode(DomainEventTestFixtures.allEvents().filterIsInstance<DomainEvent.DataStale>().single())
         val tampered = original.copy(
             payload = CanonicalJson.of(
-                "{"capability":"TIMETABLE_READ","since":"2026-01-02T02:00:00Z","extra":true}"
+                """{"capability":"TIMETABLE_READ","since":"2026-01-02T02:00:00Z","extra":true}"""
             )
         )
 
@@ -100,7 +100,7 @@ class DomainEventCodecTest {
         val original = registry.encode(DomainEventTestFixtures.allEvents().filterIsInstance<DomainEvent.DataStale>().single())
         val tampered = original.copy(
             payload = CanonicalJson.of(
-                "{"capability":"NOT_A_CAPABILITY","since":"2026-01-02T02:00:00Z"}"
+                """{"capability":"NOT_A_CAPABILITY","since":"2026-01-02T02:00:00Z"}"""
             )
         )
 
