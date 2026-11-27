@@ -50,6 +50,12 @@ interface CampusDao {
     @Query("DELETE FROM period_times WHERE schemeId IS NOT NULL")
     suspend fun clearSchemePeriodTimes(): Int
 
+    @Query("SELECT * FROM period_times WHERE schemeId IS NULL AND userModified = 1")
+    suspend fun getUserModifiedBasePeriodTimesSnapshot(): List<PeriodTimeEntity>
+
+    @Query("DELETE FROM period_times WHERE schemeId IS NULL AND userModified = 1")
+    suspend fun clearUserModifiedBasePeriodTimes(): Int
+
     @Query("SELECT * FROM period_time_schemes ORDER BY termId ASC, startDateIso ASC, id ASC")
     fun observePeriodTimeSchemes(): Flow<List<PeriodTimeSchemeEntity>>
 

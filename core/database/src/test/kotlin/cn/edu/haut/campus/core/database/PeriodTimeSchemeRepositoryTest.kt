@@ -148,7 +148,11 @@ class PeriodTimeSchemeRepositoryTest {
     }
 
     @Test
-    fun wipeAllPersonalDataClearsSchemeMetadataAndSchemeRows() = runBlocking {
+    fun wipeAllPersonalDataClearsSchemesAndRestoresReferencePeriods() = runBlocking {
+        repo.termRepository.saveBasePeriodTimes(
+            timeTableId = term.timeTableId,
+            periods = listOf(draftPeriod(1, "07:50", "08:35"))
+        )
         repo.termRepository.savePeriodTimeScheme(
             term = term,
             name = "擦除测试",
@@ -161,5 +165,11 @@ class PeriodTimeSchemeRepositoryTest {
         repo.wipeAllPersonalData()
         assertEquals(0, dao.countPeriodTimeSchemes())
         assertEquals(0, dao.countSchemePeriodTimes())
+        val restored = dao.getPeriodTimesSnapshot().filter {
+            it.timeTableId == term.timeTableId && it.schemeId == null
+        }
+        assertEquals(12, restored.size)
+        assertTrue(restored.all { !it.userModified })
+        assertEquals("08:30", restored.first { it.periodNo == 1 }.startLocalTimeIso)
     }
 }

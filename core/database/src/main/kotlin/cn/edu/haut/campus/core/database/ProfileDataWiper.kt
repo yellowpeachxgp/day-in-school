@@ -197,10 +197,21 @@ class ProfileDataWiper internal constructor(
                 dao.clearUnscheduledCourses()
                 dao.clearImportAudits()
                 dao.clearWidgetConfigs()
-                // W0-04：作息方案与用户方案节次行是按 Profile 保存的个人排课数据；
-                // 默认参考 period_times（schemeId=NULL）仍按既有 reference 语义保留。
+                // W0-04：作息方案、方案节次行和显式用户修改的默认作息都是个人排课数据。
+                // 对可识别的公开/离线参考表，在同一事务内恢复为干净的 reference 模板；
+                // 自定义 timeTableId 不伪造模板，用户后续重新导入/配置。
+                val userModifiedPeriodTables = dao.getUserModifiedBasePeriodTimesSnapshot()
+                    .map { it.timeTableId }
+                    .toSet()
                 dao.clearPeriodTimeSchemes()
                 dao.clearSchemePeriodTimes()
+                dao.clearUserModifiedBasePeriodTimes()
+                for (timeTableId in userModifiedPeriodTables) {
+                    val referenceRows = ReferencePeriodTimes.forTimeTableId(timeTableId)
+                    if (referenceRows.isNotEmpty()) {
+                        dao.upsertPeriodTimes(referenceRows.map { it.toEntity() })
+                    }
+                }
                 reminderDao.clearAllTasks()
                 reminderDao.clearAllEventPrefs()
                 utilityAndFocusDao.clearAllDailySamples()

@@ -345,15 +345,7 @@ class TermRepository internal constructor(
             id = "$year-${year + 1}-$termNo", academicYear = "$year-${year + 1}", termNumber = termNo,
             startDate = monday, weekCount = 20, timeTableId = timetableId, current = true
         ).toEntity()))
-        val starts = listOf(
-            "08:00", "08:55", "10:00", "10:55",
-            "14:00", "14:55", "16:00", "16:55",
-            "19:00", "19:55", "20:50", "21:45"
-        )
-        dao.upsertPeriodTimes(starts.mapIndexed { index, raw ->
-            val start = LocalTime.parse(raw)
-            PeriodTime("manual_period_${index + 1}", timetableId, index + 1, start, start.plusMinutes(45)).toEntity()
-        })
+        dao.upsertPeriodTimes(ReferencePeriodTimes.forTimeTableId(timetableId).map { it.toEntity() })
     }
 
 
