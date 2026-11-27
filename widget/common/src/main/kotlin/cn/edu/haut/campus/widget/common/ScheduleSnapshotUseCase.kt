@@ -7,8 +7,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
+import cn.edu.haut.campus.core.database.DirectScheduleData
 import android.widget.RemoteViews
 import android.net.Uri
 import cn.edu.haut.campus.core.domain.ScheduleEngine
@@ -95,6 +95,30 @@ object ScheduleSnapshotUseCase {
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
         val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF053968.toInt())
         val data = repository.getDirectScheduleDataSnapshot()
+        return composeWidgetSnapshot(
+            data = data,
+            config = config,
+            themeAccentArgb = themeAccentArgb,
+            profileId = active.profileId,
+            generation = active.generation,
+            now = now
+        )
+    }
+
+    /**
+     * 课表链纯组装接缝（测试可注入，绝不另起第二口径）：直连课表数据快照 →
+     * 日时间轴 + 当前教学周整周排课 + Chronometer 倒计时基准 + 导入标记。
+     * [elapsedRealtime] 为 SystemClock.elapsedRealtime() 的注入点，默认实钟。
+     */
+    internal fun composeWidgetSnapshot(
+        data: DirectScheduleData,
+        config: WidgetInstanceConfig,
+        themeAccentArgb: Int,
+        profileId: String,
+        generation: Long,
+        now: ZonedDateTime,
+        elapsedRealtime: Long = SystemClock.elapsedRealtime()
+    ): WidgetScheduleSnapshot {
         val today = now.toLocalDate()
 
         val daySnapshot = ScheduleEngine.buildDayTimelineSnapshot(
@@ -137,7 +161,7 @@ object ScheduleSnapshotUseCase {
             if (targetTime != null) {
                 val deltaMillis = Duration.between(now.toLocalTime(), targetTime).toMillis()
                 if (deltaMillis > 0) {
-                    SystemClock.elapsedRealtime() + deltaMillis
+                    elapsedRealtime + deltaMillis
                 } else null
             } else null
         } else null
@@ -150,8 +174,8 @@ object ScheduleSnapshotUseCase {
         }
 
         return WidgetScheduleSnapshot(
-            profileId = active.profileId,
-            generation = active.generation,
+            profileId = profileId,
+            generation = generation,
             daySnapshot = daySnapshot,
             weekOccurrences = weekOccurrences,
             config = config,
