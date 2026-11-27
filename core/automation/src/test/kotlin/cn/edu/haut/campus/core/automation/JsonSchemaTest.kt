@@ -22,9 +22,9 @@ class JsonSchemaTest {
             }""".trimIndent()
         )
 
-        assertEquals(emptyList<JsonSchemaViolation>(), schema.validate(Json.parse("{"count":1,"mode":"a"}")))
+        assertEquals(emptyList<JsonSchemaViolation>(), schema.validate(Json.parse("""{"count":1,"mode":"a"}""")))
 
-        val violations = schema.validate(Json.parse("{"mode":"c","extra":true}"))
+        val violations = schema.validate(Json.parse("""{"mode":"c","extra":true}"""))
         assertTrue(violations.any { it.rule == "required" })
         assertTrue(violations.any { it.rule == "enum" })
         assertTrue(violations.any { it.rule == "additionalProperties" })
@@ -36,7 +36,7 @@ class JsonSchemaTest {
             """{"type":"object","properties":{"count":{"type":"integer","enum":[1]}},"required":["count"]}"""
         )
 
-        assertEquals(emptyList<JsonSchemaViolation>(), schema.validate(Json.parse("{"count":1.0}")))
+        assertEquals(emptyList<JsonSchemaViolation>(), schema.validate(Json.parse("""{"count":1.0}""")))
     }
 
     @Test
@@ -57,7 +57,7 @@ class JsonSchemaTest {
     @Test
     fun unsupportedEvaluationKeywordFailsBeforeRegistration() {
         assertThrows(IllegalArgumentException::class.java) {
-            JsonSchema.parse("{"type":"object","patternProperties":{"^x":{}}}")
+            JsonSchema.parse("""{"type":"object","patternProperties":{"^x":{}}}""")
         }
     }
 

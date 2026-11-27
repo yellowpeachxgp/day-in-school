@@ -129,7 +129,7 @@ class DefaultAutomationEngineTest {
     @Test
     fun invalidConditionConfigFailsClosedAsInvalidRule() = runTest {
         val requiredStringSchema = JsonSchema.objectSchema(
-            properties = mapOf("mode" to JsonSchema.parse("{"type":"string"}").document),
+            properties = mapOf("mode" to JsonSchema.parse("""{"type":"string"}""").document),
             required = setOf("mode")
         )
         val condition = AutomationTestFixtures.RecordingConditionEvaluator(configSchema = requiredStringSchema)
