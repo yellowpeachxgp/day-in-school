@@ -261,3 +261,16 @@
 - [ ] `#45`、`#9` 不得表述为阶段 S 已实现；只能说 reserved 接口和默认关闭。
 - [ ] `#43` 只保留 I43 §6 草稿；用户确认前不回复、不关闭，且不承诺执行插件代码。
 - [ ] 不在 GitHub 上提及内部开发机、任务板、代理、门禁或任何未公开流程。
+
+## 6. 工具链跟踪：feature:map lint「MultipleAwaitPointerEventScopes」抑制复评
+
+> 性质：内部跟踪项，不是 GitHub issue 回复草稿；不执行任何 GitHub 操作。裁决依据 AUTO-031。
+
+- **现状**：`feature/map/build.gradle.kts` 仅对 `MultipleAwaitPointerEventScopes` 一项检查做模块级抑制，注释内已写明根因与证据。
+- **根因**：lint 31.8.2（AGP 8.8.2 内置）在并发 lint 分析高峰加载 compose ui 1.7.8 lint.jar 中该 detector 的匿名内部类时偶发 `NoClassDefFoundError`；属 lint/compose 工具链竞态，非仓库代码缺陷（同 SHA 可红可绿、闲时 11 次构建零复现、版本齐全性已排除）。
+- **影响面**：该检查为 compose 手势风格检查；`OutdoorMapCanvas.kt` 每个 `pointerInput` 块均只含单个 `awaitPointerEventScope`，用法合规，抑制无实际覆盖损失。其余 compose lint 检查不受影响。
+- **复评要求（必须执行）**：
+  1. 每次 AGP 或 compose BOM 升级后，先在分支移除该 `disable` 并连跑 2 次 `android-full` 门禁；
+  2. 若均绿则保留移除并关闭本跟踪项；若复现红则恢复抑制并记录升级后版本与证据；
+  3. 复评结果记录回本节。
+- **复评记录**：（暂无）
