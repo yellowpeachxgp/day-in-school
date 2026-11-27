@@ -23,6 +23,12 @@
 | D15 | **契约的唯一权威是 `cloud-in-school/contracts/`** | Android 仓库的 `contracts/` 是同步副本。目前两份已经漂移（`openapi/cloud-v1.yaml`、`endpoints/endpoint-inventory.yaml` 不同），由 INF-02 收敛，并在两仓 CI 中加一致性检查。契约同一时间只由契约线（CT 系列）修改 |
 | D16 | **开发机地址和账号不进公开仓库** | 仓库里的 `DEVBOX.md` 和脚本一律用 `<devbox>` 或环境变量 `CIS_DEVBOX`；真实地址只出现在本机启动提示词里。任何密码、Token、Key 都不写进仓库、PR、Issue、任务板、日志和子代理汇总 |
 
+## 用户指示
+
+| 编号 | 日期 | 结论 | 依据 | 状态 |
+|---|---|---|---|---|
+| USER-2026-11-27-I43 | 2026-11-27 | 用户指示按 issue #43 插件 SDK 核查报告调整 W6 路线：后续相关卡引用 `task-notes/campus/research/I43.md`；扩充 INF-02；新增 W6-HOTFIX 与 W6-00；W6-01 拆成 W6-01a 插件安全底座和 W6-01b 开发者工具；W6-02/W6-05 按报告阶段2与 AC-31…AC-36 调整；SQL 0011 分配给 W6-01a，Room v19 预留；同步验收矩阵与 #43 issue 回复草稿 | 用户高优先级指示与 `task-notes/campus/research/I43.md` | 已记录，待合入 |
+
 ## 自主决策
 
 | 编号 | 日期 | 结论 | 依据 | 状态 |
@@ -42,6 +48,10 @@
 | AUTO-013 | 2026-11-27 | W0-08 因拆分 `app.mjs` 必然改变整文件 hash，授权最小扩大到 `tools/contract-ci/generate-reservation-fixtures.mjs` 与 `tests/fixtures/reservation-*.json`；优先改语义指纹，不得改 `contracts/`；自主决策，待用户复核 | 主代理行为不变证据裁决：纯搬移后整文件 hash 必然变化，语义指纹比文件 hash 更能证明 handler 等价；范围不得再扩大 | 待用户复核 |
 | AUTO-014 | 2026-11-27 | W0-02 可对 `CampusRepository.kt` 做 3 行配置接缝、对 `core/model/src/main/kotlin/cn/edu/haut/campus/core/model/ReminderModels.kt` 做 1 行 `liveProgressRefreshMinutes` 配置字段、对 `core/reminder/build.gradle.kts` 做最小测试依赖改动；不得扩大；自主决策，待用户复核 | 主代理最小接缝裁决：实况进度需要读取刷新频率配置并补测试依赖，三处均为必要最小接缝，但不得演变成 Repository、模型或构建文件宽泛改动 | 待用户复核 |
 | AUTO-015 | 2026-11-27 | INF-00/INF-01 bootstrap 列车中，`contracts` 的两仓预存漂移归 INF-02；scanner 未合入前的 exit3 只适用于 INF-00；INF-01 起 secrets 必须真实通过。workflow 暂不覆盖 `train/**`，以原 PR 托管 CI 作合并记录；自主决策，待用户复核 | 主代理 bootstrap 边界裁决：区分工具未合入的 exit3 与真实扫描通过，避免把 INF-02 契约漂移或 train 分支覆盖缺口记为 INF-00/INF-01 内容失败 | 待用户复核 |
+| AUTO-016 | 2026-11-27 | FIRE 兼容语义采用闭区间 `[fireAt, expiresAt]`：`expiresAt` 是最后可执行毫秒，只有 `expiresAt + 1ms` 起才过期；不扩大到其他调度阶段；自主决策，待用户复核 | 主代理兼容裁决：保持既有 planner、云端和测试对 FIRE 边界的一致语义，避免修边界时引入二次行为变化 | 待用户复核 |
+| AUTO-017 | 2026-11-27 | `file-line-gate` 不把 `contracts/**` 纳入源代码棘轮；契约文件的规模与演进由契约线、contract parity 和专门 CI 治理；自主决策，待用户复核 | 主代理门禁边界裁决：`contracts/**` 包含契约 YAML/JSON 与同步副本，不是应用源代码棘轮对象，避免契约补全文档时被错误拦截 | 待用户复核 |
+| AUTO-018 | 2026-11-27 | 允许 PR#58 为 acceptance 合成 fixture 增加精确 allowlist 条目；仅限合成测试样例的精确值，不放宽真实秘密、生产凭据或通用模式；自主决策，待用户复核 | 主代理最小例外裁决：验收合成 fixture 需要可重复示例，但 scanner 例外必须精确、可审计、可过期 | 待用户复核 |
+| AUTO-019 | 2026-11-27 | W0-05 按 a/b/c/d 分批拆分 `CampusRepository`；每批独立 PR、行为不变、特征测试一致，公开 API 外观先保持兼容；自主决策，待用户复核 | 主代理拆分节奏裁决：巨型 Repository 一次拆分风险过高，分批可降低冲突并让每批可编译、可审阅、可回退 | 待用户复核 |
 
 ## 追加规则
 
