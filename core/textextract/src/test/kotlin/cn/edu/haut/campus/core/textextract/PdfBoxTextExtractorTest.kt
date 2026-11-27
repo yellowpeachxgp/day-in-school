@@ -292,8 +292,8 @@ class PdfBoxTextExtractorTest {
         try {
             val page = PDPage(PDRectangle(612f, 792f))
             page.rotation = rotation
-            configurePage(page)
             document.addPage(page)
+            configurePage(page)
             val contentStream = PDPageContentStream(document, page)
             try {
                 writeContent(contentStream)
