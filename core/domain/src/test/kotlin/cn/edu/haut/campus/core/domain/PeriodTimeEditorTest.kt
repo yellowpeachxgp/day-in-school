@@ -105,6 +105,66 @@ class PeriodTimeEditorTest {
     }
 
     @Test
+    fun validateOccurrenceRules_doubleCustomRulesUseActualClockOverlap() {
+        val overlapping = PeriodTimeEditor.validateOccurrenceRules(
+            listOf(
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 1, 2, setOf(14), "场地A",
+                    customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(12, 0)
+                ),
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 3, 4, setOf(14), "场地B",
+                    customStartTime = LocalTime.of(10, 0), customEndTime = LocalTime.of(11, 0)
+                )
+            )
+        )
+        assertTrue(overlapping.any { it.code == "OVERLAPPING_OCCURRENCE" })
+
+        // 双方都有完整 custom 时以实际时钟为准：节次锚点相交但真实时间不重叠不误伤；
+        // 半开区间端点相接（10:30 结束 / 10:30 开始）不算重叠。
+        val disjointClocks = PeriodTimeEditor.validateOccurrenceRules(
+            listOf(
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 1, 4, setOf(14), "场地A",
+                    customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(10, 30)
+                ),
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 3, 5, setOf(14), "场地B",
+                    customStartTime = LocalTime.of(10, 30), customEndTime = LocalTime.of(12, 0)
+                )
+            )
+        )
+        assertEquals(emptyList<PeriodTimeEditor.ValidationIssue>(), disjointClocks)
+    }
+
+    @Test
+    fun validateOccurrenceRules_mixedCustomAndPeriodOnlyRulesUseConservativeAnchorOverlap() {
+        val anchorOverlap = PeriodTimeEditor.validateOccurrenceRules(
+            listOf(
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 1, 4, setOf(14), "场地A",
+                    customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(9, 0)
+                ),
+                OccurrenceRule(DayOfWeek.MONDAY, 3, 5, setOf(14), "场地B")
+            )
+        )
+        assertTrue(anchorOverlap.any { it.code == "OVERLAPPING_OCCURRENCE" })
+
+        // 保守混合口径：没有双方完整时钟时不跨单位推断，只有锚点相交才拒绝。
+        // 该用例固定此明确语义，防止后续把一方 custom 与另一方节次号做不可靠的直接比较。
+        val disjointAnchors = PeriodTimeEditor.validateOccurrenceRules(
+            listOf(
+                OccurrenceRule(
+                    DayOfWeek.MONDAY, 1, 2, setOf(14), "场地A",
+                    customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(12, 0)
+                ),
+                OccurrenceRule(DayOfWeek.MONDAY, 3, 4, setOf(14), "场地B")
+            )
+        )
+        assertEquals(emptyList<PeriodTimeEditor.ValidationIssue>(), disjointAnchors)
+    }
+
+    @Test
     fun scheduleEngine_usesDatedSchemeOnlyInsideClosedDateRange() {
         val term = Term(
             id = "2026-2027-1", academicYear = "2026-2027", termNumber = 1,

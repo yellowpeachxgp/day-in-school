@@ -114,6 +114,29 @@ object PeriodTimeEditor {
         require(issues.isEmpty()) { issues.joinToString("；") { it.message } }
     }
 
+    /**
+     * 两条实践课规则的时间重叠口径。
+     *
+     * - 双方都带完整 custom 起止时，custom 是更强时间证据，按半开时钟区间
+     *   [start, end) 判真实重叠；此时不再用节次锚点把实际不重叠的时段误判为冲突，
+     *   也不会漏掉「1-2 节 08:00-12:00」与「3-4 节 10:00-11:00」这种跨锚点重叠。
+     * - 混合情况（只有一方有完整 custom）不把单方时钟与另一方节次号直接比较：
+     *   矩阵输入本身不携带逐日期生效的作息表，单方时钟无法可靠映射到对方的节次锚点。
+     *   因此采用保守的共同维度口径——只要节次锚点闭区间相交就拒绝；锚点不相交时，
+     *   不凭单方 custom 推断双方关系。若需要精确比较，应为双方同时填写 custom 起止。
+     */
+    private fun occurrenceTimeOverlaps(rule: OccurrenceRule, other: OccurrenceRule): Boolean {
+        val firstStart = rule.customStartTime
+        val firstEnd = rule.customEndTime
+        val secondStart = other.customStartTime
+        val secondEnd = other.customEndTime
+        return if (firstStart != null && firstEnd != null && secondStart != null && secondEnd != null) {
+            firstStart < secondEnd && secondStart < firstEnd
+        } else {
+            rule.startPeriod <= other.endPeriod && other.startPeriod <= rule.endPeriod
+        }
+    }
+
     /** 校验实践课多日排课矩阵；完全相同的时间段重复提交视为输入错误而非静默去重。 */
     fun validateOccurrenceRules(rules: List<OccurrenceRule>): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
@@ -124,7 +147,7 @@ object PeriodTimeEditor {
         val seen = linkedSetOf<String>()
         for ((index, rule) in rules.withIndex()) {
             for (other in rules.drop(index + 1)) {
-                val overlapsTime = rule.startPeriod <= other.endPeriod && other.startPeriod <= rule.endPeriod
+                val overlapsTime = occurrenceTimeOverlaps(rule, other)
                 if (rule.weekday == other.weekday && overlapsTime && rule.weeks.intersect(other.weeks).isNotEmpty()) {
                     issues += ValidationIssue(
                         "OVERLAPPING_OCCURRENCE",

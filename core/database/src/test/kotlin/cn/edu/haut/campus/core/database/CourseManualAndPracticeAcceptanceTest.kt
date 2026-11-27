@@ -333,6 +333,29 @@ class CourseManualAndPracticeAcceptanceTest {
         assertTrue(dao.getRulesSnapshot().isEmpty())
         assertEquals(1, dao.getUnscheduledCoursesSnapshot().size)
 
+        // 第二审负例回归：双方都有完整 custom 起止时按真实时钟判重叠，
+        // 即使节次锚点 1-2 与 3-4 本身不相交也必须拒绝，且不得发生部分写入。
+        val customOverlapFailure = runCatching {
+            repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+                unscheduled = pending,
+                occurrences = listOf(
+                    OccurrenceRule(
+                        DayOfWeek.MONDAY, 1, 2, setOf(14), "工程中心A",
+                        customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(12, 0)
+                    ),
+                    OccurrenceRule(
+                        DayOfWeek.MONDAY, 3, 4, setOf(14), "工程中心B",
+                        customStartTime = LocalTime.of(10, 0), customEndTime = LocalTime.of(11, 0)
+                    )
+                )
+            )
+        }
+        assertTrue(customOverlapFailure.isFailure)
+        assertTrue(customOverlapFailure.exceptionOrNull()?.message?.contains("时间段重叠") == true)
+        assertTrue(dao.getCoursesSnapshot().isEmpty())
+        assertTrue(dao.getRulesSnapshot().isEmpty())
+        assertEquals(1, dao.getUnscheduledCoursesSnapshot().size)
+
         repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
             unscheduled = pending,
             occurrences = listOf(valid, OccurrenceRule(DayOfWeek.THURSDAY, 5, 8, setOf(15), "工程中心B"))
