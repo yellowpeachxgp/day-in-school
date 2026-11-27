@@ -9,23 +9,27 @@ import org.junit.Test
 import java.io.File
 
 /**
- * W6-00 runtime-only conformance fixtures.
+ * W6 shared contract conformance fixtures.
  *
- * 这些夹具不是 contracts/fixtures/plugins/ 共享契约夹具；CT-01 合并后的
- * 契约面微切片才负责 AC-01…AC-03 的字面契约验收。
+ * contracts/fixtures/plugins/ 是云端与 Android 共同消费的权威夹具树；
+ * 非 contracts 的 W6-00 运行时镜像已迁移，不再作为 AC-02 事实源。
  */
 class ExtensionManifestV2RuntimeConformanceTest {
 
     @Test
-    fun runtime夹具结论与规范错误码稳定() {
-        val files = fixtureDir().listFiles { _, name -> name.endsWith(".json") }
-            ?.sortedBy { it.name }
-            ?: error("runtime fixture directory is empty")
-        assertTrue("expected at least 30 runtime fixtures, found " + files.size, files.size >= 30)
-        assertTrue(files.any { it.name.startsWith("valid-") })
-        assertTrue(files.any { it.name.startsWith("invalid-") })
+    fun 契约夹具结论与规范错误码稳定() {
+        val files = fixtureFiles()
+        assertEquals("expected exactly 58 shared contract fixtures, found " + files.size, 58, files.size)
+        assertTrue(files.any { it.group == "valid" })
+        assertTrue(files.any { it.group == "invalid" })
 
-        files.forEach { file ->
+        files.forEach { fixture ->
+            val file = fixture.file
+            assertEquals(
+                file.name + " must be in the directory matching its name",
+                if (file.name.startsWith("valid-")) "valid" else "invalid",
+                fixture.group
+            )
             val text = file.readText(Charsets.UTF_8)
             if (file.name.startsWith("valid-")) {
                 val parsed = ExtensionManifestV2Codec.parseOrAdapt(text)
@@ -59,7 +63,7 @@ class ExtensionManifestV2RuntimeConformanceTest {
         assertEquals("  Runtime Fixture Card  ", padded.uiSlots[0].title)
 
         val controlWhitespaceName = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-ecma-whitespace-u001e-name.json"))
-        assertEquals("\u001E", controlWhitespaceName.name)
+        assertEquals("", controlWhitespaceName.name)
         val hostBoundary = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-host-api-int32-max.json"))
         assertEquals(Int.MAX_VALUE, hostBoundary.maxHostApi)
         val sizeBoundary = ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-size-bytes-int32-max.json"))
@@ -86,7 +90,7 @@ class ExtensionManifestV2RuntimeConformanceTest {
     }
 
     @Test
-    fun 运行时hostApi2槽位表与六个已实现槽位一致() {
+    fun 运行时hostApi2槽位表与契约权威六个槽位一致() {
         assertEquals(
             setOf(
                 "home.cards",
@@ -98,24 +102,61 @@ class ExtensionManifestV2RuntimeConformanceTest {
             ),
             ExtensionManifestV2Codec.SUPPORTED_UI_SLOTS
         )
+        assertEquals(contractHostApi2Slots().toSet(), ExtensionManifestV2Codec.SUPPORTED_UI_SLOTS)
     }
 
     @Test
-    fun 运行时矩阵资源已随主代码打包且不是contracts副本() {
+    fun 运行时矩阵资源已随主代码打包且与contract矩阵同源对齐() {
         val resource = javaClass.classLoader.getResource("runtime-host-api-matrix.json")
         assertNotNull(resource)
         val text = resource!!.readText(Charsets.UTF_8)
-        assertTrue(text.contains("Runtime-only plugin host API fact source"))
-        assertTrue(text.contains("must not be presented as the CT/INF contract shared fixture source"))
         assertTrue(text.contains("home.cards"))
+        assertTrue(text.contains("campus.services"))
+        assertTrue(text.contains("settings.entries"))
     }
 
     private fun fixtureText(fileName: String): String =
-        File(fixtureDir(), fileName).readText(Charsets.UTF_8)
+        fixtureFiles().firstOrNull { it.file.name == fileName }?.file?.readText(Charsets.UTF_8)
+            ?: error("shared contract fixture is missing: " + fileName)
 
-    private fun fixtureDir(): File {
-        val resource = javaClass.classLoader.getResource("runtime-plugin-manifest-fixtures")
-            ?: error("runtime-plugin-manifest-fixtures test resource is missing")
-        return File(resource.toURI())
+    private data class ContractFixture(val group: String, val file: File)
+
+    private fun fixtureFiles(): List<ContractFixture> {
+        val root = contractFixtureRoot()
+        return listOf("valid", "invalid").flatMap { group ->
+            val directory = File(root, group)
+            directory.listFiles().orEmpty()
+                .filter { it.isFile && it.name.endsWith(".json") }
+                .sortedBy { it.name }
+                .map { ContractFixture(group, it) }
+        }.sortedBy { it.file.name }
+    }
+
+    private fun repoRoot(): File {
+        val configured = System.getProperty("campus.repo.root")
+            ?: error("campus.repo.root test system property is missing")
+        val root = File(configured)
+        require(File(root, "settings.gradle.kts").isFile) {
+            "campus.repo.root does not identify the Android repository: " + root.absolutePath
+        }
+        return root
+    }
+
+    private fun contractFixtureRoot(): File {
+        val root = File(repoRoot(), "contracts/fixtures/plugins")
+        require(root.isDirectory) { "contracts/fixtures/plugins is missing: " + root.absolutePath }
+        return root
+    }
+
+    private fun contractHostApi2Slots(): List<String> {
+        val matrixText = File(repoRoot(), "contracts/compatibility/host-api-matrix.yaml").readText(Charsets.UTF_8)
+        val host2 = matrixText.split("  - host_api: 2
+").getOrNull(1)
+            ?: error("contract host-api matrix is missing host_api 2")
+        val slotSection = host2.split("    supported_ui_slots:
+").getOrNull(1).orEmpty()
+        return slotSection.lines()
+            .filter { it.startsWith("      - ") }
+            .map { it.removePrefix("      - ").trim() }
     }
 }
