@@ -148,6 +148,26 @@ class BuiltinAutomationTemplatesTest {
     }
 
     @Test
+    fun expiredWeatherCacheIsUnknownAndDoesNotTriggerTemplate() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_EARLY_RAIN_UMBRELLA)!!
+        val rule = acceptWeatherAndEnable(template.instantiate(scope))
+        val staleSnapshotBase = mondayMorning.minusSeconds(2 * 3600)
+        val engine = engineAt(
+            at = mondayMorning,
+            timelineService = StaticTimelineService(listOf(timelineEvent(mondayMorning.plusSeconds(3600)))),
+            weatherProvider = StaticWeatherProvider(WeatherProviderResult.Success(weatherSnapshot(staleSnapshotBase)))
+        )
+
+        val run = engine.dryRun(rule, mondayMorning)
+
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        val weather = run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION }
+        assertEquals(Certainty.UNKNOWN, weather.certainty)
+        assertTrue(weather.reason?.contains("过期") == true)
+        assertTrue(run.outcomes.isEmpty())
+    }
+
+    @Test
     fun unavailableWeatherIsUnknownAndDoesNotTriggerTemplate() = runTest {
         val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_EARLY_RAIN_UMBRELLA)!!
         val rule = acceptWeatherAndEnable(template.instantiate(scope))
