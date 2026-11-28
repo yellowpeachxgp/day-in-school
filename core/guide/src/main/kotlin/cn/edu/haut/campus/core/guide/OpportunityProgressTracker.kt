@@ -81,8 +81,9 @@ class OpportunityProgressTracker(
         val now = clock.instant()
         val materials = item.materials.mapIndexed { index, material ->
             val completedAt = snapshot.completedMaterials[index]
-            val expiresAt = if (completedAt != null && material.validDays != null) {
-                completedAt.plus(Duration.ofDays(material.validDays.toLong()))
+            val validDays = material.validDays
+            val expiresAt = if (completedAt != null && validDays != null) {
+                completedAt.plus(Duration.ofDays(validDays.toLong()))
             } else {
                 null
             }
