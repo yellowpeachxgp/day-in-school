@@ -60,7 +60,6 @@ object KnowledgeRuntimeFactory {
             clock = clock
         )
         return VaultKnowledgeRepository(
-            database = database,
             scope = scope,
             blobStore = blobStore,
             searchIndex = searchIndex,
