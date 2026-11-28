@@ -24,7 +24,6 @@ import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.database.automationDatabase
 import cn.edu.haut.campus.core.database.automationEntityWritePort
 import cn.edu.haut.campus.core.database.automationScope
-import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
@@ -41,7 +40,6 @@ import cn.edu.haut.campus.core.vault.RoomSearchIndex
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
@@ -189,33 +187,12 @@ class AutomationRuntime private constructor(
     }
 
     /** 消费一批当前未 ack 事件。任何执行级异常都保持事件未 ack，进程重启/WorkManager retry 后继续。 */
-    suspend fun consumeOutboxOnce(): Int {
-        val pending = outbox.pendingUnacked(CONSUMER_GROUP)
-        if (pending.isEmpty()) return 0
-        val rules = ruleStore.list().filter { it.enabled }
-        val codec = DomainEventCodecRegistry.DEFAULT
-        var consumed = 0
-        for (record in pending) {
-            val event = codec.decode(record.envelope)
-            val instances = rules.mapNotNull { rule ->
-                BuiltinTriggerPlanner.instanceForDomainEvent(rule, event)?.let { rule to it }
-            }
-            var failed = false
-            for ((rule, instance) in instances) {
-                try {
-                    engine.executeTrigger(instance)
-                } catch (error: Throwable) {
-                    if (error is CancellationException || error is Error) throw error
-                    failed = true
-                    break
-                }
-            }
-            if (failed) throw AutomationOutboxConsumptionException(event.eventId)
-            outbox.acknowledge(CONSUMER_GROUP, event.eventId)
-            consumed++
-        }
-        return consumed
-    }
+    suspend fun consumeOutboxOnce(): Int = AutomationOutboxProcessor(
+        outbox = outbox,
+        ruleStore = ruleStore,
+        engine = engine,
+        consumerGroup = CONSUMER_GROUP
+    ).consumeOnce()
 
     private suspend fun planEnabledRules(now: Instant): List<Pair<AutomationRule, PlannedTriggerInstance>> {
         val horizon = Duration.ofHours(36)
