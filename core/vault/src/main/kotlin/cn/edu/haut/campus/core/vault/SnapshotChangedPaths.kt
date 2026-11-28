@@ -13,6 +13,7 @@ import cn.edu.haut.campus.core.model.json.JsonValue
  */
 internal object SnapshotChangedPaths {
     private const val MAX_PATHS_BEFORE_COLLAPSE = 64
+    private const val MAX_PATH_TEXT_CHARS = 4 * 1024
     private val DEPTH_FALLBACKS = listOf(8, 4, 2, 1)
 
     fun of(before: CanonicalJson?, after: CanonicalJson?): List<String> {
@@ -20,12 +21,16 @@ internal object SnapshotChangedPaths {
         val afterValue = after?.let { Json.parse(it.text) }
         DEPTH_FALLBACKS.forEach { maxDepth ->
             val paths = diff(beforeValue, afterValue, maxDepth)
-            if (paths.size <= MAX_PATHS_BEFORE_COLLAPSE) {
+            if (fitsSmallEventBudget(paths)) {
                 return paths.ifEmpty { listOf("/") }
             }
         }
-        return diff(beforeValue, afterValue, maxDepth = 1).ifEmpty { listOf("/") }
+        // 极端自定义快照可能有很多长顶层键；此时只报告根变化，仍不把一个审计事件放大成共享 bus 大 payload。
+        return listOf("/")
     }
+
+    private fun fitsSmallEventBudget(paths: List<String>): Boolean =
+        paths.size <= MAX_PATHS_BEFORE_COLLAPSE && paths.sumOf { it.length } <= MAX_PATH_TEXT_CHARS
 
     private fun diff(before: JsonValue?, after: JsonValue?, maxDepth: Int): List<String> {
         val paths = linkedSetOf<String>()
