@@ -121,7 +121,10 @@ class VaultBlobStoreTest {
         val second = async { runCatching { blobs.put(bytes, "text/plain", scope) } }
         val results = listOf(first.await(), second.await())
 
-        assertEquals(2, results.count { it.isSuccess })
+        val resultDescription = results.map { result ->
+            result.exceptionOrNull()?.let { it.javaClass.name + ":" + it.message } ?: "success"
+        }.toString()
+        assertEquals(resultDescription, 2, results.count { it.isSuccess })
         assertEquals(1, blobs.count())
         val winner = results.mapNotNull { it.getOrNull() }.first()
         assertEquals("text/plain", blobs.get(winner.blobId, scope)?.ref?.mimeType)
