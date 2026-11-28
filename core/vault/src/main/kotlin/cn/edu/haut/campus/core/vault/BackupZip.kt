@@ -8,7 +8,10 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 internal object BackupZip {
-    private val ENTRY_NAME = Regex("(manifest\.json|data\.json|blobs/[0-9a-f]{64})")
+    private val BLOB_ENTRY_NAME = Regex("blobs/[0-9a-f]{64}")
+
+    private fun validEntryName(name: String): Boolean =
+        name == BackupFormatConstants.MANIFEST_ENTRY || name == BackupFormatConstants.DATA_ENTRY || BLOB_ENTRY_NAME.matches(name)
 
     fun create(
         manifestText: String,
@@ -38,7 +41,7 @@ internal object BackupZip {
                     val entry = zip.nextEntry ?: break
                     if (entry.isDirectory) throw BackupCorruptedException("ZIP 不允许目录项")
                     val name = entry.name
-                    if (!ENTRY_NAME.matches(name)) throw BackupCorruptedException("ZIP 包含未登记条目: " + name)
+                    if (!validEntryName(name)) throw BackupCorruptedException("ZIP 包含未登记条目: " + name)
                     if (entries.containsKey(name)) throw BackupCorruptedException("ZIP 条目重复: " + name)
                     val remaining = BackupFormatConstants.MAX_ARCHIVE_BYTES - total
                     val bytes = readEntryLimited(zip, remaining)

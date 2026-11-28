@@ -224,7 +224,7 @@ class VaultBackupService(
         )
     }
 
-    private fun restoreInsideTransaction(
+    private suspend fun restoreInsideTransaction(
         preview: RestorePreview,
         mode: RestoreMode,
         resolutions: Map<BackupRowKey, BackupConflictResolution>
@@ -318,8 +318,10 @@ class VaultBackupService(
         if (prepared.tables.any { it.policy.category == BackupCategory.ACADEMIC }) {
             courseIds += queryTextColumn("courses", "id")
             queryTextPair("course_schedule_rules", "id", "courseId").forEach { (rule, course) ->
-                ruleToCourse[rule] = course
-                courseIds += course
+                if (course != null) {
+                    ruleToCourse[rule] = course
+                    courseIds += course
+                }
             }
             queryTextPair("occurrence_overrides", "id", "courseId").values.filterNotNull().forEach(courseIds::add)
             prepared.tables.forEach { table ->
@@ -622,7 +624,7 @@ class VaultBackupService(
     private fun currentSchemaVersion(): Int = sqlite.version
 
     private fun quoteIdentifier(identifier: String): String =
-        """ + identifier.replace(""", """") + """
+        "\"" + identifier.replace("\"", "\"\"") + "\""
 }
 
 internal fun backupProfileFingerprint(scope: SchoolAccountScope): String = Digests.sha256Hex(

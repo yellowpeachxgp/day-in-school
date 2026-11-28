@@ -31,7 +31,7 @@ internal object BackupSchemaSafety {
     }
 
     fun validateColumns(table: BackupTablePolicy, columns: List<String>) {
-        validateKeyName(table, "备份表名")
+        validateKeyName(table.table, "备份表名")
         columns.forEach { validateKeyName(it, "备份表 " + table.table + " 列") }
     }
 }
