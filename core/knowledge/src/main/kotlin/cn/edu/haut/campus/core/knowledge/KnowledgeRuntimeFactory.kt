@@ -38,7 +38,8 @@ object KnowledgeRuntimeFactory {
             mimeType = VersionedBlobDocumentStore.REVIEW_TASK_MIME,
             clock = clock
         )
-        val materialSnapshots = CourseMaterialSnapshotStore(materialDocuments, scope, clock)
+        val searchProjector = KnowledgeSearchProjector(scope, searchIndex, blobStore)
+        val materialSnapshots = CourseMaterialSnapshotStore(materialDocuments, scope, searchProjector, clock)
         val reviewSnapshots = ReviewTaskSnapshotStore(reviewDocuments, scope, clock)
         val journal = RoomVaultJournal(
             database = database,
@@ -63,6 +64,7 @@ object KnowledgeRuntimeFactory {
             scope = scope,
             blobStore = blobStore,
             searchIndex = searchIndex,
+            searchProjector = searchProjector,
             writer = journal,
             materialDocuments = materialDocuments,
             reviewDocuments = reviewDocuments,

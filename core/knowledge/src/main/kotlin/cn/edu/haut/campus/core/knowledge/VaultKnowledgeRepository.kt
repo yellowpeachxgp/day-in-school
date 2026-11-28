@@ -37,6 +37,7 @@ class VaultKnowledgeRepository internal constructor(
     private val scope: SchoolAccountScope,
     private val blobStore: VaultBlobStore,
     private val searchIndex: RoomSearchIndex,
+    private val searchProjector: KnowledgeSearchProjector,
     private val writer: EntityWriter,
     private val materialDocuments: VersionedBlobDocumentStore,
     private val reviewDocuments: VersionedBlobDocumentStore,
@@ -133,7 +134,7 @@ class VaultKnowledgeRepository internal constructor(
                 updatedAt = now
             )
             materialDocuments.writeDocument(materialId, encodeCourseMaterialDocument(material))
-            replaceSearchProjection(existing, material, extraction?.payload?.lines)
+            searchProjector.replace(existing, material, extraction?.payload?.lines)
             upsertDeadlineIfNeeded(material, actor)
             material
         }
@@ -219,7 +220,7 @@ class VaultKnowledgeRepository internal constructor(
                 updatedAt = clock()
             )
             materialDocuments.writeDocument(materialId, encodeCourseMaterialDocument(updated))
-            replaceSearchProjection(existing, updated, lines)
+            searchProjector.replace(existing, updated, lines)
             updated
         }
     }

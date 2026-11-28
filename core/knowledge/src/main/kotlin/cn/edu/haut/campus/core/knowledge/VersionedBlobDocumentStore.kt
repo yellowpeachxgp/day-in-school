@@ -15,8 +15,9 @@ import java.util.UUID
  * 不新增 Room 表的版本化文档存储。
  *
  * blob_store 行是不可变内容；每次写入都包一层 versioned-document 信封（写入时间与 nonce），
- * 因此撤销旧快照也能作为新的 head 重新出现。逻辑快照只取 envelope.document，不把 volatile
- * 写信封泄进 entity_journal，避免同一内容撤销后产生假差异。该结构是 W3-04 在 v13–v15
+ * 查询按 SQLite rowid 的插入顺序取最后有效版本，即使测试或快速连续写入共享同一毫秒也不会
+ * 随机选错 head。逻辑快照只取 envelope.document，不把 volatile 写信封泄进 entity_journal。
+ * 该结构是 W3-04 在 v13–v15
  * 未按序合入前的过渡落地，后续 Room v16 结构化表迁移不得重写这些 blob 的内容身份。
  */
 internal class VersionedBlobDocumentStore(
@@ -77,7 +78,7 @@ internal class VersionedBlobDocumentStore(
         return rows.asSequence()
             .filter { row -> row.inKnowledgeScope() && row.mimeType == mimeType }
             .map(::decodeEnvelope)
-            .maxWithOrNull(compareBy<VersionedDocument> { it.writeAtEpochMs }.thenBy { it.writeNonce })
+            .lastOrNull()
     }
 
     private fun decodeEnvelope(row: BlobStoreEntity): VersionedDocument {

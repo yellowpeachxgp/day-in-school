@@ -36,7 +36,7 @@ internal suspend fun prepareExtraction(
     val lowerName = request.fileName.lowercase()
     val lowerMime = request.mimeType.lowercase()
     return when {
-        request.kind == CourseMaterialKind.NOTE -> prepareNoteExtraction(request.contentBytes)
+        request.kind == CourseMaterialKind.NOTE || lowerMime.startsWith("text/") -> prepareNoteExtraction(request.contentBytes)
         request.kind == CourseMaterialKind.PDF || lowerMime == "application/pdf" || lowerName.endsWith(".pdf") -> {
             val extracted = extractor.extractPdf(PdfExtractionRequest(request.contentBytes.copyOf(), context))
             prepareFromExtractedText(extracted)

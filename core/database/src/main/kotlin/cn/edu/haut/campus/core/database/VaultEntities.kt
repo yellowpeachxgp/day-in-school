@@ -290,10 +290,10 @@ interface VaultDao {
     @Query("SELECT * FROM blob_store ORDER BY createdAtEpochMs ASC, blobId ASC")
     suspend fun getBlobsSnapshot(): List<BlobStoreEntity>
 
-    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType ORDER BY createdAtEpochMs ASC, blobId ASC")
+    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType ORDER BY rowid ASC")
     suspend fun getBlobsByOwnerType(schoolId: String, accountId: String, profileId: String, ownerEntityType: String): List<BlobStoreEntity>
 
-    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId ORDER BY createdAtEpochMs ASC, blobId ASC")
+    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId ORDER BY rowid ASC")
     suspend fun getBlobsForOwner(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, ownerEntityId: String): List<BlobStoreEntity>
 
     @Query("DELETE FROM blob_store")

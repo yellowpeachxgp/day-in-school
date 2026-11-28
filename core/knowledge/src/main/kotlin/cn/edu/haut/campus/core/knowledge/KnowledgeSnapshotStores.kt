@@ -13,6 +13,7 @@ import java.time.Instant
 internal class CourseMaterialSnapshotStore(
     private val documents: VersionedBlobDocumentStore,
     private val scope: SchoolAccountScope,
+    private val projector: KnowledgeSearchProjector,
     private val clock: () -> Instant = Instant::now
 ) : EntitySnapshotStore {
     override val type: EntityType = EntityType.COURSE_MATERIAL
@@ -26,9 +27,11 @@ internal class CourseMaterialSnapshotStore(
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
         requireValidRef(ref)
+        val beforeDocument = documents.readDocument(ref.id)
+        val before = beforeDocument?.let(::decodeCourseMaterialDocument)
+        var after: CourseMaterial? = null
         if (snapshot == null) {
-            val current = documents.readDocument(ref.id)
-            val revision = current?.nullableLong("revision") ?: 0L
+            val revision = beforeDocument?.nullableLong("revision") ?: 0L
             documents.writeDocument(
                 ownerId = ref.id,
                 document = jsonObjectOf(
@@ -40,13 +43,15 @@ internal class CourseMaterialSnapshotStore(
                     "updatedAt" to JsonValue.Str(clock().toString())
                 )
             )
-            return
+        } else {
+            val obj = Json.parse(snapshot.text).asObjOrNull
+                ?: throw IllegalArgumentException("课程资料快照必须是 object")
+            require(obj.requiredString("id") == ref.id) { "课程资料快照 id 与 EntityRef 不一致" }
+            require(decodeScope(obj.requiredField("scope")) == ref.scope) { "课程资料快照 scope 与 EntityRef 不一致" }
+            documents.writeDocument(ref.id, obj)
+            after = decodeCourseMaterialDocument(obj)
         }
-        val obj = Json.parse(snapshot.text).asObjOrNull
-            ?: throw IllegalArgumentException("课程资料快照必须是 object")
-        require(obj.requiredString("id") == ref.id) { "课程资料快照 id 与 EntityRef 不一致" }
-        require(decodeScope(obj.requiredField("scope")) == ref.scope) { "课程资料快照 scope 与 EntityRef 不一致" }
-        documents.writeDocument(ref.id, obj)
+        projector.replace(before, after)
     }
 
     private fun requireValidRef(ref: EntityRef) {
