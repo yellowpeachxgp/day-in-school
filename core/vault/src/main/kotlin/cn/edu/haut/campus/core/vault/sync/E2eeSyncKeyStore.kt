@@ -78,7 +78,7 @@ object E2eeSyncRecoveryKeys {
 }
 
 /** Android Keystore 包装密钥 + 应用私有目录密封文件。包装密钥不可导出；sealed 文件不含明文 key。 */
-class AndroidE2eeSyncKeyStore(
+internal class AndroidE2eeSyncKeyStore(
     context: Context,
     profileId: String,
     private val random: SecureRandom = SecureRandom(),
@@ -229,7 +229,7 @@ class AndroidE2eeSyncKeyStore(
 }
 
 /** 测试与 Preview 使用的内存密钥仓库；进程退出即丢失，不能用于生产装配。 */
-class InMemoryE2eeSyncKeyStore : E2eeSyncKeyStore {
+internal class InMemoryE2eeSyncKeyStore : E2eeSyncKeyStore {
     private val mutex = Mutex()
     private var master: ByteArray? = null
     private var space: ByteArray? = null

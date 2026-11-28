@@ -275,7 +275,7 @@ object E2eeSyncStateCodec {
 }
 
 /** 应用私有目录中的按 Profile 隔离状态文件；不是云端密钥/明文备份，擦除时必须删除。 */
-class FileE2eeSyncStateStore(
+internal class FileE2eeSyncStateStore(
     context: Context,
     profileId: String
 ) : E2eeSyncStateStore {
@@ -319,7 +319,7 @@ class FileE2eeSyncStateStore(
     fun rootDirectory(): File = rootDir
 }
 
-class InMemoryE2eeSyncStateStore(
+internal class InMemoryE2eeSyncStateStore(
     private var state: E2eeSyncState = E2eeSyncState()
 ) : E2eeSyncStateStore {
     private val mutex = Mutex()
