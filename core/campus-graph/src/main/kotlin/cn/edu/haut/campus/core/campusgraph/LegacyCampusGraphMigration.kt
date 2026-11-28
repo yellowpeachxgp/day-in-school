@@ -620,7 +620,7 @@ object LegacyCampusGraphMigration {
             building.name == displayName ||
                 building.shortName == displayName ||
                 building.aliases.any { it == displayName } ||
-                building.legacyAliases.any { !it.pattern && it.value == displayName }
+                building.legacyAliases.any { !it.pattern && it.verified && it.value == displayName }
             )
     }
 
