@@ -393,6 +393,11 @@ class CommunityDormCollaborationAdapter(
             reason,
             retryable = false,
         )
+        CommunityResult.NotEnabled -> throw DormCollaborationException(
+            DormErrorKind.UNSUPPORTED,
+            operation + "：群组协作能力未启用",
+            retryable = false,
+        )
         is CommunityResult.Failure -> throw error.toDormException(operation)
     }
 
