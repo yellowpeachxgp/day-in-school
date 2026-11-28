@@ -19,7 +19,7 @@ internal object BackupSchemaSafety {
         "cookie", "setcookie", "authorization", "proxyauthorization", "secret", "clientsecret",
         "apikey", "aikey", "privatekey", "secretkey", "accesskey", "sessionkey", "cookiekey",
         "encryptionkey", "signingkey", "masterkey", "keysecret", "keystore", "keychain",
-        "jwt", "passkey", "sessid", "authcode", "authsecret", "hmackey"
+        "jwt", "passkey", "sessid", "authcode", "authsecret", "hmackey", "authkey", "authsession"
     )
 
     private val forbiddenSegments = setOf(
@@ -33,8 +33,15 @@ internal object BackupSchemaSafety {
         "signing", "master", "client", "credential", "cookie", "hmac", "x"
     )
 
+    // token 只作为键名后缀匹配，且后方必须紧接可选引号/空白与 : 或 =；
+    // 因而 tokenize/tokenization 等普通词不会命中，token/passToken/serviceToken/*Token 会命中。
     private val sensitiveAssignmentPattern = Regex(
-        """(?i)(?<![A-Za-z0-9_])["']?(?:password|passwd|pwd|passphrase|passcode|credential|client[_-]?secret|secret|api[_-]?key|ai[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|auth(?:orization)?(?:[_-]?token)?|bearer|cookie|set-cookie|session(?:[_-]?id)?|sid|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)["']?\s*[:=]\s*["']?[^\s,;\]\}"']{3,}"""
+        """(?i)(?<![A-Za-z0-9_])["']?""" +
+            """(?:password|passwd|pwd|passphrase|passcode|credential|client[_-]?secret|secret|""" +
+            """api[_-]?key|ai[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|""" +
+            """[A-Za-z0-9_-]*token|auth(?:orization)?(?:[_-]?token)?|bearer|cookie|set-cookie|""" +
+            """session(?:[_-]?id)?|sid|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)""" +
+            """["']?\s*[:=]\s*["']?[^\s,;\]\}"']{3,}"""
     )
     private val cookieNameAssignmentPattern = Regex(
         """(?i)(?<![A-Za-z0-9_])(?:jsessionid|sessionid|session|ssid|sid|csrftoken|csrf[_-]token|xsrf[_-]token)[A-Za-z0-9_-]*\s*=\s*[^\s;,]{3,}"""

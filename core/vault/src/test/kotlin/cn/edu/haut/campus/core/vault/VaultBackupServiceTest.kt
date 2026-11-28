@@ -35,6 +35,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -367,12 +368,13 @@ class VaultBackupServiceTest {
         listOf(
             "accessToken", "refresh_token", "idToken", "authToken", "sessionId", "x-api-key",
             "privateKey", "clientSecret", "cookie", "set-cookie", "Authorization", "auth",
-            "jwt", "oauth", "sso", "session_key", "csrf", "xsrf", "passkey", "totp", "hmacKey"
+            "jwt", "oauth", "sso", "session_key", "csrf", "xsrf", "passkey", "totp", "hmacKey",
+            "authkey", "authsession"
         ).forEach { key ->
             val error = runCatching { BackupSchemaSafety.validateKeyName(key, "测试") }.exceptionOrNull()
             assertTrue("应拒绝 " + key, error is BackupValidationException)
         }
-        listOf("sourceKey", "courseKey", "eventScopeKey", "author").forEach { key ->
+        listOf("sourceKey", "courseKey", "eventScopeKey", "author", "tokenize", "tokenization").forEach { key ->
             val error = runCatching { BackupSchemaSafety.validateKeyName(key, "测试") }.exceptionOrNull()
             assertEquals("不应误伤稳定标识列 " + key, null, error)
         }
@@ -397,6 +399,61 @@ class VaultBackupServiceTest {
             assertEquals(label + " 不应产生导出字节", 0, out.size())
             canaries.forEach { canary -> assertFalse("错误消息不得回显 canary", error?.message.orEmpty().contains(canary)) }
         }
+    }
+
+    @Test
+    fun exportFailsClosedWhenEstimatedDeliveryTextContainsTokenAssignmentsOrNestedAuthKeys() = runBlocking {
+        seedPortableRows()
+        database.cloudAndParcelDao().upsertParcelItem(parcelRow())
+        val cases = listOf(
+            Triple("bare token", "上游文本 token=backup-token-123456", listOf("backup-token-123456")),
+            Triple("passToken", "上游文本 passToken=backup-pass-123456", listOf("backup-pass-123456")),
+            Triple(
+                "serviceToken",
+                "上游文本 serviceToken=backup-service-123456; cUserId=safe-user",
+                listOf("backup-service-123456")
+            ),
+            Triple("generic token suffix", "上游文本 xCustomToken=backup-custom-123456", listOf("backup-custom-123456")),
+            Triple("authkey", "{\"outer\":{\"authkey\":\"backup-authkey-123456\"}}", listOf("backup-authkey-123456")),
+            Triple(
+                "authsession",
+                "{\"outer\":[{\"authsession\":\"backup-authsession-123456\"}]}",
+                listOf("backup-authsession-123456")
+            )
+        )
+
+        cases.forEach { (label, injectedText, canaries) ->
+            database.cloudAndParcelDao().upsertParcelItem(parcelRow().copy(estimatedDeliveryText = injectedText))
+            val out = ByteArrayOutputStream()
+            val error = runCatching { service.export(scope, BackupSelection.ALL, passphrase, out) }.exceptionOrNull()
+            assertTrue(label + " 应 fail-closed", error is BackupValidationException)
+            assertEquals(label + " 不应产生导出字节", 0, out.size())
+            canaries.forEach { canary ->
+                assertFalse(label + " 错误消息不得回显 canary", error?.message.orEmpty().contains(canary))
+            }
+        }
+    }
+
+    @Test
+    fun exportAllowsTokenizeTokenizationAndStableIdentifierKeys() = runBlocking {
+        seedPortableRows()
+        val safeNestedText = "{\"tokenize\":\"tokenize=safe-1234\"," +
+            "\"tokenization\":\"tokenization=safe-1234\"," +
+            "\"sourceKey\":\"source-safe\",\"courseKey\":\"MATH101\"," +
+            "\"eventScopeKey\":\"scope-safe\",\"author\":\"plain-author\"}"
+        database.cloudAndParcelDao().upsertParcelItem(parcelRow().copy(estimatedDeliveryText = safeNestedText))
+
+        val out = ByteArrayOutputStream()
+        val error = runCatching { service.export(scope, BackupSelection.ALL, passphrase, out) }.exceptionOrNull()
+
+        assertNull("tokenize/tokenization 与稳定标识键不应误伤: " + error?.message, error)
+        assertTrue("误伤负例应产生加密备份", out.size() > 0)
+        val plaintext = BackupEnvelopeCrypto.decrypt(out.toByteArray(), passphrase)
+        val entries = BackupZip.read(plaintext)
+        plaintext.fill(0)
+        val dataText = String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8)
+        assertTrue(dataText.contains("tokenize=safe-1234"))
+        assertTrue(dataText.contains("tokenization=safe-1234"))
     }
 
     @Test
