@@ -201,14 +201,15 @@ class RoomVaultJournal(
         val childRows = dao.getJournalGroup(parentOriginal.writeGroupId)
             .filter { it.changeId != parentOriginal.changeId }
             .filter { it.revertedByChangeId == null }
-            .filter { row ->
-                row.sourceJson?.let { sourceJson ->
+            .mapNotNull { row ->
+                val source = row.sourceJson?.let { sourceJson ->
                     runCatching {
-                        decodeSourceRef(cn.edu.haut.campus.core.model.json.Json.parse(sourceJson)).entity
+                        decodeSourceRef(cn.edu.haut.campus.core.model.json.Json.parse(sourceJson))
                     }.getOrNull()
-                } == rootRef
+                }
+                if (source?.entity == rootRef) row to source else null
             }
-        childRows.forEach { childRow ->
+        childRows.forEach { (childRow, childSource) ->
             val childRef = entityRefOf(childRow)
             val childStore = snapshotStores[childRef.type] ?: throw UnsupportedVaultEntityException(childRef.type)
             val current = childStore.read(childRef)
@@ -237,7 +238,9 @@ class RoomVaultJournal(
                 actor = actor,
                 actorDetail = "causal-revert:" + parentOriginal.changeId + ":" + childRow.changeId,
                 at = clock(),
-                source = null,
+                // 保留子实体原来的因果来源。这样「撤销一次撤销」时，根实体与其派生
+                // personal_event 仍能沿同一 source/writeGroup 一起恢复，不会只还原半边状态。
+                source = childSource,
                 writeGroupId = parentOriginal.writeGroupId
             )
             updateSearchProjection(childRef, childStore)

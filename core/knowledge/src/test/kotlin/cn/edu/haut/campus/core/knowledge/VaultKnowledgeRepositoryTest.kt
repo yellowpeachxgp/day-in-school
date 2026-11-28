@@ -376,6 +376,37 @@ class VaultKnowledgeRepositoryTest {
     }
 
     @Test
+    fun revertingAssignmentRevertRestoresMaterialAndDeadlineTogether() = runBlocking {
+        val bytes = "撤销的撤销".toByteArray(Charsets.UTF_8)
+        val due = Instant.parse("2026-03-09T12:00:00Z")
+        val material = repository.archiveMaterial(assignmentArchiveRequest(bytes, "连续撤销作业", due))
+        val eventId = VaultKnowledgeRepository.assignmentEventId(material.id)
+        val journal = createKnowledgeJournal()
+        val materialRef = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            material.id,
+            scope
+        )
+        val initialHistory = journal.history(materialRef).first()
+        assertEquals(1, initialHistory.size)
+
+        val firstRevert = journal.revert(initialHistory[0].changeId, Actor.USER)
+        assertNull(repository.getMaterial(scope, material.id))
+        assertNull(database.vaultDao().getPersonalEvent(eventId.value))
+
+        val revertedHistory = journal.history(materialRef).first()
+        val reversal = revertedHistory.single { it.changeId == firstRevert.revertChangeId }
+        journal.revert(reversal.changeId, Actor.USER)
+
+        val restored = repository.getMaterial(scope, material.id)
+        assertNotNull("撤销一次撤销后资料必须恢复", restored)
+        assertEquals("资料与其派生截止必须一起恢复", due, restored?.assignment?.dueAt)
+        val row = database.vaultDao().getPersonalEvent(eventId.value)
+        assertNotNull("撤销一次撤销后 personal_event 不得丢失", row)
+        assertEquals(due.toEpochMilli(), row?.startAtEpochMs)
+    }
+
+    @Test
     fun materialsAndSearchAreInvisibleAcrossProfileScopes() = runBlocking {
         repository.archiveMaterial(
             ArchiveMaterialRequest(
