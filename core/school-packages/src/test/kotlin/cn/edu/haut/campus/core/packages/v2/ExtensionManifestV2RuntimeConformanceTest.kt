@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.packages.v2
 
 import cn.edu.haut.campus.core.packages.PackageException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -98,6 +99,23 @@ class ExtensionManifestV2RuntimeConformanceTest {
             ),
             ExtensionManifestV2Codec.SUPPORTED_UI_SLOTS
         )
+    }
+
+    @Test
+    fun communityBoards槽位只登记为reserved且不可被插件声明() {
+        assertFalse(ExtensionManifestV2Codec.SUPPORTED_UI_SLOTS.contains("community.boards"))
+        assertEquals(setOf("community.boards"), ExtensionManifestV2Codec.RESERVED_UI_SLOTS)
+        try {
+            ExtensionManifestV2Codec.parseOrAdapt(fixtureText("valid-minimal.json").replace("home.cards", "community.boards"))
+            fail("community.boards is reserved and must not be accepted as a supported plugin slot")
+        } catch (e: PackageException) {
+            assertEquals("runtime_slot_unknown", e.runtimeValidationCode)
+        }
+        val resource = javaClass.classLoader.getResource("runtime-host-api-matrix.json")
+        assertNotNull(resource)
+        val text = resource!!.readText(Charsets.UTF_8)
+        assertTrue(text.contains("\"reserved_ui_slots\""))
+        assertTrue(text.contains("\"community.boards\""))
     }
 
     @Test

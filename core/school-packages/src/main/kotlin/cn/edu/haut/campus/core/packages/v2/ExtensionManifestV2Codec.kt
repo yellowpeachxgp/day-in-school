@@ -75,7 +75,10 @@ object ExtensionManifestV2Codec {
     const val RUNTIME_SIGNATURE_INVALID = "runtime_signature_invalid"
 
     val SUPPORTED_SCHEMAS = setOf("dis-extension/v2", "dis-plugin/v2")
-    val SUPPORTED_UI_SLOTS = loadRuntimeUiSlots()
+    val SUPPORTED_UI_SLOTS = loadRuntimeUiSlots(field = "supported_ui_slots", required = true)
+
+    /** 保留槽位只用于登记与拒绝前的语义辨识；绝不并入 SUPPORTED_UI_SLOTS。 */
+    val RESERVED_UI_SLOTS = loadRuntimeUiSlots(field = "reserved_ui_slots", required = false)
     val ALLOWED_PERMISSIONS = setOf(
         "network.request",
         "account.session",
@@ -546,7 +549,7 @@ object ExtensionManifestV2Codec {
         runtimeCode: String = RUNTIME_SCHEMA_INVALID
     ): Nothing = throw PackageException(error, message, runtimeCode)
 
-    private fun loadRuntimeUiSlots(): Set<String> {
+    private fun loadRuntimeUiSlots(field: String, required: Boolean): Set<String> {
         val stream = ExtensionManifestV2Codec::class.java.getResourceAsStream("/runtime-host-api-matrix.json")
             ?: error("runtime-host-api-matrix.json resource is missing")
         val text = stream.use { String(it.readBytes(), Charsets.UTF_8) }
@@ -555,10 +558,17 @@ object ExtensionManifestV2Codec {
         val host = versions.mapNotNull { it.asObjOrNull }.firstOrNull {
             it.fields["host_api"]?.intOrNull() == 2
         } ?: error("runtime host matrix is missing host_api 2")
-        val slots = host.fields["supported_ui_slots"]?.asArrOrNull?.items
-            ?.mapNotNull { it.stringOrNull() }
-            .orEmpty()
-        require(slots.isNotEmpty()) { "runtime host matrix host_api 2 has no UI slots" }
+        val rawSlots = host.fields[field]
+        if (rawSlots == null) {
+            require(!required) { "runtime host matrix host_api 2 is missing " + field }
+            return emptySet()
+        }
+        val items = rawSlots.asArrOrNull?.items
+            ?: error("runtime host matrix host_api 2 field " + field + " must be an array")
+        val slots = items.map { value ->
+            value.stringOrNull() ?: error("runtime host matrix host_api 2 field " + field + " must contain only strings")
+        }
+        require(!required || slots.isNotEmpty()) { "runtime host matrix host_api 2 has no UI slots in " + field }
         return slots.toSet()
     }
 }
