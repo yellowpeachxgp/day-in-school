@@ -18,7 +18,8 @@ import java.time.LocalDate
  *
  * 独立分发的 datapack 必须先经 DisDatapackLoader.verify 完成 exact-byte、Schema 与 detached
  * 签名验证；嵌入 dis-campus-plugin/v1  zip 时则由外层 PackageVerifier 先验证宿主包签名。
- * 本解码器只做图投影，拒不完整或语义未对齐的输入，绝不静默丢弃边、层级或依赖语义。
+ * 本解码器只做图索引投影：无法确定图身份/父级或依赖语义时 fail-closed；分支、材料有效期等
+ * 完整 item 细节仍由 typed datapack 提供，不在图实体中伪造或静默截断。
  */
 class DisDatapackCampusGraphDecoder(
     private val defaultCampusRef: PlaceRef? = null
@@ -40,8 +41,8 @@ class DisDatapackCampusGraphDecoder(
      * 把已验证 datapack 投影为 Campus Graph 实体。
      *
      * v1 schema 中 opportunity-catalog、period-preset 与 pharmacy-catalog 不是图实体；indoor-graph 的
-     * edge/level 语义还不能被当前 FloorNode/IndoorNode 模型无损承接。以上输入在此 fail-closed，
-     * 待 W6-03/契约线明确无损映射后再开放。
+     * edge/level 语义还不能被当前 FloorNode/IndoorNode 模型承接。以上输入在此 fail-closed，
+     * 待 W6-03/契约线明确映射后再开放。
      */
     fun decode(pack: DisDatapack): List<CampusGraphEntity> = when (pack.kind) {
         DisDatapackKind.PROCEDURE_GUIDE -> pack.items.map { item ->
