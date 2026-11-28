@@ -103,8 +103,19 @@ class BackupCenterSectionTest {
     @Test
     fun syncConflictShowsTwoVersionsAndResolutionActions() {
         val actions = RecordingActions()
+        val conflict = E2eeSyncConflictSummary(
+            id = "sc-preview",
+            table = "courses",
+            rowKey = "t:8:course-1",
+            kind = "CONCURRENT_UPDATE",
+            reason = "本机与远端同时修改同一逻辑行，未静默覆盖",
+            localExcerpt = "local-version",
+            remoteExcerpt = "remote-version",
+            remoteDeletion = false,
+            localDeletion = false
+        )
         composeRule.setContent {
-            BackupCenterSection(state = BackupCenterPreviewFixtures.syncConflict, actions = actions)
+            SyncConflictRow(conflict, actions, enabled = true)
         }
 
         assertTrue(composeRule.onAllNodesWithTag("sync-conflict-local").fetchSemanticsNodes().isNotEmpty())

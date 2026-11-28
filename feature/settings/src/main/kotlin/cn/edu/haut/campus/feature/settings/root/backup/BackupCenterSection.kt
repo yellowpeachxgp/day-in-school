@@ -512,7 +512,7 @@ private fun E2eeSyncConsentDialog(sync: E2eeSyncPanelUiState, actions: BackupCen
 }
 
 @Composable
-private fun SyncConflictRow(
+internal fun SyncConflictRow(
     conflict: E2eeSyncConflictSummary,
     actions: BackupCenterUiAction,
     enabled: Boolean
