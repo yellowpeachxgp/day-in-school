@@ -294,6 +294,9 @@ class CourseTimelineSourceTest {
             endPeriod = 8,
             weeks = setOf(14),
             rawRoom = "工程中心B"
+        ).copy(
+            customStartTime = LocalTime.of(14, 0),
+            customEndTime = LocalTime.of(17, 30)
         )
         val snapshot = fixture.scheduleSnapshot(
             courses = listOf(practiceCourse),
@@ -314,6 +317,8 @@ class CourseTimelineSourceTest {
             listOf("practice:2026-2027-1/r-prac-mon/2026-11-30", "practice:2026-2027-1/r-prac-wed/2026-12-02"),
             practiceEvents.map { it.id.value }
         )
+        assertEquals(Instant.parse("2026-12-02T06:00:00Z"), practiceEvents[1].start)
+        assertEquals(Instant.parse("2026-12-02T09:30:00Z"), practiceEvents[1].end)
         assertEquals(emptyList<TimelineEvent>(), normalEvents)
     }
 
