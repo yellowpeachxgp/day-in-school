@@ -107,8 +107,11 @@ class ExtensionPluginInstaller(
     }
 
     fun installArchive(zipBytes: ByteArray, schoolId: String): ExtensionInstallResult {
-        val archive = ExtensionZipPackageReader.read(zipBytes)
-        return install(archive.manifestBytes, archive.artifactMap, schoolId)
+        val unpacked = ExtensionPackZip.unpack(zipBytes)
+        val artifacts = unpacked.artifactPaths().associateWith { path ->
+            unpacked.copyOfArtifact(path) ?: throw PackageException(PackageError.FILE_MISSING, "严格 ZIP 解包结果缺少产物：" + path)
+        }
+        return install(unpacked.copyOfManifestBytes(), artifacts, schoolId)
     }
 
     fun snapshot(): List<ExtensionInstallation> = store.listInstallations()

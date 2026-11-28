@@ -52,6 +52,7 @@ dependencies {
     api(project(":core:academic-protocols"))
     api(project(":core:school-packages"))
     api(project(":core:ui-runtime"))
+    api(project(":core:vault"))
     api(project(":core:campusservices"))
     api(project(":core:location"))
     api(project(":core:designsystem"))
