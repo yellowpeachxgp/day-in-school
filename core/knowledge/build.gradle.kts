@@ -31,6 +31,7 @@ android {
 dependencies {
     api(project(":core:model"))
     api(project(":core:timeline"))
+    api(project(":core:solver"))
     api(project(":core:textextract"))
     api(project(":core:vault"))
     implementation(project(":core:events"))
