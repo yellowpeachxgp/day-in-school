@@ -7,8 +7,9 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 
 /**
- * W2-02 自动化运行时接缝。放在独立文件，避免扩大 W0-05 的 CampusRepository 外观；
- * 只读取同一模块内部已绑定的 repositoryEnvironment，不提供任意数据库替换能力。
+ * W2-02 自动化运行时与 W1-05 Today reactive Timeline 投影共用的窄接缝。
+ * 放在独立文件，避免扩大 W0-05 的 CampusRepository 外观；只读取同一模块内部
+ * 已绑定的 repositoryEnvironment，不提供任意数据库替换能力。
  */
 val CampusRepository.currentAccountDatabase: HautDatabase
     get() = repositoryEnvironment.database

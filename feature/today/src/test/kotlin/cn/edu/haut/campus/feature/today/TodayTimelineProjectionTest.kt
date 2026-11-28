@@ -22,6 +22,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -175,6 +176,7 @@ class TodayTimelineProjectionTest {
         assertEquals(2, decoded.endPeriod)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun snapshotRevisionUpdatesAreEmittedReactively() = runTest {
         val snapshots = MutableStateFlow(courseSnapshot(revision = 1L))

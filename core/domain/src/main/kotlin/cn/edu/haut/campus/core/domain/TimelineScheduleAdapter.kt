@@ -26,9 +26,10 @@ import java.time.LocalDate
 /**
  * 课表消费端读取 Timeline 的适配层（W1-05）。
  *
- * Today、Timetable 与四款小组件不再调用 engine 的展开入口，而是经由本适配器
- * 「输入快照 → Timeline 事件投影 → 元数据还原 → 展示后处理」读取课程时间流：
- * 展开语义的唯一实现因此只有 core:timeline 的 ScheduleOccurrenceExpander 一套。
+ * 切片一先将 Today 的课程读取改为经本适配器
+ * 「输入快照 → Timeline 事件投影 → 元数据还原 → 展示后处理」读取课程时间流；
+ * Timetable 与四款小组件属后续切片。展开语义的唯一实现因此只有
+ * core:timeline 的 ScheduleOccurrenceExpander 一套。
  *
  * 信封说明：投影发生在单次进程内的闭环读取中，输入数据本身已属于当前账号；
  * 事件 scope/provenance 只是投影管道要求的信封字段，绝不进入还原后的领域模型，

@@ -37,7 +37,8 @@ data class EffectiveScheduleDate(
  * 按日期切换节次方案、单双周精确周集合、今日停课/仅改本次/跨日调入、同课相邻节次合并、
  * 非法时间证据不冒充可信时刻。W1-05 已按 W1-02b 备注完成收敛：
  * 旧 engine 展开路径（ScheduleEngine/TeachingWeekCalculator）全部委托本实现，
- * 不再存在第二套课表展开语义；Today/Timetable/小组件经 Timeline 投影读取本展开结果。
+ * 不再存在第二套课表展开语义；切片一中 Today 经 Timeline 投影读取本展开结果，
+ * Timetable/小组件切换留给后续切片。
  */
 object ScheduleOccurrenceExpander {
 
