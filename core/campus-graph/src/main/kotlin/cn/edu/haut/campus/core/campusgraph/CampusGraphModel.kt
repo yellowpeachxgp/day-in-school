@@ -41,6 +41,9 @@ data class CampusGraphProvenance(
         require(reviewBy == null || verifiedAt == null || !reviewBy.isBefore(verifiedAt)) {
             "复核截止日期不能早于核验日期"
         }
+        require(sourceLevel != CampusGraphSourceLevel.CROWD_REPORT || reviewBy != null) {
+            "众包上报必须带复核/过期日期，不能形成永久事实"
+        }
     }
 
     companion object {

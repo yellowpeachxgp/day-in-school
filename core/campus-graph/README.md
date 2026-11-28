@@ -20,7 +20,7 @@ W1-07 校园实体图内核（纯 JVM）。本模块把楼宇、教室、设施�
 
 ## 来源优先级
 
-同一稳定 ID 按 `DATA_PACKAGE > USER_OVERRIDE > CROWD_REPORT` 合并。迁移快照使用 `DATA_PACKAGE` 级别表示它等价于随宿主分发的基线数据包；这不等于校方已核验。所有实体继续携带 `DataProvenance`，来源说明与核验日期保持原样。
+同一稳定 ID 按 `DATA_PACKAGE > USER_OVERRIDE > CROWD_REPORT` 合并。迁移快照使用 `DATA_PACKAGE` 级别表示它等价于随宿主分发的基线数据包；这不等于校方已核验。所有实体继续携带 `DataProvenance`，来源说明与核验日期保持原样。众包上报必须带 `reviewBy`，过期后不再进入合并快照。快照同时提供实体检索、保守教室解析与服务/设施目录项查询，用于承接药品、菜品和自习室 legacy 查询。
 
 ## 边界
 

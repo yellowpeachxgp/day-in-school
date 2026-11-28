@@ -3,6 +3,13 @@ package cn.edu.haut.campus.core.campusgraph
 import cn.edu.haut.campus.core.model.BuildingMatchStatus
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.PlaceRef
+import java.time.LocalDate
+
+data class CampusGraphCatalogItemHit(
+    val owner: CampusGraphEntity,
+    val item: ServiceCatalogItem,
+    val matchedText: String
+)
 
 data class CampusGraphSearchResult(
     val entity: CampusGraphEntity,
@@ -89,6 +96,47 @@ class CampusGraphSnapshot private constructor(
     fun procedures(campusId: CampusId? = null): List<ProcedureNode> =
         entities.filterIsInstance<ProcedureNode>().filter { campusId == null || it.ref.campusId == campusId }
 
+    /**
+     * 查询服务/设施挂载的目录项。空查询返回完整目录并保持迁移顺序；
+     * 非空查询匹配名称、类别、摘要与全部属性值，用于承接药品、菜品等 legacy 查询。
+     */
+    fun searchCatalogItems(
+        query: String,
+        serviceKind: CampusGraphServiceKind? = null,
+        facilityKind: CampusGraphFacilityKind? = null,
+        campusId: CampusId? = null
+    ): List<CampusGraphCatalogItemHit> {
+        val normalized = query.trim().lowercase()
+        return entities.flatMap { entity ->
+            if (campusId != null && entity.ref.campusId != campusId) return@flatMap emptyList<CampusGraphCatalogItemHit>()
+            val ownerMatches = when {
+                entity is ServiceNode && serviceKind != null -> entity.kind == serviceKind
+                entity is FacilityNode && facilityKind != null -> entity.kind == facilityKind
+                serviceKind == null && facilityKind == null -> entity is ServiceNode || entity is FacilityNode
+                else -> false
+            }
+            if (!ownerMatches) return@flatMap emptyList<CampusGraphCatalogItemHit>()
+            val items = when (entity) {
+                is ServiceNode -> entity.catalogItems
+                is FacilityNode -> entity.catalogItems
+                else -> emptyList<ServiceCatalogItem>()
+            }
+            items.mapNotNull { item ->
+                if (normalized.isEmpty()) {
+                    return@mapNotNull CampusGraphCatalogItemHit(entity, item, item.name)
+                }
+                val candidates = buildList {
+                    add(item.name)
+                    item.category?.let(::add)
+                    item.summary?.let(::add)
+                    addAll(item.attributes.values)
+                }
+                val matched = candidates.firstOrNull { it.lowercase().contains(normalized) }
+                matched?.let { CampusGraphCatalogItemHit(entity, item, it) }
+            }
+        }
+    }
+
     fun buildingByLegacyId(legacyBuildingId: String, campusId: CampusId? = null): BuildingNode? =
         buildings(campusId).firstOrNull { it.legacyBuildingId == legacyBuildingId }
 
@@ -138,14 +186,16 @@ class CampusGraphSnapshot private constructor(
         if (trimmed.isEmpty()) {
             return CampusGraphRoomResolution(rawRoom, BuildingMatchStatus.UNRESOLVED, reason = "empty-room-text")
         }
+        val inlineCampusId = if (campusId == null) detectExplicitInlineCampus(trimmed) else null
+        val effectiveCampusId = campusId ?: inlineCampusId
         val allBuildingPool = buildings()
-        val buildingPool = buildings(campusId)
-        val roomPool = rooms(campusId = campusId)
+        val buildingPool = buildings(effectiveCampusId)
+        val roomPool = rooms(campusId = effectiveCampusId)
         val roomNumberHint = ROOM_NUMBER_REGEX.findAll(trimmed).lastOrNull()?.value
         val multiCampusPool = allBuildingPool.map { it.ref.campusId }.distinct().size > 1
         val pureNumericRoom = Regex("^\\d{4,5}$").matches(trimmed)
 
-        if (!(pureNumericRoom && campusId == null && multiCampusPool)) {
+        if (!(pureNumericRoom && effectiveCampusId == null && multiCampusPool)) {
             exactRoomMatch(trimmed, roomPool)?.let { matched ->
             return when (matched.size) {
                 1 -> {
@@ -174,6 +224,19 @@ class CampusGraphSnapshot private constructor(
 
         val directMatches = directBuildingMatches(trimmed, buildingPool)
         if (directMatches.isNotEmpty()) {
+            val directCampuses = directMatches.map { it.ref.campusId }.distinct()
+            if (effectiveCampusId == null && directCampuses.size > 1) {
+                return CampusGraphRoomResolution(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                    building = null,
+                    roomNumberHint = roomNumberHint,
+                    confidence = 0.50f,
+                    matchedAlias = "跨校区同名楼宇待确认",
+                    candidateBuildings = directMatches.take(4),
+                    reason = "direct-building-cross-campus"
+                )
+            }
             val bestLength = directMatches.maxOf { it.name.length }
             val bestMatches = directMatches.filter { it.name.length == bestLength }.distinctBy { it.ref }
             if (bestMatches.size > 1) {
@@ -200,13 +263,26 @@ class CampusGraphSnapshot private constructor(
             )
         }
 
-        val aliasPool = if (campusId == null && multiCampusPool) {
+        val aliasPool = if (effectiveCampusId == null && multiCampusPool) {
             buildingPool.map { it.copy(legacyAliases = it.legacyAliases.filterNot { alias -> alias.pattern }) }
         } else {
             buildingPool
         }
         val aliasMatches = aliasBuildingMatches(trimmed, aliasPool)
         if (aliasMatches.isNotEmpty()) {
+            val aliasCampuses = aliasMatches.map { it.building.ref.campusId }.distinct()
+            if (effectiveCampusId == null && aliasCampuses.size > 1) {
+                return CampusGraphRoomResolution(
+                    rawRoom = rawRoom,
+                    status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                    building = null,
+                    roomNumberHint = roomNumberHint,
+                    confidence = 0.50f,
+                    matchedAlias = "跨校区楼宇别名待确认",
+                    candidateBuildings = aliasMatches.map { it.building }.distinctBy { it.ref }.take(4),
+                    reason = "alias-cross-campus"
+                )
+            }
             val bestConfidence = aliasMatches.maxOf { it.alias.confidence }
             val best = aliasMatches.filter { it.alias.confidence == bestConfidence }
             val distinctBuildings = best.map { it.building }.distinctBy { it.ref }
@@ -238,7 +314,7 @@ class CampusGraphSnapshot private constructor(
             )
         }
 
-        numericInference(trimmed, buildingPool, allBuildingPool, multiCampusPool, campusId)?.let { inferred ->
+        numericInference(trimmed, buildingPool, allBuildingPool, multiCampusPool, effectiveCampusId)?.let { inferred ->
             return inferred.copy(rawRoom = rawRoom, roomNumberHint = roomNumberHint)
         }
 
@@ -249,6 +325,16 @@ class CampusGraphSnapshot private constructor(
             candidateBuildings = buildingPool.take(4),
             reason = "no-building-or-room-match"
         )
+    }
+
+    private fun detectExplicitInlineCampus(trimmed: String): CampusId? {
+        val normalizedInput = normalizeText(trimmed)
+        if (normalizedInput.isEmpty()) return null
+        return campuses().firstOrNull { campus ->
+            (listOf(campus.name) + campus.aliases).any { term ->
+                term.length >= 2 && normalizedInput.contains(normalizeText(term))
+            }
+        }?.ref?.campusId
     }
 
     private fun exactRoomMatch(trimmed: String, roomPool: List<RoomNode>): List<RoomNode>? {
@@ -407,26 +493,34 @@ class CampusGraphSnapshot private constructor(
         fun of(entities: List<CampusGraphEntity>): CampusGraphSnapshot = CampusGraphSnapshot(entities)
 
         /**
-         * 合并三层来源。高优先级覆盖低优先级；同优先级后到的修订覆盖先到版本，
-         * 版本选择本身应由包管理或用户覆盖存储在调用前完成。
+         * 合并三层来源。高优先级覆盖低优先级；同优先级后到的修订覆盖先到版本。
+         * 输入层必须与其声明的 sourceLevel 一致；众包上报只在 reviewBy 当天及之前有效，
+         * 过期上报不会进入快照，避免临时纠错沉淀成永久事实。
          */
         fun merge(
             dataPackageEntities: List<CampusGraphEntity>,
             userOverrideEntities: List<CampusGraphEntity> = emptyList(),
-            crowdEntities: List<CampusGraphEntity> = emptyList()
+            crowdEntities: List<CampusGraphEntity> = emptyList(),
+            now: LocalDate = LocalDate.now()
         ): CampusGraphSnapshot {
             val merged = LinkedHashMap<PlaceRef, CampusGraphEntity>()
-            fun absorb(layer: List<CampusGraphEntity>) {
+            fun absorb(layer: List<CampusGraphEntity>, expectedLevel: CampusGraphSourceLevel) {
                 for (entity in layer) {
+                    require(entity.provenance.sourceLevel == expectedLevel) {
+                        "合并输入层与 sourceLevel 不一致：" + entity.ref.id
+                    }
                     val current = merged[entity.ref]
                     if (current == null || entity.provenance.sourceLevel.priority >= current.provenance.sourceLevel.priority) {
                         merged[entity.ref] = entity
                     }
                 }
             }
-            absorb(dataPackageEntities)
-            absorb(userOverrideEntities)
-            absorb(crowdEntities)
+            val activeCrowdEntities = crowdEntities.filter { entity ->
+                entity.provenance.reviewBy?.let { reviewBy -> !reviewBy.isBefore(now) } == true
+            }
+            absorb(dataPackageEntities, CampusGraphSourceLevel.DATA_PACKAGE)
+            absorb(userOverrideEntities, CampusGraphSourceLevel.USER_OVERRIDE)
+            absorb(activeCrowdEntities, CampusGraphSourceLevel.CROWD_REPORT)
             return CampusGraphSnapshot(merged.values.toList())
         }
 

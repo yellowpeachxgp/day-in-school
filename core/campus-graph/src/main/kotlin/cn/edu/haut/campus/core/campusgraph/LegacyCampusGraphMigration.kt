@@ -60,7 +60,7 @@ object LegacyCampusGraphMigration {
         entities += CampusNode(
             ref = songshanluCampusRef,
             name = "嵩山路校区",
-            aliases = listOf("嵩山路", "嵩山校区", "齐礼阎"),
+            aliases = listOf("嵩山路", "嵩山", "嵩山校区", "齐礼阎"),
             polygon = ClassroomBuildingResolver.HAUT_SONGSHANLU_POLYGON,
             provenance = provenance(
                 campusId = SONGSHANLU_CAMPUS_ID,

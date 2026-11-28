@@ -4,7 +4,9 @@ import cn.edu.haut.campus.core.model.CampusCategory
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.PlaceRef
 import cn.edu.haut.campus.core.model.SchoolId
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,6 +74,28 @@ class CampusGraphKernelTest {
     }
 
     @Test
+    fun expiredCrowdReportsDoNotEnterSnapshotAndLayerMismatchIsRejected() {
+        val ref = CampusGraphIds.build(school, campus, CampusGraphEntityType.BUILDING, "b_t1")
+        val crowd = building(ref, CampusGraphSourceLevel.CROWD_REPORT, name = "有效众包楼")
+        val user = building(ref, CampusGraphSourceLevel.USER_OVERRIDE, name = "用户覆盖楼")
+        val expiredCrowd = crowd.copy(
+            name = "过期众包楼",
+            provenance = crowd.provenance.copy(reviewBy = LocalDate.now().minusDays(1))
+        )
+
+        val merged = CampusGraphSnapshot.merge(
+            dataPackageEntities = emptyList(),
+            crowdEntities = listOf(expiredCrowd),
+            now = LocalDate.now()
+        )
+        assertNull(merged.entity(ref))
+
+        assertThrowsIllegalArgument {
+            CampusGraphSnapshot.merge(dataPackageEntities = listOf(user))
+        }
+    }
+
+    @Test
     fun searchUsesNameAndAliasesWithDeterministicOrdering() {
         val first = building(
             CampusGraphIds.build(school, campus, CampusGraphEntityType.BUILDING, "b_t1"),
@@ -119,7 +143,12 @@ class CampusGraphKernelTest {
             sourceSystem = "test",
             sourceRecordId = "fixture"
         ),
-        sourceReference = "test fixture"
+        sourceReference = "test fixture",
+        reviewBy = if (sourceLevel == CampusGraphSourceLevel.CROWD_REPORT) {
+            LocalDate.now().plusDays(7)
+        } else {
+            null
+        }
     )
 
     private inline fun assertThrowsIllegalArgument(block: () -> Unit) {

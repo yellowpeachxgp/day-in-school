@@ -139,6 +139,18 @@ class LegacyCampusGraphMigrationTest {
     }
 
     @Test
+    fun pharmacyCatalogSearchKeepsLegacyQueryResultOrder() {
+        for (query in listOf("布洛芬", "0.9%氯化钠", "")) {
+            val legacyIds = CampusHospitalPharmacyCatalog.search(query).map { it.id }
+            val graphIds = snapshot.searchCatalogItems(
+                query = query,
+                serviceKind = CampusGraphServiceKind.PHARMACY
+            ).map { it.item.id }
+            assertEquals("query=" + query, legacyIds, graphIds)
+        }
+    }
+
+    @Test
     fun roomResolutionKeepsDirectMatchesAndCampusGuardrails() {
         val direct = snapshot.resolveRoomText("3号教学楼3101", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
         assertEquals(BuildingMatchStatus.EXACT_VERIFIED, direct.status)
@@ -150,9 +162,18 @@ class LegacyCampusGraphMigrationTest {
         assertEquals("b_ss_t1", songshan.building?.legacyBuildingId)
         assertEquals("嵩山1教101", songshan.room?.roomNumber)
 
+        val inlineSongshan = snapshot.resolveRoomText("嵩山1教101")
+        assertEquals(BuildingMatchStatus.EXACT_VERIFIED, inlineSongshan.status)
+        assertEquals("b_ss_t1", inlineSongshan.building?.legacyBuildingId)
+
         val unresolvedAcrossCampus = snapshot.resolveRoomText("3206", LegacyCampusGraphMigration.SONGSHANLU_CAMPUS_ID)
         assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, unresolvedAcrossCampus.status)
         assertNull(unresolvedAcrossCampus.building)
         assertFalse(unresolvedAcrossCampus.candidateBuildings.any { it.ref.campusId == LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID })
+
+        val pureNumericWithoutCampus = snapshot.resolveRoomText("3206")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, pureNumericWithoutCampus.status)
+        assertNull(pureNumericWithoutCampus.building)
+        assertEquals("numeric-room-needs-campus-context", pureNumericWithoutCampus.reason)
     }
 }
