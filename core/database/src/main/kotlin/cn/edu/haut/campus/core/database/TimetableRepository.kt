@@ -45,6 +45,7 @@ class TimetableRepository internal constructor(
     internal val occurrenceWriteContext = TimetableOccurrenceWriteContext(environment)
     private val occurrenceStore = TimetableOccurrenceStore(environment, occurrenceWriteContext)
     private val restoreCommandService = TimetableRestoreCommandService(environment, occurrenceWriteContext)
+    private val legacyRestoreReviewJournalStore = LegacyRestoreReviewJournalStore(environment)
 
     val coursesFlow: Flow<List<Course>> =
         dao.observeCourses().map { list -> list.map { it.toDomain() } }
@@ -54,6 +55,10 @@ class TimetableRepository internal constructor(
 
     val occurrenceOverridesFlow: Flow<List<OccurrenceOverride>> =
         dao.observeOccurrenceOverrides().map { list -> list.map { it.toDomain() } }
+
+    /** 旧版调入核对完成 journal：跨 ViewModel 重建恢复，Room 行删除/改令牌后自动失效。 */
+    val legacyRestoreReviewTargetsFlow: Flow<List<OccurrenceOverride>> =
+        legacyRestoreReviewJournalStore.targetsFlow
 
     val buildingsFlow: Flow<List<Building>> =
         combine(dao.observeBuildings(), preferences.data) { list, prefs ->
@@ -171,6 +176,7 @@ class TimetableRepository internal constructor(
             it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
             it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
             it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
+            it.remove(CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON)
         }
         notifyScheduleOrPolicyChanged("RESET_DEMO_SEED_DATA")
     }
@@ -1136,6 +1142,15 @@ class TimetableRepository internal constructor(
         ) {
             restoreCommandService.executeRestoreCommand(command)
         }
+
+    suspend fun appendLegacyRestoreReviewTargets(targets: List<OccurrenceOverride>) =
+        legacyRestoreReviewJournalStore.append(targets)
+
+    suspend fun removeLegacyRestoreReviewTarget(overrideId: String) =
+        legacyRestoreReviewJournalStore.remove(overrideId)
+
+    suspend fun clearLegacyRestoreReviewTargets() =
+        legacyRestoreReviewJournalStore.clear()
 
     @Deprecated(
         "模糊选择已于 R5 废止：改用 executeRestoreCommand(RestoreCommand) 提交点击时冻结的完整不可变命令"

@@ -258,6 +258,7 @@ class ProfileDataWiper internal constructor(
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON)
                 prefs[CampusRepositoryPrefKeys.SEEDED] = true
                 prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
                 prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false
