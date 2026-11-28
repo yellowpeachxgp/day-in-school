@@ -484,7 +484,7 @@ private fun validateReferenceInvariant(entity: CampusGraphEntity) {
             entity.serviceRef?.let { requireRefType(it, CampusGraphEntityType.SERVICE, "流程所属服务") }
             entity.dependsOn.forEach { requireRefType(it, CampusGraphEntityType.PROCEDURE, "流程依赖") }
         }
-        is CampusNode -> Unit
+        is CampusNode, is BuildingNode -> Unit
     }
 }
 
