@@ -8,6 +8,8 @@ import cn.edu.haut.campus.core.automation.ActionRisk
 import cn.edu.haut.campus.core.automation.ActionSpec
 import cn.edu.haut.campus.core.automation.AutomationExtensionRegistry
 import cn.edu.haut.campus.core.automation.AutomationRule
+import cn.edu.haut.campus.core.automation.AutomationRun
+import cn.edu.haut.campus.core.automation.AutomationRunStore
 import cn.edu.haut.campus.core.automation.BuiltinAutomationTypes
 import cn.edu.haut.campus.core.automation.BuiltinTriggerPlanner
 import cn.edu.haut.campus.core.automation.CompareOp
@@ -17,6 +19,8 @@ import cn.edu.haut.campus.core.automation.JsonSchema
 import cn.edu.haut.campus.core.automation.MetricRef
 import cn.edu.haut.campus.core.automation.RunContext
 import cn.edu.haut.campus.core.automation.TriggerSpec
+import cn.edu.haut.campus.core.automation.TriggerInstance
+import cn.edu.haut.campus.core.automation.TriggerExecutionResult
 import cn.edu.haut.campus.core.automation.builtinTriggerProviders
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.DomainEvent
@@ -37,7 +41,11 @@ import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.vault.RoomEventOutbox
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
@@ -126,6 +134,53 @@ class AutomationOutboxProcessorTest {
         assertEquals(0, flakyOutbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
     }
 
+    @Test
+    fun roomDurableCheckpointReconcilesActionAfterRunAppendCrashAcrossEngineRestart() = runBlocking {
+        val action = RecordingAction()
+        val ruleStore = RoomAutomationRuleStore(database, scope)
+        val rule = AutomationRule(
+            id = "checkpoint-durable-rule",
+            scope = scope,
+            name = "持久检查点",
+            enabled = true,
+            trigger = TriggerSpec.AtTime(java.time.LocalTime.of(8, 0), setOf(java.time.DayOfWeek.MONDAY)),
+            conditions = emptyList(),
+            actions = listOf(ActionSpec("test.action"))
+        )
+        ruleStore.upsert(rule)
+        val registry = AutomationExtensionRegistry()
+        builtinTriggerProviders().forEach(registry::registerTriggerProvider)
+        registry.registerActionExecutor(action)
+        val clock = MutableClock(now)
+        val lease = Duration.ofSeconds(30)
+        val failingRunStore = FailOnceAppendRunStore(RoomAutomationRunStore(database))
+        fun newEngine(runStore: AutomationRunStore) = DefaultAutomationEngine(
+            ruleStore = ruleStore,
+            runStore = runStore,
+            dedupeStore = RoomAutomationDedupeStore(database),
+            registry = registry,
+            clock = clock,
+            checkpointStore = RoomAutomationActionCheckpointStore(database),
+            pendingLease = lease
+        )
+        val instance = TriggerInstance(rule.id, "checkpoint-durable-instance", now)
+
+        val first = runCatching { newEngine(failingRunStore).executeTrigger(instance) }
+
+        assertTrue(first.isFailure)
+        assertEquals(1, action.calls.size)
+        assertEquals(1, database.automationDao().countCheckpoints())
+
+        clock.advance(lease.plusSeconds(1))
+        val recovered = newEngine(RoomAutomationRunStore(database)).executeTrigger(instance)
+
+        assertTrue(recovered is TriggerExecutionResult.Executed)
+        val run = (recovered as TriggerExecutionResult.Executed).run
+        assertEquals(ActionOutcomeStatus.SUCCESS, run.outcomes.single().status)
+        assertEquals("run 写失败后的跨进程恢复必须重放 durable checkpoint，不得重复动作", 1, action.calls.size)
+        assertEquals(1, database.automationDao().countRuns())
+    }
+
     private fun utilityEvent(): DomainEvent.UtilityBalanceSampled = DomainEvent.UtilityBalanceSampled(
         eventId = "utility-low-event",
         scope = scope,
@@ -155,6 +210,26 @@ class AutomationOutboxProcessorTest {
             calls += ctx.runId + "/" + ctx.actionExecutionKey
             return ActionOutcome(actionType = type, risk = risk, status = ActionOutcomeStatus.SUCCESS, detail = "ok")
         }
+    }
+
+    private class MutableClock(initial: Instant) : Clock() {
+        @Volatile private var current: Instant = initial
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId): Clock = this
+        override fun instant(): Instant = current
+        fun advance(duration: Duration) { current = current.plus(duration) }
+    }
+
+    private class FailOnceAppendRunStore(
+        private val delegate: AutomationRunStore
+    ) : AutomationRunStore {
+        private val fail = AtomicBoolean(true)
+        override suspend fun append(run: AutomationRun): Boolean {
+            if (fail.compareAndSet(true, false)) throw IllegalStateException("模拟 run append 前进程死亡")
+            return delegate.append(run)
+        }
+        override suspend fun get(runId: String): AutomationRun? = delegate.get(runId)
+        override fun runs(ruleId: String) = delegate.runs(ruleId)
     }
 
     private class FailOnceAckOutbox(
