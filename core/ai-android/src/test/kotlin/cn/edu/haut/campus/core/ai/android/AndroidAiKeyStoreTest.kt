@@ -37,6 +37,7 @@ class AndroidAiKeyStoreTest {
         campusId = CampusId("north")
     )
     private val otherScope = scope.copy(accountId = AccountId("acct-other"), profileId = ProfileId("prof-other"))
+    private val otherProfileScope = scope.copy(profileId = ProfileId("prof-other-only"))
     private val endpoint = AiEndpoint(HttpsUrl("https://provider.example/v1"), "chat-vision-test", supportsVision = true)
 
     @Test
@@ -59,6 +60,39 @@ class AndroidAiKeyStoreTest {
         assertTrue(settings.enabled)
 
         store.wipeAll(scope)
+    }
+
+    @Test
+    fun profilePartitionsStayIsolatedAndWipingOneLeavesTheOtherConfigured() = runTest {
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("profile-isolation"), keys = fakeKeys)
+        val otherEndpoint = endpoint.copy(model = "chat-other-profile")
+        store.put(scope, endpoint, keyCanary().toCharArray())
+        store.setEnabled(scope, true)
+
+        assertEquals(AiKeyStatus.CONFIGURED, store.status(scope).first())
+        assertEquals(AiKeyStatus.NONE, store.status(otherProfileScope).first())
+        assertFalse(store.settings(otherProfileScope).enabled)
+        assertThrows(AiKeyAccessException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                store.withKeyMaterial(otherProfileScope) { _, _ -> Unit }
+            }
+        }
+
+        store.put(otherProfileScope, otherEndpoint, "android-test-key-canary-other".toCharArray())
+        store.setEnabled(otherProfileScope, true)
+        assertEquals(endpoint, store.settings(scope).endpoint)
+        assertEquals(otherEndpoint, store.settings(otherProfileScope).endpoint)
+
+        store.wipeAll(scope)
+        assertEquals(AiKeyStatus.NONE, store.status(scope).first())
+        assertFalse(store.settings(scope).enabled)
+        assertEquals(AiKeyStatus.CONFIGURED, store.status(otherProfileScope).first())
+        assertEquals(otherEndpoint, store.settings(otherProfileScope).endpoint)
+        assertTrue(store.settings(otherProfileScope).enabled)
+
+        store.wipeAll(otherProfileScope)
+        assertEquals(AiKeyStatus.NONE, store.status(otherProfileScope).first())
+        assertTrue("擦除后安全存储文件必须为 0", store.rootDir.listFiles()?.isEmpty() != false)
     }
 
     @Test
