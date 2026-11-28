@@ -308,12 +308,10 @@ private class RepositoryDataFreshnessPort(
         prefs: cn.edu.haut.campus.core.database.AppPreferencesState
     ): Long? {
         val currentTermId = repository.currentTermFlow.first()?.id ?: return null
-        if (prefs.lastAcademicDataSyncTermId == currentTermId && prefs.lastAcademicDataSyncEpochMillis != null) {
-            return prefs.lastAcademicDataSyncEpochMillis
-        }
-        return repository.importAuditsFlow.first()
-            .firstOrNull { it.termId == currentTermId }
-            ?.importedAt
-            ?.toEpochMilli()
+        return resolveAcademicDataFreshnessEpochMs(
+            prefs = prefs,
+            currentTermId = currentTermId,
+            importAudits = repository.importAuditsFlow.first()
+        )
     }
 }
