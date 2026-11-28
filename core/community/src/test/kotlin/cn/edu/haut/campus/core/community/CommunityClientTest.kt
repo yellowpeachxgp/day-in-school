@@ -12,6 +12,7 @@ import org.junit.Test
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.nio.file.Files
 
 class CommunityClientTest {
     private val fixedClock: Clock = Clock.fixed(Instant.ofEpochMilli(1_764_300_000_000L), ZoneOffset.UTC)
@@ -234,6 +235,34 @@ class CommunityClientTest {
         assertEquals("GROUP_PERMISSION_DENIED", error.code)
         assertEquals(403, error.statusCode)
         assertFalse(error.retryable)
+    }
+
+    @Test
+    fun factoryAssemblesProfileIsolatedFileBackedClientWithStaleOfflineFallback() = runTest {
+        val filesDir = Files.createTempDirectory("community-client-factory-test").toFile()
+        try {
+            val transport = RecordingCommunityTransport(
+                jsonResponse(successBody("[]", requestId = "req-factory")),
+                networkFailure(),
+            )
+            val assembly = CommunityClientFactory.createFileBacked(
+                filesDir = filesDir,
+                baseUrl = "https://cloud.example.test",
+                scope = communityTestScope(),
+                accessTokenProvider = { "synthetic-access-token" },
+                featureGate = CommunityFeatureGate.ENABLED,
+                transport = transport,
+                clock = fixedClock,
+            )
+
+            assertTrue(assembly.client.listGroups("haut") is CommunityResult.Success)
+            assertEquals(1, assembly.cacheStore.countEntries())
+            val offline = assembly.client.listGroups("haut")
+            assertTrue(offline is CommunityResult.Success)
+            assertEquals(Staleness.STALE, (offline as CommunityResult.Success).staleness)
+        } finally {
+            filesDir.deleteRecursively()
+        }
     }
 
     @Test

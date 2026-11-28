@@ -105,7 +105,7 @@ class CommunityClient(
             }
             return CommunityResult.Success(
                 value = envelope,
-                provenance = provenance(operation, clock.millis()),
+                provenance = provenance(clock.millis()),
                 staleness = Staleness.FRESH,
             )
         }
@@ -135,10 +135,7 @@ class CommunityClient(
             if (cached != null) {
                 return CommunityResult.Success(
                     value = cached.envelope,
-                    provenance = provenance(
-                        CommunityOperation.byOperationId(cacheKey.operationId),
-                        cached.cachedAtEpochMillis,
-                    ),
+                    provenance = provenance(cached.cachedAtEpochMillis),
                     staleness = Staleness.STALE,
                     cachedAtEpochMillis = cached.cachedAtEpochMillis,
                     cacheFallbackReason = fallbackReason,
@@ -148,13 +145,14 @@ class CommunityClient(
         return CommunityResult.Failure(error)
     }
 
-    private fun provenance(operation: CommunityOperation?, fetchedAtEpochMillis: Long): DataProvenance =
+    private fun provenance(fetchedAtEpochMillis: Long): DataProvenance =
         DataProvenance(
             providerId = "cloud-in-school",
             schoolId = scope.schoolId,
             accountId = scope.accountId,
             sourceSystem = "campus-cloud-community/v1",
-            sourceRecordId = operation?.operationId,
+            // 通用 envelope 客户端不能把 operationId 冒充为记录 ID；领域映射层拿到 data 后再填真实记录标识。
+            sourceRecordId = null,
             fetchedAt = Instant.ofEpochMilli(fetchedAtEpochMillis),
             completeness = SnapshotCompleteness.UNKNOWN,
             trust = VerificationLevel.SOURCE_CONFIRMED,
