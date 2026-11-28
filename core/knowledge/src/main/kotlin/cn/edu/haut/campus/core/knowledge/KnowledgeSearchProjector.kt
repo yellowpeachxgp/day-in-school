@@ -34,39 +34,55 @@ internal class KnowledgeSearchProjector(
     }
 
     private fun projectionDocuments(material: CourseMaterial, lines: List<KnowledgeTextLine>?): List<SearchDocument> {
-        val chunks = if (lines.isNullOrEmpty()) {
-            listOf(
-                SearchTextChunk(
-                    pageIndex = 0,
-                    partIndex = 0,
-                    text = listOfNotNull(material.title, material.note, material.course.courseName).joinToString(10.toChar().toString())
-                )
-            )
-        } else {
-            chunkLinesForSearch(lines)
+        // 元数据与正文页证据严格分离：title/note/courseName 只属于材料级文档，
+        // 绝不能在没有抽取行时伪造 pageIndex=0；页文档 body 只承载该页抽取文本。
+        val documents = mutableListOf(metadataDocument(material))
+        if (!lines.isNullOrEmpty()) {
+            documents += chunkLinesForSearch(lines).map { chunk -> pageDocument(material, chunk) }
         }
-        return chunks.map { chunk ->
-            val pageId = material.id + "/page-" + chunk.pageIndex + "-part-" + chunk.partIndex
-            val ref = EntityRef(EntityType.COURSE_MATERIAL_PAGE, pageId, scope)
-            SearchDocument(
-                ref = ref,
-                type = EntityType.COURSE_MATERIAL_PAGE,
-                title = material.title,
-                body = chunk.text,
-                code = material.course.courseCode,
-                aliases = listOf(material.course.courseName, material.fileName).map { it.take(128) }.filter { it.isNotBlank() }.distinct(),
-                termId = material.course.termId,
-                at = material.updatedAt,
-                deeplink = "dis://knowledge/material/" + material.id + "/page/" + chunk.pageIndex,
-                facets = mapOf(
-                    "materialId" to material.id,
-                    "courseId" to material.course.courseId,
-                    "teachingWeek" to material.course.teachingWeek.toString(),
-                    "kind" to material.kind.name,
-                    "pageIndex" to chunk.pageIndex.toString(),
-                    "partIndex" to chunk.partIndex.toString()
-                )
-            )
-        }
+        return documents
     }
+
+    private fun metadataDocument(material: CourseMaterial): SearchDocument {
+        val ref = EntityRef(EntityType.COURSE_MATERIAL, material.id, scope)
+        return SearchDocument(
+            ref = ref,
+            type = EntityType.COURSE_MATERIAL,
+            title = material.title,
+            body = material.note.orEmpty(),
+            code = material.course.courseCode,
+            aliases = listOf(material.course.courseName, material.fileName).map { it.take(128) }.filter { it.isNotBlank() }.distinct(),
+            termId = material.course.termId,
+            at = material.updatedAt,
+            deeplink = "dis://knowledge/material/" + material.id,
+            facets = materialFacets(material)
+        )
+    }
+
+    private fun pageDocument(material: CourseMaterial, chunk: SearchTextChunk): SearchDocument {
+        val pageId = material.id + "/page-" + chunk.pageIndex + "-part-" + chunk.partIndex
+        val ref = EntityRef(EntityType.COURSE_MATERIAL_PAGE, pageId, scope)
+        return SearchDocument(
+            ref = ref,
+            type = EntityType.COURSE_MATERIAL_PAGE,
+            title = material.title,
+            body = chunk.text,
+            code = material.course.courseCode,
+            aliases = listOf(material.course.courseName, material.fileName).map { it.take(128) }.filter { it.isNotBlank() }.distinct(),
+            termId = material.course.termId,
+            at = material.updatedAt,
+            deeplink = "dis://knowledge/material/" + material.id + "/page/" + chunk.pageIndex,
+            facets = materialFacets(material) + mapOf(
+                "pageIndex" to chunk.pageIndex.toString(),
+                "partIndex" to chunk.partIndex.toString()
+            )
+        )
+    }
+
+    private fun materialFacets(material: CourseMaterial): Map<String, String> = mapOf(
+        "materialId" to material.id,
+        "courseId" to material.course.courseId,
+        "teachingWeek" to material.course.teachingWeek.toString(),
+        "kind" to material.kind.name
+    )
 }

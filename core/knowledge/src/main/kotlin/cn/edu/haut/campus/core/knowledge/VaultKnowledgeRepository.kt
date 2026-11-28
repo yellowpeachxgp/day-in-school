@@ -179,7 +179,7 @@ class VaultKnowledgeRepository internal constructor(
             q = SearchQuery(
                 scope = scope,
                 text = text,
-                types = setOf(EntityType.COURSE_MATERIAL_PAGE),
+                types = setOf(EntityType.COURSE_MATERIAL, EntityType.COURSE_MATERIAL_PAGE),
                 facetEquals = facetFilters,
                 limit = (limit * 4).coerceAtMost(100)
             )
@@ -190,18 +190,23 @@ class VaultKnowledgeRepository internal constructor(
             val material = getMaterial(scope, materialId) ?: continue
             if (courseId != null && material.course.courseId != courseId) continue
             if (teachingWeek != null && material.course.teachingWeek != teachingWeek) continue
-            val pageIndex = hit.document.facets["pageIndex"]?.toIntOrNull()
+            val indexedPageIndex = hit.document.facets["pageIndex"]?.toIntOrNull()
+                ?.takeIf { hit.document.type == EntityType.COURSE_MATERIAL_PAGE }
             val extractionLines = material.extraction?.let { readExtractionLines(it.blobId) }.orEmpty()
-            val located = locateLine(extractionLines, text, pageIndex)
-            val bodyPageMatches = pageMatchesLines(extractionLines, text, pageIndex)
+            val located = locateLine(extractionLines, text, indexedPageIndex)
+            val bodyPageMatches = indexedPageIndex != null && pageMatchesLines(extractionLines, text, indexedPageIndex)
+            // 页文档只有正文证据 verified 后才能作为页结果；title/alias/code 命中统一由材料级文档表达。
+            if (hit.document.type == EntityType.COURSE_MATERIAL_PAGE && located == null && !bodyPageMatches) {
+                continue
+            }
             val pageSnippet = if (located == null && bodyPageMatches) {
-                makePageSnippet(extractionLines, text, pageIndex)
+                makePageSnippet(extractionLines, text, indexedPageIndex)
             } else {
                 null
             }
             val snippet = located?.text?.let { makeSnippet(it, text) }
                 ?: pageSnippet
-                ?: if (bodyPageMatches || hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK) {
+                ?: if (bodyPageMatches || (hit.document.type == EntityType.COURSE_MATERIAL && hit.channel == SearchHitChannel.BODY)) {
                     hit.snippet
                 } else {
                     listOfNotNull(material.title, material.fileName, material.course.courseName, material.note).joinToString(" · ").take(180)
@@ -213,7 +218,7 @@ class VaultKnowledgeRepository internal constructor(
                 kind = material.kind,
                 pageIndex = when {
                     located != null -> located.pageIndex
-                    bodyPageMatches || hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK -> pageIndex
+                    bodyPageMatches -> indexedPageIndex
                     else -> null
                 },
                 lineIndex = located?.lineIndex,
@@ -224,7 +229,10 @@ class VaultKnowledgeRepository internal constructor(
                 updatedAt = material.updatedAt
             )
         }
-        return results.distinctBy { listOf(it.materialId, it.pageIndex, it.lineIndex).joinToString("/") }.take(limit)
+        val withoutRedundantMetadata = results.groupBy { it.materialId }.values.flatMap { materialHits ->
+            if (materialHits.any { it.pageIndex != null }) materialHits.filter { it.pageIndex != null } else materialHits.take(1)
+        }
+        return withoutRedundantMetadata.distinctBy { listOf(it.materialId, it.pageIndex, it.lineIndex).joinToString("/") }.take(limit)
     }
 
     override suspend fun setExtractionConfirmed(

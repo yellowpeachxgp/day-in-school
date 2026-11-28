@@ -63,6 +63,9 @@ data class CourseAssociation(
         require(courseId.length in 1..256 && courseId.none { it.isISOControl() || it.isWhitespace() }) {
             "courseId 为空、过长或含空白/控制字符"
         }
+        require(courseId.none { it == '"' || it == '\\' }) {
+            "courseId 含引号或反斜线，无法与 SearchQuery facet 等值过滤安全对齐"
+        }
         require(courseName.isNotBlank() && courseName.length <= 256 && courseName.none { it.isISOControl() }) {
             "课程名称为空、过长或含控制字符"
         }

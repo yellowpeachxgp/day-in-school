@@ -153,6 +153,19 @@ class RoomSearchIndexTest {
     }
 
     @Test
+    fun crossFieldTokenCombinationDoesNotCreateSyntheticHit() = runBlocking {
+        index.upsert(document("cpu-course", EntityType.COURSE, "CPU 组成原理", "缓存一致性协议"))
+
+        val compact = index.query(scope, SearchQuery(scope, "CPU缓存"))
+        val separated = index.query(scope, SearchQuery(scope, "CPU 缓存"))
+
+        assertEquals(0, compact.totalCount)
+        assertTrue(compact.hits.isEmpty())
+        assertEquals(0, separated.totalCount)
+        assertTrue(separated.hits.isEmpty())
+    }
+
+    @Test
     fun searchResultsAreScopeIsolated() = runBlocking {
         index.upsert(document("shared-id", EntityType.COURSE, "离散数学", "当前账号"))
         val otherScope = scope.copy(accountId = AccountId("acct_other"), profileId = ProfileId("prof_other"))

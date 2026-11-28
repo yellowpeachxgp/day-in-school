@@ -227,9 +227,10 @@ class VaultKnowledgeRepositoryEdgeTest {
             )
         )
         val indexedDocs = database.vaultDao().getSearchDocsSnapshot()
-        assertEquals(1, indexedDocs.size)
-        assertTrue(indexedDocs[0].tokenStream.contains("征值"))
-        assertTrue(indexedDocs[0].tokenStream.contains("征向"))
+        assertEquals(2, indexedDocs.size)
+        val pageDoc = indexedDocs.single { it.entityType == cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL_PAGE.name }
+        assertTrue(pageDoc.tokenStream.contains("征值"))
+        assertTrue(pageDoc.tokenStream.contains("征向"))
         assertEquals(1, repository.searchMaterials(scope, "特征值").size)
         assertEquals(1, repository.searchMaterials(scope, "特征向量").size)
         val hits = repository.searchMaterials(scope, "特征值 特征向量")
@@ -325,6 +326,68 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertEquals(1, hits.size)
         assertNull(hits[0].pageIndex)
         assertNull(hits[0].lineIndex)
+    }
+
+    @Test
+    fun courseIdRejectsQuoteAndBackslashAlignedWithSearchQueryFacets() {
+        listOf("bad\"course", "bad\\course").forEach { badCourseId ->
+            assertTrue(
+                "courseId 引号/反斜线必须与 SearchQuery facet 约束一致: " + badCourseId,
+                runCatching { course.copy(courseId = badCourseId) }.isFailure
+            )
+        }
+    }
+
+    @Test
+    fun pptxWithoutExtractionUsesNoteMetadataWithoutFabricatedPage() = runBlocking {
+        val material = repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.SLIDES,
+                title = "操作系统课件",
+                note = "汇编入口与中断向量表",
+                fileName = "os-week7.pptx",
+                mimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                contentBytes = byteArrayOf(11, 12, 13)
+            )
+        )
+        assertNull(material.extraction)
+
+        val hits = repository.searchMaterials(scope, "汇编入口")
+        assertEquals(1, hits.size)
+        assertEquals(material.id, hits[0].materialId)
+        assertNull("无抽取行时 note 命中不得伪造页码", hits[0].pageIndex)
+        assertNull(hits[0].lineIndex)
+        assertNull(hits[0].bounds)
+        assertNull(hits[0].coordinateSpace)
+        assertTrue(
+            database.vaultDao().getSearchDocsSnapshot().none { it.facetsJson.contains("\"pageIndex\"") }
+        )
+    }
+
+    @Test
+    fun titleCpuAndBodyCacheCannotCombineIntoBodyPageHit() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 5, "缓存一致性协议"))
+        repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.PDF,
+                title = "CPU 组成原理",
+                note = null,
+                fileName = "cpu.pdf",
+                mimeType = "application/pdf",
+                contentBytes = byteArrayOf(21, 22)
+            )
+        )
+
+        val compactHits = repository.searchMaterials(scope, "CPU缓存")
+        val separatedHits = repository.searchMaterials(scope, "CPU 缓存")
+        assertTrue("跨字段拼合不得命中正文页码", compactHits.all { it.pageIndex == null })
+        assertTrue("跨字段拼合不得命中正文页码", separatedHits.all { it.pageIndex == null })
+        assertTrue(compactHits.isEmpty())
+        assertTrue(separatedHits.isEmpty())
     }
 
     @Test

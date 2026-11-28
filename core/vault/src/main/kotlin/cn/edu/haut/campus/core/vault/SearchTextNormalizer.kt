@@ -24,9 +24,9 @@ object SearchTextNormalizer {
         val isEmpty: Boolean get() = normalizedQuery.isBlank()
     }
 
-    private enum class ScriptKind { CJK, WORD }
+    internal enum class ScriptKind { CJK, WORD }
 
-    private data class ScriptRun(
+    internal data class ScriptRun(
         val kind: ScriptKind,
         val text: String,
         val codePoints: List<String>
@@ -141,7 +141,7 @@ object SearchTextNormalizer {
         return tokens
     }
 
-    private fun splitScriptRuns(unit: String): List<ScriptRun> {
+    internal fun splitScriptRuns(unit: String): List<ScriptRun> {
         val parts = codePointStrings(unit)
         if (parts.isEmpty()) return emptyList()
         val runs = mutableListOf<ScriptRun>()
