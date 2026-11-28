@@ -177,7 +177,8 @@ internal fun SettingsHomeSectionContent(
     onNavigateToSchoolCenter: () -> Unit,
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
-    onShowImportHistory: () -> Unit
+    onShowImportHistory: () -> Unit,
+    settingsEntriesContent: @Composable () -> Unit = {}
 ) {
     val studentProfile = state.studentProfile
     val terms = state.terms
@@ -806,6 +807,8 @@ internal fun SettingsHomeSectionContent(
                             )
                         }
                     }
+
+                    settingsEntriesContent()
 
                     XPeachInsetDivider(verticalPadding = 8.dp)
 

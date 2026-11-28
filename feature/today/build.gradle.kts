@@ -32,6 +32,7 @@ dependencies {
     api(project(":core:database"))
     api(project(":core:reminder"))
     api(project(":core:designsystem"))
+    api(project(":core:ui-runtime"))
     api(project(":widget:common"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

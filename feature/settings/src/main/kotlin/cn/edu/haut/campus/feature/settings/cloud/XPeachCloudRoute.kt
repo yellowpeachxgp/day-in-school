@@ -8,6 +8,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.ExtensionPluginRuntimeRegistry
+import cn.edu.haut.campus.feature.settings.plugin.PluginManagementViewModel
 import cn.edu.haut.campus.feature.settings.cloud.ui.XPeachCloudAccountScreenContent
 import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
 import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
@@ -28,11 +30,29 @@ fun XPeachCloudRoute(
         key = sessionKey,
         factory = XPeachCloudViewModel.factory(repository, sessionStates)
     )
+    val extensionInstaller = remember(context, repository.profileId) {
+        ExtensionPluginRuntimeRegistry.installerForContext(context, repository.profileId)
+    }
+    val pluginViewModel: PluginManagementViewModel = viewModel(
+        viewModelStoreOwner = viewModelStoreOwner,
+        key = "plugin-management-" + sessionKey,
+        factory = PluginManagementViewModel.factory(
+            profileId = repository.profileId,
+            schoolId = repository.schoolId,
+            sessionGeneration = repository.sessionGeneration,
+            isSessionActive = { repository.isSessionActive },
+            installer = extensionInstaller,
+            sessionStates = sessionStates
+        )
+    )
+    val pluginManagementState by pluginViewModel.uiState.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     XPeachCloudAccountScreenContent(
         state = state,
         actions = viewModel,
         onBack = onBack,
-        onNavigateToCloudSeatBooking = onNavigateToCloudSeatBooking
+        onNavigateToCloudSeatBooking = onNavigateToCloudSeatBooking,
+        pluginManagementState = pluginManagementState,
+        onPluginManagementAction = pluginViewModel::onAction
     )
 }

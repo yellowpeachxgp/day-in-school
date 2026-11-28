@@ -16,6 +16,7 @@ import cn.edu.haut.campus.core.domain.SchoolDirectory
 import cn.edu.haut.campus.core.model.SchoolProfile
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiAction
 import cn.edu.haut.campus.feature.settings.schoolcenter.state.SchoolCenterUiEffect
+import cn.edu.haut.campus.feature.settings.extension.ExtensionPluginSlot
 import cn.edu.haut.campus.feature.settings.schoolcenter.ui.SchoolCenterScreenContent
 import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
 
@@ -64,6 +65,15 @@ fun SchoolCenterRoute(
         }
     }
 
+    val extensionSlotContent: @Composable () -> Unit = {
+        ExtensionPluginSlot(
+            profileId = activeSession?.repository?.profileId.orEmpty(),
+            schoolId = activeSession?.repository?.schoolId.orEmpty(),
+            sessionGeneration = activeSession?.repository?.sessionGeneration,
+            slotId = "campus.services",
+            allowedHostRoutes = emptySet()
+        )
+    }
     SchoolCenterScreenContent(
         state = state,
         directory = directory,
@@ -72,6 +82,7 @@ fun SchoolCenterRoute(
         onSelectSchool = onSelectSchool,
         activeSession = activeSession,
         onSwitchProfile = onSwitchProfile,
-        onAction = viewModel::onAction
+        onAction = viewModel::onAction,
+        extensionSlotContent = extensionSlotContent
     )
 }

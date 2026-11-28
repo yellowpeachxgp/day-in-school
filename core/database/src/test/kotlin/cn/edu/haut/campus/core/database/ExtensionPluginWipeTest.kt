@@ -4,6 +4,7 @@ import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,11 +20,15 @@ class ExtensionPluginWipeTest {
 
     @Before
     fun setUp() {
+        ExtensionPluginRuntimeRegistry.clearInstallersForTest()
         fixture = RepairTestFixture.create(RuntimeEnvironment.getApplication(), "prof_extension_wipe")
     }
 
     @After
-    fun tearDown() = fixture.close()
+    fun tearDown() {
+        fixture.close()
+        ExtensionPluginRuntimeRegistry.clearInstallersForTest()
+    }
 
     @Test
     fun wipeLeavesPluginInstallationGrantStorageAndCacheAtZero() = runBlocking {
@@ -35,6 +40,8 @@ class ExtensionPluginWipeTest {
         )
         val context = RuntimeEnvironment.getApplication()
         val root = ExtensionPluginWipeRegistration.rootForProfile(context.filesDir, fixture.profile.id)
+        val installer = ExtensionPluginRuntimeRegistry.installerForProfile(context.filesDir, fixture.profile.id)
+        val revisionBeforeWipe = installer.revision.value
         val installFile = File(root, "installations/school/plugin.json")
         val storageFile = File(root, "storage/school/plugin/value.bin")
         val cacheFile = File(root, "cache/school/plugin/value.bin")
@@ -53,5 +60,6 @@ class ExtensionPluginWipeTest {
         assertEquals(false, installFile.exists())
         assertEquals(false, storageFile.exists())
         assertEquals(false, cacheFile.exists())
+        assertTrue("wipe must notify the shared installer revision", installer.revision.value > revisionBeforeWipe)
     }
 }
