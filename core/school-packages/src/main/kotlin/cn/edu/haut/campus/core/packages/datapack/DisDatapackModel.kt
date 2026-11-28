@@ -5,6 +5,16 @@ import cn.edu.haut.campus.core.model.VerificationLevel
 const val DIS_DATAPACK_FORMAT: String = "dis-datapack/v1"
 const val DIS_DATAPACK_SIGNATURE_SCHEME: String = "DIS_DATAPACK_CANONICAL_JSON_SHA256_V1"
 
+/** CT-06 dis-datapack/v1 schema 固定允许的 verificationLevel；不得随宿主权威枚举未来扩展而放宽。 */
+val DIS_DATAPACK_VERIFICATION_LEVELS: Set<String> = setOf(
+    "UNVERIFIED",
+    "SOURCE_CONFIRMED",
+    "MOCK_TESTED",
+    "DEVICE_TESTED",
+    "SCHOOL_VERIFIED",
+    "DISTRIBUTION_READY"
+)
+
 enum class DisDatapackKind(val wireId: String) {
     PROCEDURE_GUIDE("procedure-guide"),
     OPPORTUNITY_CATALOG("opportunity-catalog"),

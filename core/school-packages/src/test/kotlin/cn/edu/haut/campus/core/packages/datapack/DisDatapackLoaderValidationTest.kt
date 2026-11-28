@@ -4,7 +4,10 @@ import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.packages.PackageException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.time.LocalDate
 
 class DisDatapackLoaderValidationTest {
@@ -21,6 +24,28 @@ class DisDatapackLoaderValidationTest {
         assertEquals(true, item.materials.single().required)
         assertEquals(DataPackFreshness.CURRENT, DisDatapackLoader.freshness(decoded.pack, LocalDate.parse("2027-05-20")))
         assertEquals(DataPackFreshness.REVIEW_DUE, DisDatapackLoader.freshness(decoded.pack, LocalDate.parse("2027-05-21")))
+    }
+
+
+    @Test
+    fun mergedCt06SchemaKeepsMirroredRootShapeAndFixedEnumSets() {
+        val schema = Json.parse(readContractSchema())
+        assertEquals(
+            setOf("format", "packId", "schoolId", "kind", "version", "sources", "verifiedAt", "reviewBy", "maintainers", "items"),
+            schema.arr("required")!!.map { it.stringOrNull() }.toSet()
+        )
+        val properties = schema.obj("properties")!!.asObjOrNull!!
+        val kindValues = properties.fields["kind"]!!.asObjOrNull!!.fields["enum"]!!.asArrOrNull!!.items.map { it.stringOrNull() }
+        assertEquals(DisDatapackKind.entries.map { it.wireId }.toSet(), kindValues.toSet())
+        val levelValues = properties.fields["verificationLevel"]!!.asObjOrNull!!.fields["enum"]!!.asArrOrNull!!.items.map { it.stringOrNull() }
+        assertEquals(DIS_DATAPACK_VERIFICATION_LEVELS, levelValues.toSet())
+        val description = schema.str("description")!!
+        assertTrue(description.contains("bytes to equal RFC8785(parse(bytes))"))
+        assertTrue(description.contains("dis-datapack/v1, LF, lowercase SHA-256"))
+        val defs = schema.obj("\$defs")!!.asObjOrNull!!
+        for (name in listOf("procedureGuideItem", "opportunityCatalogItem", "facilityCatalogItem", "indoorGraphItem", "periodPresetItem", "pharmacyCatalogItem")) {
+            assertTrue(defs.fields.containsKey(name))
+        }
     }
 
     @Test
@@ -72,6 +97,17 @@ class DisDatapackLoaderValidationTest {
         assertSchemaError {
             validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a"],"items":[{"id":"x","title":"x","steps":[{"id":"s","title":"s","instruction":"i","estimatedMinutes":10081}],"unexpected":true}]}""")
         }
+    }
+
+
+    private fun readContractSchema(): String {
+        var dir = Paths.get("").toAbsolutePath()
+        while (dir != null) {
+            val candidate = dir.resolve("contracts/schemas/dis-datapack-v1.schema.json")
+            if (Files.isRegularFile(candidate)) return String(Files.readAllBytes(candidate), Charsets.UTF_8)
+            dir = dir.parent
+        }
+        throw AssertionError("contracts/schemas/dis-datapack-v1.schema.json not found from test working directory")
     }
 
     private fun validateWith(root: cn.edu.haut.campus.core.model.json.JsonValue, kind: String, item: cn.edu.haut.campus.core.model.json.JsonValue): DisDatapack {
