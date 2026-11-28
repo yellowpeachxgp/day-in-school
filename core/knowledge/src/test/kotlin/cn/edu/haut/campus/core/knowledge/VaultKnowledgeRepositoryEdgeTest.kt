@@ -189,6 +189,7 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertNull(hits[0].lineIndex)
         assertNull(hits[0].bounds)
         assertNull(hits[0].coordinateSpace)
+        assertTrue(!hits[0].snippet.contains("完全无关的正文"))
     }
 
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =

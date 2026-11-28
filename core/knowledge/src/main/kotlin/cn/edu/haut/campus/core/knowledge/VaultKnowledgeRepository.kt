@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.timeline.TimelineKind
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import cn.edu.haut.campus.core.vault.EntityWriter
 import cn.edu.haut.campus.core.vault.RoomSearchIndex
+import cn.edu.haut.campus.core.vault.SearchHitChannel
 import cn.edu.haut.campus.core.vault.SearchQuery
 import cn.edu.haut.campus.core.vault.SearchTextNormalizer
 import cn.edu.haut.campus.core.vault.VaultBlobStore
@@ -192,7 +193,12 @@ class VaultKnowledgeRepository internal constructor(
             val pageIndex = hit.document.facets["pageIndex"]?.toIntOrNull()
             val extractionLines = material.extraction?.let { readExtractionLines(it.blobId) }.orEmpty()
             val located = locateLine(extractionLines, text, pageIndex)
-            val snippet = located?.text?.let { makeSnippet(it, text) } ?: hit.snippet
+            val snippet = located?.text?.let { makeSnippet(it, text) }
+                ?: if (hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK) {
+                    hit.snippet
+                } else {
+                    listOfNotNull(material.title, material.fileName, material.course.courseName, material.note).joinToString(" · ").take(180)
+                }
             results += KnowledgeSearchHit(
                 materialId = material.id,
                 title = material.title,
