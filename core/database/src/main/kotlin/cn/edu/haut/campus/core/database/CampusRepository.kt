@@ -226,7 +226,7 @@ class CampusRepository internal constructor(
         override suspend fun wipeCommunityCacheForCloudIdentityChange() =
             CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
     }
-    private val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
+    val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
         environment = repositoryEnvironment,
         appContext = appContext,
         cloudTokenVault = cloudTokenVault,

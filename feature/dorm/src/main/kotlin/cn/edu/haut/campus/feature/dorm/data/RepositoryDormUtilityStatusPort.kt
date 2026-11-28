@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package cn.edu.haut.campus.feature.dorm.data
 
 import cn.edu.haut.campus.core.campusservices.UtilityMeterCategory
