@@ -107,6 +107,7 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":core:vault"))
     implementation(project(":core:automation-android"))
+    implementation(project(":core:ai-android"))
     implementation(project(":core:reminder"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:academic"))
