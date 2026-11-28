@@ -103,7 +103,7 @@ class DormViewModelTest {
 
         viewModel.dispatch(DormUiAction.ReverseLedgerEntry(original.entryId))
         advanceUntilIdle()
-        assertEquals(-1000L, port.amendInputs.single().third.amountFen)
+        assertEquals(-1000L, port.amendInputs.single().input.amountFen)
 
         viewModel.dispatch(DormUiAction.RequestDutySwap(DormPreviewFixtures.contentSnapshot.dutyTasks.first().taskId, DormPreviewFixtures.member3))
         advanceUntilIdle()
