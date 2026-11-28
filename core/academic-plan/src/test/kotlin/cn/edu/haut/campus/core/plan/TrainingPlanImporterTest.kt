@@ -203,9 +203,9 @@ class TrainingPlanImporterTest {
         val plan = TrainingPlanImporter.import(view).plan
         assertNotNull(plan.groupById("gw-practice"))
         assertNotNull(plan.groupById("gw-general"))
-        assertTrue(plan.groupById("gw-practice")!!.courses.any { it.courseCode == "P1" })
-        assertTrue(plan.groupById("gw-general")!!.courses.any { it.courseCode == "G1" })
-        assertTrue(plan.groupById("gw-required")!!.courses.none { it.courseCode == "P1" || it.courseCode == "G1" })
+        assertTrue(plan.groupById("gw-practice")!!.courses.any { it.code == "P1" })
+        assertTrue(plan.groupById("gw-general")!!.courses.any { it.code == "G1" })
+        assertTrue(plan.groupById("gw-required")!!.courses.none { it.code == "P1" || it.code == "G1" })
     }
 
     @Test
