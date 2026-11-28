@@ -43,8 +43,8 @@ import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
-class AutomationOutboxConsumptionException(eventId: String) :
-    IllegalStateException("自动化 outbox 事件处理失败，保留未 ack 等待补处理: " + eventId)
+class AutomationOutboxConsumptionException(eventId: String, cause: Throwable? = null) :
+    IllegalStateException("自动化 outbox 事件处理失败，保留未 ack 等待补处理: " + eventId, cause)
 
 data class AutomationWakeSummary(
     val geofenceEventsPublished: Int,

@@ -25,17 +25,18 @@ class AutomationOutboxProcessor(
             val instances = rules.mapNotNull { rule ->
                 BuiltinTriggerPlanner.instanceForDomainEvent(rule, event)?.let { instance -> rule to instance }
             }
-            var failed = false
+            var failureCause: Throwable? = null
             for ((_, instance) in instances) {
                 try {
                     engine.executeTrigger(instance)
                 } catch (error: Throwable) {
                     if (error is CancellationException || error is Error) throw error
-                    failed = true
+                    failureCause = error
                     break
                 }
             }
-            if (failed) throw AutomationOutboxConsumptionException(event.eventId)
+            val failed = failureCause != null
+            if (failed) throw AutomationOutboxConsumptionException(event.eventId, failureCause)
             outbox.acknowledge(consumerGroup, event.eventId)
             consumed++
         }

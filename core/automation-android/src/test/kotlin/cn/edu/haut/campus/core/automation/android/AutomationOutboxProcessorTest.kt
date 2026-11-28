@@ -110,7 +110,9 @@ class AutomationOutboxProcessorTest {
         flakyOutbox.append(DomainEventCodecRegistry.DEFAULT.encode(event))
 
         val first = runCatching { processor.consumeOnce() }
-        first.exceptionOrNull()?.let { println("first consume error: " + it::class.qualifiedName + ": " + it.message) }
+        first.exceptionOrNull()?.let {
+            println("first consume error: " + it::class.qualifiedName + ": " + it.message + " cause=" + it.cause)
+        }
         assertTrue(first.isFailure)
         assertEquals(1, action.calls.size)
         assertEquals(1, database.vaultDao().countDomainOutbox())
