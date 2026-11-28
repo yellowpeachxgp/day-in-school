@@ -304,6 +304,7 @@ class TodayViewModelDurableWriteTest {
                 writeExecutor = gatedExecutor
             )
 
+            val restoreOperationKey = "legacy-restore-owner-clear"
             firstViewModel.onAction(
                 TodayUiAction.RestoreCanceledOccurrence(
                     termId = termId,
@@ -312,7 +313,7 @@ class TodayViewModelDurableWriteTest {
                     overrideId = null,
                     mergedRuleIds = listOf(rule.id),
                     occurrenceOverrides = actionSnapshot,
-                    writeToken = "legacy-restore-owner-clear"
+                    writeToken = restoreOperationKey
                 )
             )
             withTimeout(2_000) { writeStarted.await() }
@@ -360,17 +361,17 @@ class TodayViewModelDurableWriteTest {
                     }
                 }
 
-                val deleteToken = "legacy-review-delete-a"
+                val deleteOperationKey = "legacy-review-delete-a"
                 restoredViewModel.onAction(
                     TodayUiAction.DeleteLegacyOccurrenceOverride(
                         overrideId = "ov_legacy_tgt_a",
-                        writeToken = deleteToken
+                        writeToken = deleteOperationKey
                     )
                 )
                 withTimeout(2_000) {
-                    while (!restoredViewModel.uiState.value.writeCompletions.containsKey(deleteToken)) yield()
+                    while (!restoredViewModel.uiState.value.writeCompletions.containsKey(deleteOperationKey)) yield()
                 }
-                assertTrue(restoredViewModel.uiState.value.writeCompletions.getValue(deleteToken).isSuccess)
+                assertTrue(restoredViewModel.uiState.value.writeCompletions.getValue(deleteOperationKey).isSuccess)
                 assertTrue(fixture.dao.getOccurrenceOverridesSnapshot().none { it.id == "ov_legacy_tgt_a" })
                 withTimeout(2_000) {
                     while (restoredViewModel.uiState.value.pendingLegacyRestoreTargets.map { it.id } != listOf("ov_legacy_tgt_b")) {
