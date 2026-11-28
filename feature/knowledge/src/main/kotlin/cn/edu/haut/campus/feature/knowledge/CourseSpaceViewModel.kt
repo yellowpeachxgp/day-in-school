@@ -157,26 +157,29 @@ class CourseSpaceViewModel(
         }
     }
 
-    private fun toMaterialCard(material: CourseMaterial): CourseMaterialCardUi = CourseMaterialCardUi(
-        id = material.id,
-        title = material.title,
-        kindLabel = when (material.kind) {
-            CourseMaterialKind.SLIDES -> "课件"
-            CourseMaterialKind.PDF -> "PDF"
-            CourseMaterialKind.PHOTO -> "照片"
-            CourseMaterialKind.NOTE -> "笔记"
-            CourseMaterialKind.ASSIGNMENT -> "作业"
-        },
-        teachingWeek = material.course.teachingWeek,
-        fileLabel = material.fileName,
-        extractionLabel = when {
-            material.extraction == null -> "未抽取正文"
-            material.extraction.confirmationState == ExtractionConfirmationState.USER_CONFIRMED -> "文本已确认"
-            else -> "抽取待确认"
-        },
-        extractionNeedsConfirmation = material.extraction?.confirmationState == ExtractionConfirmationState.UNCONFIRMED,
-        updatedLabel = material.updatedAt.toString().replace('T', ' ').take(16)
-    )
+    private fun toMaterialCard(material: CourseMaterial): CourseMaterialCardUi {
+        val extraction = material.extraction
+        return CourseMaterialCardUi(
+            id = material.id,
+            title = material.title,
+            kindLabel = when (material.kind) {
+                CourseMaterialKind.SLIDES -> "课件"
+                CourseMaterialKind.PDF -> "PDF"
+                CourseMaterialKind.PHOTO -> "照片"
+                CourseMaterialKind.NOTE -> "笔记"
+                CourseMaterialKind.ASSIGNMENT -> "作业"
+            },
+            teachingWeek = material.course.teachingWeek,
+            fileLabel = material.fileName,
+            extractionLabel = when {
+                extraction == null -> "未抽取正文"
+                extraction.confirmationState == ExtractionConfirmationState.USER_CONFIRMED -> "文本已确认"
+                else -> "抽取待确认"
+            },
+            extractionNeedsConfirmation = extraction?.confirmationState == ExtractionConfirmationState.UNCONFIRMED,
+            updatedLabel = material.updatedAt.toString().replace('T', ' ').take(16)
+        )
+    }
 
     private fun toDeadlineCard(material: CourseMaterial): CourseDeadlineUi? {
         val assignment = material.assignment ?: return null
@@ -200,18 +203,21 @@ class CourseSpaceViewModel(
         estimatedLabel = task.estimatedMinutes?.let { "约 " + it + " 分钟" } ?: "未估时"
     )
 
-    private fun toSearchHitCard(hit: KnowledgeSearchHit): CourseSearchHitUi = CourseSearchHitUi(
-        id = hit.materialId + ":" + hit.pageIndex + ":" + hit.lineIndex,
-        materialId = hit.materialId,
-        title = hit.title,
-        snippet = hit.snippet,
-        locationLabel = when {
-            hit.coordinateSpace == KnowledgeCoordinateSpace.IMAGE_PIXEL_TOP_LEFT && hit.bounds != null -> "图片区域"
-            hit.pageIndex != null -> "第 " + (hit.pageIndex + 1) + " 页"
-            else -> "资料元数据"
-        },
-        needsConfirmation = hit.confirmationState == ExtractionConfirmationState.UNCONFIRMED
-    )
+    private fun toSearchHitCard(hit: KnowledgeSearchHit): CourseSearchHitUi {
+        val pageIndex = hit.pageIndex
+        return CourseSearchHitUi(
+            id = hit.materialId + ":" + hit.pageIndex + ":" + hit.lineIndex,
+            materialId = hit.materialId,
+            title = hit.title,
+            snippet = hit.snippet,
+            locationLabel = when {
+                hit.coordinateSpace == KnowledgeCoordinateSpace.IMAGE_PIXEL_TOP_LEFT && hit.bounds != null -> "图片区域"
+                pageIndex != null -> "第 " + (pageIndex + 1) + " 页"
+                else -> "资料元数据"
+            },
+            needsConfirmation = hit.confirmationState == ExtractionConfirmationState.UNCONFIRMED
+        )
+    }
 
     private fun emit(effect: CourseSpaceUiEffect) {
         check(_effects.tryEmit(effect)) { "课程空间事件缓冲已满" }
