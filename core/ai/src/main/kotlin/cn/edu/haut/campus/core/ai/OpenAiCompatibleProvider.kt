@@ -35,14 +35,15 @@ class OpenAiCompatibleProvider(
     private val transport: AiTransport = HttpUrlConnectionAiTransport()
 ) : AiProviderPort {
     override suspend fun preview(scope: SchoolAccountScope, req: AiRequest): AiSendPreview {
-        val endpoint = requireReadyEndpoint(scope)
-        return buildPreview(scope, endpoint, req)
+        val settings = requireReadySettings(scope)
+        return buildPreview(scope, checkNotNull(settings.endpoint), req, settings.configurationGeneration)
     }
 
     override suspend fun send(scope: SchoolAccountScope, req: AiRequest, consent: AiConsentToken): AiResult {
         return try {
-            val endpoint = requireReadyEndpoint(scope)
-            val preview = buildPreview(scope, endpoint, req)
+            val settings = requireReadySettings(scope)
+            val endpoint = checkNotNull(settings.endpoint)
+            val preview = buildPreview(scope, endpoint, req, settings.configurationGeneration)
             when (val verdict = consentCenter.consume(scope, endpoint, preview, consent)) {
                 AiConsentVerdict.ACCEPTED -> Unit
                 AiConsentVerdict.INVALID -> return AiResult.Failure(AiError.CONSENT_INVALID, retryable = false)
@@ -85,7 +86,7 @@ class OpenAiCompatibleProvider(
         }
     }
 
-    private suspend fun requireReadyEndpoint(scope: SchoolAccountScope): AiEndpoint {
+    private suspend fun requireReadySettings(scope: SchoolAccountScope): AiSettings {
         val settings = settingsAccess.settings(scope)
         if (!settings.enabled) {
             throw AiProviderException(AiError.FEATURE_DISABLED, "BYOK AI 默认关闭，请先单独开启")
@@ -93,10 +94,15 @@ class OpenAiCompatibleProvider(
         if (settings.keyStatus != AiKeyStatus.CONFIGURED || settings.endpoint == null) {
             throw AiProviderException(AiError.NOT_CONFIGURED, "尚未配置 AI endpoint 或 Key")
         }
-        return settings.endpoint
+        return settings
     }
 
-    private fun buildPreview(scope: SchoolAccountScope, endpoint: AiEndpoint, req: AiRequest): AiSendPreview {
+    private fun buildPreview(
+        scope: SchoolAccountScope,
+        endpoint: AiEndpoint,
+        req: AiRequest,
+        configurationGeneration: Long
+    ): AiSendPreview {
         validateAttachmentsInScope(scope, req)
         validateAttachmentMetadata(endpoint, req)
         val redacted = AiLocalRedactor.redact(req.messages)
@@ -115,7 +121,8 @@ class OpenAiCompatibleProvider(
             estimatedRequestBytes = textBytes + imagePayloadBytes + 512L,
             purpose = req.purpose,
             maxTokens = req.maxTokens,
-            attachmentSha256 = req.attachments.map { it.sha256 }
+            attachmentSha256 = req.attachments.map { it.sha256 },
+            configurationGeneration = configurationGeneration
         )
     }
 

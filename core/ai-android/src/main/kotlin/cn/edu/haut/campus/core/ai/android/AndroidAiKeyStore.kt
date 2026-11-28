@@ -32,6 +32,7 @@ import java.nio.CharBuffer
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -101,12 +102,14 @@ class AndroidAiKeyStore internal constructor(
                 val keyCopy = key.copyOf()
                 var keyBytes: ByteArray? = null
                 var payload: ByteArray? = null
+                var envelopeWriteCompleted = false
                 try {
                     keyBytes = charsToUtf8(keyCopy)
                     require(keyBytes.size <= AiByokStorageFormat.MAX_KEY_BYTES) { "AI Key UTF-8 长度超限" }
                     val normalizedEndpoint = endpoint.copy(baseUrl = HttpsUrl(endpoint.baseUrl.withoutTrailingSlash))
                     payload = AiByokStorageFormat.encodePayload(normalizedEndpoint, keyBytes)
                     writeAtomic(envelopeFile(scope), encrypt(scope, payload))
+                    envelopeWriteCompleted = true
                     val verified = decryptEnvelopeLocked(scope) as? EnvelopeRead.Valid
                     check(verified != null && verified.payload.endpoint == normalizedEndpoint) { "AI Key 安全保存校验失败" }
                     try {
@@ -116,6 +119,7 @@ class AndroidAiKeyStore internal constructor(
                         verified.payload.wipe()
                     }
                 } finally {
+                    if (envelopeWriteCompleted) advanceConfigurationGeneration(scope)
                     keyCopy.fill(0.toChar())
                     keyBytes?.fill(0)
                     payload?.fill(0)
@@ -132,6 +136,7 @@ class AndroidAiKeyStore internal constructor(
                 runCatching { deleteAtomic(envelopeFile(scope)) }.onFailure { if (failure == null) failure = it }
                 runCatching { deleteAtomic(enabledFile(scope)) }.onFailure { if (failure == null) failure = it }
                 runCatching { keys.delete(scope) }.onFailure { if (failure == null) failure = it }
+                advanceConfigurationGeneration(scope)
             }
             publish(scope)
             failure?.let { throw IllegalStateException("AI Key 安全擦除未完成", it) }
@@ -169,6 +174,7 @@ class AndroidAiKeyStore internal constructor(
                     check(valid) { "请先保存有效的 AI endpoint 与 Key" }
                 }
                 writeAtomic(enabledFile(scope), byteArrayOf(if (enabled) 1 else 0))
+                advanceConfigurationGeneration(scope)
             }
             publish(scope)
         }
@@ -213,14 +219,15 @@ class AndroidAiKeyStore internal constructor(
 
     private suspend fun readSettings(scope: SchoolAccountScope): AiSettings = withContext(Dispatchers.IO) {
         mutexFor(scope).withLock {
+            val generation = currentConfigurationGeneration(scope)
             when (val read = decryptEnvelopeLocked(scope)) {
                 is EnvelopeRead.Valid -> {
                     val endpoint = read.payload.endpoint
                     read.payload.wipe()
-                    AiSettings(endpoint, AiKeyStatus.CONFIGURED, readEnabledLocked(scope))
+                    AiSettings(endpoint, AiKeyStatus.CONFIGURED, readEnabledLocked(scope), generation)
                 }
-                EnvelopeRead.Missing -> AiSettings(null, AiKeyStatus.NONE, false)
-                EnvelopeRead.Invalid -> AiSettings(null, AiKeyStatus.INVALID, false)
+                EnvelopeRead.Missing -> AiSettings(null, AiKeyStatus.NONE, false, generation)
+                EnvelopeRead.Invalid -> AiSettings(null, AiKeyStatus.INVALID, false, generation)
             }
         }
     }
@@ -342,9 +349,20 @@ class AndroidAiKeyStore internal constructor(
 
         /** Profile 级进程锁：擦除 hook 会新建 store 实例，实例内 mutex 无法阻止 put/wipe 跨实例交错。 */
         private val scopeMutexes = ConcurrentHashMap<String, Mutex>()
+        private val configurationGenerations = ConcurrentHashMap<String, AtomicLong>()
 
         private fun mutexFor(scope: SchoolAccountScope): Mutex =
             scopeMutexes.computeIfAbsent(AiByokStorageFormat.scopeStorageKey(scope)) { Mutex() }
+
+        /** consent 只需进程内串行世代：进程死亡后 token 已按设计全部失效，因此世代无需持久化。 */
+        private fun generationCounter(scope: SchoolAccountScope): AtomicLong =
+            configurationGenerations.computeIfAbsent(AiByokStorageFormat.scopeStorageKey(scope)) { AtomicLong(0) }
+
+        private fun currentConfigurationGeneration(scope: SchoolAccountScope): Long = generationCounter(scope).get()
+
+        private fun advanceConfigurationGeneration(scope: SchoolAccountScope) {
+            generationCounter(scope).incrementAndGet()
+        }
 
         private fun charsToUtf8(chars: CharArray): ByteArray {
             val encoded = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars))

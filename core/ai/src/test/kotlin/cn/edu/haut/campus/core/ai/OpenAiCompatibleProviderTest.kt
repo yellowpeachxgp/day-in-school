@@ -176,6 +176,22 @@ class OpenAiCompatibleProviderTest {
     }
 
     @Test
+    fun changingKeyConfigurationGenerationRejectsOutstandingConsentBeforeKeyAndTransport() = runTest {
+        val transport = RecordingTransport(AiTransportResponse(200, "{}"))
+        val harness = Harness(transport = transport)
+        val req = AiTestFixtures.request()
+        val preview = harness.provider.preview(AiTestFixtures.scope, req)
+        val token = harness.consentCenter.issue(AiTestFixtures.scope, AiTestFixtures.endpoint, preview)
+
+        harness.configurationGeneration += 1
+        val result = harness.provider.send(AiTestFixtures.scope, req, token)
+
+        assertEquals(AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
+        assertEquals(0, transport.calls)
+        assertEquals(0, harness.keyAccess.calls)
+    }
+
+    @Test
     fun attachmentFromAnotherProfileIsRejectedBeforeConsentConsumption() = runTest {
         val transport = RecordingTransport(AiTransportResponse(200, "{}"))
         val harness = Harness(transport = transport)
@@ -195,13 +211,15 @@ class OpenAiCompatibleProviderTest {
         transport: RecordingTransport,
         attachmentReader: AiAttachmentReader? = null
     ) {
+        var configurationGeneration = 1L
         val consentCenter = AiConsentCenter()
         val settingsAccess = object : AiSettingsAccess {
             override suspend fun settings(scope: SchoolAccountScope): AiSettings =
                 AiSettings(
                     endpoint = AiTestFixtures.endpoint,
                     keyStatus = AiKeyStatus.CONFIGURED,
-                    enabled = enabled
+                    enabled = enabled,
+                    configurationGeneration = configurationGeneration
                 )
         }
         val keyAccess = RecordingKeyAccess()

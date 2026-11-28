@@ -92,6 +92,7 @@ class AiConsentCenter(
                 add(endpoint.supportsVision.toString())
                 add(endpoint.host)
                 add(preview.purpose.name)
+                add(preview.configurationGeneration.toString())
                 add(preview.maxTokens.toString())
                 add(preview.textChars.toString())
                 add(preview.attachmentCount.toString())

@@ -127,9 +127,12 @@ data class AiSendPreview(
     val estimatedRequestBytes: Long,
     val purpose: AiPurpose,
     val maxTokens: Int,
-    val attachmentSha256: List<String>
+    val attachmentSha256: List<String>,
+    /** Key/endpoint 配置世代；只用于同意绑定，不是 secret。 */
+    val configurationGeneration: Long = 0
 ) {
     init {
+        require(configurationGeneration >= 0) { "配置世代不能为负" }
         require(endpointHost.isNotBlank() && endpointHost.length <= 512) { "预览 endpointHost 非法" }
         require(model.isNotBlank() && model.length <= 256) { "预览 model 非法" }
         require(textChars >= 0 && attachmentCount >= 0 && estimatedRequestBytes >= 0) { "预览统计不能为负" }
@@ -165,8 +168,12 @@ data class AiConsentToken(
 data class AiSettings(
     val endpoint: AiEndpoint? = null,
     val keyStatus: AiKeyStatus = AiKeyStatus.NONE,
-    val enabled: Boolean = false
+    val enabled: Boolean = false,
+    /** 进程内 Key/配置串行世代；不提供任何 Key 材料或可由离线反推 secret 的信息。 */
+    val configurationGeneration: Long = 0
 ) {
+    init { require(configurationGeneration >= 0) { "配置世代不能为负" } }
+
     val configured: Boolean get() = endpoint != null && keyStatus == AiKeyStatus.CONFIGURED
 }
 

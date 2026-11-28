@@ -27,8 +27,14 @@ class AiAndroidService internal constructor(
     fun settings(scope: SchoolAccountScope): Flow<AiSettings> = store.observeSettings(scope)
     fun keyStatus(scope: SchoolAccountScope): Flow<AiKeyStatus> = store.status(scope)
 
-    suspend fun saveEndpointAndKey(scope: SchoolAccountScope, endpoint: AiEndpoint, key: CharArray) =
-        store.put(scope, endpoint, key)
+    suspend fun saveEndpointAndKey(scope: SchoolAccountScope, endpoint: AiEndpoint, key: CharArray) {
+        try {
+            store.put(scope, endpoint, key)
+        } finally {
+            // 覆盖配置无论成败都不再复用旧同意；配置世代是跨 store 实例的第二道防线。
+            consentCenter.clear()
+        }
+    }
 
     suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean) = store.setEnabled(scope, enabled)
     suspend fun clear(scope: SchoolAccountScope) {

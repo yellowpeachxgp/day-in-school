@@ -1,9 +1,19 @@
 package cn.edu.haut.campus.core.ai.android
 
+import cn.edu.haut.campus.core.ai.AiConsentCenter
 import cn.edu.haut.campus.core.ai.AiEndpoint
+import cn.edu.haut.campus.core.ai.AiError
 import cn.edu.haut.campus.core.ai.AiKeyAccessException
 import cn.edu.haut.campus.core.ai.AiKeyStatus
+import cn.edu.haut.campus.core.ai.AiMessage
+import cn.edu.haut.campus.core.ai.AiMessageRole
+import cn.edu.haut.campus.core.ai.AiPurpose
+import cn.edu.haut.campus.core.ai.AiRequest
+import cn.edu.haut.campus.core.ai.AiResult
+import cn.edu.haut.campus.core.ai.AiTransport
+import cn.edu.haut.campus.core.ai.AiTransportResponse
 import cn.edu.haut.campus.core.ai.HttpsUrl
+import cn.edu.haut.campus.core.ai.OpenAiCompatibleProvider
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.ProfileId
@@ -191,6 +201,47 @@ class AndroidAiKeyStoreTest {
         assertEquals(AiKeyStatus.NONE, store.status(scope).first())
         failingKeys.failDelete = false
         store.wipeAll(scope)
+    }
+
+    @Test
+    fun overwritingKeyThroughServiceRejectsPreviouslyIssuedConsent() = runTest {
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("service-key-rotation"), keys = fakeKeys)
+        val consentCenter = AiConsentCenter()
+        val transport = object : AiTransport {
+            var calls = 0
+            override suspend fun postJson(url: String, bearerKey: CharArray, body: String): AiTransportResponse {
+                calls += 1
+                return AiTransportResponse(200, """{"choices":[{"message":{"content":"ok"}}]}""")
+            }
+        }
+        val service = AiAndroidService(
+            store,
+            consentCenter,
+            OpenAiCompatibleProvider(
+                settingsAccess = store,
+                keyMaterialAccess = store,
+                consentCenter = consentCenter,
+                transport = transport
+            )
+        )
+        service.saveEndpointAndKey(scope, endpoint, keyCanary().toCharArray())
+        service.setEnabled(scope, true)
+        val request = AiRequest(
+            purpose = AiPurpose.INBOX_PARSE,
+            messages = listOf(AiMessage(AiMessageRole.USER, "请总结这条通知")),
+            attachments = emptyList(),
+            maxTokens = 32
+        )
+        val preview = service.preview(scope, request)
+        val token = service.issueConsent(scope, endpoint, preview)
+
+        service.saveEndpointAndKey(scope, endpoint, "rotated-android-test-key".toCharArray())
+        val result = service.send(scope, request, token)
+
+        assertTrue(result is AiResult.Failure)
+        assertEquals("同 endpoint 换 Key 后旧 consent 必须失效", AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
+        assertEquals(0, transport.calls)
+        service.clear(scope)
     }
 
     @Test
