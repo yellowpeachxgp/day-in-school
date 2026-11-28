@@ -38,7 +38,10 @@ class RoomPersonalEventStore(
 ) : PersonalEventStore, PersonalEventTimelineInputProvider {
     private val dao = database.vaultDao()
 
-    override suspend fun upsert(event: PersonalEventDraft, actor: Actor): TimelineEventId {
+    override suspend fun upsert(event: PersonalEventDraft, actor: Actor): TimelineEventId =
+        upsert(event = event, actor = actor, writeGroupId = null)
+
+    suspend fun upsert(event: PersonalEventDraft, actor: Actor, writeGroupId: String?): TimelineEventId {
         require(event.scope == scope) { "PersonalEventStore 只能写入本 profile scope" }
         val timelineId = event.id ?: TimelineEventId(
             PersonalEventDraft.PERSONAL_TIMELINE_SOURCE + ":" + idGenerator()
@@ -52,7 +55,8 @@ class RoomPersonalEventStore(
             ref = ref,
             actor = actor,
             actorDetail = "personal-event-upsert",
-            source = source
+            source = source,
+            writeGroupId = writeGroupId
         ) {
             val nowMs = clock().toEpochMilli()
             val existing = dao.getPersonalEvent(timelineId.value)
@@ -92,6 +96,15 @@ class RoomPersonalEventStore(
     }
 
     override suspend fun delete(id: TimelineEventId, actor: Actor) {
+        delete(id = id, actor = actor, writeGroupId = null)
+    }
+
+    suspend fun delete(
+        id: TimelineEventId,
+        actor: Actor,
+        writeGroupId: String?,
+        source: SourceRef? = null
+    ) {
         require(id.sourceId == PersonalEventDraft.PERSONAL_TIMELINE_SOURCE) {
             "个人日程 TimelineEventId source 必须是 personal"
         }
@@ -99,7 +112,9 @@ class RoomPersonalEventStore(
         writer.write(
             ref = ref,
             actor = actor,
-            actorDetail = "personal-event-delete"
+            actorDetail = "personal-event-delete",
+            source = source,
+            writeGroupId = writeGroupId
         ) {
             dao.deletePersonalEventById(id.value)
             searchIndex.delete(ref)
