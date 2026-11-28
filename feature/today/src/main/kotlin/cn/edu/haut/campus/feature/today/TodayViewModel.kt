@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
+import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ReminderKind
 import cn.edu.haut.campus.core.model.SnoozeOutcome
@@ -37,6 +38,16 @@ private val TODAY_FEEDBACK_TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPat
 internal fun todayClassEventKey(termId: String, occurrenceId: String): String =
     "CLASS:" + termId + ":" + occurrenceId
 
+private fun mergeLegacyRestoreTargets(
+    current: List<OccurrenceOverride>,
+    incoming: List<OccurrenceOverride>
+): List<OccurrenceOverride> {
+    val merged = linkedMapOf<String, OccurrenceOverride>()
+    for (target in current) merged[target.id] = target
+    for (target in incoming) merged[target.id] = target
+    return merged.values.toList()
+}
+
 /** 聚合今日页 Repository Flow，并把仓库/提醒写操作集中在一个可测试边界。 */
 class TodayViewModel internal constructor(
     private val repository: CampusRepository,
@@ -65,6 +76,9 @@ class TodayViewModel internal constructor(
         collect(repository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
         collect(repository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
         collect(repository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
+        collect(repository.timetableRepository.legacyRestoreReviewTargetsFlow) { value ->
+            _uiState.update { it.copy(pendingLegacyRestoreTargets = value) }
+        }
         collect(repository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
         collect(repository.examSchedulesFlow) { value -> _uiState.update { it.copy(examSchedules = value) } }
         collect(repository.unscheduledCoursesFlow) { value -> _uiState.update { it.copy(unscheduledCourses = value) } }
@@ -162,7 +176,10 @@ class TodayViewModel internal constructor(
             is TodayUiAction.DeleteLegacyOccurrenceOverride -> launchDurableOperation(
                 kind = TodayWriteKind.DeleteLegacyOccurrenceOverride,
                 operationToken = action.writeToken,
-                write = { repository.deleteOccurrenceOverride(action.overrideId) },
+                write = {
+                    repository.deleteOccurrenceOverride(action.overrideId)
+                    repository.timetableRepository.removeLegacyRestoreReviewTarget(action.overrideId)
+                },
                 onSuccess = {
                     _uiState.update { state ->
                         state.copy(
@@ -171,7 +188,7 @@ class TodayViewModel internal constructor(
                     }
                 }
             )
-            TodayUiAction.ClearLegacyRestoreTargets -> _uiState.update { it.copy(pendingLegacyRestoreTargets = emptyList()) }
+            TodayUiAction.ClearLegacyRestoreTargets -> clearLegacyRestoreTargetsDurably()
             is TodayUiAction.ConsumeWriteCompletion -> _uiState.update { state ->
                 state.copy(writeCompletions = state.writeCompletions - action.token)
             }
@@ -379,12 +396,30 @@ class TodayViewModel internal constructor(
         launchDurableOperation(
             kind = TodayWriteKind.RestoreCanceledOccurrence,
             operationToken = action.writeToken,
-            write = { repository.executeRestoreCommand(command) },
+            write = {
+                val restoreResult = repository.executeRestoreCommand(command)
+                if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED &&
+                    restoreResult.legacyReviewRequired
+                ) {
+                    // 完成 journal 与 durable write 同 job 持久化：owner/ViewModel 销毁后仍能重建核对框。
+                    repository.timetableRepository.appendLegacyRestoreReviewTargets(
+                        restoreResult.legacyAmbiguousTargets
+                    )
+                }
+                restoreResult
+            },
             onSuccess = { restoreResult ->
                 if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED &&
                     restoreResult.legacyReviewRequired
                 ) {
-                    _uiState.update { it.copy(pendingLegacyRestoreTargets = restoreResult.legacyAmbiguousTargets) }
+                    _uiState.update { state ->
+                        state.copy(
+                            pendingLegacyRestoreTargets = mergeLegacyRestoreTargets(
+                                current = state.pendingLegacyRestoreTargets,
+                                incoming = restoreResult.legacyAmbiguousTargets
+                            )
+                        )
+                    }
                 }
                 val banner = when (restoreResult.status) {
                     CampusRepository.OccurrenceCommandStatus.APPLIED ->
@@ -513,6 +548,21 @@ class TodayViewModel internal constructor(
                 message = "账号会话尚未就绪，写入未执行"
             )
         }
+    }
+
+    /**
+     * 「保留待核对」是对 journal 的确认清理，不展示完成 token；仍必须经耐用写边界，
+     * 避免用户点击后立刻离场导致清理丢失、下次重建又误报同一批候选。
+     */
+    private fun clearLegacyRestoreTargetsDurably() {
+        val generation = expectedSessionGeneration
+        if (generation == null || !isCurrentSession()) return
+        writeExecutor.enqueue(
+            profileId = expectedProfileId,
+            sessionGeneration = generation,
+            write = { repository.timetableRepository.clearLegacyRestoreReviewTargets() },
+            onComplete = {}
+        )
     }
 
     private fun rejectDurableOperation(
