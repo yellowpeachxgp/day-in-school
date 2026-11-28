@@ -58,14 +58,15 @@ internal suspend fun prepareExtraction(
 
 internal fun prepareNoteExtraction(bytes: ByteArray): PreparedExtraction {
     val text = bytes.toString(Charsets.UTF_8)
-    var extractionLineIndex = 0
     val rows = buildList {
-        text.split(10.toChar()).forEach { raw ->
+        // lineIndex 保持原笔记的物理零基行号；空行虽不索引，也必须计入后续行号。
+        // 超长物理行切段索引时多个 segment 共享同一物理行号，原始字节始终是完整来源。
+        text.split(10.toChar()).forEachIndexed { physicalLineIndex, raw ->
             val logicalLine = raw.removeSuffix(13.toChar().toString())
             logicalLine.chunked(16 * 1024).forEach { segment ->
                 add(
                     KnowledgeTextLine(
-                        lineIndex = extractionLineIndex++,
+                        lineIndex = physicalLineIndex,
                         pageIndex = 0,
                         text = segment,
                         confidence = null,

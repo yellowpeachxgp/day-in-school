@@ -193,8 +193,9 @@ class VaultKnowledgeRepository internal constructor(
             val pageIndex = hit.document.facets["pageIndex"]?.toIntOrNull()
             val extractionLines = material.extraction?.let { readExtractionLines(it.blobId) }.orEmpty()
             val located = locateLine(extractionLines, text, pageIndex)
+            val bodyPageMatches = pageMatchesLines(extractionLines, text, pageIndex)
             val snippet = located?.text?.let { makeSnippet(it, text) }
-                ?: if (hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK) {
+                ?: if (bodyPageMatches || hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK) {
                     hit.snippet
                 } else {
                     listOfNotNull(material.title, material.fileName, material.course.courseName, material.note).joinToString(" · ").take(180)
@@ -206,7 +207,7 @@ class VaultKnowledgeRepository internal constructor(
                 kind = material.kind,
                 pageIndex = when {
                     located != null -> located.pageIndex
-                    hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK -> pageIndex
+                    bodyPageMatches || hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK -> pageIndex
                     else -> null
                 },
                 lineIndex = located?.lineIndex,
@@ -346,6 +347,17 @@ class VaultKnowledgeRepository internal constructor(
 
     private suspend fun readExtractionLines(blobId: String): List<KnowledgeTextLine> =
         searchProjector.readExtractionLines(blobId)
+
+    private fun pageMatchesLines(lines: List<KnowledgeTextLine>, query: String, pageIndex: Int?): Boolean {
+        if (lines.isEmpty()) return false
+        val units = SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
+        if (units.isEmpty()) return false
+        val normalizedPageText = lines
+            .filter { pageIndex == null || it.pageIndex == pageIndex }
+            .joinToString(" ") { it.text }
+            .let(SearchTextNormalizer::normalizePlain)
+        return normalizedPageText.isNotBlank() && units.all { normalizedPageText.contains(it) }
+    }
 
     private fun locateLine(lines: List<KnowledgeTextLine>, query: String, pageIndex: Int?): KnowledgeTextLine? {
         if (lines.isEmpty()) return null

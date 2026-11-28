@@ -193,6 +193,46 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertTrue(!hits[0].snippet.contains("完全无关的正文"))
     }
 
+    @Test
+    fun blankLinesDoNotShiftNoteLineIndexes() = runBlocking {
+        repository.archiveMaterial(
+            noteRequest(
+                course,
+                "第一行\n\n边界关键词".toByteArray(Charsets.UTF_8),
+                "text/plain",
+                "空行笔记"
+            )
+        )
+        val hits = repository.searchMaterials(scope, "边界关键词")
+        assertEquals(1, hits.size)
+        assertEquals(2, hits[0].lineIndex)
+    }
+
+    @Test
+    fun multiLineBodyMatchKeepsPageWithoutClaimingExactLine() = runBlocking {
+        extractor.pdfLines = listOf(
+            extractedLine(0, 2, "特征值与"),
+            extractedLine(1, 2, "特征向量")
+        )
+        repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.PDF,
+                title = "特征值 特征向量课件",
+                note = null,
+                fileName = "chapter.pdf",
+                mimeType = "application/pdf",
+                contentBytes = byteArrayOf(1, 2, 3)
+            )
+        )
+        val hits = repository.searchMaterials(scope, "特征值 特征向量")
+        assertEquals(1, hits.size)
+        assertEquals(2, hits[0].pageIndex)
+        assertNull(hits[0].lineIndex)
+        assertNull(hits[0].bounds)
+    }
+
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
         ArchiveMaterialRequest(
             scope = scope,
