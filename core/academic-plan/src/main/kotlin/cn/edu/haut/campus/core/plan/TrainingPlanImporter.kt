@@ -483,10 +483,8 @@ object TrainingPlanImporter {
                 }
                 ch == '"' -> inQuotes = !inQuotes
                 !inQuotes && ch == ',' -> { row += current.toString(); current.clear() }
-                !inQuotes && (ch == '
-' || ch == '') -> {
-                    if (ch == '' && index + 1 < text.length && text[index + 1] == '
-') index++
+                !inQuotes && (ch == '\u000a' || ch == '\u000d') -> {
+                    if (ch == '\u000d' && index + 1 < text.length && text[index + 1] == '\u000a') index++
                     endRow()
                 }
                 else -> current.append(ch)
