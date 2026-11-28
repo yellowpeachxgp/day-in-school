@@ -100,6 +100,6 @@ class UtilityBalanceEventProjector(
         "utility-" + AutomationKeys.sha256Hex(meterId + "|" + balanceCents + "|" + updatedAtEpochMs).substring(0, 32)
 
     private companion object {
-        val NUMBER_REGEX = Regex("(-?\d+(?:\.\d+)?)")
+        val NUMBER_REGEX = Regex("(-?[0-9]+(?:[.][0-9]+)?)")
     }
 }

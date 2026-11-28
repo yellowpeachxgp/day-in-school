@@ -95,7 +95,7 @@ class AutomationOutboxProcessorTest {
             name = "水电低余额",
             enabled = true,
             trigger = TriggerSpec.Threshold(
-                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTS),
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS),
                 op = CompareOp.LESS_THAN,
                 value = BigDecimal("2000")
             ),
