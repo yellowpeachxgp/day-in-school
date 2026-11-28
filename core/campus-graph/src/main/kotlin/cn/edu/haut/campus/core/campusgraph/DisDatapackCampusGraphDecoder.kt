@@ -157,7 +157,7 @@ class DisDatapackCampusGraphDecoder(
             name = item.title,
             kind = facilityKind(item.facilityType),
             buildingRef = buildingRef,
-            openingHours = item.openingHours?.let(::graphSafeText),
+            openingHours = item.openingHours,
             parent = parent,
             provenance = provenance(pack, item, item.id),
             attributes = attributes

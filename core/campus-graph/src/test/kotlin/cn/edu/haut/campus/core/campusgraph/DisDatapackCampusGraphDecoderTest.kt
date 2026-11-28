@@ -73,7 +73,7 @@ class DisDatapackCampusGraphDecoderTest {
     }
 
     @Test
-    fun multilineDisplayTextProjectsAsLosslessGraphSafeEscapes() {
+    fun multilineDisplayTextPreservesOpeningHoursAndEscapesGraphAttributes() {
         val bytes = facilityPackBytesWithMultilineText()
         val decoded = DisDatapackLoader.decode(bytes)
         val typed = decoded.pack.items.single() as cn.edu.haut.campus.core.packages.datapack.DisDatapackItem.FacilityCatalog
@@ -83,7 +83,7 @@ class DisDatapackCampusGraphDecoderTest {
 
         assertEquals("Weekdays: 09:00-17:00\\nSaturday: 09:00-12:00", facility.attributes["summary"])
         assertEquals("北门进入\\n工作日登记", facility.attributes["accessNotes"])
-        assertEquals("工作日 09:00-17:00\\n周六 09:00-12:00", facility.openingHours)
+        assertEquals("工作日 09:00-17:00\n周六 09:00-12:00", facility.openingHours)
         assertTrue(facility.attributes.values.all { value -> value.none { it.isISOControl() } })
     }
 
