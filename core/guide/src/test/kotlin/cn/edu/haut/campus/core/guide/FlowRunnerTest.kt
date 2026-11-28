@@ -105,6 +105,24 @@ class FlowRunnerTest {
     }
 
     @Test
+    fun removed_item_is_reported_as_definition_change_not_missing_item() = runTest {
+        val store = InMemoryGuideProgressStore()
+        val runner = FlowRunner(store, clock)
+        runner.start(GuideTestFixtures.scope, pack, "student-certificate")
+        val removed = GuideTestFixtures.guidePackage(
+            DisDatapackKind.PROCEDURE_GUIDE,
+            listOf(GuideTestFixtures.simpleProcedure("other-procedure")),
+            artifactSha256 = "e".repeat(64)
+        )
+
+        val restored = runner.restore(GuideTestFixtures.scope, removed, "student-certificate")
+
+        assertTrue(restored is GuideRestoreResult.DefinitionChanged)
+        assertEquals(pack.artifactSha256, (restored as GuideRestoreResult.DefinitionChanged).storedArtifactSha256)
+        assertEquals(removed.artifactSha256, restored.currentArtifactSha256)
+    }
+
+    @Test
     fun correcting_prior_answer_excludes_old_branch_completion_from_new_path() = runTest {
         val store = InMemoryGuideProgressStore()
         val runner = FlowRunner(store, clock)
@@ -121,6 +139,47 @@ class FlowRunnerTest {
         assertEquals(1, state.completedCount)
         assertEquals("submit", state.currentStep?.id)
         assertTrue(state.snapshot.completedStepIds.contains("guardian"))
+    }
+
+    @Test
+    fun jump_does_not_permanently_skip_precollection_question_at_same_trigger() = runTest {
+        val branchAtStart = ProcedureQuestion(
+            id = "branch-at-start",
+            question = "是否跳过起始步骤？",
+            options = listOf(
+                ProcedureQuestionOption("stay", "不跳过", nextStepId = "start"),
+                ProcedureQuestionOption("skip", "跳过", nextStepId = "end")
+            )
+        )
+        val precollection = ProcedureQuestion(
+            id = "precollection",
+            question = "前置事实是否已确认？",
+            options = listOf(
+                ProcedureQuestionOption("yes", "已确认", nextStepId = null),
+                ProcedureQuestionOption("no", "未确认", nextStepId = null)
+            )
+        )
+        val item = GuideTestFixtures.simpleProcedure("pre-collection-jump").copy(
+            steps = listOf(
+                ProcedureStep("start", "开始", "开始"),
+                ProcedureStep("middle", "中段", "中段"),
+                ProcedureStep("end", "结束", "结束")
+            ),
+            questions = listOf(branchAtStart, precollection)
+        )
+        val jumpPack = GuideTestFixtures.guidePackage(DisDatapackKind.PROCEDURE_GUIDE, listOf(item))
+        val store = InMemoryGuideProgressStore()
+        val runner = FlowRunner(store, clock)
+        runner.start(GuideTestFixtures.scope, jumpPack, "pre-collection-jump")
+
+        var state = runner.answer(GuideTestFixtures.scope, jumpPack, "pre-collection-jump", "branch-at-start", "skip")
+        assertEquals("precollection", state.actionableQuestion?.id)
+        assertTrue(!state.path.complete)
+
+        state = runner.answer(GuideTestFixtures.scope, jumpPack, "pre-collection-jump", "precollection", "yes")
+        assertTrue(state.path.complete)
+        assertEquals(listOf("end"), state.path.steps.map { it.id })
+        assertEquals(mapOf("branch-at-start" to "skip", "precollection" to "yes"), state.snapshot.answers)
     }
 
     @Test

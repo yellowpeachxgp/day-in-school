@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.timeline.DefaultTimelineService
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineFilter
 import cn.edu.haut.campus.core.timeline.TimelineKind
+import cn.edu.haut.campus.core.timeline.TimelineTextSafety
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import java.time.Clock
 import java.time.Duration
@@ -107,6 +108,52 @@ class GuideTimelineSourceTest {
         val events = source.observe(GuideTestFixtures.scope, window).first()
 
         assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun control_characters_in_procedure_step_title_do_not_crash_projection_and_roundtrip() = runTest {
+        val rawTitle = "准备\n\u0001\u0085材料"
+        val baseItem = GuideTestFixtures.branchProcedure()
+        val item = baseItem.copy(
+            steps = baseItem.steps.map { step ->
+                if (step.id == "prepare") step.copy(title = rawTitle) else step
+            }
+        )
+        val pack = GuideTestFixtures.guidePackage(DisDatapackKind.PROCEDURE_GUIDE, listOf(item))
+        val store = InMemoryGuideProgressStore()
+        val runner = FlowRunner(store, clock)
+        runner.start(GuideTestFixtures.scope, pack, "student-certificate")
+        runner.scheduleStep(
+            GuideTestFixtures.scope,
+            pack,
+            "student-certificate",
+            "prepare",
+            Instant.parse("2026-03-02T01:00:00Z"),
+            Duration.ofMinutes(30)
+        )
+        val source = GuideTimelineSource(listOf(pack), store, zone)
+
+        val event = source.observe(GuideTestFixtures.scope, window).first().single()
+
+        assertTrue(event.title.none { it.isISOControl() })
+        assertTrue(event.title.any { it == '\uFFFD' })
+        assertEquals(rawTitle, TimelineTextSafety.decodeLosslessText(event.sourceMetadata, "guide.title"))
+    }
+
+    @Test
+    fun control_characters_in_opportunity_title_do_not_crash_deadline_projection_and_roundtrip() = runTest {
+        val rawItemTitle = "创新\n\u0007项目"
+        val item = GuideTestFixtures.opportunity().copy(title = rawItemTitle)
+        val pack = GuideTestFixtures.guidePackage(DisDatapackKind.OPPORTUNITY_CATALOG, listOf(item))
+        val store = InMemoryGuideProgressStore()
+        val tracker = OpportunityProgressTracker(store, clock)
+        tracker.track(GuideTestFixtures.scope, pack, "innovation-grant")
+        val source = GuideTimelineSource(listOf(pack), store, zone)
+
+        val event = source.observe(GuideTestFixtures.scope, window).first().single()
+
+        assertTrue(event.title.none { it.isISOControl() })
+        assertEquals(rawItemTitle + " 截止", TimelineTextSafety.decodeLosslessText(event.sourceMetadata, "guide.title"))
     }
 
     @Test

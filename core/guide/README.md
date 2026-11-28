@@ -4,7 +4,7 @@ W5-03 办事导航与机会中心内核（纯 JVM，C20/C21）。本模块只解
 
 ## 输入信任边界
 
-`GuidePackageLoader.loadVerified` 只接受 W5-01 `DisDatapackLoader.verify` 产生的 `VerifiedDataPack`，且重新检查 canonical artifact、签名 payload 与 signer 指纹摘要链。模块没有 unsigned、trust-null 或跳过签名入口。当前可执行 kind 只有：
+`GuidePackageLoader.loadVerified` 只接受 W5-01 `DisDatapackLoader.verify` 产生的 `VerifiedDataPack`；该结果必须携带 trust-root 复查材料。loader 不信任类型或摘要字段本身，会对 canonical bytes 重新执行 exact-byte/schema、detached payload digest、pinned trust-root 中的 Ed25519 验签，并比对完整验签结果。模块没有 unsigned、trust-null 或跳过签名入口。当前可执行 kind 只有：
 
 - `procedure-guide`
 - `opportunity-catalog`
@@ -18,18 +18,20 @@ v1 schema 没有表达式语言，因此本模块固定使用下列确定性子�
 1. `steps[]` 是有序前向控制流。
 2. 一个 question 的触发点是它所有非空 `nextStepId` 中**最小的 step 下标**；没有分支目标的问题在流程开始前采集。
 3. 回答后，`nextStepId == null` 或指向当前下标表示顺序继续；指向更靠后的 step 表示前向跳转。被跳过的 steps/questions 不进入本次个人路径。
-4. 遇到未回答的问题立即停止路径求值；`PersonalPath` 只展示已解析前缀，绝不猜测默认分支。已经被确定在当前路径上的问题允许先回答，不要求用户先完成前序步骤，以便提前生成完整个人路径和材料清单。
+4. 同一触发点的全部问题都先完成求值；只要仍有未回答问题，阻塞优先于跳转，前置事实采集问题不会被一次前向跳转永久跳过。遇到未回答的问题立即停止路径求值；`PersonalPath` 只展示已解析前缀，绝不猜测默认分支。已经被确定在当前路径上的问题允许先回答，不要求用户先完成前序步骤，以便提前生成完整个人路径和材料清单。
 5. 分支目标必须在 `steps[]` 内，步骤/问题 ID 不得重复或含空白控制字符；非法结构在加载时拒绝。`dependsOn` 的 item-id/placeRef 语义尚未由契约明确，非空时在加载时 fail-closed，绝不静默忽略。
 
 该子集能表达「条件可选步骤/跳过一段流程」；它不能表达任意 DAG 或带表达式的互斥多分支。若后续契约补充显式分支结束/条件字段，应由契约线先改 schema，再扩展本解释器。
 
-进度只保存答案、已完成步骤与用户显式计划时间。当前位置和个人路径由这些数据确定性重建；artifact/version 变化时恢复显式返回 `DefinitionChanged`，不把旧答案套进新流程。
+进度只保存答案、已完成步骤与用户显式计划时间。当前位置和个人路径由这些数据确定性重建；artifact/version 变化或条目在新包中移除时恢复显式返回 `DefinitionChanged`，不把旧答案套进新流程，也不误报成普通「条目不存在」。
 
 ## 持久化与恢复
 
 `GuideProgressStore` 是纯 JVM Port，附带 `InMemoryGuideProgressStore` 供测试和 Preview；Android/Room 持久化由后续 feature 层实现。`GuideProgressCodec` 提供 `dis-guide-progress/v1` 白名单 JSON codec：
 
 - 未知字段、未来 schema、非法枚举、非法 Instant、非规范材料下标、损坏 SHA-256 全部拒绝；
+- procedure 计划时长使用整数 `durationMicros` 无损编码；非正、溢出或不能精确到微秒的时长在模型/codec 边界拒绝，不再用 `Duration.seconds` 截断；
+- procedure 答案值按 datapack schema 视为不透明字符串（1..80 个 Unicode code point），不套用 ID token 的空白/控制字符规则；
 - procedure 与 opportunity 都按 `(scope, packId, itemId)` 隔离；
 - opportunity 材料用同一 artifact 内的下标记录完成时间，包变化后整份进度拒绝恢复。
 
@@ -49,6 +51,7 @@ v1 schema 没有表达式语言，因此本模块固定使用下列确定性子�
 
 - `PROCEDURE_STEP`：只投影用户显式 schedule 的个人路径步骤。能确定正时长时投影 `TIMED + TENTATIVE`；否则投影 `UNCERTAIN + FREE`，绝不伪造 deadline 或占用窗口。
 - `OPPORTUNITY_MILESTONE`：只投影已追踪机会的 `deadlineAt`，使用 `DEADLINE + FREE` 点事件；未追踪机会不会污染个人时间流。
+- datapack 标题允许换行/控制字符，但 TimelineEvent 禁止；投影复用 W1-05 `TimelineTextSafety`：信封标题安全替换/截断，原文用同一 JSON 转义分片 metadata 无损保留，控制字符标题不会击垮 flow。
 - 进度 artifact 与当前包不一致、跨 scope、条目缺失或 deadline 非法时 fail-closed。
 
 本模块不调度通知、不写 Room、不接入 UI；W5-04/W5-05 在此内核上实现骨架 UI 与提醒装配。

@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.guide
 
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackItem
+import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -48,11 +49,15 @@ class FlowRunner(
         guidePackage: GuidePackage,
         itemId: String
     ): GuideRestoreResult {
-        requireProcedure(guidePackage, itemId)
+        if (guidePackage.kind != DisDatapackKind.PROCEDURE_GUIDE) {
+            throw GuideDefinitionException("数据包不包含办事流程条目：" + itemId)
+        }
         requireScopeSchool(scope, guidePackage)
         val snapshot = store.loadProcedureRun(scope, guidePackage.packId, itemId)
             ?: return GuideRestoreResult.NotFound
-        if (!isCompatible(snapshot, guidePackage, itemId)) {
+        // 先找进度、再查条目：条目在新 artifact 中被删除也属于定义变化，
+        // 不能把恢复路径误报成「条目不存在」或把旧答案静默丢弃。
+        if (guidePackage.procedureOrNull(itemId) == null || !isCompatible(snapshot, guidePackage, itemId)) {
             return GuideRestoreResult.DefinitionChanged(snapshot.artifactSha256, guidePackage.artifactSha256)
         }
         return GuideRestoreResult.Restored(evaluate(guidePackage, itemId, snapshot))

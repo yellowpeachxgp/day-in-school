@@ -96,9 +96,27 @@ data class ScheduledStep(
     val duration: Duration? = null
 ) {
     init {
-        require(duration == null || !duration.isZero && !duration.isNegative) { "步骤计划时长必须为正" }
+        require(duration == null || isPersistablePositiveDuration(duration)) {
+            "步骤计划时长必须为可无损持久化的正微秒精度"
+        }
     }
 }
+
+/** v1 进度格式使用整数微秒；拒绝会被截断成 0 或损失纳秒尾数的时长，绝不静默改写用户计划。 */
+internal fun durationToWholeMicros(duration: Duration): Long? {
+    if (duration.nano % 1_000 != 0) return null
+    return try {
+        Math.addExact(
+            Math.multiplyExact(duration.seconds, 1_000_000L),
+            (duration.nano / 1_000).toLong()
+        )
+    } catch (error: ArithmeticException) {
+        null
+    }
+}
+
+private fun isPersistablePositiveDuration(duration: Duration): Boolean =
+    !duration.isZero && !duration.isNegative && durationToWholeMicros(duration)?.let { it > 0 } == true
 
 /** procedure 进度的纯数据快照；状态机位置由 answers/completedStepIds 确定性推导。 */
 data class ProcedureRunSnapshot(
@@ -118,8 +136,8 @@ data class ProcedureRunSnapshot(
         require(revision > 0) { "procedure 进度 revision 必须为正" }
         require(!updatedAt.isBefore(createdAt)) { "procedure 进度 updatedAt 不能早于 createdAt" }
         requireProgressIdentity(packId, itemId, artifactSha256, "procedure")
-        require(answers.keys.all { validProgressToken(it) } && answers.values.all { it.isNotBlank() }) {
-            "procedure 答案键值不能为空或含非法字符"
+        require(answers.keys.all { validProgressToken(it) } && answers.values.all(::validOptionValue)) {
+            "procedure 答案键含非法字符，或答案值不符合 datapack option value schema"
         }
         require(completedStepIds.distinct().size == completedStepIds.size) { "procedure 已完成步骤重复" }
         require(completedStepIds.all(::validProgressToken)) { "procedure 已完成步骤 ID 含非法字符" }
@@ -215,6 +233,10 @@ private val HEX_SHA256 = Regex("^[0-9a-f]{64}$")
 
 private fun validProgressToken(value: String): Boolean =
     value.isNotBlank() && value.length <= 256 && value.none { it.isISOControl() || it.isWhitespace() }
+
+/** option value 是 datapack 声明的不透明字符串，不是 token；按 schema 只强制 1..80 个 Unicode code point。 */
+private fun validOptionValue(value: String): Boolean =
+    value.isNotEmpty() && value.codePointCount(0, value.length) <= 80
 
 private fun requireProgressIdentity(packId: String, itemId: String, artifactSha256: String, label: String) {
     require(validProgressToken(packId) && validProgressToken(itemId)) { label + " 进度缺少合法包/条目身份" }

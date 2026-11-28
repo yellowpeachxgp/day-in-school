@@ -44,8 +44,8 @@ object ProcedurePathEvaluator {
             for (question in questionsHere) {
                 val answer = answers[question.id]
                 if (answer == null) {
-                    blocked = question
-                    break
+                    if (blocked == null) blocked = question
+                    continue
                 }
                 val option = question.options.firstOrNull { it.value == answer }
                     ?: throw GuidePersistenceException("持久化答案不属于声明式选项：" + question.id)
@@ -56,9 +56,10 @@ object ProcedurePathEvaluator {
                     if (targetIndex < cursor) {
                         throw GuideDefinitionException("流程分支不得向后跳转形成循环：" + question.id)
                     }
-                    if (targetIndex > cursor) {
+                    // 同一触发点可能同时有分支问题和前置事实采集问题。先记录跳转但继续
+                    // 评估剩余问题；只要还有问题未答，阻塞优先于跳转，避免前置问题被永久跳过。
+                    if (targetIndex > cursor && jumpTo == null) {
                         jumpTo = targetIndex
-                        break
                     }
                 }
             }

@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.guide
 import java.time.Duration
 import java.time.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -32,6 +33,31 @@ class GuidePersistenceTest {
     }
 
     @Test
+    fun procedure_schedule_codec_preserves_subsecond_and_fractional_second_durations() {
+        val snapshot = ProcedureRunSnapshot(
+            scope = GuideTestFixtures.scope,
+            packId = "haut.procedures",
+            itemId = "student-certificate",
+            packVersion = "2026.11.1",
+            artifactSha256 = "a".repeat(64),
+            scheduledSteps = linkedMapOf(
+                "prepare" to ScheduledStep(Instant.parse("2026-12-01T01:00:00Z"), Duration.ofMillis(500)),
+                "guardian" to ScheduledStep(Instant.parse("2026-12-01T02:00:00Z"), Duration.ofMillis(1500))
+            ),
+            createdAt = created,
+            updatedAt = updated,
+            revision = 2
+        )
+
+        val encoded = GuideProgressCodec.encodeProcedureRun(snapshot)
+        val decoded = GuideProgressCodec.decodeProcedureRun(encoded)
+
+        assertEquals(snapshot, decoded)
+        assertTrue(encoded.contains("\"durationMicros\":500000"))
+        assertTrue(encoded.contains("\"durationMicros\":1500000"))
+    }
+
+    @Test
     fun opportunity_snapshot_codec_roundtrip_preserves_facts_materials_override_and_status() {
         val snapshot = OpportunityProgressSnapshot(
             scope = GuideTestFixtures.scope,
@@ -58,6 +84,26 @@ class GuidePersistenceTest {
         val decoded = GuideProgressCodec.decodeOpportunityProgress(GuideProgressCodec.encodeOpportunityProgress(snapshot))
 
         assertEquals(snapshot, decoded)
+    }
+
+    @Test
+    fun codec_treats_whitespace_option_value_as_schema_valid_opaque_string() {
+        val snapshot = ProcedureRunSnapshot(
+            scope = GuideTestFixtures.scope,
+            packId = "haut.procedures",
+            itemId = "student-certificate",
+            packVersion = "2026.11.1",
+            artifactSha256 = "a".repeat(64),
+            answers = linkedMapOf("minor" to " "),
+            createdAt = created,
+            updatedAt = updated,
+            revision = 1
+        )
+
+        val decoded = GuideProgressCodec.decodeProcedureRun(GuideProgressCodec.encodeProcedureRun(snapshot))
+
+        assertEquals(snapshot, decoded)
+        assertEquals(" ", decoded.answers["minor"])
     }
 
     @Test
@@ -113,6 +159,13 @@ class GuidePersistenceTest {
     }
 
     @Test
+    fun scheduled_step_rejects_duration_that_would_lose_submicrosecond_precision() {
+        assertFailsWith<IllegalArgumentException> {
+            ScheduledStep(Instant.parse("2026-12-01T01:00:00Z"), Duration.ofNanos(500))
+        }
+    }
+
+    @Test
     fun codec_rejects_non_positive_scheduled_duration_as_persistence_error() {
         val snapshot = ProcedureRunSnapshot(
             scope = GuideTestFixtures.scope,
@@ -126,7 +179,7 @@ class GuidePersistenceTest {
             revision = 1
         )
         val encoded = GuideProgressCodec.encodeProcedureRun(snapshot)
-        val tampered = encoded.replace("\"durationSeconds\":1800", "\"durationSeconds\":-1")
+        val tampered = encoded.replace("\"durationMicros\":1800000000", "\"durationMicros\":-1")
 
         assertFailsWith<GuidePersistenceException> {
             GuideProgressCodec.decodeProcedureRun(tampered)

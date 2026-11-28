@@ -44,58 +44,19 @@ object CourseOccurrenceTimelineMetadata {
     const val COURSE_NAME_JSON_TRUNCATED = "courseOccurrence.courseName.json.truncated"
     const val COURSE_NAME_JSON_CHUNK_PREFIX = "courseOccurrence.courseName.json.chunk."
 
-    private const val JSON_CHUNK_COUNT_SUFFIX = ".json.chunkCount"
-    private const val JSON_TRUNCATED_SUFFIX = ".json.truncated"
-    private const val JSON_CHUNK_PREFIX_SUFFIX = ".json.chunk."
-    private const val METADATA_VALUE_LIMIT = 4096
-    private const val METADATA_ENTRY_LIMIT = 64
-
     /**
      * TimelineEvent 信封标题的安全投影：控制字符替换为 U+FFFD、超长截断，
      * 空/全控制输入仍给非空占位。原文不在这里丢失——需要时由 metadata 的
      * JSON 转义分片或调用侧课程快照无损还原。
      */
-    internal fun safeTimelineTitle(raw: String): String {
-        val cleaned = buildString(raw.length) {
-            raw.forEach { ch -> append(if (ch.isISOControl()) '\uFFFD' else ch) }
-        }
-        val nonBlank = cleaned.takeUnless { it.isBlank() } ?: "课程"
-        return if (nonBlank.length <= 256) nonBlank else nonBlank.take(255) + "…"
-    }
+    internal fun safeTimelineTitle(raw: String): String =
+        TimelineTextSafety.safeTimelineTitle(raw, blankFallback = "课程")
 
-    /** canonical JSON 只强制转义 C0；Timeline metadata 额外禁止 C1/DEL，这里补齐为 ASCII Unicode 转义。 */
-    private fun metadataJsonString(raw: String): String {
-        val canonical = Json.canonical(JsonValue.Str(raw))
-        return buildString(canonical.length) {
-            canonical.forEach { ch ->
-                if (ch.isISOControl()) {
-                    append("\\u" + ch.code.toString(16).padStart(4, '0'))
-                } else {
-                    append(ch)
-                }
-            }
-        }
-    }
-
-    private fun isSimpleLosslessText(value: String): Boolean =
-        value.none { it.isISOControl() } && value.length <= METADATA_VALUE_LIMIT
-
-    /** 读取统一信封；完整 JSON 分片逐字还原，安全短文本按原 key 直读，截断/残缺返回 null 让调用侧兜底。 */
-    private fun decodeLosslessText(metadata: Map<String, String>, baseKey: String): String? {
-        val chunkCountText = metadata[baseKey + JSON_CHUNK_COUNT_SUFFIX] ?: return metadata[baseKey]
-        if (metadata[baseKey + JSON_TRUNCATED_SUFFIX] == "true") return null
-        val chunkCount = chunkCountText.toIntOrNull() ?: return null
-        if (chunkCount < 0) return null
-        val parts = (0 until chunkCount).map { index ->
-            metadata[baseKey + JSON_CHUNK_PREFIX_SUFFIX + index] ?: return null
-        }
-        return runCatching {
-            Json.parse(parts.joinToString("")).stringOrNull()
-        }.getOrNull()
-    }
+    private fun decodeLosslessText(metadata: Map<String, String>, baseKey: String): String? =
+        TimelineTextSafety.decodeLosslessText(metadata, baseKey)
 
     private fun hasTruncatedLosslessText(metadata: Map<String, String>): Boolean =
-        metadata.keys.any { it.endsWith(JSON_TRUNCATED_SUFFIX) && metadata[it] == "true" }
+        TimelineTextSafety.hasTruncatedLosslessText(metadata)
 
     fun encode(occurrence: ClassOccurrence): Map<String, String> = buildMap {
         put(OCCURRENCE_ID, occurrence.occurrenceId)
@@ -129,25 +90,7 @@ object CourseOccurrenceTimelineMetadata {
                 add(COURSE_NAME to occurrence.courseName)
             }
         }
-        val encodedTextInputs = textInputs.filterNot { (_, value) -> isSimpleLosslessText(value) }
-        textInputs.filter { (_, value) -> isSimpleLosslessText(value) }.forEach { (key, value) ->
-            put(key, value)
-        }
-        encodedTextInputs.forEachIndexed { index, (baseKey, value) ->
-            val encodedChunks = metadataJsonString(value).chunked(METADATA_VALUE_LIMIT)
-            val remainingEncodedFields = encodedTextInputs.size - index - 1
-            // count + truncated 是每字段最少控制开销；为后续字段也保留最低控制开销。
-            val reservedControlEntries = 2 + remainingEncodedFields * 2
-            val availableChunkCount = (METADATA_ENTRY_LIMIT - size - reservedControlEntries).coerceAtLeast(0)
-            val storedChunks = encodedChunks.take(availableChunkCount)
-            put(baseKey + JSON_CHUNK_COUNT_SUFFIX, storedChunks.size.toString())
-            storedChunks.forEachIndexed { chunkIndex, chunk ->
-                put(baseKey + JSON_CHUNK_PREFIX_SUFFIX + chunkIndex, chunk)
-            }
-            if (storedChunks.size < encodedChunks.size) {
-                put(baseKey + JSON_TRUNCATED_SUFFIX, "true")
-            }
-        }
+        TimelineTextSafety.encodeLosslessTextFields(this, textInputs)
     }
 
     /** 还原 Timeline 投影时的原始领域字段；buildingName、internalBreaks 与冲突分栏仍由课表 engine 统一后处理。 */

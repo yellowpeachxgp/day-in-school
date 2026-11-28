@@ -23,7 +23,12 @@ object GuideProgressCodec {
         snapshot.scheduledSteps.forEach { (stepId, schedule) ->
             scheduled[stepId] = JsonValue.Obj(linkedMapOf(
                 "startAt" to JsonValue.Str(schedule.startAt.toString()),
-                "durationSeconds" to (schedule.duration?.let { JsonValue.Num(it.seconds.toString()) } ?: JsonValue.Null)
+                "durationMicros" to (schedule.duration?.let { duration ->
+                    JsonValue.Num(
+                        durationToWholeMicros(duration)?.toString()
+                            ?: throw GuidePersistenceException("procedure 计划时长不能无损编码为微秒")
+                    )
+                } ?: JsonValue.Null)
             ))
         }
         return Json.canonical(JsonValue.Obj(linkedMapOf(
@@ -64,15 +69,17 @@ object GuideProgressCodec {
         scheduledObject.fields.forEach { (stepId, value) ->
             val path = "$.scheduledSteps." + stepId
             val obj = expectObj(value, path)
-            expectExactKeys(obj, path, setOf("startAt", "durationSeconds"))
-            val durationValue = obj.fields["durationSeconds"]
-            val durationSeconds = if (durationValue is JsonValue.Null) null else expectLong(durationValue, path + ".durationSeconds")
-            if (durationSeconds != null && durationSeconds <= 0) {
-                throw GuidePersistenceException(path + ".durationSeconds 必须为正")
+            expectExactKeys(obj, path, setOf("startAt", "durationMicros"))
+            val durationValue = obj.fields["durationMicros"]
+            val durationMicros = if (durationValue is JsonValue.Null) null else expectLong(durationValue, path + ".durationMicros")
+            if (durationMicros != null && durationMicros <= 0) {
+                throw GuidePersistenceException(path + ".durationMicros 必须为正")
             }
             scheduled[stepId] = ScheduledStep(
                 startAt = expectInstant(obj.fields["startAt"], path + ".startAt"),
-                duration = durationSeconds?.let { seconds -> Duration.ofSeconds(seconds) }
+                duration = durationMicros?.let { micros ->
+                    Duration.ofSeconds(micros / 1_000_000L, (micros % 1_000_000L) * 1_000L)
+                }
             )
         }
         return try {

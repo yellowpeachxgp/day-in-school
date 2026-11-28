@@ -15,12 +15,15 @@ import cn.edu.haut.campus.core.timeline.TimelineEvent
 import cn.edu.haut.campus.core.timeline.TimelineEventId
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import cn.edu.haut.campus.core.timeline.TimelineSource
+import cn.edu.haut.campus.core.timeline.TimelineTextSafety
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import java.time.Duration
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+
+private const val GUIDE_TITLE_METADATA_KEY = "guide.title"
 
 /**
  * guide → Timeline 投影。只投影用户显式追踪/计划的数据：
@@ -76,11 +79,12 @@ class GuideTimelineSource(
             val end = duration?.let { schedule.startAt.plus(it) }
             val timed = end != null
             val stepDigest = Digests.sha256Hex(stepId)
+            val safeTitle = TimelineTextSafety.safeTimelineTitle(step.title, blankFallback = "流程步骤")
             TimelineEvent(
                 id = TimelineEventId("guide:procedure/" + stableRunDigest(run.packId, run.itemId) + "/" + stepDigest),
                 scope = scope,
                 kind = TimelineKind.PROCEDURE_STEP,
-                title = step.title,
+                title = safeTitle,
                 start = schedule.startAt,
                 end = end,
                 timeSemantics = if (timed) TimelineTimeSemantics.TIMED else TimelineTimeSemantics.UNCERTAIN,
@@ -92,12 +96,16 @@ class GuideTimelineSource(
                 busy = if (timed) BusyLevel.TENTATIVE else BusyLevel.FREE,
                 revision = run.revision,
                 links = listOf(entity),
-                sourceMetadata = linkedMapOf(
-                    "packId" to run.packId,
-                    "itemId" to run.itemId,
-                    "stepId" to stepId,
-                    "artifactSha256" to run.artifactSha256,
-                    "pathComplete" to evaluation.path.complete.toString()
+                sourceMetadata = metadataWithLosslessTitle(
+                    linkedMapOf(
+                        "packId" to run.packId,
+                        "itemId" to run.itemId,
+                        "stepId" to stepId,
+                        "artifactSha256" to run.artifactSha256,
+                        "pathComplete" to evaluation.path.complete.toString()
+                    ),
+                    rawTitle = step.title,
+                    safeTitle = safeTitle
                 )
             )
         }
@@ -125,11 +133,13 @@ class GuideTimelineSource(
         val entity = EntityRef(EntityType.OPPORTUNITY, stableEntityId("opportunity", progress.packId, progress.itemId), scope)
         val done = progress.applicationStatus == OpportunityApplicationStatus.SUBMITTED ||
             progress.applicationStatus == OpportunityApplicationStatus.ACCEPTED
+        val rawTitle = item.title + " 截止"
+        val safeTitle = TimelineTextSafety.safeTimelineTitle(rawTitle, blankFallback = "机会截止")
         return TimelineEvent(
             id = TimelineEventId("guide:opportunity/" + stableRunDigest(progress.packId, progress.itemId) + "/deadline"),
             scope = scope,
             kind = TimelineKind.OPPORTUNITY_MILESTONE,
-            title = item.title + " 截止",
+            title = safeTitle,
             start = deadline,
             end = null,
             timeSemantics = TimelineTimeSemantics.DEADLINE,
@@ -141,14 +151,29 @@ class GuideTimelineSource(
             busy = BusyLevel.FREE,
             revision = progress.revision,
             links = listOf(entity),
-            sourceMetadata = linkedMapOf(
-                "packId" to progress.packId,
-                "itemId" to progress.itemId,
-                "artifactSha256" to progress.artifactSha256,
-                "applicationStatus" to progress.applicationStatus.name,
-                "deadlineAt" to deadlineText
+            sourceMetadata = metadataWithLosslessTitle(
+                linkedMapOf(
+                    "packId" to progress.packId,
+                    "itemId" to progress.itemId,
+                    "artifactSha256" to progress.artifactSha256,
+                    "applicationStatus" to progress.applicationStatus.name,
+                    "deadlineAt" to deadlineText
+                ),
+                rawTitle = rawTitle,
+                safeTitle = safeTitle
             )
         )
+    }
+
+    private fun metadataWithLosslessTitle(
+        base: Map<String, String>,
+        rawTitle: String,
+        safeTitle: String
+    ): Map<String, String> = buildMap {
+        putAll(base)
+        if (safeTitle != rawTitle) {
+            TimelineTextSafety.encodeLosslessTextFields(this, listOf(GUIDE_TITLE_METADATA_KEY to rawTitle))
+        }
     }
 
     private fun packFor(packId: String): GuidePackage = guidePackages.firstOrNull { it.packId == packId }
