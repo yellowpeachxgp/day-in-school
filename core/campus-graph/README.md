@@ -26,4 +26,4 @@ W1-07 校园实体图内核（纯 JVM）。本模块把楼宇、教室、设施�
 
 - 本卡不改既有目录消费方、不改 Room、不改契约、不改 UI。
 - `implementation(project(":core:domain"))` 仅用于过渡迁移适配器直接读取现有目录对象，避免复制大型药品/餐厅目录造成第二事实源；公共内核模型不依赖 domain。
-- `dis-datapack/v1` 的外部签名 schema 属 W5-01；本切片只交付实体模型、快照合并与现有目录迁移适配层，不宣称已完成外部数据包编解码或加载。
+- `dis-datapack/v1` 的外部签名 schema 属 W5-01；本切片交付实体模型、快照合并、现有目录迁移适配层和格式无关的 `CampusGraphDataPackageLoader` 接缝，但不宣称已完成外部数据包编解码。
