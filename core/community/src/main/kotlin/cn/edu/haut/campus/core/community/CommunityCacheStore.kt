@@ -11,6 +11,7 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.FileVisitResult
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -77,7 +78,9 @@ class FileCommunityCacheStore(
     private val maxEntryBytes: Int = 512 * 1024,
 ) : CommunityCacheStore {
     private val responsesDir: Path = rootDir.resolve("responses")
-    private val lock = Any()
+    private val rootKey = rootDir.toAbsolutePath().normalize().toString()
+    private val lock = ROOT_LOCKS.computeIfAbsent(rootKey) { Any() }
+    private val instanceWipeGeneration = WIPE_GENERATIONS[rootKey] ?: 0L
 
     init {
         require(maxEntries > 0) { "maxEntries 必须为正数" }
@@ -89,6 +92,7 @@ class FileCommunityCacheStore(
 
     override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = withContext(Dispatchers.IO) {
         synchronized(lock) {
+            if (isRetiredByWipe()) return@synchronized null
             val file = responsesDir.resolve(key.storageId + ".json")
             if (!Files.isRegularFile(file)) return@synchronized null
             if (runCatching { Files.size(file) }.getOrDefault(Long.MAX_VALUE) > maxEntryBytes) {
@@ -112,6 +116,7 @@ class FileCommunityCacheStore(
     override suspend fun write(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long) =
         withContext(Dispatchers.IO) {
             synchronized(lock) {
+                if (isRetiredByWipe()) return@synchronized
                 Files.createDirectories(responsesDir)
                 val entry = encodeEntry(key, envelope, cachedAtEpochMillis)
                 val bytes = Json.canonical(entry).toByteArray(Charsets.UTF_8)
@@ -148,6 +153,9 @@ class FileCommunityCacheStore(
 
     override suspend fun wipe() = withContext(Dispatchers.IO) {
         synchronized(lock) {
+            // 先推进本进程内代际再删除：擦除前已在途的旧实例写入在锁释放后必然失效，
+            // 而擦除后新建的实例采用新代际，可以继续正常使用同一目录。
+            WIPE_GENERATIONS[rootKey] = (WIPE_GENERATIONS[rootKey] ?: 0L) + 1L
             deleteTree(rootDir)
         }
     }
@@ -160,6 +168,8 @@ class FileCommunityCacheStore(
             }
         }
     }
+
+    private fun isRetiredByWipe(): Boolean = (WIPE_GENERATIONS[rootKey] ?: 0L) != instanceWipeGeneration
 
     private fun encodeEntry(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long): JsonValue.Obj {
         return JsonValue.Obj(
@@ -214,6 +224,11 @@ class FileCommunityCacheStore(
             else -> 0
         }
         if (deleteCount < 0) error("unreachable")
+    }
+
+    private companion object {
+        private val ROOT_LOCKS = ConcurrentHashMap<String, Any>()
+        private val WIPE_GENERATIONS = ConcurrentHashMap<String, Long>()
     }
 
     private fun deleteTree(path: Path) {

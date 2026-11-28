@@ -60,6 +60,31 @@ class CommunityCacheStoreTest {
 
             assertEquals(0, store.countEntries())
             assertFalse(root.exists())
+
+            // 擦除前创建的旧实例即使随后完成写路径，也不得把已擦除数据重新种回；
+            // 擦除后新建实例采用新代际，可以继续使用同一目录。
+            store.write(key(marker = "after-wipe-old-instance"), envelope("req-old"), 3L)
+            assertNull(store.read(key(marker = "after-wipe-old-instance")))
+            assertEquals(0, store.countEntries())
+            val replacement = FileCommunityCacheStore(root)
+            replacement.write(key(marker = "after-wipe-new-instance"), envelope("req-new"), 4L)
+            assertEquals(1, replacement.countEntries())
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidateAllClearsEntriesWithoutRetiringTheStore() = runTest {
+        val filesDir = Files.createTempDirectory("community-cache-invalidate-test").toFile()
+        try {
+            val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_invalidate")
+            val store = FileCommunityCacheStore(root)
+            store.write(key(marker = "before"), envelope(), 1L)
+            store.invalidateAll()
+            assertEquals(0, store.countEntries())
+            store.write(key(marker = "after"), envelope(), 2L)
+            assertEquals(1, store.countEntries())
         } finally {
             filesDir.deleteRecursively()
         }
