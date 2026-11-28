@@ -226,7 +226,22 @@ fun triggerSummary(rule: AutomationRule): String = when (val trigger = rule.trig
     is TriggerSpec.AtTime -> "定时 " + trigger.local + " · " + trigger.days.size + " 天/周"
     is TriggerSpec.BeforeEvent -> "课前 " + trigger.offset.toMinutes() + " 分钟"
     is TriggerSpec.OnEvent -> "事件 " + trigger.eventType
-    is TriggerSpec.Threshold -> "水电阈值 " + trigger.op + " " + trigger.value + " 分"
+    is TriggerSpec.Threshold -> {
+        val amount = trigger.value.movePointLeft(2).stripTrailingZeros().toPlainString()
+        val op = when (trigger.op) {
+            CompareOp.LESS_THAN -> "低于"
+            CompareOp.LESS_OR_EQUAL -> "不高于"
+            CompareOp.EQUAL -> "等于"
+            CompareOp.GREATER_OR_EQUAL -> "不低于"
+            CompareOp.GREATER_THAN -> "高于"
+            CompareOp.NOT_EQUAL -> "不等于"
+        }
+        when (trigger.metric.value) {
+            BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS -> "电表剩余量" + op + " " + amount + " 度"
+            BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS -> "水表剩余量" + op + " " + amount + " 吨"
+            else -> "水电阈值 " + trigger.op + " " + amount + "（表计单位）"
+        }
+    }
     is TriggerSpec.Geofence -> (if (trigger.enter) "进入 " else "离开 ") + trigger.campusId.value
     is TriggerSpec.Plugin -> "插件触发 " + trigger.pluginId
 }

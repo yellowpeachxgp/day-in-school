@@ -72,6 +72,7 @@ class AutomationRuntime private constructor(
     private val outbox = RoomEventOutbox(database)
     private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope)
     private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope)
+    private val wakeRunner = ExclusiveWakeRunner()
 
     private val personalEventStore: RoomPersonalEventStore? =
         (repository.automationEntityWritePort as? EntityWriter)?.let { writer ->
@@ -159,11 +160,15 @@ class AutomationRuntime private constructor(
      * 批量唤醒入口：低频粗围栏采样 → outbox at-least-once 消费 → 到期时间触发补处理 → 下一次 inexact 唤醒。
      * 进程在任意点被杀都不会重复副作用：事件不提前 ack、dedupe/checkpoint/run 三层对账。
      */
-    suspend fun processWake(reason: String): AutomationWakeSummary {
+    suspend fun processWake(reason: String): AutomationWakeSummary = wakeRunner.call {
+        processWakeExclusive(reason)
+    }
+
+    private suspend fun processWakeExclusive(reason: String): AutomationWakeSummary {
         val now = clock.instant()
         val publishedGeofence = runCatching { geofenceMonitor.sampleAndPublish() }.getOrDefault(0)
         val publishedUtility = runCatching { utilityBalanceProjector.publishChangedBalances() }.getOrDefault(0)
-        val consumed = consumeOutboxOnce()
+        val consumed = consumeOutboxExclusive()
         val planned = planEnabledRules(now)
         val due = planned.filter { !it.second.fireAt.isAfter(now) }
         var fired = 0
@@ -191,8 +196,10 @@ class AutomationRuntime private constructor(
         )
     }
 
-    /** 消费一批当前未 ack 事件。任何执行级异常都保持事件未 ack，进程重启/WorkManager retry 后继续。 */
-    suspend fun consumeOutboxOnce(): Int = AutomationOutboxProcessor(
+    /** 消费一批当前未 ack 事件；与完整 processWake 共用同一互斥，避免并发 ack/执行交错。 */
+    suspend fun consumeOutboxOnce(): Int = wakeRunner.call { consumeOutboxExclusive() }
+
+    private suspend fun consumeOutboxExclusive(): Int = AutomationOutboxProcessor(
         outbox = outbox,
         ruleStore = ruleStore,
         engine = engine,

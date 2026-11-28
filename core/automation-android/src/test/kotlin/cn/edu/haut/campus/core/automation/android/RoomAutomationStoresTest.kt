@@ -101,6 +101,26 @@ class RoomAutomationStoresTest {
     }
 
     @Test
+    fun expiredLeaseCannotBeRenewedOrRevivedInRoomStore() = runBlocking {
+        val store = RoomAutomationDedupeStore(database)
+        val acquiredAt = now
+        val original = dedupeRecord(acquiredAt, owner = "owner-expired", leaseEnd = acquiredAt.plusSeconds(10))
+        assertTrue(store.tryAcquire(original) is DedupeAcquireResult.Acquired)
+
+        assertFalse(
+            "过期 PENDING lease 不得被原 owner 续租复活",
+            store.renewLease(original, acquiredAt.plusSeconds(11), acquiredAt.plusSeconds(40))
+        )
+
+        val recovery = dedupeRecord(acquiredAt.plusSeconds(11), owner = "owner-recovery", leaseEnd = acquiredAt.plusSeconds(50))
+        assertTrue(store.tryAcquire(recovery) is DedupeAcquireResult.Acquired)
+        assertFalse(
+            "恢复者接管后旧 owner 更不得续租",
+            store.renewLease(original, acquiredAt.plusSeconds(12), acquiredAt.plusSeconds(60))
+        )
+    }
+
+    @Test
     fun checkpointRoomStoreReplaysCompletedOutcomeAndFencesStaleOwner() = runBlocking {
         val store = RoomAutomationActionCheckpointStore(database)
         val checkpoint = checkpoint("checkpoint-1", owner = "owner-1", attempt = 1)

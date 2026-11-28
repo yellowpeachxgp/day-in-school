@@ -4,6 +4,7 @@ import cn.edu.haut.campus.core.automation.BuiltinAutomationTypes
 import cn.edu.haut.campus.core.automation.TriggerSpec
 import java.math.BigDecimal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,7 +22,7 @@ class AutomationEditorDraftTest {
     }
 
     @Test
-    fun utilityThresholdConvertsYuanToCents() {
+    fun utilityThresholdConvertsNativeUnitsToCentiunits() {
         val draft = AutomationEditorDraft(
             triggerChoice = AutomationTriggerChoice.THRESHOLD,
             thresholdValueText = "12.34"
@@ -37,6 +38,17 @@ class AutomationEditorDraftTest {
         val draft = AutomationEditorDraft(notify = false, createTask = false, createEvent = false, refreshHome = false)
 
         assertEquals("至少选择一个动作", draft.validate())
+    }
+
+    @Test
+    fun thresholdSummaryUsesNativeUnitWithoutCentiunitScalingError() {
+        val rule = AutomationEditorDraft(
+            triggerChoice = AutomationTriggerChoice.THRESHOLD,
+            thresholdValueText = "20"
+        ).toRule(AutomationPreviewFixtures.scope)
+
+        assertTrue(triggerSummary(rule).contains("20 度"))
+        assertFalse(triggerSummary(rule).contains("2000 分"))
     }
 
     @Test
