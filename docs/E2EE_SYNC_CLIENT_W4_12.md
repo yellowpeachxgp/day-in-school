@@ -34,13 +34,13 @@
 - cursor 只在页面全部解密、校验并持久应用后保存；cursor 不跨设备复制。SYNC_CURSOR_EXPIRED/INVALID 只丢弃 cursor 并 cursorless resync，不删除本地 dirty 或从未确认的对象。
 - version vector 只排序服务端写，不证明 plaintext freshness。payload logicalClock/rowSha256 是客户端回滚检测事实源：远端 logicalClock 倒退、同 clock 不同内容、本地 dirty 与远端并发、同逻辑键双 blob identity、删除遇上本地 dirty，全部进入 pending conflict。
 - 冲突永不静默覆盖。UI 同时展示本机版本与远端版本（表、row key、logicalClock、内容摘要/canonical row），用户显式选择保留本机或使用远端；删除冲突提供「保留本机」与「接受远端删除」。
-- 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。
+- 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。`personal_events` 恢复生成列使用 `dis-sync-e2ee/v1` / `E2EE_CLOUD_SYNC` provenance，绝不写成 `dis-backup/v1` / `LOCAL_BACKUP_RESTORE`。每张可同步表都有受控 EntityType 的行级 journal ref；非 search-indexed 表也记录精确 before/after typed-cell 快照，blob 内容仍只按摘要引用。
 
 ## 6. 云身份、设备与本地擦除
 
 - 本地同步状态显式绑定启用时的 `cloud_user_id`。切换 XPeach Cloud 账号后，旧 cursor/vector/object index 一律冻结 fail-closed；不得把旧账号因果状态用于新账号，也不得以 cursorless resync 删除本地 dirty 数据。用户必须显式停用/擦除旧同步状态后重新加入。
 - 停用顺序是先撤回 E2EE consent、再撤销当前设备：revoke 当前设备会失效其绑定的会话族，反向顺序会导致 consent 撤回不可达。UI 如实区分「远端已确认」与「本机已停止但远端未确认」。
-- 撤销是永久 tombstone；重新启用总是生成新的随机 installation UUID。设备列表只展示账号安全元数据，不展示硬件序列号、精确设备标识、密钥或 session 绑定。
+- 撤销是永久 tombstone；重新启用总是生成新的随机 installation UUID。设备列表只展示账号安全元数据，不展示硬件序列号、精确设备标识、密钥或 session 绑定。JOIN 只能重复同一 recovery key；不同 key 不得覆盖本机密封 key 或混入旧 objects/conflicts，用户必须先显式执行「清除本机同步状态并重新加入」。
 - 全量擦除注册在 ProfileDataWipe before-hook：best-effort 停用远端后无条件删除本机状态、pending write、cursor、冲突缓存、Keystore 包装密钥与密封 master key，并取消 WorkManager。
 
 ## 7. 同意与生命周期 UI
