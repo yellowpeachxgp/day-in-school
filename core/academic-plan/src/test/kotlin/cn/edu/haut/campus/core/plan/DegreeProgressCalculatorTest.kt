@@ -249,4 +249,33 @@ class DegreeProgressCalculatorTest {
         assertTrue("UNVERIFIED：没有任何已修记录时未归类列表为空", progress.unclassified.isEmpty())
         assertEquals("UNVERIFIED：三个叶子组都必须出现", 3, progress.groups.size)
     }
+
+    @Test
+    fun childAssignmentDeductsSharedCourseFromMixedParentPending() {
+        val shared = PlanFixtures.ref("X", "共享课程")
+        val child = PlanFixtures.group(
+            id = "child",
+            credits = "4",
+            courses = listOf(shared),
+            title = "子要求"
+        )
+        val parent = PlanFixtures.group(
+            id = "parent",
+            credits = "6",
+            courses = listOf(shared),
+            children = listOf(child),
+            title = "父要求"
+        )
+        val progress = DegreeProgressCalculator.evaluate(
+            PlanFixtures.plan(listOf(parent)),
+            listOf(PlanFixtures.completed("X", "共享课程", "3.0"))
+        )
+        val childProgress = progress.groupById("child")!!
+        val parentProgress = progress.groupById("parent")!!
+        assertEquals("UNVERIFIED：更深 child 必须优先承接共享课程", "child", childProgress.assignedCourses.single().groupId)
+        assertEquals(listOf("parent"), childProgress.assignedCourses.single().otherCandidateGroupIds)
+        PlanFixtures.assertAmount("3", parentProgress.earnedCredits, "UNVERIFIED：父组只聚合子组入账")
+        assertTrue("UNVERIFIED：child 已修课程不得继续列为 parent 待修", parentProgress.pendingCourses.isEmpty())
+        assertEquals("child", parentProgress.subtreeAssignedCourses.single().groupId)
+    }
 }

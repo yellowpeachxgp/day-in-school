@@ -137,11 +137,13 @@ object DegreeProgressCalculator {
         }
         val groups = visibleGroups.map { group ->
             val assignments = assignmentsByGroup.getValue(group.id)
+            val subtreeAssignmentList = subtreeAssignments(group)
             val groupTotals = totals.getValue(group.id)
             val earned = groupTotals.aggregateEarnedCredits
             val remaining = (group.requiredCredits - earned).max(BigDecimal.ZERO)
             val surplus = (earned - group.requiredCredits).max(BigDecimal.ZERO)
-            val pending = group.courses.filter { ref -> assignments.none { matchesRef(it.course, ref) } }
+            // 与 DegreeAuditor 同规则：更深后代组已经承接的课程必须从父组 pending 中扣除。
+            val pending = group.courses.filter { ref -> subtreeAssignmentList.none { matchesRef(it.course, ref) } }
             if (group.courses.isEmpty() && group.requiredCredits > BigDecimal.ZERO && group.isLeaf) {
                 notes += "要求组「${group.title}」未列出具体课程（开放选修或任选课），缺口按学分统计，不推断具体待修课程"
             }
@@ -155,7 +157,7 @@ object DegreeProgressCalculator {
                 surplusCredits = surplus,
                 assignedCourses = assignments,
                 pendingCourses = pending,
-                subtreeAssignedCourses = subtreeAssignments(group)
+                subtreeAssignedCourses = subtreeAssignmentList
             )
         }
 

@@ -599,12 +599,17 @@ object DegreeAuditor {
         }
         val groups = visibleGroups.map { group ->
             val assignments = assignmentsByGroup.getValue(group.id)
+            val subtreeAssignmentList = subtreeAssignments(group)
             val groupTotals = totals.getValue(group.id)
             val earned = groupTotals.aggregateEarnedCredits
             val remaining = (group.requiredCredits - earned).max(BigDecimal.ZERO)
             val surplus = (earned - group.requiredCredits).max(BigDecimal.ZERO)
-            val assignedKeys = assignments.flatMap { listOf(normalize(it.course.courseName), normalize(it.course.courseKey)) }.toSet()
-            val fulfilledBySubstitution = assignments.mapNotNull { it.fulfilledCourse }
+            // 后代/更深组优先抵扣：父组 pending 必须看整棵子树，而不是只看直接入账；
+            // 否则同一门课被子组正确承接后，父组仍会误报「尚未修读」。
+            val assignedKeys = subtreeAssignmentList.flatMap {
+                listOf(normalize(it.course.courseName), normalize(it.course.courseKey))
+            }.toSet()
+            val fulfilledBySubstitution = subtreeAssignmentList.mapNotNull { it.fulfilledCourse }
             val pending = group.courses.filter { ref ->
                 val directlyAssigned = normalize(ref.name) in assignedKeys ||
                     (ref.code != null && normalize(ref.code) in assignedKeys)
@@ -636,7 +641,7 @@ object DegreeAuditor {
                 surplusCredits = surplus,
                 assignedCourses = assignments,
                 pendingCourses = pending,
-                subtreeAssignedCourses = subtreeAssignments(group)
+                subtreeAssignedCourses = subtreeAssignmentList
             )
         }
         val totalRequired = plan.totalRequiredCredits

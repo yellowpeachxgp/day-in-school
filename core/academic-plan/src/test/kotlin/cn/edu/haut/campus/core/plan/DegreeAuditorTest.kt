@@ -534,6 +534,12 @@ class DegreeAuditorTest {
         PlanFixtures.assertAmount("3", parentProgress.earnedCredits, "父组只聚合子组入账")
         PlanFixtures.assertAmount("3", parentProgress.remainingCredits)
         assertTrue(parentProgress.assignedCourses.isEmpty())
+        assertEquals(listOf("parent"), childProgress.assignedCourses.single().otherCandidateGroupIds)
+        assertTrue("子组已承接的课程不得继续列为父组待修", parentProgress.pendingCourses.none { it.name == "共享课程" })
+        assertTrue(
+            "父组缺口详情也不得把子组已修课程列为 pending",
+            report.gaps.none { gap -> gap.groupId == "parent" && gap.pendingCourses.any { it.name == "共享课程" } }
+        )
         assertEquals("child", parentProgress.subtreeAssignedCourses.single().groupId)
         PlanFixtures.assertAmount("3", report.totalEarnedCredits)
     }
