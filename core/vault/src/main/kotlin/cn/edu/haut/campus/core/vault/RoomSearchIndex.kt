@@ -88,7 +88,7 @@ class RoomSearchIndex(
         val totalCount = querySingleLong(sql.countSql, sql.countArgs).toInt()
         val ranked = rows.mapIndexedNotNull { index, row ->
             val document = row.toDocument()
-            val channel = classifyHit(row, rewrite.normalizedQuery, rewrite.singleCharFallbacks.isNotEmpty())
+            val channel = classifyHit(row, rewrite.normalizedQuery)
                 ?: return@mapIndexedNotNull null
             RankedHit(row = row, document = document, channel = channel, sqliteOrder = index)
         }.sortedWith(
@@ -236,8 +236,11 @@ class RoomSearchIndex(
             val unitConditions = units.map { unit ->
                 val runConditions = unit.runs.mapNotNull { run ->
                     if (run.kind == SearchTextNormalizer.ScriptKind.CJK && run.text.codePointCount(0, run.text.length) == 1) {
-                        // 单字 CJK 走 normalizedText fallback；SQL 这里保持宽候选，由 Kotlin 按字段精确归因。
-                        null
+                        // 多字 CJK 在 tokenStream 中保存为重叠 bigram，单字查询通常没有独立 token；
+                        // 但目标字只会作为孤立 token 或 bigram 的一部分出现，字段内 substring
+                        // 与 normalized plain 中的单字存在性等价，因此也必须参与字段归因。
+                        conditionArgs += run.text
+                        "instr(search_docs." + column + ", ?) > 0"
                     } else {
                         val tokenConditions = run.tokens.distinct().map { token ->
                             val pattern = if (run.tailPrefix) " " + token else " " + token + " "
@@ -276,7 +279,7 @@ class RoomSearchIndex(
         }
     }
 
-    private fun classifyHit(row: SearchDocEntity, normalizedQuery: String, singleCharFallback: Boolean): SearchHitChannel? {
+    private fun classifyHit(row: SearchDocEntity, normalizedQuery: String): SearchHitChannel? {
         val units = structuredQueryUnits(normalizedQuery)
         fun containsAll(normalized: String): Boolean = normalized.isNotBlank() && units.all { unit ->
             unit.runs.all { run -> queryRunMatches(normalized, run) }
@@ -290,7 +293,6 @@ class RoomSearchIndex(
             aliases.any(::containsAll) -> SearchHitChannel.ALIAS
             containsAll(normalizedCode) -> SearchHitChannel.CODE
             containsAll(normalizedBody) -> SearchHitChannel.BODY
-            singleCharFallback -> SearchHitChannel.FALLBACK
             else -> null
         }
     }
