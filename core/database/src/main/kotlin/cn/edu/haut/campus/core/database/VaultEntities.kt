@@ -281,9 +281,6 @@ interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertBlobOrAbort(entity: BlobStoreEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertBlob(entity: BlobStoreEntity)
-
     @Query("SELECT * FROM blob_store WHERE blobId = :blobId LIMIT 1")
     suspend fun getBlob(blobId: String): BlobStoreEntity?
 

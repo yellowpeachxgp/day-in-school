@@ -113,7 +113,7 @@ class VaultWipeTest {
                 deleted = false
             )
         )
-        dao.upsertBlob(
+        dao.insertBlobOrAbort(
             BlobStoreEntity(
                 blobId = "blob-wipe",
                 scopeSchoolId = "haut",
