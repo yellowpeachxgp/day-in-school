@@ -157,6 +157,40 @@ class VaultBackupServiceTest {
     }
 
     @Test
+    fun tooNewSchemaVersionFailsBeforeAnyRestoreWrite() = runBlocking {
+        seedPortableRows()
+        val backup = exportBackup().first
+        val modified = reencryptWithManifestVersion(backup, 999, fieldName = "schemaVersion")
+        val journalBefore = database.vaultDao().countEntityJournal()
+
+        val error = runCatching {
+            service.inspect(ByteArrayInputStream(modified), passphrase)
+        }.exceptionOrNull()
+
+        assertTrue(error is BackupVersionTooNewException)
+        assertEquals("schema", (error as BackupVersionTooNewException).component)
+        assertEquals(journalBefore, database.vaultDao().countEntityJournal())
+        assertEquals("高等数学A（一）", database.campusDao().getCourseById("course-1")?.name)
+    }
+
+    @Test
+    fun stalePreviewFailsWithoutTouchingNewerLocalWrite() = runBlocking {
+        seedPortableRows()
+        val backup = exportBackup().first
+        val preview = service.inspect(ByteArrayInputStream(backup), passphrase)
+        database.campusDao().upsertCourse(courseRow().copy(name = "预览后的本地写入"))
+        val journalBefore = database.vaultDao().countEntityJournal()
+
+        val error = runCatching {
+            service.restore(preview, RestoreMode.REPLACE, emptyMap())
+        }.exceptionOrNull()
+
+        assertTrue(error is BackupRestoreStaleException)
+        assertEquals("预览后的本地写入", database.campusDao().getCourseById("course-1")?.name)
+        assertEquals(journalBefore, database.vaultDao().countEntityJournal())
+    }
+
+    @Test
     fun identityMismatchIsExplicitAndDoesNotWrite() = runBlocking {
         seedPortableRows()
         val backup = exportBackup().first
@@ -297,12 +331,17 @@ class VaultBackupServiceTest {
         return out.toByteArray() to manifest
     }
 
-    private fun reencryptWithManifestVersion(backup: ByteArray, version: Int): ByteArray {
+    private fun reencryptWithManifestVersion(backup: ByteArray, version: Int, fieldName: String = "formatVersion"): ByteArray {
         val plaintext = BackupEnvelopeCrypto.decrypt(backup, passphrase)
         val entries = BackupZip.read(plaintext)
         val manifest = String(entries.getValue(BackupFormatConstants.MANIFEST_ENTRY), Charsets.UTF_8)
-        val modifiedManifest = manifest.replace("\"formatVersion\":1", "\"formatVersion\":" + version)
-        require(modifiedManifest != manifest) { "测试 manifest 未找到 formatVersion" }
+        val modifiedManifest = if (fieldName == "formatVersion") {
+            manifest.replace("\"formatVersion\":1", "\"formatVersion\":" + version)
+        } else {
+            val schemaVersion = database.openHelper.writableDatabase.version
+            manifest.replace("\"schemaVersion\":" + schemaVersion, "\"schemaVersion\":" + version)
+        }
+        require(modifiedManifest != manifest) { "测试 manifest 未找到 " + fieldName }
         val blobs = entries.filterKeys { it.startsWith(BackupFormatConstants.BLOB_ENTRY_PREFIX) }
             .mapKeys { (path, _) -> path.removePrefix(BackupFormatConstants.BLOB_ENTRY_PREFIX) }
         val modifiedZip = BackupZip.create(

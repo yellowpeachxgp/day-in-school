@@ -57,6 +57,7 @@ v1 备份的可移植分类：学业数据、校园参考数据、提醒偏好�
 5. `installed_extension_plugins`：插件包、签名和授权文件在库外，恢复登记行会制造悬挂信任状态。
 6. `entity_journal`、`domain_outbox`、`search_docs`、`search_fts`：审计、投递和索引由恢复事务重新生成。业务行是可移植事实；恢复不能伪装成旧写入，必须留下自己的 `Actor.RESTORE` 审计。
 7. `occurrence_overrides.mutationToken`：这是并发行版本令牌而非用户内容，schema 层省略；恢复时每行重新生成，不复用旧令牌。
+8. DataStore 中的应用偏好、迁移完成位、诊断缓存和 auth/session linkage：v1 只备份显式目录内的 Room 业务行；尚未建立逐键类型化、无秘密白名单前不做全量偏好夹带，避免把凭据或设备局部状态混入备份。
 
 ## 5. 身份与跨设备语义
 
