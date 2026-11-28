@@ -62,6 +62,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
+import cn.edu.haut.campus.core.domain.TimelineScheduleAdapter
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.CourseScheduleRule
@@ -203,7 +204,7 @@ private fun TimetableLegacyContent(
         buildings
     ) {
         val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-        ScheduleEngine.resolveOccurrencesForTeachingWeek(
+        TimelineScheduleAdapter.resolveOccurrencesForTeachingWeek(
             teachingWeek = selectedWeek,
             term = activeTerm,
             courses = courses,
@@ -768,7 +769,7 @@ private fun TimetableLegacyContent(
                 buildings
             ) {
                 val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-                ScheduleEngine.resolveOccurrencesForTeachingWeek(
+                TimelineScheduleAdapter.resolveOccurrencesForTeachingWeek(
                     teachingWeek = activeWeek,
                     term = activeTerm,
                     courses = courses,
