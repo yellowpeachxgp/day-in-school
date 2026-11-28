@@ -92,7 +92,7 @@ class DegreeAuditorTest {
         )
     )
 
-    private fun override(
+    private fun makeOverride(
         id: String,
         attemptId: String,
         action: OverrideAction,
@@ -183,7 +183,7 @@ class DegreeAuditorTest {
         )
         val report = DegreeAuditor.audit(
             plan, attempts,
-            listOf(override("o1", "ov1", OverrideAction.ASSIGN, "open", "教务处认定可计入开放选修")),
+            listOf(makeOverride("o1", "ov1", OverrideAction.ASSIGN, "open", "教务处认定可计入开放选修")),
             now
         )
         val open = report.groupById("open")!!
@@ -202,7 +202,7 @@ class DegreeAuditorTest {
         )
         val report = DegreeAuditor.audit(
             plan, attempts,
-            listOf(override("o2", "ov2", OverrideAction.EXCLUDE, null, "该成绩系误判同步，不计入")),
+            listOf(makeOverride("o2", "ov2", OverrideAction.EXCLUDE, null, "该成绩系误判同步，不计入")),
             now
         )
         val basic = report.groupById("basic")!!
@@ -218,8 +218,8 @@ class DegreeAuditorTest {
             PlanFixtures.attempt("MATH1", name = "高等数学A", credits = "5", id = "ov3")
         )
         val overrides = listOf(
-            override("o3a", "ov3", OverrideAction.EXCLUDE, null, "先排除", Instant.parse("2026-01-01T00:00:00Z")),
-            override("o3b", "ov3", OverrideAction.RETRACT, null, "撤销排除恢复自动归属", Instant.parse("2026-02-01T00:00:00Z"))
+            makeOverride("o3a", "ov3", OverrideAction.EXCLUDE, null, "先排除", Instant.parse("2026-01-01T00:00:00Z")),
+            makeOverride("o3b", "ov3", OverrideAction.RETRACT, null, "撤销排除恢复自动归属", Instant.parse("2026-02-01T00:00:00Z"))
         )
         val report = DegreeAuditor.audit(plan, attempts, overrides, now)
         val basic = report.groupById("basic")!!

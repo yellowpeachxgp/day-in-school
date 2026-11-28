@@ -31,7 +31,9 @@ enum class EntityType {
     COURSE_MATERIAL_PAGE,
     AUTOMATION_RULE,
     BLOB,
-    PROFILE
+    PROFILE,
+    TRAINING_PLAN_IMPORT,
+    AUDIT_OVERRIDE
 }
 
 /**
