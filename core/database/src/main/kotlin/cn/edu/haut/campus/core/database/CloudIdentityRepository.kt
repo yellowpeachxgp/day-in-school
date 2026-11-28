@@ -33,6 +33,25 @@ object CloudIdentityE2eeAccessTokenProviderRegistry {
 }
 
 /**
+ * W4 群组协作窄令牌端口。调用方必须传入请求开始时的身份快照；若切号、解绑、同号重登
+ * 或云端地址变化使快照失效，实现返回空串并丢弃刷新结果，绝不把新身份令牌错配给旧缓存键。
+ */
+fun interface CloudIdentityCommunityAccessTokenProvider {
+    suspend fun resolveForIdentity(snapshot: CampusRepository.CloudIdentitySessionSnapshot): String
+}
+
+/** 按 Profile 隔离的 community 令牌端口注册表；由 CloudIdentityRepository 构造时自注册。 */
+object CloudIdentityCommunityAccessTokenProviderRegistry {
+    private val providers = ConcurrentHashMap<String, CloudIdentityCommunityAccessTokenProvider>()
+
+    internal fun register(profileId: String, provider: CloudIdentityCommunityAccessTokenProvider) {
+        providers[profileId] = provider
+    }
+
+    fun forProfile(profileId: String): CloudIdentityCommunityAccessTokenProvider? = providers[profileId]
+}
+
+/**
  * CloudIdentity 拆分期运行时端口。
  * 云同步编排仍由兼容外观的 Sync 后续批次所有者提供；本批只保持原有触发与传输读取时序。
  */
@@ -99,6 +118,12 @@ class CloudIdentityRepository internal constructor(
             resolveValidCloudAccessToken(
                 forceRefresh = forceRefresh,
                 failedAccessToken = failedAccessToken
+            )
+        }
+        CloudIdentityCommunityAccessTokenProviderRegistry.register(profileId) { snapshot ->
+            resolveValidCloudAccessToken(
+                forceRefresh = false,
+                expectedIdentity = snapshot,
             )
         }
     }
