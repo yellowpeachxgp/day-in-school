@@ -160,7 +160,14 @@ class AndroidAiKeyStore internal constructor(
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 if (enabled) {
-                    check(decryptEnvelopeLocked(scope) is EnvelopeRead.Valid) { "请先保存有效的 AI endpoint 与 Key" }
+                    val valid = when (val read = decryptEnvelopeLocked(scope)) {
+                        is EnvelopeRead.Valid -> {
+                            read.payload.wipe()
+                            true
+                        }
+                        else -> false
+                    }
+                    check(valid) { "请先保存有效的 AI endpoint 与 Key" }
                 }
                 writeAtomic(enabledFile(scope), byteArrayOf(if (enabled) 1 else 0))
             }
@@ -194,8 +201,11 @@ class AndroidAiKeyStore internal constructor(
 
     private suspend fun readStatus(scope: SchoolAccountScope): AiKeyStatus = withContext(Dispatchers.IO) {
         mutex.withLock {
-            when (decryptEnvelopeLocked(scope)) {
-                is EnvelopeRead.Valid -> AiKeyStatus.CONFIGURED
+            when (val read = decryptEnvelopeLocked(scope)) {
+                is EnvelopeRead.Valid -> {
+                    read.payload.wipe()
+                    AiKeyStatus.CONFIGURED
+                }
                 EnvelopeRead.Missing -> AiKeyStatus.NONE
                 EnvelopeRead.Invalid -> AiKeyStatus.INVALID
             }
