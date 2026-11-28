@@ -82,7 +82,7 @@ class TrainingPlanImporterTest {
         } catch (error: IllegalArgumentException) {
             assertTrue(error.message.orEmpty().contains("格式"))
         }
-        val missingTitle = sampleJson().replace(""title": "计算机示范方案",", "")
+        val missingTitle = sampleJson().replace("\"title\": \"计算机示范方案\",", "")
         try {
             TrainingPlanImporter.import(ImportInput.JsonDocument(missingTitle))
             throw AssertionError("应当拒绝缺字段")
@@ -157,7 +157,7 @@ class TrainingPlanImporterTest {
                 GatewayPlanEntry("CS999", "无学分课", "专业选修", null, null)
             )
         )
-        val result = TrainingPlanImporter.import(ImportInput.GatewayView(view))
+        val result = TrainingPlanImporter.import(view)
         val plan = result.plan
         assertEquals(PlanSource.OFFICIAL_IMPORT, plan.source)
         assertFalse(plan.confirmedForStudent)
