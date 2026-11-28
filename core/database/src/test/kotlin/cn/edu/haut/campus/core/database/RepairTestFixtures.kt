@@ -66,7 +66,8 @@ internal data class RepairTestFixture(
         fun create(
             context: Context,
             profileSeed: String = "prof_repair_test",
-            isLegacy: Boolean = false
+            isLegacy: Boolean = false,
+            academicEntityWritePort: AcademicEntityWritePort = DirectAcademicEntityWritePort
         ): RepairTestFixture {
             val n = ++counter
             val database = Room.inMemoryDatabaseBuilder(context, HautDatabase::class.java)
@@ -101,6 +102,7 @@ internal data class RepairTestFixture(
                 preferences = dataStore,
                 accountProfile = profile
             )
+            repository.repositoryEnvironment.academicEntityWritePort = academicEntityWritePort
             repository.activateSession(1L)
             return RepairTestFixture(database, repository, dataStore, profile, storeFile)
         }

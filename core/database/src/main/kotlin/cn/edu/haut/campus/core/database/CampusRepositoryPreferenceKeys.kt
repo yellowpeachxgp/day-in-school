@@ -107,6 +107,7 @@ internal object CampusRepositoryPrefKeys {
     val CLOUD_IDENTITY_UNLINK_TOMBSTONE = stringPreferencesKey("cloud_identity_unlink_tombstone_v1")
     val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
     val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
+    val LEGACY_RESTORE_REVIEW_JOURNAL_JSON = stringPreferencesKey("legacy_restore_review_journal_v1")
     val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
     val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
     /**

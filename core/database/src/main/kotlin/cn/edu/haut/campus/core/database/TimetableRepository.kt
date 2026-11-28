@@ -7,6 +7,7 @@ import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
 import cn.edu.haut.campus.core.domain.PeriodTimeEditor
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.Course
@@ -16,6 +17,7 @@ import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.ImportDiffPreview
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.OccurrenceRule
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +45,7 @@ class TimetableRepository internal constructor(
     internal val occurrenceWriteContext = TimetableOccurrenceWriteContext(environment)
     private val occurrenceStore = TimetableOccurrenceStore(environment, occurrenceWriteContext)
     private val restoreCommandService = TimetableRestoreCommandService(environment, occurrenceWriteContext)
+    private val legacyRestoreReviewJournalStore = LegacyRestoreReviewJournalStore(environment)
 
     val coursesFlow: Flow<List<Course>> =
         dao.observeCourses().map { list -> list.map { it.toDomain() } }
@@ -52,6 +55,10 @@ class TimetableRepository internal constructor(
 
     val occurrenceOverridesFlow: Flow<List<OccurrenceOverride>> =
         dao.observeOccurrenceOverrides().map { list -> list.map { it.toDomain() } }
+
+    /** 旧版调入核对完成 journal：跨 ViewModel 重建恢复，Room 行删除/改令牌后自动失效。 */
+    val legacyRestoreReviewTargetsFlow: Flow<List<OccurrenceOverride>> =
+        legacyRestoreReviewJournalStore.targetsFlow
 
     val buildingsFlow: Flow<List<Building>> =
         combine(dao.observeBuildings(), preferences.data) { list, prefs ->
@@ -85,14 +92,83 @@ class TimetableRepository internal constructor(
         environment.notifyScheduleOrPolicyChanged(reason)
     }
 
+    /**
+     * 课程聚合写入边界：refsProvider 在 Vault/Room 事务内求值，before/after 与业务行同事务。
+     * 调用方应尽量给精确课程集合；批量导入/清空可给当前全量加计划新增 ID 的安全超集。
+     */
+    private suspend fun <T> writeCourseAggregates(
+        courseIdsProvider: suspend () -> Collection<String>,
+        actor: Actor,
+        actorDetail: String,
+        writeGroupId: String? = null,
+        block: suspend () -> T
+    ): T = environment.academicEntityWritePort.writeMany(
+        refsProvider = {
+            courseIdsProvider().distinct().map { environment.academicRef(EntityType.COURSE, it) }
+        },
+        actor = actor,
+        actorDetail = actorDetail,
+        writeGroupId = writeGroupId,
+        block = block
+    )
+
+    private suspend fun courseIdsForRules(ruleIds: Collection<String>): Set<String> =
+        dao.getRulesSnapshot().filter { it.id in ruleIds }.mapTo(mutableSetOf()) { it.courseId }
+
+    private fun absorbedCompanionRuleIds(
+        allOverrides: List<OccurrenceOverrideEntity>,
+        seedIds: Set<String>,
+        contextDateIso: String?
+    ): List<String> = if (contextDateIso != null) {
+        allOverrides
+            .filter { ov ->
+                ov.dateIso == contextDateIso &&
+                    !ov.courseRuleId.isNullOrBlank() &&
+                    seedIds.any { id -> ov.reason == "MERGED_INTO:$id" }
+            }
+            .mapNotNull { it.courseRuleId }
+    } else {
+        emptyList()
+    }
+
+    private suspend fun courseIdsForOverrides(overrideIds: Collection<String>): Set<String> {
+        val rules = dao.getRulesSnapshot().associateBy { it.id }
+        return dao.getOccurrenceOverridesSnapshot()
+            .filter { it.id in overrideIds }
+            .mapNotNullTo(mutableSetOf()) { row ->
+                row.courseId ?: row.courseRuleId?.let(rules::get)?.courseId
+            }
+    }
+
+    private suspend fun courseIdsForMoveIds(moveIds: Collection<String>): Set<String> {
+        val rules = dao.getRulesSnapshot().associateBy { it.id }
+        return dao.getOccurrenceOverridesSnapshot()
+            .filter { it.moveId in moveIds }
+            .mapNotNullTo(mutableSetOf()) { row ->
+                row.courseId ?: row.courseRuleId?.let(rules::get)?.courseId
+            }
+    }
+
     suspend fun resetToDemoSeedData() {
         check(supportsHautServices) { "当前学校不提供工大示例数据" }
-        database.withTransaction {
-            dao.clearCourses()
-            dao.clearRules()
-            dao.clearOccurrenceOverrides()
-            dao.clearGradeAttempts()
-            seedDemoDataInternal()
+        environment.academicEntityWritePort.writeMany(
+            refsProvider = {
+                val courseIds = (dao.getCoursesSnapshot().map { it.id } + HautMockSeedData.defaultCourses.map { it.id }).distinct()
+                val gradeIds = (dao.getGradeAttemptsSnapshot().map { it.id } + HautMockSeedData.defaultGradeAttempts.map { it.id }).distinct()
+                courseIds.map { environment.academicRef(EntityType.COURSE, it) } +
+                    gradeIds.map { environment.academicRef(EntityType.GRADE_ATTEMPT, it) }
+            },
+            actor = Actor.USER,
+            actorDetail = "reset-demo-seed-data",
+            writeGroupId = "reset-demo-seed-data:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
+                dao.clearCourses()
+                dao.clearRules()
+                dao.clearOccurrenceOverrides()
+                dao.clearGradeAttempts()
+                seedDemoDataInternal()
+            }
         }
         preferences.edit {
             it[CampusRepositoryPrefKeys.SEEDED] = true
@@ -100,6 +176,7 @@ class TimetableRepository internal constructor(
             it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
             it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA)
             it.remove(CampusRepositoryPrefKeys.OFFICIAL_GPA_NOTE)
+            it.remove(CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON)
         }
         notifyScheduleOrPolicyChanged("RESET_DEMO_SEED_DATA")
     }
@@ -155,7 +232,14 @@ class TimetableRepository internal constructor(
         val explicitExtraIds = mergedRuleIds.distinct().filter { it.isNotBlank() && it != primaryRule.id }
         val contextDateIso = contextDate?.toString()
 
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                setOf(course.id, primaryRule.courseId) + courseIdsForRules((mergedRuleIds + primaryRule.id).toSet())
+            },
+            actor = Actor.USER,
+            actorDetail = "course-user-edit"
+        ) {
+            database.withTransaction {
             val allRulesById = dao.getRulesSnapshot().associateBy { it.id }
             val existingPrimaryDomain = allRulesById[primaryRule.id]?.toDomain()
             val allOverrides = dao.getOccurrenceOverridesSnapshot()
@@ -219,6 +303,7 @@ class TimetableRepository internal constructor(
                     }
                 }
             }
+            }
         }
         notifyScheduleOrPolicyChanged("USER_COURSE_EDIT")
     }
@@ -271,9 +356,15 @@ class TimetableRepository internal constructor(
             } else null,
             userModified = true
         )
-        database.withTransaction {
-            dao.upsertCourse(course.toEntity())
-            dao.upsertRule(rule.toEntity())
+        writeCourseAggregates(
+            courseIdsProvider = { setOf(courseId) },
+            actor = Actor.USER,
+            actorDetail = "manual-course-add"
+        ) {
+            database.withTransaction {
+                dao.upsertCourse(course.toEntity())
+                dao.upsertRule(rule.toEntity())
+            }
         }
         notifyScheduleOrPolicyChanged("MANUAL_COURSE_ADDED")
     }
@@ -291,20 +382,19 @@ class TimetableRepository internal constructor(
         val seedIds = ruleIds.distinct().filter { it.isNotBlank() }.toSet()
         if (seedIds.isEmpty()) return
         val contextDateIso = contextDate?.toString()
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                val overrides = dao.getOccurrenceOverridesSnapshot()
+                val cleanIds = (seedIds + absorbedCompanionRuleIds(overrides, seedIds, contextDateIso)).toSet()
+                courseIdsForRules(cleanIds)
+            },
+            actor = Actor.USER,
+            actorDetail = "course-rule-delete"
+        ) {
+            database.withTransaction {
             val allOverrides = dao.getOccurrenceOverridesSnapshot()
             // 仅当存在明确卡片日期上下文（contextDateIso）时才扩展该日被吸收的合并成员，严禁跨日期全局扩展误删其他周次独立排课！
-            val absorbedCompanionIds = if (contextDateIso != null) {
-                allOverrides
-                    .filter { ov ->
-                        ov.dateIso == contextDateIso &&
-                            !ov.courseRuleId.isNullOrBlank() &&
-                            seedIds.any { id -> ov.reason == "MERGED_INTO:$id" }
-                    }
-                    .mapNotNull { it.courseRuleId }
-            } else {
-                emptyList()
-            }
+            val absorbedCompanionIds = absorbedCompanionRuleIds(allOverrides, seedIds, contextDateIso)
             val cleanIds = (seedIds + absorbedCompanionIds).toSet()
             val rules = dao.getRulesSnapshot()
             val targetRules = rules.filter { it.id in cleanIds }
@@ -391,6 +481,7 @@ class TimetableRepository internal constructor(
                     }
                 }
             }
+            }
         }
         notifyScheduleOrPolicyChanged("COURSE_RULE_DELETED")
     }
@@ -421,14 +512,25 @@ class TimetableRepository internal constructor(
         val resolved = ClassroomBuildingResolver.resolve(cleanRoom, buildings, aliases)
         val now = Instant.now()
         val stablePracticalExternalId = "sjk:${unscheduled.termId}:${unscheduled.sourceKey}"
+        val fallbackCourseId = "c_prac_${UUID.randomUUID().toString().take(8)}"
 
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                val existingId = dao.getCoursesSnapshot().firstOrNull { row ->
+                    row.source == CourseSource.OFFICIAL_JW.name && row.externalId == stablePracticalExternalId
+                }?.id
+                setOf(existingId ?: fallbackCourseId)
+            },
+            actor = Actor.USER,
+            actorDetail = "practical-course-schedule"
+        ) {
+            database.withTransaction {
             val existingCourse = dao.getCoursesSnapshot()
                 .map { it.toDomain() }
                 .firstOrNull { c ->
                     c.source == CourseSource.OFFICIAL_JW && c.externalId == stablePracticalExternalId
                 }
-            val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
+            val courseId = existingCourse?.id ?: fallbackCourseId
             val course = existingCourse?.copy(
                 teacher = unscheduled.teacher?.takeIf { it.isNotBlank() } ?: existingCourse.teacher,
                 credit = unscheduled.creditPlain?.toBigDecimalOrNull() ?: existingCourse.credit,
@@ -470,6 +572,7 @@ class TimetableRepository internal constructor(
                 dao.upsertRule(rule.toEntity())
             }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
+            }
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
     }
@@ -492,6 +595,7 @@ class TimetableRepository internal constructor(
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val now = Instant.now()
         val stablePracticalExternalId = "sjk:${unscheduled.termId}:${unscheduled.sourceKey}"
+        val fallbackCourseId = "c_prac_${UUID.randomUUID().toString().take(8)}"
 
         fun fingerprint(
             weekdayIso: Int,
@@ -511,13 +615,23 @@ class TimetableRepository internal constructor(
             customEndTimeIso.orEmpty()
         ).joinToString("|")
 
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                val existingId = dao.getCoursesSnapshot().firstOrNull { row ->
+                    row.source == CourseSource.OFFICIAL_JW.name && row.externalId == stablePracticalExternalId
+                }?.id
+                setOf(existingId ?: fallbackCourseId)
+            },
+            actor = Actor.USER,
+            actorDetail = "practical-course-matrix-schedule"
+        ) {
+            database.withTransaction {
             val existingCourse = dao.getCoursesSnapshot()
                 .map { it.toDomain() }
                 .firstOrNull { c ->
                     c.source == CourseSource.OFFICIAL_JW && c.externalId == stablePracticalExternalId
                 }
-            val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
+            val courseId = existingCourse?.id ?: fallbackCourseId
             val course = existingCourse?.copy(
                 teacher = unscheduled.teacher?.takeIf { it.isNotBlank() } ?: existingCourse.teacher,
                 credit = unscheduled.creditPlain?.toBigDecimalOrNull() ?: existingCourse.credit,
@@ -615,6 +729,7 @@ class TimetableRepository internal constructor(
                 dao.upsertRule(rule.toEntity())
             }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
+            }
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
     }
@@ -681,6 +796,19 @@ class TimetableRepository internal constructor(
         preview: ImportDiffPreview,
         overwriteUserConflicts: Boolean = false,
         setAsCurrentTerm: Boolean = true
+    ) = commitCourseImportDiffWithActor(
+        preview = preview,
+        overwriteUserConflicts = overwriteUserConflicts,
+        setAsCurrentTerm = setAsCurrentTerm,
+        actor = Actor.SYNC
+    )
+
+    /** 与兼容签名分离的显式 actor 入口；自动同步使用 SYNC，用户确认的导入 UI 使用 USER。 */
+    suspend fun commitCourseImportDiffWithActor(
+        preview: ImportDiffPreview,
+        overwriteUserConflicts: Boolean = false,
+        setAsCurrentTerm: Boolean = true,
+        actor: Actor
     ) {
         val palette = listOf(
             0xFF0072BC, 0xFF0284C7, 0xFF0D9488, 0xFF16A34A,
@@ -689,21 +817,40 @@ class TimetableRepository internal constructor(
         val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val now = Instant.now()
+        val addedIds = preview.entries.mapIndexedNotNull { index, entry ->
+            if (entry.changeType == ImportChangeType.ADDED && entry.incoming != null) {
+                index to (
+                    "c_imp_${UUID.randomUUID().toString().take(8)}" to
+                        "r_imp_${UUID.randomUUID().toString().take(8)}"
+                    )
+            } else {
+                null
+            }
+        }.toMap()
 
         termRepository.ensureTermExistsAndUpdateCalendar(
             termId = preview.termId,
             setCurrent = setAsCurrentTerm
         )
 
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                (preview.entries.mapNotNull { it.existingCourse?.id } + addedIds.values.map { it.first }).distinct()
+            },
+            actor = actor,
+            actorDetail = "course-import-commit",
+            writeGroupId = "course-import:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
             var colorIdx = 0
-            for (entry in preview.entries) {
+            for ((entryIndex, entry) in preview.entries.withIndex()) {
                 val candidate = entry.incoming
                 when (entry.changeType) {
                     ImportChangeType.ADDED -> {
                         if (candidate != null) {
-                            val courseId = "c_imp_${UUID.randomUUID().toString().take(8)}"
-                            val ruleId = "r_imp_${UUID.randomUUID().toString().take(8)}"
+                            val plannedIds = checkNotNull(addedIds[entryIndex]) { "ADDED 导入项缺少预分配 ID" }
+                            val courseId = plannedIds.first
+                            val ruleId = plannedIds.second
                             val resolved = ClassroomBuildingResolver.resolve(candidate.rawRoom, buildings, aliases)
                             val course = Course(
                                 id = courseId,
@@ -806,6 +953,7 @@ class TimetableRepository internal constructor(
                     outcome = "新增${preview.addedCount}/更新${preview.modifiedCount}/移除${removedCount}/保留用户修改${preview.conflictUserEditCount}"
                 ).toEntity()
             )
+            }
         }
         preferences.edit {
             it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
@@ -843,8 +991,16 @@ class TimetableRepository internal constructor(
         )
     }
 
-    suspend fun saveOccurrenceOverride(override: OccurrenceOverride) =
+    suspend fun saveOccurrenceOverride(override: OccurrenceOverride) = writeCourseAggregates(
+        courseIdsProvider = {
+            override.courseId?.let(::setOf)
+                ?: override.courseRuleId?.let { courseIdsForRules(setOf(it)) }.orEmpty()
+        },
+        actor = Actor.USER,
+        actorDetail = "occurrence-override-save"
+    ) {
         occurrenceStore.saveOccurrenceOverride(override)
+    }
 
     suspend fun saveSingleDayOccurrenceEdit(
         occ: cn.edu.haut.campus.core.model.ClassOccurrence,
@@ -853,27 +1009,44 @@ class TimetableRepository internal constructor(
         newEndPeriod: Int,
         newRoom: String,
         reason: String = "单次调课"
-    ) = occurrenceStore.saveSingleDayOccurrenceEdit(
-        occ = occ,
-        termId = termId,
-        newStartPeriod = newStartPeriod,
-        newEndPeriod = newEndPeriod,
-        newRoom = newRoom,
-        reason = reason
-    )
+    ) = writeCourseAggregates(
+        courseIdsProvider = { setOf(occ.courseId) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-single-day-edit"
+    ) {
+        occurrenceStore.saveSingleDayOccurrenceEdit(
+            occ = occ,
+            termId = termId,
+            newStartPeriod = newStartPeriod,
+            newEndPeriod = newEndPeriod,
+            newRoom = newRoom,
+            reason = reason
+        )
+    }
 
-    suspend fun resetSingleDayOccurrenceEdit(occ: cn.edu.haut.campus.core.model.ClassOccurrence) =
+    suspend fun resetSingleDayOccurrenceEdit(occ: cn.edu.haut.campus.core.model.ClassOccurrence) = writeCourseAggregates(
+        courseIdsProvider = { setOf(occ.courseId) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-single-day-reset"
+    ) {
         occurrenceStore.resetSingleDayOccurrenceEdit(occ)
+    }
 
     suspend fun cancelClassOccurrenceOnDate(
         occ: cn.edu.haut.campus.core.model.ClassOccurrence,
         termId: String,
         reason: String = "单次停课"
-    ) = occurrenceStore.cancelClassOccurrenceOnDate(
-        occ = occ,
-        termId = termId,
-        reason = reason
-    )
+    ) = writeCourseAggregates(
+        courseIdsProvider = { setOf(occ.courseId) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-cancel"
+    ) {
+        occurrenceStore.cancelClassOccurrenceOnDate(
+            occ = occ,
+            termId = termId,
+            reason = reason
+        )
+    }
 
     suspend fun rescheduleSingleOccurrenceCrossDate(
         occ: cn.edu.haut.campus.core.model.ClassOccurrence,
@@ -883,51 +1056,101 @@ class TimetableRepository internal constructor(
         newEndPeriod: Int,
         newRoom: String,
         reason: String? = null
-    ) = occurrenceStore.rescheduleSingleOccurrenceCrossDate(
-        occ = occ,
-        termId = termId,
-        targetDate = targetDate,
-        newStartPeriod = newStartPeriod,
-        newEndPeriod = newEndPeriod,
-        newRoom = newRoom,
-        reason = reason
-    )
+    ) = writeCourseAggregates(
+        courseIdsProvider = { setOf(occ.courseId) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-cross-date-reschedule"
+    ) {
+        occurrenceStore.rescheduleSingleOccurrenceCrossDate(
+            occ = occ,
+            termId = termId,
+            targetDate = targetDate,
+            newStartPeriod = newStartPeriod,
+            newEndPeriod = newEndPeriod,
+            newRoom = newRoom,
+            reason = reason
+        )
+    }
 
-    suspend fun deleteOccurrenceOverride(overrideId: String) =
+    suspend fun deleteOccurrenceOverride(overrideId: String) = writeCourseAggregates(
+        courseIdsProvider = { courseIdsForOverrides(setOf(overrideId)) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-override-delete"
+    ) {
         occurrenceStore.deleteOccurrenceOverride(overrideId)
+    }
 
     suspend fun unpauseOccurrence(
         termId: String,
         overrideId: String,
         expectedMoveId: String? = null
-    ): CampusRepository.OccurrenceCommandResult =
+    ): CampusRepository.OccurrenceCommandResult = writeCourseAggregates(
+        courseIdsProvider = { courseIdsForOverrides(setOf(overrideId)) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-unpause"
+    ) {
         restoreCommandService.unpauseOccurrence(
             termId = termId,
             overrideId = overrideId,
             expectedMoveId = expectedMoveId
         )
+    }
 
     suspend fun undoMove(
         termId: String,
         moveId: String
-    ): CampusRepository.OccurrenceCommandResult =
+    ): CampusRepository.OccurrenceCommandResult = writeCourseAggregates(
+        courseIdsProvider = { courseIdsForMoveIds(setOf(moveId)) },
+        actor = Actor.USER,
+        actorDetail = "occurrence-move-undo"
+    ) {
         restoreCommandService.undoMove(termId, moveId)
+    }
 
     suspend fun restoreRuleCancellation(
         termId: String,
         ruleIds: List<String>,
         date: LocalDate,
         expectedMoveId: String? = null
-    ): CampusRepository.OccurrenceCommandResult =
+    ): CampusRepository.OccurrenceCommandResult = writeCourseAggregates(
+        courseIdsProvider = {
+            val directCourseIds = dao.getOccurrenceOverridesSnapshot()
+                .filter { it.courseRuleId in ruleIds && it.dateIso == date.toString() }
+                .mapNotNullTo(mutableSetOf()) { it.courseId }
+            courseIdsForRules(ruleIds) + directCourseIds
+        },
+        actor = Actor.USER,
+        actorDetail = "occurrence-rule-cancellation-restore"
+    ) {
         restoreCommandService.restoreRuleCancellation(
             termId = termId,
             ruleIds = ruleIds,
             date = date,
             expectedMoveId = expectedMoveId
         )
+    }
 
     suspend fun executeRestoreCommand(command: CampusRepository.RestoreCommand): CampusRepository.OccurrenceCommandResult =
-        restoreCommandService.executeRestoreCommand(command)
+        writeCourseAggregates(
+            courseIdsProvider = {
+                courseIdsForOverrides(command.selectedRows.map { it.id }.toSet()) +
+                    courseIdsForMoveIds(command.selectedMoves.map { it.moveId }.toSet())
+            },
+            actor = Actor.USER,
+            actorDetail = "occurrence-restore-command:" + command.intent.name,
+            writeGroupId = "occurrence-restore-command:" + command.commandId
+        ) {
+            restoreCommandService.executeRestoreCommand(command)
+        }
+
+    suspend fun appendLegacyRestoreReviewTargets(targets: List<OccurrenceOverride>) =
+        legacyRestoreReviewJournalStore.append(targets)
+
+    suspend fun removeLegacyRestoreReviewTarget(overrideId: String) =
+        legacyRestoreReviewJournalStore.remove(overrideId)
+
+    suspend fun clearLegacyRestoreReviewTargets() =
+        legacyRestoreReviewJournalStore.clear()
 
     @Deprecated(
         "模糊选择已于 R5 废止：改用 executeRestoreCommand(RestoreCommand) 提交点击时冻结的完整不可变命令"
@@ -937,11 +1160,20 @@ class TimetableRepository internal constructor(
         ruleId: String?,
         overrideId: String? = null,
         mergedRuleIds: List<String> = emptyList()
-    ): CampusRepository.OccurrenceRestoreResult =
+    ): CampusRepository.OccurrenceRestoreResult = writeCourseAggregates(
+        courseIdsProvider = {
+            val ruleCourseIds = courseIdsForRules((listOfNotNull(ruleId) + mergedRuleIds).toSet())
+            val overrideCourseIds = overrideId?.let { courseIdsForOverrides(setOf(it)) }.orEmpty()
+            ruleCourseIds + overrideCourseIds
+        },
+        actor = Actor.USER,
+        actorDetail = "occurrence-restore-legacy-adapter"
+    ) {
         restoreCommandService.restoreCanceledOccurrence(
             date = date,
             ruleId = ruleId,
             overrideId = overrideId,
             mergedRuleIds = mergedRuleIds
         )
+    }
 }

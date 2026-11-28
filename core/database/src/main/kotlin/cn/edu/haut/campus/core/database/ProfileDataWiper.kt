@@ -36,6 +36,7 @@ class ProfileDataWiper internal constructor(
     private val cloudIdentityRepository: CloudIdentityRepository,
     private val syncOrchestrator: SyncOrchestrator
 ) {
+    private val vaultDao = database.vaultDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -224,6 +225,12 @@ class ProfileDataWiper internal constructor(
                 cloudAndParcelDao.clearCloudIdentityBinding()
                 cloudAndParcelDao.clearLibraryBookingPlans()
                 cloudAndParcelDao.clearParcelItems()
+                vaultDao.clearPersonalEvents()
+                vaultDao.clearEntityJournal()
+                vaultDao.clearDomainOutbox()
+                vaultDao.clearSearchDocs()
+                vaultDao.clearSearchFts()
+                vaultDao.clearBlobStore()
             }
         }
         cloudTokenMutex.withLock {
@@ -251,6 +258,7 @@ class ProfileDataWiper internal constructor(
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_MY_TAG_CODES)
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_POST_IDS)
                 prefs.remove(CampusRepositoryPrefKeys.MOMENTS_FAVORITE_BOOK_IDS)
+                prefs.remove(CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON)
                 prefs[CampusRepositoryPrefKeys.SEEDED] = true
                 prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
                 prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = false

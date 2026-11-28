@@ -94,6 +94,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
 import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.model.AcademicTermResolver
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportDiffPreview
@@ -1002,9 +1003,10 @@ fun ImporterScreen(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    repository.commitCourseImportDiff(
+                                    repository.timetableRepository.commitCourseImportDiffWithActor(
                                         preview = preview,
-                                        overwriteUserConflicts = overwriteUserEdits
+                                        overwriteUserConflicts = overwriteUserEdits,
+                                        actor = Actor.USER
                                     )
                                     val calMeta = pendingInterchangeMeta
                                     if (calMeta != null && calMeta.hasCalendarMetadata && applyInterchangeCalendar) {
