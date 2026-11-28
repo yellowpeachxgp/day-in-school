@@ -54,7 +54,7 @@
 | W2-03 | 4 个规则模板与 `WeatherProvider` SPI | Android | W2-02、R03 | — | C08 | 未开始 | — | — | — | — | — | — |
 | W2-04 | `:core:textextract`：端侧 OCR 与 PDF 文本抽取 | Android | R02、INF-00 | — | C09 | 已合并 | s7-w204 等 | feat/cis-w2-04-textextract | PR#78 | — | cddfb54 | — |
 | W2-05 | `:core:inbox`：分享入口、相对日期、规则解析器、指纹去重、改课预览与应用 | Android | W1-02b、W1-03、W2-04 | Room v14 | C09 | 未开始 | — | — | — | — | — | — |
-| W2-06 | `:core:ai` BYOK 通道（§6.8） | Android | W1-04 | — | C10 C27 | 进行中 | m-w206 | feat/cis-w2-06-byok | — | — | — | 凭据/Key 类需 2 独立审阅 |
+| W2-06 | `:core:ai` BYOK 通道（§6.8） | Android | W1-04 | — | C10 C27 | PR 待审（quick/android/secrets 已通过） | m-w206c | feat/cis-w2-06-byok | PR#150 | c902f367 | — | 凭据/Key 类需 2 独立审阅 |
 | W2-07 | 收件箱的 AI 解析器（可选路径，需预览和单次同意） | Android | W2-05、W2-06 | — | C09 C10 | 未开始 | — | — | — | — | — | — |
 | W3-01 | 培养方案导入、`DegreeAuditor`、人工认定、依据追踪 | Android | W0-05 | Room v15 | C11 | 未开始 | — | — | — | — | — | — |
 | W3-02 | `:core:solver` 与 `TravelTimeMatrix`、无解解释 | Android | R04、W1-02a | — | C12 | 已合并 | w302-solver 等 | feat/cis-w3-02-solver | PR#87 | — | 240eb54 | — |
