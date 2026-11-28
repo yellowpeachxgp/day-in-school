@@ -15,9 +15,9 @@ class DomainEventCodecTest {
     private val registry = DomainEventCodecRegistry.DEFAULT
 
     @Test
-    fun eightDomainEventsKeepSchemaVersionAndCanonicalRoundTrip() {
+    fun nineDomainEventsKeepSchemaVersionAndCanonicalRoundTrip() {
         val events = DomainEventTestFixtures.allEvents()
-        assertEquals(8, events.size)
+        assertEquals(9, events.size)
         assertEquals(
             setOf(
                 "course.changed",
@@ -27,6 +27,7 @@ class DomainEventCodecTest {
                 "geofence.transition",
                 "notice.confirmed",
                 "group.event.confirmed",
+                "vault.entity.changed",
                 "data.stale"
             ),
             registry.supportedEventTypes
@@ -153,6 +154,63 @@ class DomainEventCodecTest {
         }.exceptionOrNull()
 
         assertTrue(error is SensitiveEventPayloadException)
+    }
+
+    @Test
+    fun vaultEntityChangedRejectsSensitiveChangedPathAtConstructionAndEncodeBoundary() {
+        val error = runCatching {
+            DomainEvent.VaultEntityChanged(
+                eventId = "event-vault-sensitive-path",
+                scope = DomainEventTestFixtures.scope,
+                occurredAt = DomainEventTestFixtures.occurredAt,
+                changeId = 7L,
+                writeGroupId = "write-group-sensitive",
+                entityRef = DomainEventTestFixtures.ref(EntityType.PERSONAL_EVENT, "personal:sensitive"),
+                change = ChangeKind.UPDATED,
+                actor = cn.edu.haut.campus.core.model.Actor.USER,
+                actorDetail = null,
+                changedPaths = listOf("/row/sessionCookie")
+            )
+        }.exceptionOrNull()
+
+        assertTrue(error is SensitiveEventPayloadException)
+    }
+
+    @Test
+    fun vaultEntityChangedDecodeRejectsTamperedSensitiveChangedPath() {
+        val valid = DomainEventTestFixtures.allEvents().filterIsInstance<DomainEvent.VaultEntityChanged>().single()
+        val envelope = registry.encode(valid)
+        val tampered = envelope.copy(
+            payload = CanonicalJson.of(envelope.payload.text.replace("/row/title", "/row/sessionCookie"))
+        )
+
+        val error = runCatching { registry.decode(tampered) }.exceptionOrNull()
+
+        assertTrue(error is SensitiveEventPayloadException)
+    }
+
+    @Test
+    fun mutableListAliasCannotChangeVaultEntityChangedPathsAfterValidation() {
+        val backingPaths = mutableListOf("/row/title")
+        val event = DomainEvent.VaultEntityChanged(
+            eventId = "event-vault-path-alias",
+            scope = DomainEventTestFixtures.scope,
+            occurredAt = DomainEventTestFixtures.occurredAt,
+            changeId = 8L,
+            writeGroupId = "write-group-alias",
+            entityRef = DomainEventTestFixtures.ref(EntityType.PERSONAL_EVENT, "personal:alias"),
+            change = ChangeKind.UPDATED,
+            actor = cn.edu.haut.campus.core.model.Actor.USER,
+            actorDetail = null,
+            changedPaths = backingPaths
+        )
+
+        backingPaths.add("/row/sessionCookie")
+
+        assertEquals(2, backingPaths.size)
+        assertEquals(listOf("/row/title"), event.changedPaths)
+        val encoded = registry.encode(event)
+        assertFalse(encoded.payload.text.contains("sessionCookie"))
     }
 
     @Test

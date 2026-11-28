@@ -16,7 +16,9 @@ import cn.edu.haut.campus.core.campusservices.ParcelLifecycleStatus
 import cn.edu.haut.campus.core.campusservices.cleanNullLiteral
 import cn.edu.haut.campus.core.campusservices.cleanNullableLiteral
 import cn.edu.haut.campus.core.model.AcademicTermResolver
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ExamScheduleItem
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
@@ -970,7 +972,24 @@ class SyncOrchestrator internal constructor(
             )
         }
         val targetTermId = syncData.termId
-        database.withTransaction {
+        environment.academicEntityWritePort.writeMany(
+            refsProvider = {
+                if (!overwriteUserConflicts) {
+                    emptyList()
+                } else {
+                    dao.getCoursesSnapshot()
+                        .filter {
+                            it.source == CourseSource.OFFICIAL_JW.name &&
+                                it.externalId?.startsWith("sjk:$targetTermId:") == true
+                        }
+                        .map { environment.academicRef(EntityType.COURSE, it.id) }
+                }
+            },
+            actor = Actor.SYNC,
+            actorDetail = "sync-practical-course-cleanup",
+            writeGroupId = "sync-practical-course-cleanup:" + UUID.randomUUID().toString()
+        ) {
+            database.withTransaction {
             val allRules = dao.getRulesSnapshot()
             val allCourses = dao.getCoursesSnapshot()
             if (overwriteUserConflicts) {
@@ -1013,6 +1032,7 @@ class SyncOrchestrator internal constructor(
             }
             dao.clearUnscheduledCoursesForTerm(targetTermId)
             dao.upsertUnscheduledCourses(remainingUnscheduledEntities)
+            }
         }
         val seasonalTermId = AcademicTermResolver.defaultTermId(LocalDate.now(timeZone))
         val targetHasAnyAcademicContent = syncData.timetableCandidates.isNotEmpty() ||

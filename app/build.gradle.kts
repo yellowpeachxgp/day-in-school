@@ -105,6 +105,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:domain"))
     implementation(project(":core:database"))
+    implementation(project(":core:vault"))
     implementation(project(":core:reminder"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:academic"))

@@ -1,11 +1,14 @@
 package cn.edu.haut.campus.core.events
 
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.ChangeKind
 import cn.edu.haut.campus.core.model.DataProvenance
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
+import cn.edu.haut.campus.core.model.FieldChange
+import cn.edu.haut.campus.core.model.FieldChangeKind
 import cn.edu.haut.campus.core.model.FieldDiff
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.json.JsonValue as ModelJsonValue
@@ -174,6 +177,104 @@ sealed interface DomainEvent {
         }
     }
 
+    /**
+     * Vault 实体变更事实。事件只携带 journal changeId、实体引用、写操作者和已脱敏的变更路径；
+     * before/after 内容始终留在 entity_journal，不进入共享 outbox payload。
+     *
+     * changedPaths 构造时逐元素复制，避免调用方在校验后通过 MutableList 别名追加敏感路径。
+     */
+    class VaultEntityChanged(
+        override val eventId: String,
+        override val scope: SchoolAccountScope,
+        override val occurredAt: Instant,
+        val changeId: Long,
+        val writeGroupId: String,
+        val entityRef: EntityRef,
+        val change: ChangeKind,
+        val actor: Actor,
+        val actorDetail: String?,
+        changedPaths: List<String>
+    ) : DomainEvent {
+        val changedPaths: List<String> = snapshotElementCopy(changedPaths)
+
+        init {
+            validateDomainEventInvariant(this)
+        }
+
+        operator fun component1(): String = eventId
+        operator fun component2(): SchoolAccountScope = scope
+        operator fun component3(): Instant = occurredAt
+        operator fun component4(): Long = changeId
+        operator fun component5(): String = writeGroupId
+        operator fun component6(): EntityRef = entityRef
+        operator fun component7(): ChangeKind = change
+        operator fun component8(): Actor = actor
+        operator fun component9(): String? = actorDetail
+        operator fun component10(): List<String> = changedPaths
+
+        fun copy(
+            eventId: String = this.eventId,
+            scope: SchoolAccountScope = this.scope,
+            occurredAt: Instant = this.occurredAt,
+            changeId: Long = this.changeId,
+            writeGroupId: String = this.writeGroupId,
+            entityRef: EntityRef = this.entityRef,
+            change: ChangeKind = this.change,
+            actor: Actor = this.actor,
+            actorDetail: String? = this.actorDetail,
+            changedPaths: List<String> = this.changedPaths
+        ): VaultEntityChanged = VaultEntityChanged(
+            eventId = eventId,
+            scope = scope,
+            occurredAt = occurredAt,
+            changeId = changeId,
+            writeGroupId = writeGroupId,
+            entityRef = entityRef,
+            change = change,
+            actor = actor,
+            actorDetail = actorDetail,
+            changedPaths = changedPaths
+        )
+
+        override fun equals(other: Any?): Boolean = other is VaultEntityChanged &&
+            eventId == other.eventId &&
+            scope == other.scope &&
+            occurredAt == other.occurredAt &&
+            changeId == other.changeId &&
+            writeGroupId == other.writeGroupId &&
+            entityRef == other.entityRef &&
+            change == other.change &&
+            actor == other.actor &&
+            actorDetail == other.actorDetail &&
+            changedPaths == other.changedPaths
+
+        override fun hashCode(): Int {
+            var result = eventId.hashCode()
+            result = 31 * result + scope.hashCode()
+            result = 31 * result + occurredAt.hashCode()
+            result = 31 * result + changeId.hashCode()
+            result = 31 * result + writeGroupId.hashCode()
+            result = 31 * result + entityRef.hashCode()
+            result = 31 * result + change.hashCode()
+            result = 31 * result + actor.hashCode()
+            result = 31 * result + (actorDetail?.hashCode() ?: 0)
+            result = 31 * result + changedPaths.hashCode()
+            return result
+        }
+
+        override fun toString(): String = "VaultEntityChanged(eventId=" + eventId +
+            ", scope=" + scope +
+            ", occurredAt=" + occurredAt +
+            ", changeId=" + changeId +
+            ", writeGroupId=" + writeGroupId +
+            ", entityRef=" + entityRef +
+            ", change=" + change +
+            ", actor=" + actor +
+            ", actorDetail=" + actorDetail +
+            ", changedPaths=" + changedPaths +
+            ")"
+    }
+
     data class DataStale(
         override val eventId: String,
         override val scope: SchoolAccountScope,
@@ -231,6 +332,15 @@ internal fun validateDomainEventInvariant(event: DomainEvent) {
         is DomainEvent.GroupEventConfirmed -> {
             validateEventToken(event.groupId, "groupId")
             validateScopedEntityRef(event.eventRef, event.scope, EntityType.GROUP_EVENT, "eventRef")
+        }
+        is DomainEvent.VaultEntityChanged -> {
+            require(event.changeId > 0) { "VaultEntityChanged changeId 必须大于 0" }
+            validateEventToken(event.writeGroupId, "writeGroupId")
+            require(event.entityRef.scope == event.scope) { "entityRef 与事件 scope 不一致" }
+            require(event.actorDetail == null || (event.actorDetail.length <= 512 && event.actorDetail.none { it.isISOControl() })) {
+                "actorDetail 过长或含控制字符"
+            }
+            validateRedactedChangedPathsSafety(event.changedPaths)
         }
         is DomainEvent.DataStale -> Unit
     }
@@ -300,6 +410,27 @@ internal fun validateEventProvenance(provenance: DataProvenance, scope: SchoolAc
 private fun requireValidProvenancePart(value: String, label: String, maxLength: Int) {
     require(value.isNotBlank() && value.length <= maxLength) { "provenance 缺少有效的 " + label }
     require(value.none { it.isISOControl() || it.isWhitespace() }) { "provenance." + label + " 不能包含空白或控制字符" }
+}
+
+/**
+ * Vault 事件不携带 before/after 值，因此用一个只在内存中存在的 FieldDiff 探针复用统一敏感字段防线：
+ * 探针值永不编码、永不持久化，仅让 JSON Pointer 结构校验与 validateFieldDiffSafety 的路径扫描作用于
+ * changedPaths。这样敏感字段规则只有一份实现，codec encode/decode 都会重复执行。
+ */
+internal fun validateRedactedChangedPathsSafety(paths: List<String>) {
+    require(paths.isNotEmpty()) { "changedPaths 至少要包含一个字段路径" }
+    require(paths.distinct().size == paths.size) { "changedPaths 包含重复路径" }
+    val probe = FieldDiff(
+        paths.map { path ->
+            FieldChange(
+                path = path,
+                kind = FieldChangeKind.MODIFIED,
+                before = ModelJsonValue.Null,
+                after = ModelJsonValue.Str("redacted-probe")
+            )
+        }
+    )
+    validateFieldDiffSafety(probe)
 }
 
 internal fun validateFieldDiffSafety(diff: FieldDiff) {

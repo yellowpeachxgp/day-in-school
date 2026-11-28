@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.events
 
 import cn.edu.haut.campus.core.model.AccountId
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.ChangeKind
@@ -120,6 +121,18 @@ internal object DomainEventTestFixtures {
             occurredAt = occurredAt,
             groupId = "group-study-1",
             eventRef = ref(EntityType.GROUP_EVENT, "group-event-1")
+        ),
+        DomainEvent.VaultEntityChanged(
+            eventId = "event-vault-entity-changed",
+            scope = scope,
+            occurredAt = occurredAt,
+            changeId = 42L,
+            writeGroupId = "write-group-1",
+            entityRef = ref(EntityType.PERSONAL_EVENT, "personal:event-1"),
+            change = ChangeKind.UPDATED,
+            actor = Actor.USER,
+            actorDetail = "fixture-update",
+            changedPaths = listOf("/row/title", "/row/note")
         ),
         DomainEvent.DataStale(
             eventId = "event-data-stale",

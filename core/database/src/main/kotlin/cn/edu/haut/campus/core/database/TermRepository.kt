@@ -6,7 +6,9 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.PeriodTimeEditor
 import cn.edu.haut.campus.core.model.AcademicTermResolver
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CalendarOverride
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
@@ -85,15 +87,29 @@ class TermRepository internal constructor(
             return
         }
         if (prefs[CampusRepositoryPrefKeys.CLEAN_BASE_V2] != true) {
-            database.withTransaction {
-                if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] != true) {
-                    dao.clearStudentProfile()
-                    dao.clearCourses()
-                    dao.clearRules()
-                    dao.clearOccurrenceOverrides()
-                    dao.clearGradeAttempts()
+            environment.academicEntityWritePort.writeMany(
+                refsProvider = {
+                    if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] == true) {
+                        emptyList()
+                    } else {
+                        dao.getCoursesSnapshot().map { environment.academicRef(EntityType.COURSE, it.id) } +
+                            dao.getGradeAttemptsSnapshot().map { environment.academicRef(EntityType.GRADE_ATTEMPT, it.id) }
+                    }
+                },
+                actor = Actor.SYNC,
+                actorDetail = "legacy-initial-academic-clean",
+                writeGroupId = "legacy-initial-academic-clean:" + UUID.randomUUID().toString()
+            ) {
+                database.withTransaction {
+                    if (prefs[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] != true) {
+                        dao.clearStudentProfile()
+                        dao.clearCourses()
+                        dao.clearRules()
+                        dao.clearOccurrenceOverrides()
+                        dao.clearGradeAttempts()
+                    }
+                    seedBaseCampusDictionaryInternal()
                 }
-                seedBaseCampusDictionaryInternal()
             }
             preferences.edit {
                 it[CampusRepositoryPrefKeys.SEEDED] = true
@@ -143,7 +159,16 @@ class TermRepository internal constructor(
                     val rulesIn26 = allRules.filter { it.termId == "2026-2027-1" && it.id.startsWith("r_imp_") }
                     val rulesInExpected = allRules.filter { it.termId == expectedTermId }
                     if (expectedTermId != "2026-2027-1" && rulesIn26.isNotEmpty() && rulesInExpected.isEmpty()) {
-                        dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                        environment.academicEntityWritePort.writeMany(
+                            refsProvider = {
+                                rulesIn26.map { it.courseId }.distinct().map { environment.academicRef(EntityType.COURSE, it) }
+                            },
+                            actor = Actor.SYNC,
+                            actorDetail = "term-mismatch-course-repair",
+                            writeGroupId = "term-mismatch-course-repair:" + UUID.randomUUID().toString()
+                        ) {
+                            dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                        }
                         dao.setCurrentTerm(expectedTermId)
                     }
                 }
