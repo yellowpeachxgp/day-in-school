@@ -102,8 +102,8 @@ internal object TeamTimeJson {
         val obj = value.asObj("poll option")
         return TeamTimePollOption(
             optionId = obj.reqString("option_id"),
-            startAt = parseTeamTimeInstant(obj.reqString("option.start_at"), "option.start_at"),
-            endAt = parseTeamTimeInstant(obj.reqString("option.end_at"), "option.end_at"),
+            startAt = parseTeamTimeInstant(obj.reqString("start_at"), "start_at"),
+            endAt = parseTeamTimeInstant(obj.reqString("end_at"), "end_at"),
             voteCount = obj.reqInt("vote_count"),
             voterMemberIds = obj.reqArray("voter_member_ids").items.map { it.asString("voter_member_ids[]") },
         )
