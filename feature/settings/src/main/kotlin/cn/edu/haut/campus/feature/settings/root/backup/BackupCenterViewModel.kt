@@ -422,7 +422,7 @@ class BackupCenterViewModel(
                     deviceIdShort = device.deviceId.take(8),
                     label = device.deviceLabel,
                     status = device.status,
-                    currentDevice = device.deviceId == status.deviceId,
+                    currentDevice = device.deviceId == status?.deviceId,
                     lastSeenAt = device.lastSeenAt
                 )
             }

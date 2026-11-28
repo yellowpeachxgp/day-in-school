@@ -24,7 +24,11 @@
 - 块加密为 AES-256-GCM；AAD 精确绑定 `dis-sync-e2ee/v1\n<lowercase blob_id>\n<key_id>\n`。plaintext 先写入 4 字节大端原始长度，再零填充到 bucket-16；输出密文含 tag 必须恰为 1,024/4,096/16,384/65,536/262,144/1,048,576 之一。
 - 云端请求只包含注册元数据、密文、密文 SHA-256、version vector、cursor 与非秘密 encryption envelope；明文、明文 hash、master key、包装密钥、恢复密钥、口令或 KDF secret 不出设备。
 
-## 4. CAS、cursor 与冲突语义
+## 4. HTTP transport 与依赖边界
+
+生产 HTTPS transport 使用 OkHttp（Apache-2.0，`com.squareup.okhttp3:okhttp:4.12.0`），因为 CT-07 的 blob DELETE 必须携带 `base_vector/writer_counter` JSON body，而 Android 内建 `HttpURLConnection` 在多个受支持版本拒绝 DELETE 写 body。transport 只允许 HTTPS、关闭自动重定向、不写请求/响应日志；除该显式依赖外不引入代理池、Cookie 持久化或第三方密钥。
+
+## 5. CAS、cursor 与冲突语义
 
 - PUT/DELETE 使用服务器当前 version vector 做严格 CAS；writer_counter 只前进一格。网络结果不确定时，客户端先持久化 canonical pending write，后续用相同 Idempotency-Key 与相同字节重试，绝不用同一 counter 发送不同 plaintext。
 - cursor 只在页面全部解密、校验并持久应用后保存；cursor 不跨设备复制。SYNC_CURSOR_EXPIRED/INVALID 只丢弃 cursor 并 cursorless resync，不删除本地 dirty 或从未确认的对象。
@@ -32,14 +36,14 @@
 - 冲突永不静默覆盖。UI 同时展示本机版本与远端版本（表、row key、logicalClock、内容摘要/canonical row），用户显式选择保留本机或使用远端；删除冲突提供「保留本机」与「接受远端删除」。
 - 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。
 
-## 5. 云身份、设备与本地擦除
+## 6. 云身份、设备与本地擦除
 
 - 本地同步状态显式绑定启用时的 `cloud_user_id`。切换 XPeach Cloud 账号后，旧 cursor/vector/object index 一律冻结 fail-closed；不得把旧账号因果状态用于新账号，也不得以 cursorless resync 删除本地 dirty 数据。用户必须显式停用/擦除旧同步状态后重新加入。
 - 停用顺序是先撤回 E2EE consent、再撤销当前设备：revoke 当前设备会失效其绑定的会话族，反向顺序会导致 consent 撤回不可达。UI 如实区分「远端已确认」与「本机已停止但远端未确认」。
 - 撤销是永久 tombstone；重新启用总是生成新的随机 installation UUID。设备列表只展示账号安全元数据，不展示硬件序列号、精确设备标识、密钥或 session 绑定。
 - 全量擦除注册在 ProfileDataWipe before-hook：best-effort 停用远端后无条件删除本机状态、pending write、cursor、冲突缓存、Keystore 包装密钥与密封 master key，并取消 WorkManager。
 
-## 6. 同意与生命周期 UI
+## 7. 同意与生命周期 UI
 
 - 骨架 UI 放在「备份与恢复」卡片内，但文案明确区分静态备份和持续同步。用户必须勾选理解：云端只存密文但可见 bucket size/时间/设备在线模式；v1 设备、块数、字节与 24h 传输配额；撤回同意后 30 天保留、过期删除和设备撤销生命周期。
 - 勾选前不创建 consent、不注册设备、不生成或上传任何同步元数据。未登录 XPeach Cloud 时显示 NEEDS_LOGIN；离线/不支持/错误状态进入同一 SettingsUiMatrix。

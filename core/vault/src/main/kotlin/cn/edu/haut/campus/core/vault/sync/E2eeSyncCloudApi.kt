@@ -1,12 +1,16 @@
 package cn.edu.haut.campus.core.vault.sync
 
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,9 +34,16 @@ fun interface E2eeSyncAccessTokenProvider {
 
 /** 只允许 HTTPS 的最小 HTTP transport；不写请求/响应日志，避免把密文包大小之外的调试信息扩散到日志系统。 */
 class HttpsE2eeSyncHttpTransport(
-    private val connectTimeoutMs: Int = 15_000,
-    private val readTimeoutMs: Int = 30_000
+    connectTimeoutMs: Int = 15_000,
+    readTimeoutMs: Int = 30_000
 ) : E2eeSyncHttpTransport {
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
     override suspend fun request(
         method: String,
         url: String,
@@ -43,27 +54,20 @@ class HttpsE2eeSyncHttpTransport(
         if (uri.scheme?.lowercase() != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
             throw E2eeSyncException("E2EE 云同步只允许 HTTPS 云端地址")
         }
-        val connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = connectTimeoutMs
-            readTimeout = readTimeoutMs
-            instanceFollowRedirects = false
-            headers.forEach { (name, value) -> setRequestProperty(name, value) }
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        val requestBody = body?.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = Request.Builder()
+            .url(uri.toURL())
+            .method(method.uppercase(), requestBody)
+            .apply {
+                headers.forEach { (name, value) -> addHeader(name, value) }
+                if (body != null) addHeader("Content-Type", "application/json; charset=utf-8")
             }
-        }
-        try {
-            if (body != null) {
-                connection.outputStream.use { out -> out.write(body.toByteArray(Charsets.UTF_8)) }
-            }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.readBytes()?.toString(Charsets.UTF_8).orEmpty()
-            E2eeSyncHttpResponse(status, text)
-        } finally {
-            connection.disconnect()
+            .build()
+        client.newCall(request).execute().use { response ->
+            E2eeSyncHttpResponse(
+                status = response.code,
+                body = response.body?.string().orEmpty()
+            )
         }
     }
 }
