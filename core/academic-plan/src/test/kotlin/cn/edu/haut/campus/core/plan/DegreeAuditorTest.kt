@@ -565,4 +565,148 @@ class DegreeAuditorTest {
         PlanFixtures.assertAmount("3", report.totalEarnedCredits)
     }
 
+    @Test
+    fun explicitRequirementCodeDoesNotFallBackToSameName() {
+        val group = PlanFixtures.group(
+            id = "g-code-strict",
+            credits = "3",
+            courses = listOf(PlanCourseRef("HIST201", "Survey")),
+            title = "显式代码禁配组"
+        )
+        val plan = PlanFixtures.plan(listOf(group))
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("ART101", name = "Survey", credits = "3", id = "same-name-different-code")),
+            emptyList(),
+            now
+        )
+        PlanFixtures.assertAmount("0", report.totalEarnedCredits, "同名不同码不得凭名称入账")
+        assertEquals(1, report.unclassified.size)
+        assertEquals("ART101", report.unclassified.single().courseKey)
+    }
+
+    @Test
+    fun multipleOldCodesMappedToSameNameOnlyTargetAreOneLogicalCourse() {
+        val group = PlanFixtures.group(
+            id = "g-rename-alias",
+            credits = "3",
+            courses = listOf(PlanCourseRef(null, "Engineering Math")),
+            title = "改名别名组"
+        )
+        val target = PlanCourseRef(null, "Engineering Math")
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(was = PlanCourseRef("M101", "Applied Math"), now = target),
+                CourseRename(was = PlanCourseRef("M102", "Applied Math"), now = target)
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("M101", name = "Applied Math", credits = "3", id = "old-code-a", academicYear = "2023-2024"),
+                PlanFixtures.attempt("M102", name = "Applied Math", credits = "3", id = "old-code-b", academicYear = "2024-2025", attemptType = AttemptType.RETAKE)
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-rename-alias")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "同一 name-only 改名目标只能入账一次")
+        assertEquals(1, progress.assignedCourses.size)
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+        assertTrue(report.trace.any { it.rule == "retake-dedupe" })
+    }
+
+    @Test
+    fun nameOnlyRenameTargetUsesUniqueDeclaredRequirementCode() {
+        val group = PlanFixtures.group(
+            id = "g-rename-infer-code",
+            credits = "3",
+            courses = listOf(PlanCourseRef("M201", "Engineering Math")),
+            title = "目标码推断组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Applied Math"),
+                    now = PlanCourseRef(null, "Engineering Math")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("M101", name = "Applied Math", credits = "3", id = "old-code", academicYear = "2023-2024"),
+                PlanFixtures.attempt("M201", name = "Engineering Math", credits = "3", id = "new-code", academicYear = "2024-2025", attemptType = AttemptType.RETAKE)
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-rename-infer-code")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "唯一声明的目标 code 必须让旧码/新码合并入账一次")
+        assertEquals(1, progress.assignedCourses.size)
+        assertTrue(report.representativeAttemptIds.containsKey("M201"))
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+    }
+
+    @Test
+    fun conflictingCodeForInferredRenameTargetDoesNotMergeByName() {
+        val group = PlanFixtures.group(
+            id = "g-rename-infer-conflict",
+            credits = "3",
+            courses = listOf(PlanCourseRef("M201", "Engineering Math")),
+            title = "目标码冲突组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Applied Math"),
+                    now = PlanCourseRef(null, "Engineering Math")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("ART999", name = "Engineering Math", credits = "3", id = "conflicting-target-code")),
+            emptyList(),
+            now
+        )
+        PlanFixtures.assertAmount("0", report.totalEarnedCredits, "可推断目标 code 后，同名不同码不得被吸附为改名课程")
+        assertEquals(1, report.unclassified.size)
+    }
+
+    @Test
+    fun blankKeyAttemptsStayOutsideRenameAggregationAndDoNotBlockCodedPass() {
+        val group = PlanFixtures.group(
+            id = "g-blank-rename-isolation",
+            credits = "3",
+            courses = listOf(PlanCourseRef("M201", "Engineering Math")),
+            title = "缺码隔离组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Applied Math"),
+                    now = PlanCourseRef(null, "Engineering Math")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("", name = "Applied Math", credits = "3", passed = false, rawGrade = "45", numericScore = "45", gradePoint = "0", id = "blank-failed"),
+                PlanFixtures.attempt(" ", name = "Applied Math", credits = "3", id = "blank-passed"),
+                PlanFixtures.attempt("M201", name = "Engineering Math", credits = "3", id = "coded-pass")
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-blank-rename-isolation")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "缺码成绩不得污染有码通过记录的自动入账")
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+        assertEquals(1, report.unclassified.size)
+        assertEquals("blank-key:applied math", report.unclassified.single().courseKey)
+        assertTrue(report.trace.any { it.rule == "blank-course-key" && it.attemptId == "blank-passed" })
+        assertTrue(report.trace.any { it.rule == "match-code" && it.attemptId == "coded-pass" })
+    }
+
 }

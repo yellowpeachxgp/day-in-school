@@ -205,21 +205,68 @@ object DegreeAuditor {
             val blankSourceKey: Boolean
         )
 
+        // 方案课程清单中同名课程若唯一声明 code，可把它作为 name-only 改名目标的稳定身份；
+        // 多个不同 code 或没有声明时保持 null，不做猜测。
+        val declaredCodesByCourseName = mutableMapOf<String, MutableMap<String, String>>()
+        plan.allGroups().forEach { group ->
+            group.courses.forEach { ref ->
+                val originalCode = ref.code?.trim()?.takeIf { it.isNotEmpty() } ?: return@forEach
+                val normalizedCode = normalizedNonBlank(ref.code) ?: return@forEach
+                declaredCodesByCourseName.getOrPut(normalize(ref.name)) { mutableMapOf() }[normalizedCode] = originalCode
+            }
+        }
+        fun inferredTargetCode(courseName: String): String? =
+            declaredCodesByCourseName[normalize(courseName)]?.values?.singleOrNull()
+
+        fun effectiveTargetRef(rule: CourseRename): PlanCourseRef {
+            val explicit = normalizedNonBlank(rule.now.code)
+            if (explicit != null) return rule.now
+            val inferred = inferredTargetCode(rule.now.name) ?: return rule.now
+            return rule.now.copy(code = inferred)
+        }
+
+        fun endpointMatchScore(ref: PlanCourseRef, attempt: GradeAttempt): Int {
+            val refCode = normalizedNonBlank(ref.code)
+            val attemptCode = normalizedNonBlank(attempt.courseKey)
+            return if (refCode != null) {
+                if (attemptCode != null && attemptCode == refCode) 2 else 0
+            } else {
+                if (normalize(ref.name) == normalize(attempt.name)) 1 else 0
+            }
+        }
+
         /**
-         * 改名规则的来源匹配。带显式 code 的 was 只接受相同 code：同名不同码是不同课程；
-         * name-only 规则才可按名称命中。若两类规则同时命中，显式 code 规则优先于方案书写顺序。
+         * 改名规则端点匹配。带显式 code 的端点只接受相同 code：同名不同码是不同课程；
+         * name-only 端点才可按名称命中。来源/目标两端都参与身份解析，目标端让新名称成绩
+         * 与旧名称成绩落入同一逻辑课程；显式 code 命中优先于 name-only 命中。
          */
         fun renameMatchScore(rule: CourseRename, attempt: GradeAttempt): Int {
-            val wasCode = normalizedNonBlank(rule.was.code)
-            val attemptCode = normalizedNonBlank(attempt.courseKey)
-            return if (wasCode != null) {
-                if (attemptCode != null && attemptCode == wasCode) 2 else 0
-            } else {
-                if (normalize(rule.was.name) == normalize(attempt.name)) 1 else 0
+            val wasScore = endpointMatchScore(rule.was, attempt)
+            val nowScore = endpointMatchScore(effectiveTargetRef(rule), attempt)
+            return when {
+                wasScore == 2 -> 40
+                nowScore == 2 -> 30
+                wasScore == 1 -> 20
+                nowScore == 1 -> 10
+                else -> 0
             }
         }
 
         fun identityFor(attempt: GradeAttempt): Identity {
+            val blankSourceKey = attempt.courseKey.isBlank()
+            val rawKey = attempt.courseKey.trim()
+            val rawName = attempt.name.trim().ifBlank { "未命名课程 " + attempt.id }
+            if (blankSourceKey) {
+                // 缺码成绩不能被任何 name-only 改名规则吸附；否则一条缺码失败记录会污染同组
+                // 有码通过记录。缺码课程只做内部 fallback 身份，后续保守列入未归类。
+                return Identity(
+                    logicalKey = "blank-key:" + normalize(rawName),
+                    logicalName = rawName,
+                    renamed = false,
+                    rename = null,
+                    blankSourceKey = true
+                )
+            }
             var rename: CourseRename? = null
             var bestScore = 0
             plan.renames.forEach { rule ->
@@ -229,23 +276,21 @@ object DegreeAuditor {
                     rename = rule
                 }
             }
-            val blankSourceKey = attempt.courseKey.isBlank()
-            val rawKey = attempt.courseKey.trim()
-            val rawName = attempt.name.trim().ifBlank { "未命名课程 " + attempt.id }
             if (rename == null) {
-                val fallbackKey = rawKey.ifBlank { "blank-key:" + normalize(rawName) }
-                return Identity(fallbackKey, rawName, renamed = false, rename = null, blankSourceKey = blankSourceKey)
+                return Identity(rawKey, rawName, renamed = false, rename = null, blankSourceKey = false)
             }
             val matchedRename = rename!!
-            // 目标 code 缺失时保留原始 code 作为身份链；否则同名改名会把同一 raw code 拆成两组而重复入账。
-            val key = matchedRename.now.code?.trim()?.takeIf { it.isNotEmpty() }
-                ?: rawKey.ifBlank { "rename:" + normalize(matchedRename.now.name) }
+            val effectiveTarget = effectiveTargetRef(matchedRename)
+            // 目标声明/可唯一推断 code 时使用该 code；否则使用目标名生成稳定内部身份。
+            // 多个旧码指向同一 name-only 目标时也必须同一身份，避免被当作两门课重复入账。
+            val key = effectiveTarget.code?.trim()?.takeIf { it.isNotEmpty() }
+                ?: "rename:" + normalize(matchedRename.now.name)
             return Identity(
                 logicalKey = key,
                 logicalName = matchedRename.now.name.trim(),
                 renamed = true,
                 rename = matchedRename,
-                blankSourceKey = blankSourceKey
+                blankSourceKey = false
             )
         }
 
