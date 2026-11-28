@@ -69,6 +69,10 @@ object CourseOccurrenceTimelineMetadata {
             ?.items
             ?.mapNotNull { it.stringOrNull() }
             ?: throw IllegalArgumentException("课程 Timeline mergedRuleIds 元数据不是字符串数组: " + event.id.value)
+        val evidence = TimeEvidence.valueOf(required(TIME_EVIDENCE))
+        // hasResolvedTime 必须随证据等级还原：UNRESOLVED/INVALID 只保留排序锚点，
+        // 缺省会意外回落为 true，把「时间待确认」冒充成精确时间。
+        val hasResolvedTime = evidence.hasResolvedTime
         return ClassOccurrence(
             occurrenceId = required(OCCURRENCE_ID),
             courseId = required(COURSE_ID),
@@ -90,7 +94,8 @@ object CourseOccurrenceTimelineMetadata {
             overrideReason = metadata[OVERRIDE_REASON],
             userModified = required(USER_MODIFIED).toBooleanStrict(),
             mergedRuleIds = mergedIds,
-            timeEvidence = TimeEvidence.valueOf(required(TIME_EVIDENCE))
+            hasResolvedTime = hasResolvedTime,
+            timeEvidence = evidence
         )
     }
 }

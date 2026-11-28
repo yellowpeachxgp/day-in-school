@@ -16,12 +16,12 @@ import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 
 /** 与现有课表行为一致的某一天展开结果：active 为生效事件，cancelled 为被今日停课屏蔽的事件。 */
-internal data class ScheduleDayExpansion(
+data class ScheduleDayExpansion(
     val active: List<ClassOccurrence>,
     val cancelled: List<ClassOccurrence>
 )
 
-internal data class EffectiveScheduleDate(
+data class EffectiveScheduleDate(
     val actualDate: LocalDate,
     val scheduleDateUsed: LocalDate,
     val teachingWeek: Int?,
@@ -38,7 +38,7 @@ internal data class EffectiveScheduleDate(
  * 非法时间证据不冒充可信时刻。由于内核不能反向依赖 engine，本卡先保持纯 JVM 镜像；
  * W1-05 切换调用方后应收敛旧 engine 展开路径，禁止两套语义长期漂移。
  */
-internal object ScheduleOccurrenceExpander {
+object ScheduleOccurrenceExpander {
 
     fun expandDate(
         date: LocalDate,
