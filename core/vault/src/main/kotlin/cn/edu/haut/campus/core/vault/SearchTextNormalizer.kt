@@ -24,9 +24,9 @@ object SearchTextNormalizer {
         val isEmpty: Boolean get() = normalizedQuery.isBlank()
     }
 
-    private enum class ScriptKind { CJK, WORD }
+    internal enum class ScriptKind { CJK, WORD }
 
-    private data class ScriptRun(
+    internal data class ScriptRun(
         val kind: ScriptKind,
         val text: String,
         val codePoints: List<String>
@@ -115,7 +115,8 @@ object SearchTextNormalizer {
         return QueryRewrite(
             normalizedQuery = normalized.normalizedText,
             tokens = normalized.tokens,
-            ftsQuery = fragments.takeIf { it.isNotEmpty() }?.joinToString(" AND "),
+            // FTS 空白连接即隐式 AND；比显式 AND 在 Android FTS4 各版本间更稳定。
+            ftsQuery = fragments.takeIf { it.isNotEmpty() }?.joinToString(" "),
             singleCharFallbacks = fallbacks.distinct()
         )
     }
@@ -140,7 +141,7 @@ object SearchTextNormalizer {
         return tokens
     }
 
-    private fun splitScriptRuns(unit: String): List<ScriptRun> {
+    internal fun splitScriptRuns(unit: String): List<ScriptRun> {
         val parts = codePointStrings(unit)
         if (parts.isEmpty()) return emptyList()
         val runs = mutableListOf<ScriptRun>()

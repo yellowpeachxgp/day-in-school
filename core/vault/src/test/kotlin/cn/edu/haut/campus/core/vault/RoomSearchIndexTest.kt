@@ -153,6 +153,39 @@ class RoomSearchIndexTest {
     }
 
     @Test
+    fun crossFieldTokenCombinationDoesNotCreateSyntheticHit() = runBlocking {
+        index.upsert(document("cpu-course", EntityType.COURSE, "CPU 组成原理", "缓存一致性协议"))
+
+        val compact = index.query(scope, SearchQuery(scope, "CPU缓存"))
+        val separated = index.query(scope, SearchQuery(scope, "CPU 缓存"))
+
+        assertEquals(0, compact.totalCount)
+        assertTrue(compact.hits.isEmpty())
+        assertEquals(0, separated.totalCount)
+        assertTrue(separated.hits.isEmpty())
+    }
+
+    @Test
+    fun singleCjkAndAsciiMixedQueryCannotCombineAcrossTitleAndBody() = runBlocking {
+        index.upsert(document("mixed-negative", EntityType.COURSE, "数学分析", "CPU 组成原理"))
+
+        val page = index.query(scope, SearchQuery(scope, "数 CPU"))
+
+        assertEquals(0, page.totalCount)
+        assertTrue(page.hits.isEmpty())
+    }
+
+    @Test
+    fun singleCjkAndAsciiMixedQueryCanHitWithinSameField() = runBlocking {
+        index.upsert(document("mixed-positive", EntityType.COURSE, "数学分析 CPU 讲义", "组成原理"))
+
+        val page = index.query(scope, SearchQuery(scope, "数 CPU"))
+
+        assertEquals(listOf("mixed-positive"), page.hits.map { it.document.ref.id })
+        assertEquals(SearchHitChannel.TITLE, page.hits[0].channel)
+    }
+
+    @Test
     fun searchResultsAreScopeIsolated() = runBlocking {
         index.upsert(document("shared-id", EntityType.COURSE, "离散数学", "当前账号"))
         val otherScope = scope.copy(accountId = AccountId("acct_other"), profileId = ProfileId("prof_other"))
