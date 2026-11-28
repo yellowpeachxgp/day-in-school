@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.packages.datapack
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.Json
+import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.packages.PackageException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -126,6 +127,39 @@ class DisDatapackLoaderValidationTest {
     }
 
 
+    @Test
+    fun byteIdenticalCrossEndSchemaVectorsKeepRfc3339AndUriMirrorSemanticsAligned() {
+        val vectors = CrossEndDatapackVectors.document()
+        val cases = vectors.arr("schema_cases")!!
+        assertTrue(cases.size >= 20)
+        for (vectorCase in cases) {
+            val name = vectorCase.str("name")!!
+            val target = vectorCase.str("target")!!
+            val value = vectorCase.str("value")!!
+            val expectedValid = vectorCase.obj("valid")?.boolOrNull()!!
+            val base = if (target.startsWith("opportunity.")) vectorOpportunityRoot() else rootObject().asObjOrNull!!
+            val candidate = applySchemaVector(base, target, value)
+            var validated: DisDatapack? = null
+            var failure: PackageException? = null
+            try {
+                validated = DisDatapackValidator.validate(candidate)
+            } catch (error: PackageException) {
+                failure = error
+            }
+            assertEquals(name + ": " + (failure?.message ?: "unexpected acceptance"), expectedValid, failure == null)
+            if (expectedValid) {
+                when (target) {
+                    "root.verifiedAt" -> assertEquals(value, validated!!.verifiedAt)
+                    "source.url" -> assertEquals(value, validated!!.sources.single().url)
+                    "opportunity.deadlineAt" -> assertEquals(value, (validated!!.items.single() as DisDatapackItem.OpportunityCatalog).deadlineAt)
+                    "opportunity.applicationUrl" -> assertEquals(value, (validated!!.items.single() as DisDatapackItem.OpportunityCatalog).applicationUrl)
+                }
+            } else {
+                assertEquals(RUNTIME_DATAPACK_SCHEMA_INVALID, failure!!.runtimeValidationCode)
+            }
+        }
+    }
+
     private fun readContractSchema(): String = readContractFile("contracts/schemas/dis-datapack-v1.schema.json")
 
     private fun readContractFile(relativePath: String): String {
@@ -136,6 +170,43 @@ class DisDatapackLoaderValidationTest {
             dir = dir.parent
         }
         throw AssertionError(relativePath + " not found from test working directory")
+    }
+
+    private fun vectorOpportunityRoot(): JsonValue.Obj {
+        val root = rootObject().asObjOrNull ?: error("root must be object")
+        val item = parse("""
+            {"id":"certification-example","title":"示例证书","category":"certification","requirements":[{"id":"eligible","text":"在校学生"}],"materials":[]}
+        """)
+        val fields = LinkedHashMap(root.fields)
+        fields["kind"] = JsonValue.Str("opportunity-catalog")
+        fields["items"] = JsonValue.Arr(listOf(item))
+        return JsonValue.Obj(fields)
+    }
+
+    private fun applySchemaVector(root: JsonValue.Obj, target: String, value: String): JsonValue.Obj = when (target) {
+        "root.verifiedAt" -> withField(root, "verifiedAt", JsonValue.Str(value))
+        "source.url" -> {
+            val sources = root.fields["sources"]!!.asArrOrNull!!.items
+            val first = sources.single().asObjOrNull!!
+            val updated = withField(first, "url", JsonValue.Str(value))
+            withField(root, "sources", JsonValue.Arr(listOf(updated)))
+        }
+        "opportunity.deadlineAt" -> withOpportunityField(root, "deadlineAt", value)
+        "opportunity.applicationUrl" -> withOpportunityField(root, "applicationUrl", value)
+        else -> error("unknown shared vector target: " + target)
+    }
+
+    private fun withOpportunityField(root: JsonValue.Obj, key: String, value: String): JsonValue.Obj {
+        val items = root.fields["items"]!!.asArrOrNull!!.items
+        val item = items.single().asObjOrNull!!
+        val updatedItem = withField(item, key, JsonValue.Str(value))
+        return withField(root, "items", JsonValue.Arr(listOf(updatedItem)))
+    }
+
+    private fun withField(obj: JsonValue.Obj, key: String, value: JsonValue): JsonValue.Obj {
+        val fields = LinkedHashMap(obj.fields)
+        fields[key] = value
+        return JsonValue.Obj(fields)
     }
 
     private fun validateWith(root: cn.edu.haut.campus.core.model.json.JsonValue, kind: String, item: cn.edu.haut.campus.core.model.json.JsonValue): DisDatapack {

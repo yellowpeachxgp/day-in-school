@@ -44,16 +44,23 @@ class DisDatapackCampusGraphDecoder(
      * edge/level 语义还不能被当前 FloorNode/IndoorNode 模型承接。以上输入在此 fail-closed，
      * 待 W6-03/契约线明确映射后再开放。
      */
-    fun decode(pack: DisDatapack): List<CampusGraphEntity> = when (pack.kind) {
-        DisDatapackKind.PROCEDURE_GUIDE -> pack.items.map { item ->
-            procedureEntity(pack, item as DisDatapackItem.ProcedureGuide)
+    fun decode(pack: DisDatapack): List<CampusGraphEntity> {
+        val projected = when (pack.kind) {
+            DisDatapackKind.PROCEDURE_GUIDE -> pack.items.map { item ->
+                procedureEntity(pack, item as DisDatapackItem.ProcedureGuide)
+            }
+            DisDatapackKind.FACILITY_CATALOG -> pack.items.map { item ->
+                facilityEntity(pack, item as DisDatapackItem.FacilityCatalog)
+            }
+            else -> throw IllegalArgumentException(
+                "dis-datapack kind " + pack.kind.wireId + " 当前不能无损投影为 Campus Graph 实体"
+            )
         }
-        DisDatapackKind.FACILITY_CATALOG -> pack.items.map { item ->
-            facilityEntity(pack, item as DisDatapackItem.FacilityCatalog)
+        val duplicated = projected.groupingBy { it.ref }.eachCount().filterValues { it > 1 }.keys
+        require(duplicated.isEmpty()) {
+            "dis-datapack 投影包含重复 Campus Graph 稳定 ID：" + duplicated.joinToString { it.id }
         }
-        else -> throw IllegalArgumentException(
-            "dis-datapack kind " + pack.kind.wireId + " 当前不能无损投影为 Campus Graph 实体"
-        )
+        return projected
     }
 
     private fun procedureEntity(pack: DisDatapack, item: DisDatapackItem.ProcedureGuide): ProcedureNode {
@@ -75,7 +82,7 @@ class DisDatapackCampusGraphDecoder(
         require(item.dependsOn.isEmpty()) {
             "procedure-guide dependsOn 的 item-id/placeRef 语义尚未由 CT-06 明确，拒绝静默投影：" + item.id
         }
-        val ref = CampusGraphIds.build(school, parent.campusId, CampusGraphEntityType.PROCEDURE, item.id)
+        val ref = CampusGraphIds.buildDatapackEntity(school, parent.campusId, CampusGraphEntityType.PROCEDURE, item.id)
         val steps = item.steps.map { step ->
             CampusGraphProcedureStep(
                 id = step.id,
@@ -111,10 +118,10 @@ class DisDatapackCampusGraphDecoder(
 
     private fun procedureAttributes(pack: DisDatapack, item: DisDatapackItem.ProcedureGuide): Map<String, String> {
         val attributes = LinkedHashMap<String, String>()
-        item.summary?.let { attributes["summary"] = it }
-        item.officeHours?.let { attributes["officeHours"] = it }
+        item.summary?.let { attributes["summary"] = graphSafeText(it) }
+        item.officeHours?.let { attributes["officeHours"] = graphSafeText(it) }
         if (item.contacts.isNotEmpty()) {
-            val contacts = item.contacts.joinToString("; ") { contact -> contact.kind.wireId + ":" + contact.value }
+            val contacts = item.contacts.joinToString("; ") { contact -> contact.kind.wireId + ":" + graphSafeText(contact.value) }
             require(contacts.length <= 1100) { "流程 contacts 投影超出图属性上限：" + item.id }
             attributes["contacts"] = contacts
         }
@@ -130,10 +137,10 @@ class DisDatapackCampusGraphDecoder(
             "facility-catalog placeRef 必须是 campus/building 稳定 ID，不能无损推导 floor/room 层级：" + parent.id
         }
         val buildingRef = parent.takeIf { parentType == CampusGraphEntityType.BUILDING }
-        val ref = CampusGraphIds.build(school, parent.campusId, CampusGraphEntityType.FACILITY, item.id)
+        val ref = CampusGraphIds.buildDatapackEntity(school, parent.campusId, CampusGraphEntityType.FACILITY, item.id)
         val attributes = LinkedHashMap<String, String>()
-        item.summary?.let { attributes["summary"] = it }
-        item.accessNotes?.let { attributes["accessNotes"] = it }
+        item.summary?.let { attributes["summary"] = graphSafeText(it) }
+        item.accessNotes?.let { attributes["accessNotes"] = graphSafeText(it) }
         attributes["facilityType"] = item.facilityType
         if (item.capabilities.isNotEmpty()) {
             val capabilities = item.capabilities.joinToString(",")
@@ -146,7 +153,7 @@ class DisDatapackCampusGraphDecoder(
             name = item.title,
             kind = facilityKind(item.facilityType),
             buildingRef = buildingRef,
-            openingHours = item.openingHours,
+            openingHours = item.openingHours?.let(::graphSafeText),
             parent = parent,
             provenance = provenance(pack, item, item.id),
             attributes = attributes
@@ -164,6 +171,29 @@ class DisDatapackCampusGraphDecoder(
         "sports" -> CampusGraphFacilityKind.SPORTS
         "service-desk", "office" -> CampusGraphFacilityKind.SERVICE_DESK
         else -> CampusGraphFacilityKind.OTHER
+    }
+
+    /**
+     * Graph attributes reject ISO control characters, while the datapack schema legitimately
+     * allows multiline human text. This reversible escaping is only for the projected display
+     * copy; the typed datapack retains the original string byte-for-byte.
+     */
+    private fun graphSafeText(raw: String): String {
+        val out = StringBuilder(raw.length)
+        for (ch in raw) {
+            when (ch) {
+                '\\' -> out.append("\\\\")
+                '\n' -> out.append("\\n")
+                '\r' -> out.append("\\r")
+                '\t' -> out.append("\\t")
+                else -> if (ch.isISOControl()) {
+                    out.append("\\u").append(ch.code.toString(16).padStart(4, '0'))
+                } else {
+                    out.append(ch)
+                }
+            }
+        }
+        return out.toString()
     }
 
     private fun provenance(

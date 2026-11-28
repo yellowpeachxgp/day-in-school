@@ -2,8 +2,6 @@ package cn.edu.haut.campus.core.packages.datapack
 
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.net.URI
-import java.time.LocalDate
-import java.time.OffsetDateTime
 
 internal fun schemaFail(path: String, message: String): Nothing =
     throw datapackInvalid("dis-datapack/v1 schema violation at " + path + ": " + message, RUNTIME_DATAPACK_SCHEMA_INVALID)
@@ -96,32 +94,36 @@ internal fun expectNullableEnumWireValue(value: JsonValue?, path: String, allowe
 
 private val DATE_PATTERN = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 private val DATE_TIME_PATTERN = Regex(
-    "^([0-9]{4}-[0-9]{2}-[0-9]{2})T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+    "^([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
 )
+
+private fun validCalendarDate(raw: String): Boolean {
+    if (!DATE_PATTERN.matches(raw)) return false
+    val year = raw.substring(0, 4).toInt()
+    val month = raw.substring(5, 7).toInt()
+    val day = raw.substring(8, 10).toInt()
+    if (month !in 1..12 || day < 1) return false
+    val leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    val daysInMonth = when (month) {
+        1, 3, 5, 7, 8, 10, 12 -> 31
+        4, 6, 9, 11 -> 30
+        else -> if (leap) 29 else 28
+    }
+    return day <= daysInMonth
+}
 
 internal fun expectDateValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
-    val valid = DATE_PATTERN.matches(raw) && try {
-        LocalDate.parse(raw)
-        true
-    } catch (error: Exception) {
-        false
-    }
-    if (!valid) schemaFail(path, "must be a valid RFC 3339 full-date")
+    if (!validCalendarDate(raw)) schemaFail(path, "must be a valid RFC 3339 full-date")
     return raw
 }
 
 internal fun expectDateTimeValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
     val match = DATE_TIME_PATTERN.matchEntire(raw)
-    val valid = match != null && try {
-        LocalDate.parse(match.groupValues[1])
-        OffsetDateTime.parse(raw)
-        true
-    } catch (error: Exception) {
-        false
+    if (match == null || !validCalendarDate(match.groupValues[1])) {
+        schemaFail(path, "must be a valid RFC 3339 date-time")
     }
-    if (!valid) schemaFail(path, "must be a valid RFC 3339 date-time")
     return raw
 }
 
@@ -147,9 +149,76 @@ internal fun isRfc3986UriCharactersValid(value: String): Boolean {
     return true
 }
 
+private fun validPortComponent(port: String): Boolean {
+    if (port.isEmpty()) return true
+    if (port.any { it !in '0'..'9' }) return false
+    val normalized = port.trimStart('0')
+    return normalized.length <= 5 && (normalized.isEmpty() || normalized.toInt() <= 65535)
+}
+
+/**
+ * RFC 3986 raw square brackets are only the delimiters of an IP-literal host.
+ * They are not valid raw path/query/fragment characters; native array spellings
+ * such as program[]=x must be percent-encoded before entering a datapack.
+ */
+private fun validateHttpsAuthorityAndBracketPlacement(raw: String, path: String) {
+    val authorityStart = "https://".length
+    var authorityEnd = raw.length
+    for (index in authorityStart until raw.length) {
+        val ch = raw[index]
+        if (ch == '/' || ch == '?' || ch == '#') {
+            authorityEnd = index
+            break
+        }
+    }
+    val authority = raw.substring(authorityStart, authorityEnd)
+    if (authority.isEmpty()) schemaFail(path, "must include a non-empty URI authority")
+
+    val hostStart = authority.lastIndexOf('@') + 1
+    val hostAndPort = authority.substring(hostStart)
+    if (hostAndPort.isEmpty()) schemaFail(path, "must include a non-empty URI host")
+
+    val allowedOpenBracket = authorityStart + hostStart
+    var allowedCloseBracket = -1
+    if (hostAndPort.startsWith("[")) {
+        val close = hostAndPort.indexOf(']')
+        if (close <= 1) schemaFail(path, "must contain a closed non-empty IP-literal host")
+        val literal = hostAndPort.substring(1, close)
+        if (literal.contains('[') || literal.contains(']')) schemaFail(path, "must not nest raw brackets in an IP-literal host")
+        val rest = hostAndPort.substring(close + 1)
+        if (rest.isNotEmpty()) {
+            if (!rest.startsWith(":")) schemaFail(path, "must not append non-port text to an IP-literal host")
+            if (!validPortComponent(rest.substring(1))) schemaFail(path, "must use a decimal port in the supported URI range")
+        }
+        allowedCloseBracket = allowedOpenBracket + close
+    } else {
+        if (hostAndPort.contains('[') || hostAndPort.contains(']')) {
+            schemaFail(path, "must wrap an IP-literal host in exactly one bracket pair")
+        }
+        if (hostAndPort.indexOf(':') != hostAndPort.lastIndexOf(':')) {
+            schemaFail(path, "must bracket an IPv6 literal host")
+        }
+        val colon = hostAndPort.lastIndexOf(':')
+        if (colon >= 0) {
+            if (!validPortComponent(hostAndPort.substring(colon + 1))) {
+                schemaFail(path, "must use a decimal port in the supported URI range")
+            }
+            if (colon == 0) schemaFail(path, "must include a non-empty URI host")
+        }
+    }
+
+    raw.forEachIndexed { index, ch ->
+        if (ch == '[' || ch == ']') {
+            val allowedHostBracket = hostAndPort.startsWith("[") && (index == allowedOpenBracket || index == allowedCloseBracket)
+            if (!allowedHostBracket) schemaFail(path, "must percent-encode square brackets outside an IP-literal host")
+        }
+    }
+}
+
 internal fun expectHttpsUriValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
     val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw) && try {
+        validateHttpsAuthorityAndBracketPlacement(raw, path)
         val uri = URI(raw)
         uri.isAbsolute && uri.scheme == "https" && !uri.host.isNullOrBlank()
     } catch (error: Exception) {

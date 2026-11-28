@@ -6,7 +6,10 @@ import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.packages.bundle.PackageBundle
 import cn.edu.haut.campus.core.packages.bundle.PackageFile
+import cn.edu.haut.campus.core.packages.datapack.DataPackSignatureVerification
+import cn.edu.haut.campus.core.packages.datapack.DetachedDataPackSignature
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackLoader
+import cn.edu.haut.campus.core.packages.datapack.VerifiedDataPack
 import cn.edu.haut.campus.core.packages.manifest.PackageLicense
 import cn.edu.haut.campus.core.packages.manifest.PackageManifest
 import cn.edu.haut.campus.core.packages.manifest.PackageTarget
@@ -70,6 +73,60 @@ class DisDatapackCampusGraphDecoderTest {
     }
 
     @Test
+    fun multilineDisplayTextProjectsAsLosslessGraphSafeEscapes() {
+        val bytes = facilityPackBytesWithMultilineText()
+        val decoded = DisDatapackLoader.decode(bytes)
+        val typed = decoded.pack.items.single() as cn.edu.haut.campus.core.packages.datapack.DisDatapackItem.FacilityCatalog
+        assertTrue(typed.summary!!.contains('\n'))
+
+        val facility = decoder.decode(decoded.pack).single() as FacilityNode
+
+        assertEquals("Weekdays: 09:00-17:00\\nSaturday: 09:00-12:00", facility.attributes["summary"])
+        assertEquals("北门进入\\n工作日登记", facility.attributes["accessNotes"])
+        assertEquals("工作日 09:00-17:00\\n周六 09:00-12:00", facility.openingHours)
+        assertTrue(facility.attributes.values.all { value -> value.none { it.isISOControl() } })
+    }
+
+    @Test
+    fun datapackItemSeparatorsUseCollisionSafeNamespaceInStandaloneAndEmbeddedPaths() {
+        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid-forms"))
+        val decoded = DisDatapackLoader.decode(bytes)
+
+        val standalone = decoder.decodeVerified(fakeVerified(decoded))
+        assertEquals(2, standalone.size)
+        assertEquals(2, standalone.map { it.ref.id }.distinct().size)
+        assertTrue(standalone[0].ref.id.endsWith("/procedure/dp-aidSforms"))
+        assertTrue(standalone[1].ref.id.endsWith("/procedure/dp-aidHforms"))
+
+        val bundle = PackageBundle.of(listOf(PackageFile.of("assets/haut.procedures.json", bytes)))
+        val embedded = decoder.decode(manifest(bundle, id = "haut.procedures"), bundle)
+        assertEquals(standalone.map { it.ref.id }.toSet(), embedded.map { it.ref.id }.toSet())
+    }
+
+    @Test
+    fun decodeVerifiedRejectsDuplicateProjectedStableIdsFailClosed() {
+        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid/forms"))
+        val decoded = DisDatapackLoader.decode(bytes)
+
+        assertThrowsIllegalArgument {
+            decoder.decodeVerified(fakeVerified(decoded))
+        }
+    }
+
+    @Test
+    fun indoorEdgeAndLevelHaveDedicatedFailClosedNegativeCoverage() {
+        for (itemType in listOf("edge", "level")) {
+            val bytes = String(indoorPackBytes(), Charsets.UTF_8)
+                .replace("\"itemType\":\"node\"", "\"itemType\":\"" + itemType + "\"")
+                .toByteArray(Charsets.UTF_8)
+            val pack = DisDatapackLoader.decode(bytes).pack
+            assertThrowsIllegalArgument {
+                decoder.decode(pack)
+            }
+        }
+    }
+
+    @Test
     fun embeddedDecoderChecksSingleJsonAndManifestIdentity() {
         val bytes = procedureBytes("haut/lianhuajie/service/student-affairs")
         val bundle = PackageBundle.of(listOf(PackageFile.of("assets/haut.procedures.json", bytes)))
@@ -89,6 +146,28 @@ class DisDatapackCampusGraphDecoderTest {
         }
     }
 
+    private fun procedurePackWithItemIds(itemIds: List<String>): ByteArray {
+        val items = itemIds.mapIndexed { index, id ->
+            "{\"id\":\"" + id + "\",\"placeRef\":\"haut/lianhuajie/service/student-affairs\",\"steps\":[{\"id\":\"s" + (index + 1) + "\",\"instruction\":\"办理\",\"title\":\"步骤\"}],\"title\":\"事项 " + index + "\"}"
+        }.joinToString(",")
+        return ("{\"format\":\"dis-datapack/v1\",\"items\":[" + items + "],\"kind\":\"procedure-guide\",\"maintainers\":[\"github:example-maintainer\"],\"packId\":\"haut.procedures\",\"reviewBy\":\"2027-05-20\",\"schoolId\":\"haut\",\"sources\":[{\"retrievedAt\":\"2026-11-20\",\"title\":\"学校办事流程公开页\",\"url\":\"https://example.com/haut/procedure-guide\"}],\"verificationLevel\":\"UNVERIFIED\",\"verifiedAt\":\"2026-11-20\",\"version\":\"2026.11.1\"}").toByteArray(Charsets.UTF_8)
+    }
+
+    private fun fakeVerified(decoded: cn.edu.haut.campus.core.packages.datapack.DecodedDataPack): VerifiedDataPack {
+        val fingerprint = "0".repeat(64)
+        val signature = DetachedDataPackSignature(
+            algorithm = "Ed25519",
+            scheme = cn.edu.haut.campus.core.packages.datapack.DIS_DATAPACK_SIGNATURE_SCHEME,
+            publicKeyFingerprint = fingerprint,
+            valueBase64 = "A".repeat(86) + "==",
+            signedPayloadSha256 = "0".repeat(64)
+        )
+        return VerifiedDataPack(
+            decoded,
+            DataPackSignatureVerification(signature, fingerprint, "0".repeat(64))
+        )
+    }
+
     private fun procedureBytes(placeRef: String): ByteArray {
         val withStepRef = String(fixtureBytes(), Charsets.UTF_8)
             .replace("haut/lianhuajie/building/administration", placeRef)
@@ -99,6 +178,10 @@ class DisDatapackCampusGraphDecoderTest {
 
     private fun facilityPackBytes(): ByteArray = """
         {"format":"dis-datapack/v1","items":[{"capabilities":["wheelchair"],"facilityType":"service-desk","id":"service-desk-example","openingHours":"工作日 09:00-17:00","placeRef":"haut/lianhuajie/building/administration","title":"学生服务台"}],"kind":"facility-catalog","maintainers":["github:example-maintainer"],"packId":"haut.facilities","reviewBy":"2027-05-20","schoolId":"haut","sources":[{"retrievedAt":"2026-11-20","title":"学校服务台公开页","url":"https://example.com/haut/service-desk"}],"verificationLevel":"UNVERIFIED","verifiedAt":"2026-11-20","version":"2026.11.1"}
+    """.trimIndent().toByteArray(Charsets.UTF_8)
+
+    private fun facilityPackBytesWithMultilineText(): ByteArray = """
+        {"format":"dis-datapack/v1","items":[{"accessNotes":"北门进入\n工作日登记","capabilities":["wheelchair"],"facilityType":"service-desk","id":"service-desk-example","openingHours":"工作日 09:00-17:00\n周六 09:00-12:00","placeRef":"haut/lianhuajie/building/administration","summary":"Weekdays: 09:00-17:00\nSaturday: 09:00-12:00","title":"学生服务台"}],"kind":"facility-catalog","maintainers":["github:example-maintainer"],"packId":"haut.facilities","reviewBy":"2027-05-20","schoolId":"haut","sources":[{"retrievedAt":"2026-11-20","title":"学校服务台公开页","url":"https://example.com/haut/service-desk"}],"verificationLevel":"UNVERIFIED","verifiedAt":"2026-11-20","version":"2026.11.1"}
     """.trimIndent().toByteArray(Charsets.UTF_8)
 
     private fun indoorPackBytes(): ByteArray = """

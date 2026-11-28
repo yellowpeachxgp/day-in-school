@@ -30,6 +30,32 @@ class DisDatapackSignatureTest {
     }
 
     @Test
+    fun byteIdenticalRfc8032SignatureVectorVerifiesWithRawAndSpkiTrustRoots() {
+        val vector = CrossEndDatapackVectors.document().obj("ed25519_signature")!!
+        val artifact = fixtureBytes()
+        assertEquals(vector.str("artifact_sha256"), Digests.sha256Hex(artifact))
+        val rawPublicBase64 = vector.str("raw_public_key_base64")!!
+        val detached = DetachedDataPackSignature(
+            algorithm = "Ed25519",
+            scheme = DIS_DATAPACK_SIGNATURE_SCHEME,
+            publicKeyFingerprint = vector.str("public_key_fingerprint")!!,
+            valueBase64 = vector.str("signature_base64")!!,
+            signedPayloadSha256 = vector.str("payload_sha256")!!
+        )
+
+        val rawVerified = DisDatapackLoader.verify(artifact, detached, DataPackTrustRoot(listOf(rawPublicBase64)))
+        assertEquals(vector.str("payload_sha256"), rawVerified.signatureVerification.payloadSha256)
+
+        val rawPublic = Base64.getDecoder().decode(rawPublicBase64)
+        val spkiPrefix = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+        )
+        val spkiBase64 = Base64.getEncoder().encodeToString(spkiPrefix + rawPublic)
+        val spkiVerified = DisDatapackLoader.verify(artifact, detached, DataPackTrustRoot(listOf(spkiBase64)))
+        assertEquals(vector.str("public_key_fingerprint"), spkiVerified.signatureVerification.publicKeyFingerprint)
+    }
+
+    @Test
     fun semanticTamperingWrongPayloadHashWrongSignerAndMalformedSignatureFailClosed() {
         val decoded = DisDatapackLoader.decode(fixtureBytes())
         val signed = sign(decoded.canonicalBytes)
