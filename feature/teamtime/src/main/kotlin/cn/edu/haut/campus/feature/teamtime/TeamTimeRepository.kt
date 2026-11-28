@@ -43,6 +43,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 
 /** 组队找时间的应用边界。UI 不接触 CommunityClient、JsonValue、Room 或 Timeline 装配细节。 */
 interface TeamTimeRepository {
@@ -195,7 +196,7 @@ class CommunityTeamTimeRepository(
     private suspend fun writeConfirmedEventToTimeline(
         poll: TeamTimePoll,
         event: ConfirmedGroupEvent,
-    ): Result<TimelineEventId> = runCatching {
+    ): Result<TimelineEventId> = runCatchingExceptCancellation {
         val store = personalEventStore ?: error("本机 Timeline 写入端口不可用")
         val stableId = TimelineEventId(PersonalEventDraft.PERSONAL_TIMELINE_SOURCE + ":group-meeting-" + event.eventId)
         val groupRef = EntityRef(EntityType.GROUP, event.groupId, scope)
@@ -235,6 +236,14 @@ class CommunityTeamTimeRepository(
 
 internal fun List<BusyBlock>.toAvailabilityBlockInputs(): List<AvailabilityBlockInput> =
     map { AvailabilityBlockInput(formatTeamTimeInstant(it.start), formatTeamTimeInstant(it.end)) }
+
+private suspend fun <T> runCatchingExceptCancellation(block: suspend () -> T): Result<T> = try {
+    Result.success(block())
+} catch (error: CancellationException) {
+    throw error
+} catch (error: Throwable) {
+    Result.failure(error)
+}
 
 private inline fun <T> CommunityResult<CommunityEnvelope>.mapEnvelopeData(
     crossinline parser: (cn.edu.haut.campus.core.model.json.JsonValue?) -> T,
