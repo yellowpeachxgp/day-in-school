@@ -10,7 +10,9 @@ java {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:timeline"))
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 // cis-gate quick 对纯 JVM 模块直接执行 test；保留 testDebugUnitTest 作为统一入口别名。
