@@ -58,8 +58,7 @@ internal suspend fun prepareExtraction(
 
 internal fun prepareNoteExtraction(bytes: ByteArray): PreparedExtraction {
     val text = bytes.toString(Charsets.UTF_8)
-    val rows = text.split('
-').mapIndexed { index, raw ->
+    val rows = text.split(10.toChar()).mapIndexed { index, raw ->
         KnowledgeTextLine(
             lineIndex = index,
             pageIndex = 0,
