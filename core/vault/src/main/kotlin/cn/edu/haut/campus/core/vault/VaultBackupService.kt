@@ -17,7 +17,7 @@ import java.util.UUID
 /** Room 实现的 dis-backup/v1 服务：导出一致性快照、口令整体加密、预览后原子恢复。 */
 class VaultBackupService(
     private val database: HautDatabase,
-    private val scope: SchoolAccountScope,
+    override val scope: SchoolAccountScope,
     private val journal: RoomVaultJournal,
     private val appVersion: String,
     private val clock: () -> Instant = Instant::now,

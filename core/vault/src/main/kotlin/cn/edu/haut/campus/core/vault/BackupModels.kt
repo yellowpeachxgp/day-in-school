@@ -123,6 +123,11 @@ class RestorePreview internal constructor(
     internal val currentTableFingerprints: Map<String, String>
 ) {
     val requiresConflictResolution: Boolean get() = conflicts.isNotEmpty()
+
+    /** 恢复完成或放弃后主动清零 blob 明文引用；文本行仍按普通 Kotlin 对象等待 GC。 */
+    fun discardSensitiveMaterial() {
+        preparedArchive.blobs.values.forEach { it.fill(0) }
+    }
 }
 
 data class RestoreReport(
@@ -138,6 +143,8 @@ data class RestoreReport(
 
 /** MASTER_PLAN §6.2 的备份服务边界；实现必须保证错误路径不发生任何部分写入。 */
 interface BackupService {
+    val scope: SchoolAccountScope
+
     suspend fun export(
         scope: SchoolAccountScope,
         selection: BackupSelection,
