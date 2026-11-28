@@ -37,6 +37,7 @@ class ProfileDataWiper internal constructor(
     private val syncOrchestrator: SyncOrchestrator
 ) {
     private val vaultDao = database.vaultDao()
+    private val automationDao = database.automationDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -231,6 +232,10 @@ class ProfileDataWiper internal constructor(
                 vaultDao.clearSearchDocs()
                 vaultDao.clearSearchFts()
                 vaultDao.clearBlobStore()
+                automationDao.clearCheckpoints()
+                automationDao.clearDedupe()
+                automationDao.clearRuns()
+                automationDao.clearRules()
             }
         }
         cloudTokenMutex.withLock {
