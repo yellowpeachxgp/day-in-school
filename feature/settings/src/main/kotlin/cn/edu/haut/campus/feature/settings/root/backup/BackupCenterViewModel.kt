@@ -17,6 +17,14 @@ import cn.edu.haut.campus.core.vault.BackupService
 import cn.edu.haut.campus.core.vault.RestoreMode
 import cn.edu.haut.campus.core.vault.RestorePreview
 import cn.edu.haut.campus.core.vault.VaultBackupServiceRegistry
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncApiException
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncClient
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncClientFactory
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflict
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncEnableMode
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncScheduler
+import java.io.IOException
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -33,6 +41,10 @@ import kotlinx.coroutines.withContext
 class BackupCenterViewModel(
     private val appContext: Context,
     private val backupService: BackupService?,
+    private val syncClient: E2eeSyncClient? = null,
+    private val cloudSessionProvider: suspend () -> Boolean = { false },
+    private val syncWorkProfileId: String? = null,
+    private val syncWorkGeneration: Long = -1L,
     private val postRestoreHooks: suspend () -> Unit = {}
 ) : ViewModel(), BackupCenterUiAction {
     private val mutableUiState = MutableStateFlow(
@@ -45,6 +57,10 @@ class BackupCenterViewModel(
     val uiState: StateFlow<BackupCenterUiState> = mutableUiState.asStateFlow()
 
     private var preparedPreview: RestorePreview? = null
+
+    init {
+        viewModelScope.launch { refreshSyncStatus() }
+    }
 
     override fun openExportWizard() {
         mutableUiState.update {
@@ -227,6 +243,267 @@ class BackupCenterViewModel(
         }
     }
 
+    override fun openSyncConsent() {
+        mutableUiState.update {
+            it.copy(sync = it.sync.copy(consentDialog = it.sync.consentDialog.copy(visible = true, errorMessage = null)))
+        }
+        viewModelScope.launch { refreshSyncStatus() }
+    }
+
+    override fun closeSyncConsent() {
+        mutableUiState.update {
+            it.copy(sync = it.sync.copy(consentDialog = E2eeSyncConsentDialogUiState(visible = false)))
+        }
+    }
+
+    override fun enableSyncWithNewKey(deviceLabel: String) {
+        enableSync(E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE, deviceLabel, null)
+    }
+
+    override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) {
+        enableSync(E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE, deviceLabel, recoveryKey)
+    }
+
+    private fun enableSync(mode: E2eeSyncEnableMode, deviceLabel: String, recoveryKey: String?) {
+        val client = syncClient ?: return
+        mutableUiState.update {
+            it.copy(sync = it.sync.copy(consentDialog = it.sync.consentDialog.copy(running = true, errorMessage = null)))
+        }
+        viewModelScope.launch {
+            try {
+                val result = client.enable(mode, deviceLabel, recoveryKey)
+                refreshSyncStatus()
+                syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                    E2eeSyncScheduler.schedulePeriodicEnabled(appContext, profileId, syncWorkGeneration)
+                    E2eeSyncScheduler.enqueueImmediate(appContext, profileId, syncWorkGeneration)
+                }
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            consentDialog = if (result.recoveryKeyForUserCopy == null) {
+                                E2eeSyncConsentDialogUiState(visible = false)
+                            } else {
+                                it.sync.consentDialog.copy(
+                                    running = false,
+                                    generatedRecoveryKey = result.recoveryKeyForUserCopy,
+                                    errorMessage = null
+                                )
+                            }
+                        )
+                    )
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            matrix = syncMatrixForError(error),
+                            consentDialog = it.sync.consentDialog.copy(
+                                running = false,
+                                errorMessage = syncUserSafeMessage(error)
+                            )
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override fun runSyncNow() {
+        val client = syncClient ?: return
+        mutableUiState.update {
+            it.copy(sync = it.sync.copy(running = true, matrix = SettingsUiMatrix.Loading, lastErrorMessage = null))
+        }
+        viewModelScope.launch {
+            try {
+                client.runOnce()
+                refreshSyncStatus()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            running = false,
+                            matrix = syncMatrixForError(error),
+                            lastErrorMessage = syncUserSafeMessage(error)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override fun disableSync() {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            val report = client.disableAndWithdraw()
+            syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                E2eeSyncScheduler.cancel(appContext, profileId, syncWorkGeneration)
+            }
+            refreshSyncStatus()
+            if (!report.deviceRevoked || !report.consentWithdrawn) {
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            lastErrorMessage = "本机已停止同步；云端设备撤销或同意撤回未确认，请在网络恢复后复核设备列表"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override fun resetSyncStateForRekey() {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            client.wipeLocalOnly()
+            syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                E2eeSyncScheduler.cancel(appContext, profileId, syncWorkGeneration)
+            }
+            refreshSyncStatus()
+        }
+    }
+
+    override fun revokeSyncDevice(deviceId: String) {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            try {
+                client.revokeDevice(deviceId)
+                refreshSyncStatus()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            running = false,
+                            matrix = syncMatrixForError(error),
+                            lastErrorMessage = syncUserSafeMessage(error)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override fun resolveSyncConflict(conflictId: String, resolution: E2eeSyncConflictResolution) {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            try {
+                client.resolveConflict(conflictId, resolution)
+                refreshSyncStatus()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            running = false,
+                            matrix = syncMatrixForError(error),
+                            lastErrorMessage = syncUserSafeMessage(error)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun refreshSyncStatus() {
+        val client = syncClient
+        if (client == null) {
+            mutableUiState.update {
+                it.copy(sync = E2eeSyncPanelUiState(matrix = SettingsUiMatrix.Unsupported, serviceAvailable = false))
+            }
+            return
+        }
+        val status = runCatching { client.status() }.getOrNull()
+        val hasCloudSession = runCatching { cloudSessionProvider() }.getOrDefault(false)
+        var matrix = when {
+            status == null -> SettingsUiMatrix.error(retryable = true, message = "读取同步状态失败")
+            !hasCloudSession -> SettingsUiMatrix.NeedsLogin
+            !status.enabled -> SettingsUiMatrix.Empty
+            status.conflicts.isNotEmpty() || status.pendingWriteCount > 0 -> SettingsUiMatrix.Partial
+            else -> SettingsUiMatrix.Content
+        }
+        var deviceListError: Throwable? = null
+        val devices = if (hasCloudSession) {
+            val result = runCatching { client.listDevices() }
+            deviceListError = result.exceptionOrNull()
+            result.getOrDefault(emptyList()).map { device ->
+                E2eeSyncDeviceSummary(
+                    deviceId = device.deviceId,
+                    deviceIdShort = device.deviceId.take(8),
+                    label = device.deviceLabel,
+                    status = device.status,
+                    currentDevice = device.deviceId == status?.deviceId,
+                    lastSeenAt = device.lastSeenAt
+                )
+            }
+        } else {
+            emptyList()
+        }
+        deviceListError?.let { error ->
+            matrix = syncMatrixForError(error)
+        }
+        mutableUiState.update {
+            it.copy(
+                sync = it.sync.copy(
+                    matrix = matrix,
+                    serviceAvailable = true,
+                    enabled = status?.enabled == true,
+                    deviceIdShort = status?.deviceId?.take(8),
+                    syncSpaceIdShort = status?.syncSpaceId?.take(8),
+                    pendingWriteCount = status?.pendingWriteCount ?: 0,
+                    lastRunSummary = status?.lastRunSummary,
+                    lastErrorMessage = deviceListError?.let(::syncUserSafeMessage),
+                    running = false,
+                    conflicts = status?.conflicts.orEmpty().map(::toConflictSummary),
+                    devices = devices
+                )
+            )
+        }
+    }
+
+    private fun toConflictSummary(conflict: E2eeSyncConflict): E2eeSyncConflictSummary = E2eeSyncConflictSummary(
+        id = conflict.id,
+        table = conflict.table,
+        rowKey = conflict.rowKey,
+        kind = conflict.kind,
+        reason = conflict.reason,
+        localExcerpt = payloadExcerpt(conflict.localPayloadJson),
+        remoteExcerpt = payloadExcerpt(conflict.remotePayloadJson),
+        remoteDeletion = conflict.remoteDeletion,
+        localDeletion = conflict.localDeletion
+    )
+
+    private fun payloadExcerpt(raw: String?): String? = raw?.let {
+        if (it.length <= 220) it else it.take(220) + "…"
+    }
+
+    private fun syncMatrixForError(error: Throwable): SettingsUiMatrix {
+        val api = error as? E2eeSyncApiException
+        return when {
+            api?.errorCode in setOf("CLOUD_AUTH_REQUIRED", "UNAUTHORIZED", "INVALID_TOKEN") -> SettingsUiMatrix.NeedsLogin
+            api?.errorCode == "SYNC_CONSENT_REQUIRED" -> SettingsUiMatrix.NeedsPermission
+            api?.errorCode == "SYNC_CURSOR_EXPIRED" || api?.errorCode == "SYNC_CURSOR_INVALID" -> SettingsUiMatrix.Stale
+            error is IOException -> SettingsUiMatrix.Offline
+            else -> SettingsUiMatrix.error(retryable = true, message = "同步失败")
+        }
+    }
+
+    private fun syncUserSafeMessage(error: Throwable): String {
+        val api = error as? E2eeSyncApiException
+        return when {
+            api?.errorCode == "SYNC_CONSENT_REQUIRED" -> "需要重新确认 E2EE_CLOUD_SYNC 同意"
+            api?.errorCode == "SYNC_DEVICE_REVOKED" -> "本机同步设备已被撤销，请检查设备列表"
+            api != null -> "云端同步失败（" + api.errorCode + "）"
+            error is IOException -> "当前网络不可用，同步将稍后重试"
+            else -> "同步失败，请重试"
+        }
+    }
+
     private fun discardPreparedPreview() {
         preparedPreview?.discardSensitiveMaterial()
         preparedPreview = null
@@ -271,6 +548,10 @@ class BackupCenterViewModel(
                 BackupCenterViewModel(
                     appContext = context.applicationContext,
                     backupService = VaultBackupServiceRegistry.forProfile(repository.profileId),
+                    syncClient = E2eeSyncClientFactory.create(context.applicationContext, repository),
+                    cloudSessionProvider = { repository.snapshotCloudIdentitySession() != null },
+                    syncWorkProfileId = repository.profileId,
+                    syncWorkGeneration = repository.sessionGeneration ?: -1L,
                     postRestoreHooks = {
                         runCatching { repository.rescheduleActiveLocalBookingPlans() }
                         runCatching {

@@ -51,9 +51,59 @@ data class RestoreWizardUiState(
 )
 
 @Immutable
+data class E2eeSyncConflictSummary(
+    val id: String,
+    val table: String,
+    val rowKey: String,
+    val kind: String,
+    val reason: String,
+    val localExcerpt: String?,
+    val remoteExcerpt: String?,
+    val remoteDeletion: Boolean,
+    val localDeletion: Boolean
+)
+
+@Immutable
+data class E2eeSyncConsentDialogUiState(
+    val visible: Boolean = false,
+    val running: Boolean = false,
+    val errorMessage: String? = null,
+    /** 仅创建新同步空间后一次性展示。该值是秘密，Preview 必须使用假值，生产不得写日志。 */
+    val generatedRecoveryKey: String? = null
+)
+
+@Immutable
+data class E2eeSyncDeviceSummary(
+    val deviceId: String,
+    val deviceIdShort: String,
+    val label: String?,
+    val status: String,
+    val currentDevice: Boolean,
+    val lastSeenAt: String?
+)
+
+@Immutable
+data class E2eeSyncPanelUiState(
+    val matrix: SettingsUiMatrix = SettingsUiMatrix.Empty,
+    val serviceAvailable: Boolean = true,
+    val enabled: Boolean = false,
+    val deviceLabel: String? = null,
+    val deviceIdShort: String? = null,
+    val syncSpaceIdShort: String? = null,
+    val pendingWriteCount: Int = 0,
+    val lastRunSummary: String? = null,
+    val lastErrorMessage: String? = null,
+    val running: Boolean = false,
+    val conflicts: List<E2eeSyncConflictSummary> = emptyList(),
+    val devices: List<E2eeSyncDeviceSummary> = emptyList(),
+    val consentDialog: E2eeSyncConsentDialogUiState = E2eeSyncConsentDialogUiState()
+)
+
+@Immutable
 data class BackupCenterUiState(
     val matrix: SettingsUiMatrix = SettingsUiMatrix.Content,
     val serviceAvailable: Boolean = true,
     val exportWizard: ExportWizardUiState = ExportWizardUiState(),
-    val restoreWizard: RestoreWizardUiState = RestoreWizardUiState()
+    val restoreWizard: RestoreWizardUiState = RestoreWizardUiState(),
+    val sync: E2eeSyncPanelUiState = E2eeSyncPanelUiState()
 )

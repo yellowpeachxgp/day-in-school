@@ -14,6 +14,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+/** W4-12 窄令牌端口：仅供 E2EE 同步 HTTPS client 当前请求使用；不得持久化、写日志或暴露给插件。 */
+fun interface CloudIdentityE2eeAccessTokenProvider {
+    suspend fun resolve(forceRefresh: Boolean, failedAccessToken: String?): String
+}
+
+/** 按 Profile 隔离的进程内令牌端口注册表；由 CloudIdentityRepository 构造时自注册，避免扩大 CampusRepository 外观。 */
+object CloudIdentityE2eeAccessTokenProviderRegistry {
+    private val providers = ConcurrentHashMap<String, CloudIdentityE2eeAccessTokenProvider>()
+
+    internal fun register(profileId: String, provider: CloudIdentityE2eeAccessTokenProvider) {
+        providers[profileId] = provider
+    }
+
+    fun forProfile(profileId: String): CloudIdentityE2eeAccessTokenProvider? = providers[profileId]
+}
 
 /**
  * CloudIdentity 拆分期运行时端口。
@@ -76,6 +93,15 @@ class CloudIdentityRepository internal constructor(
     /** 逐次现读门面测试传输钩子；生产恒 null。 */
     private val cloudHttpTransportForTest: CloudHttpTransportForTest?
         get() = runtimePort.cloudHttpTransportForTest()
+
+    init {
+        CloudIdentityE2eeAccessTokenProviderRegistry.register(profileId) { forceRefresh, failedAccessToken ->
+            resolveValidCloudAccessToken(
+                forceRefresh = forceRefresh,
+                failedAccessToken = failedAccessToken
+            )
+        }
+    }
 
     private fun academicCredentialScope(accountId: String) = AcademicCredentialScope(
         schoolId = schoolId,

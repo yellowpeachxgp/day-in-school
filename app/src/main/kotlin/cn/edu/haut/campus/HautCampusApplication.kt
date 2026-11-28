@@ -12,6 +12,8 @@ import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.vault.VaultRuntimeInstaller
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncRuntimeRegistration
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncScheduler
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import cn.edu.haut.campus.widget.nextclass.NextClassAppWidgetProvider
 import cn.edu.haut.campus.widget.timeline.TimelineAppWidgetProvider
@@ -53,6 +55,16 @@ class HautCampusApplication : Application() {
             beforeSwitch = { },
             afterSwitch = { active ->
                 AiByokWipeRegistration.register(this@HautCampusApplication, active.repository)
+            }
+        )
+        sessions.registerLifecycleHook(
+            key = "e2ee_sync_client_lifecycle",
+            beforeSwitch = { old ->
+                old?.let { E2eeSyncScheduler.cancel(this, it.profileId, it.generation) }
+            },
+            afterSwitch = { active ->
+                E2eeSyncRuntimeRegistration.register(this, active.repository)
+                E2eeSyncScheduler.rescheduleForActiveSession(this, active)
             }
         )
         sessions.registerLifecycleHook(

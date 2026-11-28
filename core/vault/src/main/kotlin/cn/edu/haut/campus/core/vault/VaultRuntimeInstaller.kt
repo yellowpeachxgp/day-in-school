@@ -10,6 +10,8 @@ import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncBackupStoreRegistry
+import cn.edu.haut.campus.core.vault.sync.VaultBackupSyncStore
 
 /**
  * core:vault 的进程级组合入口。Application 在打开账号库前调用 [install]，
@@ -50,14 +52,19 @@ object VaultRuntimeInstaller {
     private object VaultAcademicWritePortFactory : AcademicEntityWritePortFactory {
         override fun create(database: HautDatabase, accountProfile: AccountProfileEntity): AcademicEntityWritePort {
             val journal = createJournal(database)
+            val backupService = VaultBackupService(
+                database = database,
+                scope = accountScope(accountProfile),
+                journal = journal,
+                appVersion = appVersionName
+            )
             VaultBackupServiceRegistry.register(
                 profileId = accountProfile.id,
-                service = VaultBackupService(
-                    database = database,
-                    scope = accountScope(accountProfile),
-                    journal = journal,
-                    appVersion = appVersionName
-                )
+                service = backupService
+            )
+            E2eeSyncBackupStoreRegistry.register(
+                profileId = accountProfile.id,
+                store = VaultBackupSyncStore(backupService)
             )
             return journal
         }

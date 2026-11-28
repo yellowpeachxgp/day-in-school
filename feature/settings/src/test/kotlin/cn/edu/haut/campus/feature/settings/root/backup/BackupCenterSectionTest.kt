@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.performTextInput
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupRowKey
 import cn.edu.haut.campus.core.vault.RestoreMode
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -76,6 +78,56 @@ class BackupCenterSectionTest {
     }
 
     @Test
+    fun syncPanelOpenConsentInvokesAction() {
+        val actions = RecordingActions()
+        val disabledSyncState = BackupCenterPreviewFixtures.content.copy(
+            sync = BackupCenterPreviewFixtures.content.sync.copy(enabled = false, matrix = cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix.Empty)
+        )
+        composeRule.setContent {
+            BackupCenterSection(state = disabledSyncState, actions = actions)
+        }
+
+        composeRule.onNodeWithTag("sync-open-consent").performClick()
+        assertTrue(actions.events.contains("sync-open-consent"))
+    }
+
+    @Test
+    fun syncConsentShowsOneTimeRecoveryKeyState() {
+        composeRule.setContent {
+            BackupCenterSection(state = BackupCenterPreviewFixtures.syncRecoveryKey, actions = RecordingActions())
+        }
+        composeRule.onNodeWithText("开启端到端跨设备同步").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithTag("sync-generated-recovery-key").fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
+    fun syncConflictShowsTwoVersionsAndResolutionActions() {
+        val actions = RecordingActions()
+        val conflict = E2eeSyncConflictSummary(
+            id = "sc-preview",
+            table = "courses",
+            rowKey = "t:8:course-1",
+            kind = "CONCURRENT_UPDATE",
+            reason = "本机与远端同时修改同一逻辑行，未静默覆盖",
+            localExcerpt = "local-version",
+            remoteExcerpt = "remote-version",
+            remoteDeletion = false,
+            localDeletion = false
+        )
+        composeRule.setContent {
+            SyncConflictRow(conflict, actions, enabled = true)
+        }
+
+        assertTrue(composeRule.onAllNodesWithTag("sync-conflict-local").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithTag("sync-conflict-remote").fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag("sync-conflict-keep-local").performClick()
+        composeRule.onNodeWithTag("sync-conflict-use-remote").performClick()
+
+        assertTrue(actions.events.contains("sync-resolve:sc-preview:KEEP_LOCAL"))
+        assertTrue(actions.events.contains("sync-resolve:sc-preview:USE_REMOTE"))
+    }
+
+    @Test
     fun previewFixturesCoverElevenRequiredStates() {
         assertEquals(
             setOf(
@@ -99,5 +151,16 @@ class BackupCenterSectionTest {
             events += "resolve:" + key.table + ":" + resolution.name
         }
         override fun restoreBackup() { events += "restore" }
+        override fun openSyncConsent() { events += "sync-open-consent" }
+        override fun closeSyncConsent() { events += "sync-close-consent" }
+        override fun enableSyncWithNewKey(deviceLabel: String) { events += "sync-enable-new" }
+        override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) { events += "sync-enable-existing" }
+        override fun runSyncNow() { events += "sync-run" }
+        override fun disableSync() { events += "sync-disable" }
+        override fun resetSyncStateForRekey() { events += "sync-reset-rekey" }
+        override fun revokeSyncDevice(deviceId: String) { events += "sync-revoke:" + deviceId.take(8) }
+        override fun resolveSyncConflict(conflictId: String, resolution: E2eeSyncConflictResolution) {
+            events += "sync-resolve:" + conflictId + ":" + resolution.name
+        }
     }
 }
