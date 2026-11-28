@@ -91,7 +91,7 @@ fun TodayRoute(
         onAction = viewModel::onAction,
         resetTrigger = resetTrigger,
         extensionSlot = {
-            TodayExtensionSlot(
+            TodayHostExtensionSlot(
                 profileId = repository.profileId,
                 schoolId = repository.schoolId,
                 sessionGeneration = repository.sessionGeneration,
