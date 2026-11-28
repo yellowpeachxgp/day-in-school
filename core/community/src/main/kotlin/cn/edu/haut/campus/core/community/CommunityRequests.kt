@@ -47,7 +47,7 @@ data class CreateGroupRequest(
 ) : CommunityRequestBody {
     init {
         requireText(schoolId, "school_id")
-        requireWireEnum(type, setOf("STUDY", "DORM", "CLUB", "PROJECT"), "type")
+        requireWireEnum(type, setOf("study", "dorm", "club", "project"), "type")
         requireText(name, "name", 80)
         requireOptionalText(description, "description", 500)
     }
@@ -114,7 +114,7 @@ data class UpdateGroupMemberRequest(
     val sharingLevel: String? = null,
 ) : CommunityRequestBody {
     init {
-        if (role != null) requireWireEnum(role, setOf("GROUP_OWNER", "GROUP_ADMIN", "MEMBER"), "role")
+        if (role != null) requireWireEnum(role, setOf("OWNER", "ADMIN", "MEMBER"), "role")
         if (sharingLevel != null) requireWireEnum(sharingLevel, setOf("NONE", "BUSY_BLOCKS_30MIN"), "sharing_level")
         require(role != null || sharingLevel != null) { "UpdateGroupMemberRequest 至少要更新一个字段" }
     }
@@ -132,7 +132,7 @@ data class ReplaceGroupAvailabilityRequest(
     val ttlSeconds: Int,
 ) : CommunityRequestBody {
     init {
-        require(blocks.size <= 500) { "blocks 数量不能超过 500" }
+        require(blocks.size <= 200) { "blocks 数量不能超过 200" }
         require(ttlSeconds in 1800..7_776_000) { "ttl_seconds 必须在 1800..7776000" }
     }
 
@@ -182,7 +182,7 @@ data class CreateGroupPollRequest(
 ) : CommunityRequestBody {
     init {
         requireText(title, "title", 120)
-        require(options.isNotEmpty() && options.size <= 100) { "options 必须有 1..100 项" }
+        require(options.size in 2..10 && options.distinct().size == options.size) { "options 必须有 2..10 个互不相同的候选时段" }
         requireIsoDateTime(votingDeadlineAt, "voting_deadline_at")
     }
 

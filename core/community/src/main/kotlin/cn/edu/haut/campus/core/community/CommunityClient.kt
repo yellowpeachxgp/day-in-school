@@ -194,7 +194,7 @@ class CommunityClient(
         }
         if (operation.idempotencyRequired) {
             require(!idempotencyKey.isNullOrBlank()) { operation.operationId + " 需要稳定 Idempotency-Key" }
-            require(idempotencyKey.length <= 128) { "Idempotency-Key 过长" }
+            require(idempotencyKey.length in 8..128) { "Idempotency-Key 长度必须在 8..128" }
         }
     }
 

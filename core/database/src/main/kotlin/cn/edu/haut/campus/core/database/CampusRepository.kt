@@ -362,6 +362,9 @@ class CampusRepository internal constructor(
             runCatching { xiaomiAccountVault.saveAccounts(emptyList()) }
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
         }
+        registerBeforeWipeHook(CommunityCacheWipeRegistration.HOOK_KEY) {
+            CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
+        }
         repoScope.launch {
             runCatching { profileDataWiper.sanitizePersistedNullLiteralsForFacade(sanitizeBookingPlanWriteHookForTest) }
         }
