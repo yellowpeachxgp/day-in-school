@@ -51,6 +51,7 @@ class TeamTimeViewModel(
     private var pollDomain: TeamTimePoll? = null
     private var personalBusyBlocks: List<BusyBlock> = emptyList()
     private var shareSummary: TeamTimeShareSummary? = null
+    private var selfAvailabilityStatus: TeamTimeAvailabilityStatus? = null
     private var cloudUserId: String? = null
     private var repositoryZone: ZoneId? = null
     private var queryWindow: TimeWindow = computeDefaultWindow()
@@ -129,6 +130,7 @@ class TeamTimeViewModel(
                         members = emptyList()
                         candidateDomain = emptyList()
                         shareSummary = null
+                        selfAvailabilityStatus = null
                         var degraded = false
                         var degradedMessage: String? = null
                         if (selected != null) {
@@ -186,6 +188,7 @@ class TeamTimeViewModel(
         candidateDomain = emptyList()
         pollDomain = null
         shareSummary = null
+        selfAvailabilityStatus = null
         actionJob?.cancel()
         actionJob = viewModelScope.launch {
             try {
@@ -237,9 +240,11 @@ class TeamTimeViewModel(
         runCloudAction {
             val repository = repository()
             queryWindow = computeDefaultWindow()
-            when (val result = repository.shareMyBusyBlocks(groupId, queryWindow, SHARE_TTL_SECONDS)) {
+            val ttlSeconds = shareTtlSecondsFor(queryWindow)
+            when (val result = repository.shareMyBusyBlocks(groupId, queryWindow, ttlSeconds)) {
                 is CommunityResult.Success -> {
                     shareSummary = result.value
+                    selfAvailabilityStatus = null
                     projectOwnSharingLevel(shared = true)
                     reloadMembersBestEffort(repository, groupId)
                     publishContent(
@@ -260,6 +265,7 @@ class TeamTimeViewModel(
             when (val result = repository.withdrawMyBusyBlocks(groupId)) {
                 is CommunityResult.Success -> {
                     shareSummary = null
+                    selfAvailabilityStatus = TeamTimeAvailabilityStatus.UNKNOWN
                     projectOwnSharingLevel(shared = false)
                     reloadMembersBestEffort(repository, groupId)
                     publishContent(
@@ -293,6 +299,14 @@ class TeamTimeViewModel(
             )) {
                 is CommunityResult.Success -> {
                     candidateDomain = result.value
+                    val selfMemberId = members.firstOrNull { it.cloudUserId == cloudUserId }?.memberId
+                    selfAvailabilityStatus = if (selfMemberId == null) {
+                        null
+                    } else {
+                        result.value.firstNotNullOfOrNull { candidate ->
+                            candidate.memberResults.firstOrNull { it.memberId == selfMemberId }?.status
+                        }
+                    }
                     publishContent(
                         status = if (result.value.isEmpty()) TeamTimeStatus.CONTENT else TeamTimeStatus.CONTENT,
                         selectedGroupId = groupId,
@@ -439,14 +453,36 @@ class TeamTimeViewModel(
         val activeMembers = members.filter { it.isActive }
         val sharingCount = activeMembers.count { it.sharesBusyBlocks }
         val summary = shareSummary
+        val now = clock.instant()
+        val summaryActive = summary != null && summary.expiresAt.isAfter(now)
+        val summaryExpired = summary != null && !summaryActive
+        val querySaysShared = when (selfAvailabilityStatus) {
+            TeamTimeAvailabilityStatus.AVAILABLE,
+            TeamTimeAvailabilityStatus.BUSY -> true
+            TeamTimeAvailabilityStatus.UNKNOWN -> false
+            null -> null
+        }
+        val shared = when {
+            summary != null -> summaryActive
+            querySaysShared != null -> querySaysShared
+            else -> self?.sharesBusyBlocks == true
+        }
+        val shareStatusLabel = when {
+            shared -> "已共享 30 分钟粒度忙闲"
+            summaryExpired -> "共享已过期"
+            selfAvailabilityStatus == TeamTimeAvailabilityStatus.UNKNOWN -> "未共享或已过期"
+            else -> "未共享忙闲"
+        }
+        val shareDetailLabel = when {
+            shared -> "群内 " + sharingCount + "/" + activeMembers.size + " 名成员已共享；查询只返回忙/闲/未知状态"
+            summaryExpired -> "已在云端过期；你在后续交集中是 UNKNOWN，不会被当成空闲"
+            selfAvailabilityStatus == TeamTimeAvailabilityStatus.UNKNOWN -> "云端交集已将你标记为 UNKNOWN；不会被当成空闲"
+            else -> "未共享时你在交集中显示为未知；绝不会被当成空闲"
+        }
         val shareUi = TeamTimeShareUi(
-            shared = summary != null || self?.sharesBusyBlocks == true,
-            statusLabel = if (summary != null || self?.sharesBusyBlocks == true) "已共享 30 分钟粒度忙闲" else "未共享忙闲",
-            detailLabel = if (summary != null || self?.sharesBusyBlocks == true) {
-                "群内 " + sharingCount + "/" + activeMembers.size + " 名成员已共享；查询只返回忙/闲/未知状态"
-            } else {
-                "未共享时你在交集中显示为未知；绝不会被当成空闲"
-            },
+            shared = shared,
+            statusLabel = shareStatusLabel,
+            detailLabel = shareDetailLabel,
             blockCount = summary?.blockCount ?: personalBusyBlocks.size,
             expiresLabel = summary?.expiresAt?.let { formatInstant(it, repositoryZone) },
         )
@@ -570,6 +606,13 @@ class TeamTimeViewModel(
         return TimeWindow(start, start.plusSeconds(7L * 24L * 3600L))
     }
 
+    /** TTL 以本次上传时刻到查询窗终点的真实秒数计算，保证窗口末端不越出分享生命周期。 */
+    private fun shareTtlSecondsFor(window: TimeWindow): Int {
+        val seconds = window.end.epochSecond - clock.instant().epochSecond
+        require(seconds in 1_800L..7_776_000L) { "分享 TTL 必须在契约允许范围内" }
+        return seconds.toInt()
+    }
+
     private fun votingDeadlineFor(candidates: List<TeamTimeCandidate>): Instant {
         val earliest = candidates.minOf { it.startAt }
         val now = clock.instant()
@@ -593,7 +636,6 @@ class TeamTimeViewModel(
         dateTimeFormatter.withZone(zone).format(instant)
 
     companion object {
-        private const val SHARE_TTL_SECONDS = 7 * 24 * 3600
         private val dateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
         private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 

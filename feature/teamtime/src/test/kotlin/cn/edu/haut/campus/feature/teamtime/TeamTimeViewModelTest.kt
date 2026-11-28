@@ -28,6 +28,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -72,7 +73,7 @@ class TeamTimeViewModelTest {
     }
 
     @Test
-    fun explicitShareUsesSevenDayTtlAndThirtyMinuteBusyBlocks() = runTest {
+    fun explicitShareTtlEndsAtQueryWindowEndAndUsesThirtyMinuteBusyBlocks() = runTest {
         val fake = FakeTeamTimeRepository()
         val viewModel = TeamTimeViewModel(repositoryFactory = { fake }, clock = clock)
         advanceUntilIdle()
@@ -81,11 +82,45 @@ class TeamTimeViewModelTest {
         advanceUntilIdle()
         val state = viewModel.uiState.value
 
-        assertEquals(7 * 24 * 3600, fake.lastShareTtlSeconds)
+        assertEquals(7 * 24 * 3600 + 1800, fake.lastShareTtlSeconds)
+        assertEquals(fake.lastShareWindowEnd?.epochSecond?.minus(clock.instant().epochSecond)?.toInt(), fake.lastShareTtlSeconds)
         assertEquals(2, fake.lastSharedBlocks.size)
         assertTrue(fake.lastSharedBlocks.all { (it.end.epochSecond - it.start.epochSecond) % 1800L == 0L })
         assertTrue(state.share.shared)
         assertTrue(state.notice?.contains("未上传课程标题") == true)
+    }
+
+    @Test
+    fun expiredShareAppearsAsUnknownAndIsNotProjectedShared() = runTest {
+        val fake = FakeTeamTimeRepository()
+        val viewModel = TeamTimeViewModel(repositoryFactory = { fake }, clock = clock)
+        advanceUntilIdle()
+        assertTrue("初始成员共享级别未过期时是共享投影", viewModel.uiState.value.share.shared)
+
+        viewModel.dispatch(TeamTimeUiAction.QueryAvailabilityClicked)
+        advanceUntilIdle()
+        val state = viewModel.uiState.value
+
+        assertFalse("云端把过期/不足共享标成 UNKNOWN 后不得继续投影为已共享", state.share.shared)
+        assertEquals("未共享或已过期", state.share.statusLabel)
+        assertTrue(state.share.detailLabel.contains("UNKNOWN"))
+    }
+
+    @Test
+    fun expiredShareSummaryNeverProjectsAsShared() = runTest {
+        val fake = FakeTeamTimeRepository().apply {
+            shareExpiresAt = clock.instant().minusSeconds(1)
+        }
+        val viewModel = TeamTimeViewModel(repositoryFactory = { fake }, clock = clock)
+        advanceUntilIdle()
+
+        viewModel.dispatch(TeamTimeUiAction.ShareBusyBlocksClicked)
+        advanceUntilIdle()
+        val state = viewModel.uiState.value
+
+        assertFalse(state.share.shared)
+        assertEquals("共享已过期", state.share.statusLabel)
+        assertTrue(state.share.detailLabel.contains("UNKNOWN"))
     }
 
     @Test
@@ -150,10 +185,18 @@ class TeamTimeViewModelTest {
                 busyMemberCount = 0,
                 unknownMemberCount = 1,
                 totalMemberCount = 2,
-                memberResults = emptyList(),
+                memberResults = listOf(
+                    TeamTimeMemberAvailability(
+                        memberId = "member-a",
+                        status = TeamTimeAvailabilityStatus.UNKNOWN,
+                        sharingLevel = "BUSY_BLOCKS_30MIN",
+                    ),
+                ),
             ),
         )
         var lastShareTtlSeconds: Int? = null
+        var lastShareWindowEnd: Instant? = null
+        var shareExpiresAt: Instant = Instant.parse("2026-12-08T12:30:00Z")
         var lastSharedBlocks: List<BusyBlock> = emptyList()
         var createdPollCandidates: Int = 0
         private var createdPoll: TeamTimePoll? = null
@@ -166,6 +209,7 @@ class TeamTimeViewModelTest {
 
         override suspend fun shareMyBusyBlocks(groupId: String, window: TimeWindow, ttlSeconds: Int): CommunityResult<TeamTimeShareSummary> {
             lastShareTtlSeconds = ttlSeconds
+            lastShareWindowEnd = window.end
             lastSharedBlocks = busy
             return success(
                 TeamTimeShareSummary(
@@ -173,7 +217,7 @@ class TeamTimeViewModelTest {
                     sharingLevel = "BUSY_BLOCKS_30MIN",
                     blockCount = busy.size,
                     ttlSeconds = ttlSeconds,
-                    expiresAt = Instant.parse("2026-12-08T12:30:00Z"),
+                    expiresAt = shareExpiresAt,
                     updatedAt = clock.instant(),
                 ),
             )
