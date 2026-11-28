@@ -71,10 +71,11 @@ private class AndroidAiAesKeyProvider : AiAesKeyProvider {
     }
 
     override fun delete(scope: SchoolAccountScope) {
-        runCatching {
-            val store = store()
-            if (store.containsAlias(alias(scope))) store.deleteEntry(alias(scope))
+        val store = store()
+        if (store.containsAlias(alias(scope))) {
+            store.deleteEntry(alias(scope))
         }
+        check(!store.containsAlias(alias(scope))) { "AI Keystore 密钥材料清除失败" }
     }
 }
 
@@ -107,9 +108,12 @@ class AndroidAiKeyStore internal constructor(
                     writeAtomic(envelopeFile(scope), encrypt(scope, payload))
                     val verified = decryptEnvelopeLocked(scope) as? EnvelopeRead.Valid
                     check(verified != null && verified.payload.endpoint == endpoint) { "AI Key 安全保存校验失败" }
-                    val roundTrip = verified.payload.keyBytes
-                    check(roundTrip.contentEquals(keyBytes)) { "AI Key 安全保存校验失败" }
-                    verified.payload.wipe()
+                    try {
+                        val roundTrip = verified.payload.keyBytes
+                        check(roundTrip.contentEquals(keyBytes)) { "AI Key 安全保存校验失败" }
+                    } finally {
+                        verified.payload.wipe()
+                    }
                 } finally {
                     keyCopy.fill(0.toChar())
                     keyBytes?.fill(0)
