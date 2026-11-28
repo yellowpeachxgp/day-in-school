@@ -337,8 +337,8 @@ class VaultBackupServiceTest {
             assertEquals("备份列必须逐表等于显式白名单: " + policy.table, policy.exportedColumns, actualColumns[policy.table])
         }
 
-        val preview = service.inspect(ByteArrayInputStream(backup), passphrase)
         wipePortableTables()
+        val preview = service.inspect(ByteArrayInputStream(backup), passphrase)
         service.restore(preview, RestoreMode.REPLACE, emptyMap())
         assertEquals(null, database.cloudAndParcelDao().getLibraryBookingPlanById("lib-1")?.lastDiagnosticMessage)
         val parcel = database.cloudAndParcelDao().getParcelByTrackingNumber("trk-1")
