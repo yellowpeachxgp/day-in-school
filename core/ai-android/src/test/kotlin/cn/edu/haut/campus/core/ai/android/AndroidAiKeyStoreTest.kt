@@ -87,7 +87,7 @@ class AndroidAiKeyStoreTest {
         store.put(scope, trailing, keyCanary().toCharArray())
 
         assertEquals(canonical, store.settings(scope).endpoint)
-        val loadedEndpoint = store.withKeyMaterial(scope) { storedEndpoint, _ -> storedEndpoint }
+        val loadedEndpoint = store.withKeyMaterial(scope) { storedEndpoint, _, _ -> storedEndpoint }
         assertEquals(canonical, loadedEndpoint)
         store.wipeAll(scope)
     }
@@ -104,7 +104,7 @@ class AndroidAiKeyStoreTest {
         assertFalse(store.settings(otherProfileScope).enabled)
         assertThrows(AiKeyAccessException::class.java) {
             kotlinx.coroutines.runBlocking {
-                store.withKeyMaterial(otherProfileScope) { _, _ -> Unit }
+                store.withKeyMaterial(otherProfileScope) { _, _, _ -> Unit }
             }
         }
 
@@ -140,7 +140,7 @@ class AndroidAiKeyStoreTest {
         assertEquals("跨 Profile 重放密文必须失败关闭", AiKeyStatus.INVALID, store.status(otherProfileScope).first())
         assertThrows(AiKeyAccessException::class.java) {
             kotlinx.coroutines.runBlocking {
-                store.withKeyMaterial(otherProfileScope) { _, _ -> Unit }
+                store.withKeyMaterial(otherProfileScope) { _, _, _ -> Unit }
             }
         }
         assertEquals("原 Profile 不受重放影响", AiKeyStatus.CONFIGURED, store.status(scope).first())
@@ -155,7 +155,7 @@ class AndroidAiKeyStoreTest {
         store.put(scope, endpoint, canary.toCharArray())
         var exposed: CharArray? = null
 
-        val endpointInside = store.withKeyMaterial(scope) { loadedEndpoint, key ->
+        val endpointInside = store.withKeyMaterial(scope) { loadedEndpoint, key, _ ->
             exposed = key
             assertEquals(canary, String(key))
             loadedEndpoint
@@ -179,7 +179,7 @@ class AndroidAiKeyStoreTest {
         assertEquals(AiKeyStatus.INVALID, store.settings(scope).keyStatus)
         assertThrows(AiKeyAccessException::class.java) {
             kotlinx.coroutines.runBlocking {
-                store.withKeyMaterial(scope) { _, _ -> Unit }
+                store.withKeyMaterial(scope) { _, _, _ -> Unit }
             }
         }
         store.wipeAll(scope)
@@ -240,6 +240,49 @@ class AndroidAiKeyStoreTest {
 
         assertTrue(result is AiResult.Failure)
         assertEquals("同 endpoint 换 Key 后旧 consent 必须失效", AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
+        assertEquals(0, transport.calls)
+        service.clear(scope)
+    }
+
+    @Test
+    fun overwritingKeyThroughAnotherStoreInstanceRejectsConsentWithoutServiceClear() = runTest {
+        val root = testRoot("cross-instance-key-rotation")
+        val store = AndroidAiKeyStore(context, rootDir = root, keys = fakeKeys)
+        val rotatingStore = AndroidAiKeyStore(context, rootDir = root, keys = fakeKeys)
+        val consentCenter = AiConsentCenter()
+        val transport = object : AiTransport {
+            var calls = 0
+            override suspend fun postJson(url: String, bearerKey: CharArray, body: String): AiTransportResponse {
+                calls += 1
+                return AiTransportResponse(200, """{"choices":[{"message":{"content":"ok"}}]}""")
+            }
+        }
+        val service = AiAndroidService(
+            store,
+            consentCenter,
+            OpenAiCompatibleProvider(
+                settingsAccess = store,
+                keyMaterialAccess = store,
+                consentCenter = consentCenter,
+                transport = transport
+            )
+        )
+        service.saveEndpointAndKey(scope, endpoint, keyCanary().toCharArray())
+        service.setEnabled(scope, true)
+        val request = AiRequest(
+            purpose = AiPurpose.INBOX_PARSE,
+            messages = listOf(AiMessage(AiMessageRole.USER, "请总结这条通知")),
+            attachments = emptyList(),
+            maxTokens = 32
+        )
+        val preview = service.preview(scope, request)
+        val token = service.issueConsent(scope, endpoint, preview)
+
+        rotatingStore.put(scope, endpoint, "rotated-cross-instance-key".toCharArray())
+        val result = service.send(scope, request, token)
+
+        assertTrue(result is AiResult.Failure)
+        assertEquals("跨实例同 endpoint 换 Key 后旧 consent 必须失效", AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
         assertEquals(0, transport.calls)
         service.clear(scope)
     }

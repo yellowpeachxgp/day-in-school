@@ -192,6 +192,22 @@ class OpenAiCompatibleProviderTest {
     }
 
     @Test
+    fun keyMaterialGenerationSnapshotMismatchStopsBeforeTransportAfterConsentConsumption() = runTest {
+        val transport = RecordingTransport(AiTransportResponse(200, "{}"))
+        val harness = Harness(transport = transport)
+        val req = AiTestFixtures.request()
+        val preview = harness.provider.preview(AiTestFixtures.scope, req)
+        val token = harness.consentCenter.issue(AiTestFixtures.scope, AiTestFixtures.endpoint, preview)
+
+        harness.keyAccess.configurationGeneration = 2
+        val result = harness.provider.send(AiTestFixtures.scope, req, token)
+
+        assertEquals(AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
+        assertEquals("generation 快照检查发生在 Key 读取之后、网络发送之前", 1, harness.keyAccess.calls)
+        assertEquals(0, transport.calls)
+    }
+
+    @Test
     fun attachmentFromAnotherProfileIsRejectedBeforeConsentConsumption() = runTest {
         val transport = RecordingTransport(AiTransportResponse(200, "{}"))
         val harness = Harness(transport = transport)
@@ -234,12 +250,13 @@ class OpenAiCompatibleProviderTest {
 
     private class RecordingKeyAccess : AiKeyMaterialAccess {
         var calls = 0
+        var configurationGeneration = 1L
         override suspend fun <T> withKeyMaterial(
             scope: SchoolAccountScope,
-            block: suspend (endpoint: AiEndpoint, key: CharArray) -> T
+            block: suspend (endpoint: AiEndpoint, key: CharArray, configurationGeneration: Long) -> T
         ): T {
             calls += 1
-            return block(AiTestFixtures.endpoint, AiTestFixtures.keyCanary().toCharArray())
+            return block(AiTestFixtures.endpoint, AiTestFixtures.keyCanary().toCharArray(), configurationGeneration)
         }
     }
 

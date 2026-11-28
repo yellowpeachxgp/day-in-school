@@ -9,12 +9,13 @@ import java.util.Base64
 
 /**
  * Key 材料受控使用端口。实现只在 callback 生命周期内提供明文副本，并必须在 callback 返回或抛出后清零；
+ * configurationGeneration 必须与解密出的 Key 在同一存储临界区内快照，防止配置轮换竞态绕过 consent 世代绑定；
  * 该接口故意不支持“返回 Key 给调用方保存”。
  */
 interface AiKeyMaterialAccess {
     suspend fun <T> withKeyMaterial(
         scope: SchoolAccountScope,
-        block: suspend (endpoint: AiEndpoint, key: CharArray) -> T
+        block: suspend (endpoint: AiEndpoint, key: CharArray, configurationGeneration: Long) -> T
     ): T
 }
 
@@ -52,7 +53,14 @@ class OpenAiCompatibleProvider(
                 AiConsentVerdict.MISMATCH -> return AiResult.Failure(AiError.CONSENT_MISMATCH, retryable = false)
             }
             val visionAttachments = loadVisionAttachments(scope, endpoint, req)
-            keyMaterialAccess.withKeyMaterial(scope) { keyEndpoint, key ->
+            keyMaterialAccess.withKeyMaterial(scope) { keyEndpoint, key, keyConfigurationGeneration ->
+                if (keyConfigurationGeneration != preview.configurationGeneration) {
+                    return@withKeyMaterial AiResult.Failure(
+                        AiError.CONSENT_MISMATCH,
+                        retryable = false,
+                        detail = "AI 配置已变更，本次同意已失效"
+                    )
+                }
                 if (keyEndpoint != endpoint) {
                     return@withKeyMaterial AiResult.Failure(
                         AiError.INVALID_CONFIGURATION,

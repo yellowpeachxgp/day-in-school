@@ -182,15 +182,16 @@ class AndroidAiKeyStore internal constructor(
 
     override suspend fun <T> withKeyMaterial(
         scope: SchoolAccountScope,
-        block: suspend (endpoint: AiEndpoint, key: CharArray) -> T
+        block: suspend (endpoint: AiEndpoint, key: CharArray, configurationGeneration: Long) -> T
     ): T {
         val material = withContext(Dispatchers.IO) {
             mutexFor(scope).withLock {
                 when (val read = decryptEnvelopeLocked(scope)) {
                     is EnvelopeRead.Valid -> {
                         val chars = utf8ToChars(read.payload.keyBytes)
+                        val generation = currentConfigurationGeneration(scope)
                         read.payload.wipe()
-                        KeyMaterial(read.payload.endpoint, chars)
+                        KeyMaterial(read.payload.endpoint, chars, generation)
                     }
                     EnvelopeRead.Missing -> throw AiKeyAccessException(AiKeyStatus.NONE)
                     EnvelopeRead.Invalid -> throw AiKeyAccessException(AiKeyStatus.INVALID)
@@ -198,7 +199,7 @@ class AndroidAiKeyStore internal constructor(
             }
         }
         try {
-            return block(material.endpoint, material.keyChars)
+            return block(material.endpoint, material.keyChars, material.configurationGeneration)
         } finally {
             material.wipe()
         }
@@ -332,7 +333,11 @@ class AndroidAiKeyStore internal constructor(
         check(!file.exists() && !File(file.path + ".bak").exists()) { "AI 安全存储清除失败" }
     }
 
-    private class KeyMaterial(val endpoint: AiEndpoint, val keyChars: CharArray) {
+    private class KeyMaterial(
+        val endpoint: AiEndpoint,
+        val keyChars: CharArray,
+        val configurationGeneration: Long
+    ) {
         fun wipe() {
             keyChars.fill(0.toChar())
         }
