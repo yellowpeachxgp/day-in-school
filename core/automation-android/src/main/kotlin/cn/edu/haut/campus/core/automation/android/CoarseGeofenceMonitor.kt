@@ -65,7 +65,7 @@ class CoarseGeofenceMonitor(
                 occurredAt = now,
                 campusId = campusId,
                 enter = inside,
-                accuracyMeters = if (location.hasAccuracy()) location.accuracy else MAX_EMIT_ACCURACY_METERS
+                accuracyMeters = location.accuracy
             )
             outbox.append(codecRegistry.encode(event))
             published++
