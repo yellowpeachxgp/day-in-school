@@ -31,6 +31,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -120,6 +121,31 @@ class VaultBackupServiceTest {
         val second = exportBackup()
         assertEquals(first.second.payloadSha256, second.second.payloadSha256)
         assertEquals(first.second.tables, second.second.tables)
+    }
+
+    @Test
+    fun multiMiBBlobStoreRowsExportThroughChunkedBackupRead() = runBlocking {
+        val size = 3 * 1024 * 1024 + 123
+        val input = ByteArray(size) { index -> ((index * 31 + index / 257) % 251).toByte() }
+        val ref = VaultBlobStore(database, clock = { fixedInstant() }).put(
+            content = input,
+            mimeType = "application/octet-stream",
+            scope = scope
+        )
+
+        val out = ByteArrayOutputStream()
+        val manifest = service.export(scope, BackupSelection.ALL, passphrase, out)
+
+        assertTrue("数 MiB blob 备份必须产生加密归档", out.size() > 0)
+        assertTrue("blob 条目必须计入 manifest", manifest.entryCount >= 1)
+        val plaintext = BackupEnvelopeCrypto.decrypt(out.toByteArray(), passphrase)
+        val entries = BackupZip.read(plaintext)
+        plaintext.fill(0)
+        assertArrayEquals(
+            "备份 blob 条目必须经分块读取后完整保真",
+            input,
+            entries.getValue(BackupWireCodec.blobPathFor(ref.sha256))
+        )
     }
 
     @Test

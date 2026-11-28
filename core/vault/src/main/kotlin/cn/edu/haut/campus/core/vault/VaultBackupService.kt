@@ -16,6 +16,8 @@ import java.io.OutputStream
 import java.time.Instant
 import java.util.UUID
 
+private const val BACKUP_BLOB_READ_CHUNK_BYTES = 512 * 1024
+
 /** Room 实现的 dis-backup/v1 服务：导出一致性快照、口令整体加密、预览后原子恢复。 */
 class VaultBackupService(
     private val database: HautDatabase,
@@ -461,7 +463,15 @@ class VaultBackupService(
     private fun exportTable(policy: BackupTablePolicy, blobs: MutableMap<String, ByteArray>): BackupTableData {
         val schema = readTableSchema(policy)
         val columns = schema.backupColumns
-        val selectColumns = columns.joinToString(",") { quoteIdentifier(it.name) }
+        // blob_store.content 可能达到数 MiB；不能把整行放进 Android CursorWindow。
+        // 主查询用空 BLOB 占位保持列顺序，真正的内容在该行元数据读出后按 <=512KiB 分块补读。
+        val selectColumns = columns.joinToString(",") { column ->
+            if (policy.table == "blob_store" && column.name == "content") {
+                "X'' AS " + quoteIdentifier(column.name)
+            } else {
+                quoteIdentifier(column.name)
+            }
+        }
         val orderBy = policy.primaryKeys.joinToString(",") { quoteIdentifier(it) }
         val rows = mutableListOf<BackupRow>()
         sqlite.query(
@@ -470,7 +480,21 @@ class VaultBackupService(
             while (cursor.moveToNext()) {
                 val cells = LinkedHashMap<String, BackupCell>()
                 columns.forEachIndexed { index, column ->
-                    cells[column.name] = readCell(cursor, index, blobs)
+                    cells[column.name] = if (policy.table == "blob_store" && column.name == "content") {
+                        // 占位单元格只保持列位置；下一行元数据齐备后会替换为真实分块内容。
+                        BackupCell.NullValue
+                    } else {
+                        readCell(cursor, index, blobs)
+                    }
+                }
+                if (policy.table == "blob_store") {
+                    val blobId = (cells["blobId"] as? BackupCell.TextValue)?.value
+                        ?: throw BackupValidationException("blob_store 行缺少 blobId")
+                    val byteCount = (cells["byteCount"] as? BackupCell.LongValue)?.value
+                        ?: throw BackupValidationException("blob_store 行缺少 byteCount: " + blobId)
+                    val content = readBlobContentInChunks(blobId, byteCount)
+                    // LinkedHashMap 替换已存在的 content 键不会改变列顺序，manifest 摘要保持 schema 列序。
+                    cells["content"] = registerBlobBytes(content, blobs)
                 }
                 val row = BackupRow(cells)
                 BackupSchemaSafety.validateCellValues(row.cells, "备份表 " + policy.table)
@@ -488,19 +512,52 @@ class VaultBackupService(
             Cursor.FIELD_TYPE_INTEGER -> BackupCell.LongValue(cursor.getLong(index))
             Cursor.FIELD_TYPE_FLOAT -> BackupCell.DoubleValue(cursor.getDouble(index))
             Cursor.FIELD_TYPE_STRING -> BackupCell.TextValue(cursor.getString(index))
-            Cursor.FIELD_TYPE_BLOB -> {
-                val bytes = cursor.getBlob(index)
-                BackupSchemaSafety.validateBlobBytes(bytes, "备份 blob 内容")
-                val sha = Digests.sha256Hex(bytes)
-                val existing = blobs[sha]
-                if (existing != null && !existing.contentEquals(bytes)) {
-                    throw BackupValidationException("检测到 SHA-256 blob 冲突，已停止备份")
-                }
-                if (existing == null) blobs[sha] = bytes.copyOf()
-                BackupCell.BlobValue(sha, bytes.size.toLong(), BackupWireCodec.blobPathFor(sha))
-            }
+            Cursor.FIELD_TYPE_BLOB -> registerBlobBytes(cursor.getBlob(index), blobs)
             else -> throw BackupValidationException("SQLite 单元格类型不受支持")
         }
+
+    private fun registerBlobBytes(bytes: ByteArray, blobs: MutableMap<String, ByteArray>): BackupCell.BlobValue {
+        BackupSchemaSafety.validateBlobBytes(bytes, "备份 blob 内容")
+        val sha = Digests.sha256Hex(bytes)
+        val existing = blobs[sha]
+        if (existing != null && !existing.contentEquals(bytes)) {
+            throw BackupValidationException("检测到 SHA-256 blob 冲突，已停止备份")
+        }
+        if (existing == null) blobs[sha] = bytes.copyOf()
+        return BackupCell.BlobValue(sha, bytes.size.toLong(), BackupWireCodec.blobPathFor(sha))
+    }
+
+    /**
+     * 逐块读取 blob_store.content。SQLite substr 对 BLOB 以 1-based 字节偏移计；
+     * 每块 512KiB，低于 Android CursorWindow 常见 2MiB 限制，数 MiB 培养方案/附件不再阻塞全量备份。
+     */
+    private fun readBlobContentInChunks(blobId: String, byteCount: Long): ByteArray {
+        if (byteCount < 0 || byteCount > Int.MAX_VALUE) {
+            throw BackupValidationException("blob_store 行 byteCount 超出可备份范围: " + blobId)
+        }
+        val total = byteCount.toInt()
+        if (total == 0) return ByteArray(0)
+        val result = ByteArray(total)
+        var offset = 0
+        while (offset < total) {
+            val length = minOf(BACKUP_BLOB_READ_CHUNK_BYTES, total - offset)
+            sqlite.query(
+                "SELECT substr(content, ?, ?) FROM blob_store WHERE blobId = ?",
+                arrayOf(offset + 1, length, blobId)
+            ).use { cursor ->
+                if (!cursor.moveToFirst() || cursor.isNull(0)) {
+                    throw BackupValidationException("blob_store 内容分块读取失败: " + blobId)
+                }
+                val chunk = cursor.getBlob(0)
+                if (chunk.size != length) {
+                    throw BackupValidationException("blob_store 内容分块长度不一致: " + blobId)
+                }
+                System.arraycopy(chunk, 0, result, offset, chunk.size)
+            }
+            offset += length
+        }
+        return result
+    }
 
     private fun validateTableAgainstCurrentSchema(input: BackupTableData): BackupTableData {
         val schema = readTableSchema(input.policy)
