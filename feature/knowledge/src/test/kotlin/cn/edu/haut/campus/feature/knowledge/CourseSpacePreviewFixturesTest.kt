@@ -21,5 +21,6 @@ class CourseSpacePreviewFixturesTest {
         assertTrue(content.searchHits.any { it.locationLabel.contains("页") })
         assertTrue(content.searchHits.any { it.locationLabel.contains("图片") })
         assertTrue(content.deadlines.all { it.inTimeline })
+        assertTrue(content.reviewTasks.any { it.stateLabel == "手动计划" })
     }
 }

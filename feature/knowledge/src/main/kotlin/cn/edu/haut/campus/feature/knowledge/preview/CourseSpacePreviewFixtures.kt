@@ -5,6 +5,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.feature.knowledge.CourseDeadlineUi
 import cn.edu.haut.campus.feature.knowledge.CourseMaterialCardUi
+import cn.edu.haut.campus.feature.knowledge.CourseReviewTaskUi
 import cn.edu.haut.campus.feature.knowledge.CourseSearchHitUi
 import cn.edu.haut.campus.feature.knowledge.CourseSpaceScreen
 import cn.edu.haut.campus.feature.knowledge.CourseSpaceStatus
@@ -70,6 +71,23 @@ object CourseSpacePreviewFixtures {
             inTimeline = true
         )
     )
+    private val sampleReviewTasks = listOf(
+        CourseReviewTaskUi(
+            id = "review-1",
+            title = "复习特征值与特征向量",
+            stateLabel = "待做",
+            dueLabel = "3 月 11 日前",
+            estimatedLabel = "约 90 分钟"
+        ),
+        CourseReviewTaskUi(
+            id = "review-2",
+            title = "回看第五章课件第 3 页",
+            stateLabel = "手动计划",
+            dueLabel = "本周内",
+            estimatedLabel = "约 25 分钟"
+        )
+    )
+
     private val base = CourseSpaceUiState(
         status = CourseSpaceStatus.CONTENT,
         courseName = "线性代数",
@@ -78,7 +96,8 @@ object CourseSpacePreviewFixtures {
         availableWeeks = listOf(5, 6, 7, 8),
         query = "",
         materials = sampleMaterials,
-        deadlines = sampleDeadlines
+        deadlines = sampleDeadlines,
+        reviewTasks = sampleReviewTasks
     )
     private val searching = base.copy(query = "对角化", searchHits = sampleHits)
 

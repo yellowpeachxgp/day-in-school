@@ -128,6 +128,9 @@ private fun CourseContent(state: CourseSpaceUiState, onAction: (CourseSpaceActio
     if (state.deadlines.isNotEmpty()) {
         DeadlineCard(state.deadlines)
     }
+    if (state.reviewTasks.isNotEmpty()) {
+        ReviewTaskCard(state.reviewTasks)
+    }
     if (state.query.isNotBlank()) {
         SearchResultsBlock(state, onAction)
     } else {
@@ -202,6 +205,24 @@ private fun DeadlineCard(deadlines: List<CourseDeadlineUi>) {
                         Text(deadline.dueLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (deadline.inTimeline) XPeachStatusBadge("已入时间流")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewTaskCard(tasks: List<CourseReviewTaskUi>) {
+    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("手动复习计划", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            tasks.forEach { task ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(task.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(task.dueLabel + " · " + task.estimatedLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    XPeachStatusBadge(task.stateLabel)
                 }
             }
         }

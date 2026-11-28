@@ -40,6 +40,15 @@ data class CourseSearchHitUi(
 )
 
 @Immutable
+data class CourseReviewTaskUi(
+    val id: String,
+    val title: String,
+    val stateLabel: String,
+    val dueLabel: String,
+    val estimatedLabel: String
+)
+
+@Immutable
 data class CourseDeadlineUi(
     val id: String,
     val title: String,
@@ -58,6 +67,7 @@ data class CourseSpaceUiState(
     val materials: List<CourseMaterialCardUi> = emptyList(),
     val searchHits: List<CourseSearchHitUi> = emptyList(),
     val deadlines: List<CourseDeadlineUi> = emptyList(),
+    val reviewTasks: List<CourseReviewTaskUi> = emptyList(),
     val errorMessage: String? = null,
     val notice: String? = null,
     val exportEnabled: Boolean = true
