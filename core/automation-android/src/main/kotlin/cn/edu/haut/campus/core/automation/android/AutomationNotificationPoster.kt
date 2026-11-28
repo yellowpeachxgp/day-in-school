@@ -34,6 +34,7 @@ class AutomationNotificationPoster(
         if (channelId != DEFAULT_CHANNEL_ID) ensureCustomChannel(channelId)
         if (!channelEnabled(channelId)) return false
 
+        val notificationId = stableNotificationId(scope.profileId.value + ":" + actionExecutionKey)
         val launch = Intent(Intent.ACTION_MAIN).apply {
             component = ComponentName(context.packageName, MAIN_ACTIVITY_CLASS_NAME)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -42,7 +43,7 @@ class AutomationNotificationPoster(
         }
         val contentIntent = PendingIntent.getActivity(
             context,
-            stableNotificationId(actionExecutionKey),
+            notificationId,
             launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -57,7 +58,7 @@ class AutomationNotificationPoster(
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
         return runCatching {
-            manager.notify(stableNotificationId(actionExecutionKey), notification)
+            manager.notify(notificationId, notification)
             true
         }.getOrDefault(false)
     }

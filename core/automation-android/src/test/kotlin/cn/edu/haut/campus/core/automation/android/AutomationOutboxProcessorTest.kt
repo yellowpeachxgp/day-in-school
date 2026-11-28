@@ -30,7 +30,9 @@ import cn.edu.haut.campus.core.events.EventEnvelope
 import cn.edu.haut.campus.core.events.EventOutbox
 import cn.edu.haut.campus.core.events.OutboxEventRecord
 import cn.edu.haut.campus.core.model.AccountId
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
+import cn.edu.haut.campus.core.model.ChangeKind
 import cn.edu.haut.campus.core.model.DataProvenance
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
@@ -132,6 +134,53 @@ class AutomationOutboxProcessorTest {
         assertEquals("outbox 补处理必须命中 dedupe/checkpoint，不得重复动作", 1, action.calls.size)
         assertTrue(flakyOutbox.isAcked(AutomationRuntime.CONSUMER_GROUP, event.eventId))
         assertEquals(0, flakyOutbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
+    }
+
+    @Test
+    fun automationGeneratedVaultEventIsAckedWithoutTriggeringFeedbackLoop() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val action = RecordingAction()
+        val ruleStore = RoomAutomationRuleStore(database, scope)
+        ruleStore.upsert(
+            AutomationRule(
+                id = "vault-event-rule",
+                scope = scope,
+                name = "不得形成反馈环",
+                enabled = true,
+                trigger = TriggerSpec.OnEvent("vault.entity.changed"),
+                conditions = emptyList(),
+                actions = listOf(ActionSpec("test.action"))
+            )
+        )
+        val registry = AutomationExtensionRegistry()
+        builtinTriggerProviders().forEach(registry::registerTriggerProvider)
+        registry.registerActionExecutor(action)
+        val engine = DefaultAutomationEngine(
+            ruleStore = ruleStore,
+            runStore = RoomAutomationRunStore(database),
+            dedupeStore = RoomAutomationDedupeStore(database),
+            registry = registry,
+            checkpointStore = RoomAutomationActionCheckpointStore(database)
+        )
+        val event = DomainEvent.VaultEntityChanged(
+            eventId = "automation-write-event",
+            scope = scope,
+            occurredAt = now,
+            changeId = 1L,
+            writeGroupId = "write-group-1",
+            entityRef = EntityRef(EntityType.PERSONAL_EVENT, "personal:auto-test", scope),
+            change = ChangeKind.CREATED,
+            actor = Actor.AUTOMATION,
+            actorDetail = "personal-event-upsert",
+            changedPaths = listOf("/title")
+        )
+        outbox.append(DomainEventCodecRegistry.DEFAULT.encode(event))
+
+        val consumed = AutomationOutboxProcessor(outbox, ruleStore, engine).consumeOnce()
+
+        assertEquals(1, consumed)
+        assertEquals(0, action.calls.size)
+        assertEquals(0, outbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
     }
 
     @Test

@@ -132,12 +132,13 @@ class AutomationRuntime private constructor(
     }
 
     suspend fun deleteRule(ruleId: String): AutomationWakeSummary {
-        if (ruleStore.delete(ruleId)) {
+        if (ruleStore.get(ruleId) != null) {
             val dao = database.automationDao()
             database.withTransaction {
                 dao.deleteCheckpointsForRule(ruleId)
                 dao.deleteDedupeForRule(ruleId)
                 dao.deleteRunsForRule(ruleId)
+                ruleStore.delete(ruleId)
             }
         }
         return processWake("rule-delete")
