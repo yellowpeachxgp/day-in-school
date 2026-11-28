@@ -133,7 +133,7 @@ internal class RepositoryTimetableTimelineProjection(
     private val accountScope: SchoolAccountScope,
     private val zone: ZoneId,
     currentTermFlow: Flow<Term?>,
-    courseSnapshots: Flow<CourseScheduleTimelineSnapshot>,
+    private val courseSnapshots: Flow<CourseScheduleTimelineSnapshot>,
     private val nowDate: () -> LocalDate = { LocalDate.now(zone) }
 ) : TimetableTimelineProjection {
     private val currentTermFlow = currentTermFlow.distinctUntilChanged()
