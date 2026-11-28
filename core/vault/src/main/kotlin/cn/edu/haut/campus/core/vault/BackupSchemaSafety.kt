@@ -32,22 +32,18 @@ internal object BackupSchemaSafety {
     )
 
     private val sensitiveAssignmentPattern = Regex(
-        "(?i)(?<![A-Za-z0-9_])[\"']?(?:password|passwd|pwd|passphrase|passcode|credential|client[_-]?secret|secret|" +
-            "api[_-]?key|ai[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|" +
-            "id[_-]?token|session[_-]?token|auth(?:orization)?(?:[_-]?token)?|bearer|cookie|set-cookie|" +
-            "session(?:[_-]?id)?|sid|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)[\"']?\s*[:=]\s*[\"']?" +
-            "[^\s,;\]\}\"']{3,}"
+        """(?i)(?<![A-Za-z0-9_])["']?(?:password|passwd|pwd|passphrase|passcode|credential|client[_-]?secret|secret|api[_-]?key|ai[_-]?key|private[_-]?key|access[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|auth(?:orization)?(?:[_-]?token)?|bearer|cookie|set-cookie|session(?:[_-]?id)?|sid|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)["']?\s*[:=]\s*["']?[^\s,;\]\}"']{3,}"""
     )
     private val cookieNameAssignmentPattern = Regex(
-        "(?i)(?<![A-Za-z0-9_])(?:jsessionid|sessionid|session|ssid|sid|csrftoken|csrf[_-]token|xsrf[_-]token)" +
-            "[A-Za-z0-9_-]*\s*=\s*[^\s;,]{3,}"
+        """(?i)(?<![A-Za-z0-9_])(?:jsessionid|sessionid|session|ssid|sid|csrftoken|csrf[_-]token|xsrf[_-]token)[A-Za-z0-9_-]*\s*=\s*[^\s;,]{3,}"""
     )
     private val bearerValuePattern = Regex(
-        "(?i)(?<![A-Za-z0-9_])bearer\s+[A-Za-z0-9][A-Za-z0-9._~+/-]{7,}={0,2}"
+        """(?i)(?<![A-Za-z0-9_])bearer\s+[A-Za-z0-9][A-Za-z0-9._~+/-]{7,}={0,2}"""
     )
     private val jwtValuePattern = Regex(
-        "(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])"
+        """(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])"""
     )
+
     private val privateKeyBlockPattern = Regex("-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----")
     private val commonProviderSecretPatterns = listOf(
         Regex("(?<![A-Za-z0-9])sk-(?:ant-)?[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
