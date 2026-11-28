@@ -116,7 +116,8 @@ class DefaultAutomationEngine(
             event = triggerEvent,
             source = "dry-run"
         )
-        return executeRule(rule, instance, dryRun = true, executionFence = null)
+        val boundInstance = if (triggerEvent != null) bindDomainEventInstance(rule, instance) else instance
+        return executeRule(rule, boundInstance, dryRun = true, executionFence = null)
     }
 
     override suspend fun onTrigger(ruleId: String, triggerInstanceKey: String) {
