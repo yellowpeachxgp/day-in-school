@@ -10,13 +10,19 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import javax.crypto.spec.SecretKeySpec
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [31])
 class AndroidE2eeSyncKeyStoreTest {
     @Test
-    fun androidKeystoreSealedStoreRoundTripsAndWipes() = runBlocking {
-        val keys = AndroidE2eeSyncKeyStore(RuntimeEnvironment.getApplication(), "prof-android-keystore-test")
+    fun keystoreSealedStoreRoundTripsAndWipes() = runBlocking {
+        val wrappingKey = SecretKeySpec(ByteArray(32) { (it + 1).toByte() }, "AES")
+        val keys = AndroidE2eeSyncKeyStore(
+            RuntimeEnvironment.getApplication(),
+            "prof-android-keystore-test",
+            wrappingKeyOverride = { wrappingKey }
+        )
         keys.wipe()
         assertFalse(keys.exists())
         val recovery = keys.createNew()

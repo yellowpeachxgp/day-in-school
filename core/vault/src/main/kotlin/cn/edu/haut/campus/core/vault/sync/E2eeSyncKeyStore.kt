@@ -75,7 +75,8 @@ object E2eeSyncRecoveryKeys {
 class AndroidE2eeSyncKeyStore(
     context: Context,
     profileId: String,
-    private val random: SecureRandom = SecureRandom()
+    private val random: SecureRandom = SecureRandom(),
+    private val wrappingKeyOverride: (() -> SecretKey)? = null
 ) : E2eeSyncKeyStore {
     private val mutex = Mutex()
     private val rootDir: File
@@ -167,6 +168,7 @@ class AndroidE2eeSyncKeyStore(
     }
 
     private fun wrappingKey(): SecretKey {
+        wrappingKeyOverride?.let { return it() }
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val existing = runCatching { store.getKey(wrapAlias, null) as? SecretKey }.getOrElse {
             runCatching { store.deleteEntry(wrapAlias) }
