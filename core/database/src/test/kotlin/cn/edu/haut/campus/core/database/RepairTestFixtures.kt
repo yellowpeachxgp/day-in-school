@@ -100,9 +100,9 @@ internal data class RepairTestFixture(
                 appContext = context,
                 database = database,
                 preferences = dataStore,
-                accountProfile = profile,
-                academicEntityWritePort = academicEntityWritePort
+                accountProfile = profile
             )
+            repository.overrideAcademicEntityWritePortForTest(academicEntityWritePort)
             repository.activateSession(1L)
             return RepairTestFixture(database, repository, dataStore, profile, storeFile)
         }

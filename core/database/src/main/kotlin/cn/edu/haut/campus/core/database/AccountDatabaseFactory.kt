@@ -71,8 +71,7 @@ internal class AccountDatabaseFactory(private val context: Context) {
                 context,
                 database,
                 preferences,
-                profile,
-                academicEntityWritePort = AcademicEntityWritePortRegistry.create(database, profile)
+                profile
             )
         }
     }

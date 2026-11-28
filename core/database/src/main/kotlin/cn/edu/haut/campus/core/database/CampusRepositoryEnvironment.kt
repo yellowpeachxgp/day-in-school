@@ -13,9 +13,12 @@ internal class CampusRepositoryEnvironment(
     val database: HautDatabase,
     val preferences: DataStore<Preferences>,
     val accountProfile: AccountProfileEntity,
-    val academicEntityWritePort: AcademicEntityWritePort,
+    academicEntityWritePort: AcademicEntityWritePort,
     private val scheduleOrPolicyChangedNotifier: suspend (String) -> Unit
 ) {
+    @Volatile
+    internal var academicEntityWritePort: AcademicEntityWritePort = academicEntityWritePort
+
     val dao: CampusDao = database.campusDao()
 
     val supportsHautServices: Boolean
