@@ -226,7 +226,7 @@ class CampusRepository internal constructor(
         override suspend fun wipeCommunityCacheForCloudIdentityChange() =
             CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
     }
-    private val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
+    val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
         environment = repositoryEnvironment,
         appContext = appContext,
         cloudTokenVault = cloudTokenVault,
@@ -1427,16 +1427,6 @@ class CampusRepository internal constructor(
     /** 提交云委托/写回前的即时复核：切号、解绑、同号重登、换 base-url 一律视为已失效。实现已迁至 CloudIdentityRepository，门面仅委托。 */
     suspend fun isCloudIdentitySnapshotCurrent(snapshot: CloudIdentitySessionSnapshot): Boolean =
         cloudIdentityRepository.isCloudIdentitySnapshotCurrent(snapshot)
-
-    /** community client 专用窄缝：令牌只在数据库模块内解析，feature 层不得直接读取凭据。 */
-    internal suspend fun resolveCommunityAccessToken(snapshot: CloudIdentitySessionSnapshot): String =
-        cloudIdentityRepository.resolveValidCloudAccessToken(
-            forceRefresh = false,
-            expectedIdentity = snapshot,
-        )
-
-    /** community 文件缓存根目录窄缝；不暴露 appContext 本身。 */
-    internal fun communityFilesDir(): java.io.File = appContext.filesDir
 
 
     @Volatile

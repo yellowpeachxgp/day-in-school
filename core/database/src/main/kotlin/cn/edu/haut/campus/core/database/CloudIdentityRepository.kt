@@ -185,6 +185,10 @@ class CloudIdentityRepository internal constructor(
     suspend fun isCloudIdentitySnapshotCurrent(snapshot: CampusRepository.CloudIdentitySessionSnapshot): Boolean =
         cloudIdentityMutex.withLock { isCloudIdentitySnapshotCurrentLocked(snapshot) }
 
+    /** W4-07 community client 的窄令牌读取口；令牌只交给当前 feature 装配的请求闭包，不进入日志/缓存/备份。 */
+    suspend fun resolveCommunityAccessToken(snapshot: CampusRepository.CloudIdentitySessionSnapshot): String =
+        resolveValidCloudAccessToken(forceRefresh = false, expectedIdentity = snapshot)
+
     /**
      * 网络响应写回：身份锁内复核快照仍有效后执行条件 UPDATE（rows=0 即丢弃），
      * 绝不从网络响应 INSERT 过期绑定行。
