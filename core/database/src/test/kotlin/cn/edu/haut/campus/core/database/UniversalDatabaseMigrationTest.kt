@@ -961,6 +961,77 @@ class UniversalDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration13To14RollbackAfterTwoInboxDdlSectionsKeepsV13AndAllowsRetry() {
+        val dbName = "migration_v13_inbox_rollback.db"
+        try {
+            createVersionedDatabase(dbName, 13) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO period_times
+                    (id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel)
+                    VALUES ('pt_v13_rollback_keep', 'tt', 1, '08:00', '08:45', '上午')
+                    """.trimIndent()
+                )
+            }
+            val failing = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(object : Migration(13, 14) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        // 先完整执行 v14 的 inbox_items/inbox_proposals 两段 DDL 与索引，再合成失败；
+                        // Room 必须把整段 v13→v14 事务回滚，而不是留下半套 inbox 表或索引。
+                        MIGRATION_13_14.migrate(db)
+                        error("合成 v14 inbox 两段 DDL 后迁移中断")
+                    }
+                })
+                .allowMainThreadQueries()
+                .build()
+            try {
+                assertTrue(runCatching { failing.openHelper.writableDatabase }.isFailure)
+            } finally {
+                failing.close()
+            }
+            SQLiteDatabase.openDatabase(context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READONLY).use { sqlite ->
+                assertEquals(13, sqlite.version)
+                sqlite.rawQuery(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE name IN ('inbox_items', 'inbox_proposals') OR name LIKE 'index_inbox%'
+                    """.trimIndent(),
+                    null
+                ).use { cursor ->
+                    assertFalse("失败事务不得遗留 inbox 表或索引", cursor.moveToFirst())
+                }
+                sqlite.rawQuery("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v13_rollback_keep'", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                }
+            }
+
+            val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_13_14)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = retried.openHelper.writableDatabase
+                assertEquals(14, sqlite.version)
+                for (tableName in listOf("inbox_items", "inbox_proposals")) {
+                    sqlite.query("SELECT COUNT(*) FROM " + tableName).use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals(0, cursor.getInt(0))
+                    }
+                }
+                sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v13_rollback_keep'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                }
+            } finally {
+                retried.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
     private fun createVersionNineDatabase(
         name: String,
         seed: (SQLiteDatabase) -> Unit
