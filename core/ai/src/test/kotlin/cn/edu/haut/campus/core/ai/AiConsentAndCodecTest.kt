@@ -57,7 +57,7 @@ class AiConsentAndCodecTest {
 
     @Test
     fun responseCodecExtractsTextAndUsage() {
-        val body = "{"model":"remote-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"答案"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}"
+        val body = """{"model":"remote-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"答案"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}"""
         val result = OpenAiCompatibleCodec.decodeChatResponse(body, "fallback")
 
         val success = result as AiResult.Success
@@ -71,7 +71,7 @@ class AiConsentAndCodecTest {
     @Test
     fun remoteErrorMessageNeverLeaksArbitraryProviderText() {
         val canary = AiTestFixtures.keyCanary()
-        val body = "{"error":{"type":"invalid_api_key","message":"bad credential $canary"}}"
+        val body = """{"error":{"type":"invalid_api_key","message":"bad credential $canary"}}"""
         val sanitized = OpenAiCompatibleCodec.sanitizedRemoteErrorType(body)
 
         assertEquals("invalid_api_key", sanitized)

@@ -15,7 +15,7 @@ class OpenAiCompatibleProviderTest {
         val transport = RecordingTransport(
             AiTransportResponse(
                 200,
-                "{"model":"remote","choices":[{"finish_reason":"stop","message":{"content":"完成"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"
+                """{"model":"remote","choices":[{"finish_reason":"stop","message":{"content":"完成"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"""
             )
         )
         val harness = Harness(transport = transport)
@@ -92,7 +92,7 @@ class OpenAiCompatibleProviderTest {
             }
         }
         val transport = RecordingTransport(
-            AiTransportResponse(200, "{"choices":[{"message":{"content":"看图完成"}}]}")
+            AiTransportResponse(200, """{"choices":[{"message":{"content":"看图完成"}}]}""")
         )
         val harness = Harness(transport = transport, attachmentReader = attachmentReader)
         val req = AiTestFixtures.request("描述图片").copy(attachments = listOf(blob))
@@ -110,7 +110,7 @@ class OpenAiCompatibleProviderTest {
     fun remoteErrorDetailsDoNotEchoKeyMaterialEvenIfProviderDoes() = runTest {
         val canary = AiTestFixtures.keyCanary()
         val transport = RecordingTransport(
-            AiTransportResponse(401, "{"error":{"type":"invalid_api_key","message":"bad key $canary"}}")
+            AiTransportResponse(401, """{"error":{"type":"invalid_api_key","message":"bad key $canary"}}""")
         )
         val harness = Harness(transport = transport)
         val req = AiTestFixtures.request()
