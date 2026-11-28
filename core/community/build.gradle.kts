@@ -1,4 +1,5 @@
 plugins {
+    `java-library`
     alias(libs.plugins.kotlin.jvm)
 }
 
@@ -23,6 +24,10 @@ tasks.register("testDebugUnitTest") {
 }
 
 tasks.withType<Test>().configureEach {
+    useJUnit()
     // 契约比对测试只读仓库根目录 contracts/，不复制、不修改权威契约。
     workingDir(rootDir)
+    testLogging {
+        events("passed", "failed", "skipped")
+    }
 }
