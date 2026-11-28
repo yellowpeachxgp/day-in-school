@@ -176,4 +176,51 @@ class LegacyCampusGraphMigrationTest {
         assertNull(pureNumericWithoutCampus.building)
         assertEquals("numeric-room-needs-campus-context", pureNumericWithoutCampus.reason)
     }
+
+    @Test
+    fun unverifiedLegacyAliasesStayOutOfExactAliasesAndResolveAsFuzzy() {
+        val building = snapshot.buildingByLegacyId("b_t2", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)!!
+        assertFalse(building.aliases.any { it == "A座" })
+        assertTrue(building.legacyAliases.any { it.value == "A座" && !it.verified })
+
+        val fuzzy = snapshot.resolveRoomText("A座204", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, fuzzy.status)
+        assertEquals("b_t2", fuzzy.building?.legacyBuildingId)
+        assertEquals("A座", fuzzy.matchedAlias)
+        assertTrue(fuzzy.confidence < 0.85f)
+        assertEquals("alias-needs-confirmation", fuzzy.reason)
+
+        val verifiedAlias = snapshot.resolveRoomText("教学楼A204", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.EXACT_VERIFIED, verifiedAlias.status)
+        assertEquals("b_t2", verifiedAlias.building?.legacyBuildingId)
+    }
+
+    @Test
+    fun f01W111ResolutionDoesNotPromoteUnverifiedVenueOrFallIntoEFZoneAsExact() {
+        val zone = snapshot.buildingByLegacyId("b_dorm_ef", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)!!
+        assertFalse(zone.aliases.any { it.contains("F01") })
+        assertTrue(zone.legacyAliases.any { it.value == "学生宿舍F01" && !it.verified })
+
+        val zoneAlias = snapshot.resolveRoomText("宿舍F01 W111", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, zoneAlias.status)
+        assertEquals("b_dorm_ef", zoneAlias.building?.legacyBuildingId)
+        assertEquals("宿舍F01", zoneAlias.matchedAlias)
+        assertTrue(zoneAlias.confidence < 1.0f)
+
+        val fullVenue = snapshot.resolveRoomText("莲花街校区 学生宿舍F01 W111")
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, fullVenue.status)
+        assertEquals("学生宿舍F01", fullVenue.building?.name)
+        assertFalse(fullVenue.building?.legacyBuildingId == "b_dorm_ef")
+        assertEquals("W111", fullVenue.room?.roomNumber)
+        assertEquals("W111", fullVenue.roomNumberHint)
+        assertNull(fullVenue.building?.location)
+        assertNull(fullVenue.room?.location)
+        assertTrue(fullVenue.confidence < 1.0f)
+        assertEquals("direct-building-needs-verification", fullVenue.reason)
+
+        val roomOnly = snapshot.resolveRoomText("W111", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, roomOnly.status)
+        assertEquals("room-needs-verification", roomOnly.reason)
+        assertTrue(roomOnly.confidence < 1.0f)
+    }
 }

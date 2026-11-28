@@ -46,6 +46,7 @@ class CampusGraphSnapshot private constructor(
             "Campus Graph 快照包含重复稳定 ID：" + duplicated.joinToString { it.id }
         }
         byRef = entitiesInput.associateBy { it.ref }
+        validateReferenceConsistency()
     }
 
     fun entity(ref: PlaceRef): CampusGraphEntity? = byRef[ref]
@@ -200,14 +201,18 @@ class CampusGraphSnapshot private constructor(
             return when (matched.size) {
                 1 -> {
                     val room = matched.single()
+                    val building = byRef[room.buildingRef] as? BuildingNode
+                    val verified = room.provenance.verifiedAt != null
                     CampusGraphRoomResolution(
                         rawRoom = rawRoom,
-                        status = BuildingMatchStatus.EXACT_VERIFIED,
+                        status = if (verified) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
                         room = room,
-                        building = byRef[room.buildingRef] as? BuildingNode,
+                        building = building,
                         roomNumberHint = room.roomNumber,
-                        confidence = 0.98f,
-                        matchedAlias = room.name
+                        confidence = if (verified) 0.98f else 0.68f,
+                        matchedAlias = room.name,
+                        candidateBuildings = if (verified) emptyList() else listOfNotNull(building),
+                        reason = if (verified) null else "room-needs-verification"
                     )
                 }
                 else -> CampusGraphRoomResolution(
@@ -251,15 +256,25 @@ class CampusGraphSnapshot private constructor(
             }
             val building = bestMatches.single()
             val room = roomNumberHint?.let { hint -> findRoomInBuilding(hint, building) }
+            val verified = building.provenance.verifiedAt != null
             return CampusGraphRoomResolution(
                 rawRoom = rawRoom,
-                status = BuildingMatchStatus.EXACT_VERIFIED,
+                status = if (verified) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
                 room = room,
                 building = building,
                 roomNumberHint = roomNumberHint,
-                confidence = 1.0f,
+                confidence = if (verified) 1.0f else 0.70f,
                 matchedAlias = building.name,
-                reason = if (room == null) "building-matched-room-not-in-graph" else null
+                candidateBuildings = if (verified) {
+                    emptyList()
+                } else {
+                    listOf(building) + buildingPool.filter { it.ref != building.ref }.take(2)
+                },
+                reason = when {
+                    !verified -> "direct-building-needs-verification"
+                    room == null -> "building-matched-room-not-in-graph"
+                    else -> null
+                }
             )
         }
 
@@ -325,6 +340,81 @@ class CampusGraphSnapshot private constructor(
             candidateBuildings = buildingPool.take(4),
             reason = "no-building-or-room-match"
         )
+    }
+
+    private fun validateReferenceConsistency() {
+        entities.filterIsInstance<RoomNode>().forEach { room ->
+            validateLocationConsistency(room.ref, room.buildingRef, room.floorRef, null)
+        }
+        entities.filterIsInstance<IndoorNode>().forEach { node ->
+            validateLocationConsistency(node.ref, node.buildingRef, node.floorRef, node.roomRef)
+            (byRef[node.parent] as? EntranceNode)?.let { entrance ->
+                require(entrance.buildingRef == node.buildingRef) {
+                    "室内节点入口 parent 与所属楼宇不一致：" + node.ref.id
+                }
+            }
+        }
+        entities.filterIsInstance<FacilityNode>().forEach { facility ->
+            validateLocationConsistency(facility.ref, facility.buildingRef, facility.floorRef, facility.roomRef)
+        }
+        entities.filterIsInstance<ServiceNode>().forEach { service ->
+            val expectedBuilding = service.buildingRef ?: return@forEach
+            val parent = requireNotNull(service.parent) { "服务 parent 不能为空：" + service.ref.id }
+            val parentBuilding = buildingContextOf(parent)
+            if (parentBuilding != null) {
+                require(parentBuilding == expectedBuilding) {
+                    "服务 parent 层级与 buildingRef 不一致：" + service.ref.id
+                }
+            }
+        }
+    }
+
+    private fun validateLocationConsistency(
+        owner: PlaceRef,
+        buildingRef: PlaceRef?,
+        floorRef: PlaceRef?,
+        roomRef: PlaceRef?
+    ) {
+        if (floorRef != null) {
+            (byRef[floorRef] as? FloorNode)?.let { floor ->
+                if (buildingRef != null) {
+                    require(floor.buildingRef == buildingRef) {
+                        "楼层引用与所属楼宇不一致：" + owner.id
+                    }
+                }
+            }
+        }
+        if (roomRef != null) {
+            (byRef[roomRef] as? RoomNode)?.let { room ->
+                if (buildingRef != null) {
+                    require(room.buildingRef == buildingRef) {
+                        "房间引用与所属楼宇不一致：" + owner.id
+                    }
+                }
+                if (floorRef != null) {
+                    require(room.floorRef == floorRef) {
+                        "房间引用与所属楼层不一致：" + owner.id
+                    }
+                }
+            }
+        }
+    }
+
+    private fun buildingContextOf(ref: PlaceRef?, visiting: Set<PlaceRef> = emptySet()): PlaceRef? {
+        if (ref == null || ref in visiting) return null
+        val nextVisiting = visiting + ref
+        return when (val entity = byRef[ref]) {
+            is BuildingNode -> entity.ref
+            is FloorNode -> entity.buildingRef
+            is RoomNode -> entity.buildingRef
+            is EntranceNode -> entity.buildingRef
+            is IndoorNode -> entity.buildingRef
+            is FacilityNode -> entity.buildingRef
+                ?: entity.roomRef?.let { buildingContextOf(it, nextVisiting) }
+                ?: entity.floorRef?.let { buildingContextOf(it, nextVisiting) }
+            is ServiceNode -> entity.buildingRef ?: buildingContextOf(entity.parent, nextVisiting)
+            else -> null
+        }
     }
 
     private fun detectExplicitInlineCampus(trimmed: String): CampusId? {
@@ -503,12 +593,22 @@ class CampusGraphSnapshot private constructor(
             crowdEntities: List<CampusGraphEntity> = emptyList(),
             now: LocalDate = LocalDate.now()
         ): CampusGraphSnapshot {
-            val merged = LinkedHashMap<PlaceRef, CampusGraphEntity>()
-            fun absorb(layer: List<CampusGraphEntity>, expectedLevel: CampusGraphSourceLevel) {
+            fun requireLayer(layer: List<CampusGraphEntity>, expectedLevel: CampusGraphSourceLevel) {
                 for (entity in layer) {
                     require(entity.provenance.sourceLevel == expectedLevel) {
                         "合并输入层与 sourceLevel 不一致：" + entity.ref.id
                     }
+                }
+            }
+            // 层级错配是输入错误，必须先于众包过期过滤显式拒绝；
+            // 否则错层且无/过期 reviewBy 的实体会被静默丢弃，破坏 fail-closed 语义。
+            requireLayer(dataPackageEntities, CampusGraphSourceLevel.DATA_PACKAGE)
+            requireLayer(userOverrideEntities, CampusGraphSourceLevel.USER_OVERRIDE)
+            requireLayer(crowdEntities, CampusGraphSourceLevel.CROWD_REPORT)
+
+            val merged = LinkedHashMap<PlaceRef, CampusGraphEntity>()
+            fun absorb(layer: List<CampusGraphEntity>) {
+                for (entity in layer) {
                     val current = merged[entity.ref]
                     if (current == null || entity.provenance.sourceLevel.priority >= current.provenance.sourceLevel.priority) {
                         merged[entity.ref] = entity
@@ -518,9 +618,9 @@ class CampusGraphSnapshot private constructor(
             val activeCrowdEntities = crowdEntities.filter { entity ->
                 entity.provenance.reviewBy?.let { reviewBy -> !reviewBy.isBefore(now) } == true
             }
-            absorb(dataPackageEntities, CampusGraphSourceLevel.DATA_PACKAGE)
-            absorb(userOverrideEntities, CampusGraphSourceLevel.USER_OVERRIDE)
-            absorb(activeCrowdEntities, CampusGraphSourceLevel.CROWD_REPORT)
+            absorb(dataPackageEntities)
+            absorb(userOverrideEntities)
+            absorb(activeCrowdEntities)
             return CampusGraphSnapshot(merged.values.toList())
         }
 

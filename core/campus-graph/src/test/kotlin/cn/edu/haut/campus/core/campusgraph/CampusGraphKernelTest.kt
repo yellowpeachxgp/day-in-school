@@ -100,6 +100,26 @@ class CampusGraphKernelTest {
         assertThrowsIllegalArgument {
             CampusGraphSnapshot.merge(dataPackageEntities = listOf(user))
         }
+
+        val wrongLayerWithoutReviewBy = building(ref, CampusGraphSourceLevel.DATA_PACKAGE, name = "错层数据包楼")
+        assertThrowsIllegalArgument {
+            CampusGraphSnapshot.merge(
+                dataPackageEntities = emptyList(),
+                crowdEntities = listOf(wrongLayerWithoutReviewBy),
+                now = LocalDate.now()
+            )
+        }
+
+        val wrongLayerExpired = user.copy(
+            provenance = user.provenance.copy(reviewBy = LocalDate.now().minusDays(1))
+        )
+        assertThrowsIllegalArgument {
+            CampusGraphSnapshot.merge(
+                dataPackageEntities = emptyList(),
+                crowdEntities = listOf(wrongLayerExpired),
+                now = LocalDate.now()
+            )
+        }
     }
 
     @Test

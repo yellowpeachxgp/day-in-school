@@ -203,7 +203,9 @@ object LegacyCampusGraphMigration {
             category = category,
             parent = campusRef,
             location = location,
-            aliases = (listOf(shortName) + legacyAliases.filter { !it.pattern }.map { it.value })
+            // aliases 是直接解析可使用的“已核验显示别名”；verified=false 的 legacy 别名
+            // 只保留在 legacyAliases 中进入模糊候选，绝不能在这里被提升为精确匹配证据。
+            aliases = (listOf(shortName) + legacyAliases.filter { !it.pattern && it.verified }.map { it.value })
                 .filter { it.isNotBlank() }
                 .distinct(),
             legacyAliases = legacyAliases,

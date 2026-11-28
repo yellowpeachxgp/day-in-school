@@ -280,7 +280,7 @@ data class IndoorNode(
     val floorRef: PlaceRef? = null,
     val roomRef: PlaceRef? = null,
     val nodeKind: CampusGraphIndoorNodeKind,
-    override val parent: PlaceRef = floorRef ?: buildingRef,
+    override val parent: PlaceRef = roomRef ?: floorRef ?: buildingRef,
     override val location: GeoPoint? = null,
     override val aliases: List<String> = emptyList(),
     override val provenance: CampusGraphProvenance,
@@ -471,18 +471,63 @@ private fun validateReferenceInvariant(entity: CampusGraphEntity) {
             requireRefType(entity.buildingRef, CampusGraphEntityType.BUILDING, "室内节点所属楼宇")
             entity.floorRef?.let { requireRefType(it, CampusGraphEntityType.FLOOR, "室内节点所属楼层") }
             entity.roomRef?.let { requireRefType(it, CampusGraphEntityType.ROOM, "室内节点所属房间") }
+            val parentType = CampusGraphIds.typeOf(entity.parent)
+            if (parentType == CampusGraphEntityType.ENTRANCE) {
+                require(entity.nodeKind == CampusGraphIndoorNodeKind.ENTRANCE) {
+                    "入口类室内节点才能挂到入口 parent：" + entity.ref.id
+                }
+                require(entity.floorRef == null && entity.roomRef == null) {
+                    "挂到入口 parent 的室内节点不能再声明楼层/房间引用：" + entity.ref.id
+                }
+            } else {
+                val expectedParent = entity.roomRef ?: entity.floorRef ?: entity.buildingRef
+                require(entity.parent == expectedParent) {
+                    "室内节点 parent 必须等于最具体的房间/楼层/楼宇引用：" + entity.ref.id
+                }
+            }
         }
         is FacilityNode -> {
             entity.buildingRef?.let { requireRefType(it, CampusGraphEntityType.BUILDING, "设施所属楼宇") }
             entity.floorRef?.let { requireRefType(it, CampusGraphEntityType.FLOOR, "设施所属楼层") }
             entity.roomRef?.let { requireRefType(it, CampusGraphEntityType.ROOM, "设施所属房间") }
+            val expectedParent = entity.roomRef ?: entity.floorRef ?: entity.buildingRef
+            val parent = requireNotNull(entity.parent) { "设施 parent 不能为空：" + entity.ref.id }
+            if (expectedParent == null) {
+                require(CampusGraphIds.typeOf(parent) == CampusGraphEntityType.CAMPUS) {
+                    "无楼宇/楼层/房间引用的设施必须挂到校区 parent：" + entity.ref.id
+                }
+            } else {
+                require(entity.parent == expectedParent) {
+                    "设施 parent 必须等于最具体的房间/楼层/楼宇引用：" + entity.ref.id
+                }
+            }
         }
         is ServiceNode -> {
             entity.buildingRef?.let { requireRefType(it, CampusGraphEntityType.BUILDING, "服务所属楼宇") }
+            val parent = requireNotNull(entity.parent) { "服务 parent 不能为空：" + entity.ref.id }
+            when (CampusGraphIds.typeOf(parent)) {
+                CampusGraphEntityType.BUILDING -> require(entity.buildingRef == parent) {
+                    "服务挂到楼宇 parent 时 buildingRef 必须一致：" + entity.ref.id
+                }
+                CampusGraphEntityType.CAMPUS -> require(entity.buildingRef == null) {
+                    "服务挂到校区 parent 时不能同时声明楼宇引用：" + entity.ref.id
+                }
+                else -> Unit
+            }
         }
         is ProcedureNode -> {
             entity.serviceRef?.let { requireRefType(it, CampusGraphEntityType.SERVICE, "流程所属服务") }
             entity.dependsOn.forEach { requireRefType(it, CampusGraphEntityType.PROCEDURE, "流程依赖") }
+            val parent = requireNotNull(entity.parent) { "流程 parent 不能为空：" + entity.ref.id }
+            if (entity.serviceRef == null) {
+                require(CampusGraphIds.typeOf(parent) == CampusGraphEntityType.CAMPUS) {
+                    "无服务引用的流程必须挂到校区 parent：" + entity.ref.id
+                }
+            } else {
+                require(entity.parent == entity.serviceRef) {
+                    "流程 parent 必须等于所属服务引用：" + entity.ref.id
+                }
+            }
         }
         is CampusNode, is BuildingNode -> Unit
     }
