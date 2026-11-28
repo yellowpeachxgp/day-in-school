@@ -45,6 +45,10 @@ class DisDatapackCampusGraphDecoder(
      * 待 W6-03/契约线明确映射后再开放。
      */
     fun decode(pack: DisDatapack): List<CampusGraphEntity> {
+        val duplicatedItemIds = pack.items.groupingBy { it.id }.eachCount().filterValues { it > 1 }.keys
+        require(duplicatedItemIds.isEmpty()) {
+            "dis-datapack 包含重复 item ID，不能安全投影：" + duplicatedItemIds.joinToString()
+        }
         val projected = when (pack.kind) {
             DisDatapackKind.PROCEDURE_GUIDE -> pack.items.map { item ->
                 procedureEntity(pack, item as DisDatapackItem.ProcedureGuide)

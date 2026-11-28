@@ -108,8 +108,11 @@ class DisDatapackCampusGraphDecoderTest {
     }
 
     @Test
-    fun decodeVerifiedRejectsDuplicateProjectedStableIdsFailClosed() {
-        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid/forms"))
+    fun decodeVerifiedRejectsDuplicateItemIdsAcrossCampusesFailClosed() {
+        val bytes = procedurePackWithItemPlacements(listOf(
+            "aid/forms" to "haut/lianhuajie/campus/lianhuajie",
+            "aid/forms" to "haut/songshanlu/campus/songshanlu"
+        ))
         val decoded = DisDatapackLoader.decode(bytes)
 
         assertThrowsIllegalArgument {
@@ -154,9 +157,12 @@ class DisDatapackCampusGraphDecoderTest {
         }
     }
 
-    private fun procedurePackWithItemIds(itemIds: List<String>): ByteArray {
-        val items = itemIds.mapIndexed { index, id ->
-            "{\"id\":\"" + id + "\",\"placeRef\":\"haut/lianhuajie/service/student-affairs\",\"steps\":[{\"id\":\"s" + (index + 1) + "\",\"instruction\":\"办理\",\"title\":\"步骤\"}],\"title\":\"事项 " + index + "\"}"
+    private fun procedurePackWithItemIds(itemIds: List<String>): ByteArray =
+        procedurePackWithItemPlacements(itemIds.map { it to "haut/lianhuajie/service/student-affairs" })
+
+    private fun procedurePackWithItemPlacements(placements: List<Pair<String, String>>): ByteArray {
+        val items = placements.mapIndexed { index, placement ->
+            "{\"id\":\"" + placement.first + "\",\"placeRef\":\"" + placement.second + "\",\"steps\":[{\"id\":\"s" + (index + 1) + "\",\"instruction\":\"办理\",\"title\":\"步骤\"}],\"title\":\"事项 " + index + "\"}"
         }.joinToString(",")
         return ("{\"format\":\"dis-datapack/v1\",\"items\":[" + items + "],\"kind\":\"procedure-guide\",\"maintainers\":[\"github:example-maintainer\"],\"packId\":\"haut.procedures\",\"reviewBy\":\"2027-05-20\",\"schoolId\":\"haut\",\"sources\":[{\"retrievedAt\":\"2026-11-20\",\"title\":\"学校办事流程公开页\",\"url\":\"https://example.com/haut/procedure-guide\"}],\"verificationLevel\":\"UNVERIFIED\",\"verifiedAt\":\"2026-11-20\",\"version\":\"2026.11.1\"}").toByteArray(Charsets.UTF_8)
     }
