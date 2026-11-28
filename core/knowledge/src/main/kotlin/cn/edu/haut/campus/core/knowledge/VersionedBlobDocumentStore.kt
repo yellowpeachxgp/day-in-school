@@ -1,6 +1,6 @@
 package cn.edu.haut.campus.core.knowledge
 
-import cn.edu.haut.campus.core.database.BlobStoreEntity
+import cn.edu.haut.campus.core.database.BlobStoreMetadataRow
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
@@ -49,22 +49,24 @@ internal class VersionedBlobDocumentStore(
     }
 
     suspend fun readDocument(ownerId: String): JsonValue.Obj? {
-        val rows = dao.getBlobsForOwner(
+        val rows = dao.getBlobMetadataForOwner(
             schoolId = scope.schoolId.value,
             accountId = scope.accountId.value,
             profileId = scope.profileId.value,
             ownerEntityType = ownerType.name,
-            ownerEntityId = ownerId
+            ownerEntityId = ownerId,
+            mimeType = mimeType
         )
         return latestEnvelope(rows)?.document
     }
 
     suspend fun listDocuments(): Map<String, JsonValue.Obj> {
-        val rows = dao.getBlobsByOwnerType(
+        val rows = dao.getBlobMetadataByOwnerType(
             schoolId = scope.schoolId.value,
             accountId = scope.accountId.value,
             profileId = scope.profileId.value,
-            ownerEntityType = ownerType.name
+            ownerEntityType = ownerType.name,
+            mimeType = mimeType
         )
         val grouped = rows.filter { it.ownerEntityId != null }.groupBy { it.ownerEntityId.orEmpty() }
         val result = LinkedHashMap<String, JsonValue.Obj>()
@@ -74,15 +76,17 @@ internal class VersionedBlobDocumentStore(
         return result
     }
 
-    private fun latestEnvelope(rows: List<BlobStoreEntity>): VersionedDocument? {
-        return rows.asSequence()
-            .filter { row -> row.inKnowledgeScope() && row.mimeType == mimeType }
-            .map(::decodeEnvelope)
-            .lastOrNull()
+    private suspend fun latestEnvelope(rows: List<BlobStoreMetadataRow>): VersionedDocument? {
+        var latest: VersionedDocument? = null
+        rows.filter { row -> row.inKnowledgeScope() && row.mimeType == mimeType }
+            .forEach { row -> latest = decodeEnvelope(row) }
+        return latest
     }
 
-    private fun decodeEnvelope(row: BlobStoreEntity): VersionedDocument {
-        val obj = Json.parse(row.content.toString(Charsets.UTF_8)).asObjOrNull
+    private suspend fun decodeEnvelope(row: BlobStoreMetadataRow): VersionedDocument {
+        val blob = blobStore.get(row.blobId, scope)
+            ?: throw IllegalStateException("版本化知识文档 blob 不存在: " + row.blobId)
+        val obj = Json.parse(blob.content().toString(Charsets.UTF_8)).asObjOrNull
             ?: throw IllegalArgumentException("版本化知识文档必须是 object")
         require(obj.requiredString("format") == VERSIONED_DOCUMENT_FORMAT) { "版本化知识文档格式不受支持" }
         val document = obj.requiredObject("document")
@@ -94,7 +98,7 @@ internal class VersionedBlobDocumentStore(
         )
     }
 
-    private fun BlobStoreEntity.inKnowledgeScope(): Boolean =
+    private fun BlobStoreMetadataRow.inKnowledgeScope(): Boolean =
         scopeSchoolId == scope.schoolId.value &&
             scopeAccountId == scope.accountId.value &&
             scopeProfileId == scope.profileId.value &&

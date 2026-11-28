@@ -311,11 +311,17 @@ interface VaultDao {
     @Query("SELECT * FROM blob_store ORDER BY createdAtEpochMs ASC, blobId ASC")
     suspend fun getBlobsSnapshot(): List<BlobStoreEntity>
 
-    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType ORDER BY rowid ASC")
-    suspend fun getBlobsByOwnerType(schoolId: String, accountId: String, profileId: String, ownerEntityType: String): List<BlobStoreEntity>
+    @Query("SELECT blobId, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId, sha256, mimeType, byteCount, ownerEntityType, ownerEntityId, createdAtEpochMs FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType ORDER BY rowid ASC")
+    suspend fun getBlobsByOwnerType(schoolId: String, accountId: String, profileId: String, ownerEntityType: String): List<BlobStoreMetadataRow>
 
-    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId ORDER BY rowid ASC")
-    suspend fun getBlobsForOwner(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, ownerEntityId: String): List<BlobStoreEntity>
+    @Query("SELECT blobId, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId, sha256, mimeType, byteCount, ownerEntityType, ownerEntityId, createdAtEpochMs FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId ORDER BY rowid ASC")
+    suspend fun getBlobsForOwner(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, ownerEntityId: String): List<BlobStoreMetadataRow>
+
+    @Query("SELECT blobId, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId, sha256, mimeType, byteCount, ownerEntityType, ownerEntityId, createdAtEpochMs FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND mimeType = :mimeType ORDER BY rowid ASC")
+    suspend fun getBlobMetadataByOwnerType(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, mimeType: String): List<BlobStoreMetadataRow>
+
+    @Query("SELECT blobId, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId, sha256, mimeType, byteCount, ownerEntityType, ownerEntityId, createdAtEpochMs FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId AND mimeType = :mimeType ORDER BY rowid ASC")
+    suspend fun getBlobMetadataForOwner(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, ownerEntityId: String, mimeType: String): List<BlobStoreMetadataRow>
 
     @Query("DELETE FROM blob_store")
     suspend fun clearBlobStore(): Int

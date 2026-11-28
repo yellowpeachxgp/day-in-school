@@ -197,6 +197,28 @@ class VaultBlobStoreTest {
     }
 
     @Test
+    fun multiMiBBlobRoundTripsThroughMetadataProjectionAndChunkedReads() = runBlocking {
+        val size = 3 * 1024 * 1024 + 123
+        val input = ByteArray(size) { index -> ((index * 31 + index / 257) % 251).toByte() }
+        val owner = EntityRef(EntityType.INBOX_ITEM, "large-blob", scope)
+        val ref = blobs.put(input, "application/octet-stream", scope, owner = owner)
+
+        val metadata = database.vaultDao().getBlobsForOwner(
+            schoolId = scope.schoolId.value,
+            accountId = scope.accountId.value,
+            profileId = scope.profileId.value,
+            ownerEntityType = EntityType.INBOX_ITEM.name,
+            ownerEntityId = "large-blob"
+        ).single()
+        assertEquals(ref.blobId, metadata.blobId)
+        assertEquals(size.toLong(), metadata.byteCount)
+        assertEquals(ref.sha256, metadata.sha256)
+
+        val stored = blobs.get(ref.blobId, scope)
+        assertArrayEquals("数 MiB blob 必须经分块读取完整往返", input, stored!!.content())
+    }
+
+    @Test
     fun deleteIsScopedAndIdempotent() = runBlocking {
         val otherScope = scope.copy(accountId = AccountId("acct_other"), profileId = ProfileId("prof_other"))
         val ref = blobs.put(byteArrayOf(1, 2), "text/plain", scope)

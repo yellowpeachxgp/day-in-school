@@ -10,7 +10,9 @@ import java.util.Locale
 data class CompletedCourse(
     val courseKey: String,
     val courseName: String,
-    val credits: BigDecimal
+    val credits: BigDecimal,
+    /** 生成该逻辑课程结论的代表成绩实体 ID；改名后也不能用展示 courseKey 反查成绩。 */
+    val representativeAttemptId: String? = null
 ) {
     init {
         require(courseKey.isNotBlank() && courseName.isNotBlank()) { "课程标识与名称不能为空" }
@@ -26,7 +28,11 @@ data class CourseAssignment(
     val course: CompletedCourse,
     val groupId: String,
     val matchedBy: CourseMatchKind,
-    val otherCandidateGroupIds: List<String>
+    val otherCandidateGroupIds: List<String>,
+    /** 替代课程实际满足的方案课程引用；用于从 pendingCourses 中移除被替代课程。 */
+    val fulfilledCourse: PlanCourseRef? = null,
+    /** 人工认定入账时的认定 ID；自动匹配为 null。 */
+    val overrideId: String? = null
 )
 
 /** 单个要求组的完成情况；[remainingCredits] 即该组缺口。 */
@@ -39,7 +45,9 @@ data class GroupProgress(
     val remainingCredits: BigDecimal,
     val surplusCredits: BigDecimal,
     val assignedCourses: List<CourseAssignment>,
-    val pendingCourses: List<PlanCourseRef>
+    val pendingCourses: List<PlanCourseRef>,
+    /** 本组子树内逐条入账来源（含后代组）；父组展开依据时使用，direct assignedCourses 语义不变。 */
+    val subtreeAssignedCourses: List<CourseAssignment> = emptyList()
 )
 
 /**
@@ -71,25 +79,33 @@ data class DegreeProgress(
 /**
  * 按培养方案统计毕业进度。规则（本地推导，UNVERIFIED，不代表任何学校的真实认定口径）：
  *
- * 1. 只有叶子组参与统计，父组学分不重复累加；
- * 2. 一门课程只归入一个组：先按课程代码匹配，再按课程名称匹配，同级按方案先序取第一个；
- * 3. 同一课程出现多条已修记录时按课程去重，学分只算一次；
+ * 1. 每组的 requiredCredits 是对其子树的汇总约束；子组成绩计入父组，但总量按递归最少要求计算，不重复累加；
+ * 2. 一门课程只归入一个最直接归属组：先按课程代码匹配，再按课程名称匹配；后代/更深组优先于先序父组，同层按方案先序；
+ * 3. 同一课程出现多条已修记录时按课程去重，学分只算一次；混合父组的直接课程参与匹配；
  * 4. 未匹配到任何组的课程进入「未归类」，不计入学分与缺口，也不做估算补齐；
- * 5. 总缺口是各组缺口之和：某组超额不能抵扣其他组的缺口。
+ * 5. 总缺口是满足整棵要求树还需的增量学分：子组缺口可计入父组汇总，某组超额不能抵扣其他组缺口。
  */
 object DegreeProgressCalculator {
 
     fun evaluate(plan: TrainingPlan, completed: List<CompletedCourse>): DegreeProgress {
         val notes = mutableListOf<String>()
         val deduped = dedupe(completed, notes)
-        val leaves = plan.leafGroups()
+        val allGroups = plan.allGroups()
+        val depthById = plan.groupDepths()
+        val preorderIndexById = allGroups.mapIndexed { index, group -> group.id to index }.toMap()
+        val courseBearingGroups = allGroups
+            .filter { it.courses.isNotEmpty() }
+            .sortedWith(
+                compareByDescending<RequirementGroup> { depthById[it.id] ?: 0 }
+                    .thenBy { preorderIndexById[it.id] ?: Int.MAX_VALUE }
+            )
 
         val assignmentsByGroup = LinkedHashMap<String, MutableList<CourseAssignment>>()
-        leaves.forEach { assignmentsByGroup[it.id] = mutableListOf() }
+        allGroups.forEach { assignmentsByGroup[it.id] = mutableListOf() }
         val unclassified = mutableListOf<CompletedCourse>()
 
         deduped.sortedWith(compareBy({ it.courseKey }, { it.courseName })).forEach { course ->
-            val candidates = candidateGroups(course, leaves)
+            val candidates = candidateGroups(course, courseBearingGroups)
             if (candidates.isEmpty()) {
                 unclassified += course
             } else {
@@ -97,7 +113,7 @@ object DegreeProgressCalculator {
                 val others = candidates.drop(1).map { it.first.id }
                 if (others.isNotEmpty()) {
                     notes += "课程「${course.courseName}」可归入 ${candidates.size} 个要求组，" +
-                        "按方案先序归入「${chosen.first.title}」，其他组不重复计分"
+                        "按更深组优先/同层先序归入「${chosen.first.title}」，其他组不重复计分"
                 }
                 assignmentsByGroup.getValue(chosen.first.id) += CourseAssignment(
                     course = course,
@@ -108,13 +124,27 @@ object DegreeProgressCalculator {
             }
         }
 
-        val groups = leaves.map { group ->
+        val directEarnedByGroup = allGroups.associate { group ->
+            group.id to assignmentsByGroup.getValue(group.id).fold(BigDecimal.ZERO) { acc, assignment ->
+                acc.add(assignment.course.credits)
+            }
+        }
+        val totals = RequirementTreeMath.analyze(plan, directEarnedByGroup)
+        val visibleGroups = allGroups.filter(RequirementTreeMath::isProgressVisible)
+        fun subtreeAssignments(group: RequirementGroup): List<CourseAssignment> = buildList {
+            addAll(assignmentsByGroup.getValue(group.id))
+            group.children.forEach { addAll(subtreeAssignments(it)) }
+        }
+        val groups = visibleGroups.map { group ->
             val assignments = assignmentsByGroup.getValue(group.id)
-            val earned = assignments.fold(BigDecimal.ZERO) { acc, assignment -> acc.add(assignment.course.credits) }
+            val subtreeAssignmentList = subtreeAssignments(group)
+            val groupTotals = totals.getValue(group.id)
+            val earned = groupTotals.aggregateEarnedCredits
             val remaining = (group.requiredCredits - earned).max(BigDecimal.ZERO)
             val surplus = (earned - group.requiredCredits).max(BigDecimal.ZERO)
-            val pending = group.courses.filter { ref -> assignments.none { matchesRef(it.course, ref) } }
-            if (group.courses.isEmpty() && group.requiredCredits > BigDecimal.ZERO) {
+            // 与 DegreeAuditor 同规则：更深后代组已经承接的课程必须从父组 pending 中扣除。
+            val pending = group.courses.filter { ref -> subtreeAssignmentList.none { matchesRef(it.course, ref) } }
+            if (group.courses.isEmpty() && group.requiredCredits > BigDecimal.ZERO && group.isLeaf) {
                 notes += "要求组「${group.title}」未列出具体课程（开放选修或任选课），缺口按学分统计，不推断具体待修课程"
             }
             GroupProgress(
@@ -126,14 +156,19 @@ object DegreeProgressCalculator {
                 remainingCredits = remaining,
                 surplusCredits = surplus,
                 assignedCourses = assignments,
-                pendingCourses = pending
+                pendingCourses = pending,
+                subtreeAssignedCourses = subtreeAssignmentList
             )
         }
 
-        val totalRequired = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.requiredCredits) }
-        val totalEarned = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.earnedCredits) }
-        val totalRemaining = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.remainingCredits) }
-        val totalSurplus = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.surplusCredits) }
+        val totalRequired = plan.totalRequiredCredits
+        val totalEarned = assignmentsByGroup.values.flatten().fold(BigDecimal.ZERO) { acc, assignment ->
+            acc.add(assignment.course.credits)
+        }
+        val totalRemaining = RequirementTreeMath.totalAdditionalNeeded(plan, totals)
+        val leafIds = plan.leafGroups().map { it.id }.toSet()
+        val totalSurplus = groups.filter { it.groupId in leafIds }
+            .fold(BigDecimal.ZERO) { acc, group -> acc.add(group.surplusCredits) }
 
         val provenance = when {
             plan.source == PlanSource.UNKNOWN -> Provenance.ESTIMATED
@@ -155,7 +190,7 @@ object DegreeProgressCalculator {
             planId = plan.id,
             planVersion = plan.version,
             provenance = provenance,
-            basis = "按培养方案「${plan.title}」${plan.version} 的 ${leaves.size} 个叶子要求组统计已修记录",
+            basis = "按培养方案「${plan.title}」${plan.version} 的层次要求树（叶子要求组与混合组直接课程）统计已修记录",
             groups = groups,
             unclassified = unclassified,
             totalRequiredCredits = totalRequired,
@@ -169,22 +204,27 @@ object DegreeProgressCalculator {
     /** 代码匹配优先：只要方案里有课程代码命中，就不再退化为名称匹配，避免同名课程串组。 */
     private fun candidateGroups(
         course: CompletedCourse,
-        leaves: List<RequirementGroup>
+        groups: List<RequirementGroup>
     ): List<Pair<RequirementGroup, CourseMatchKind>> {
-        val byCode = leaves.mapNotNull { group ->
+        val byCode = groups.mapNotNull { group ->
             val hit = group.courses.any { ref -> ref.code != null && normalize(ref.code) == normalize(course.courseKey) }
             if (hit) group to CourseMatchKind.CODE else null
         }
         if (byCode.isNotEmpty()) return byCode
-        return leaves.mapNotNull { group ->
-            val hit = group.courses.any { ref -> normalize(ref.name) == normalize(course.courseName) }
+        return groups.mapNotNull { group ->
+            val hit = group.courses.any { ref -> matchesRef(course, ref) }
             if (hit) group to CourseMatchKind.NAME else null
         }
     }
 
     private fun matchesRef(course: CompletedCourse, ref: PlanCourseRef): Boolean {
-        val byCode = ref.code != null && normalize(ref.code) == normalize(course.courseKey)
-        return byCode || normalize(ref.name) == normalize(course.courseName)
+        val refCode = normalizedNonBlank(ref.code)
+        val courseCode = normalizedNonBlank(course.courseKey)
+        if (refCode != null && courseCode != null) {
+            // 同名不同码是不同课程；显式 code 冲突时不得退化为名称命中。
+            return refCode == courseCode
+        }
+        return normalize(ref.name) == normalize(course.courseName)
     }
 
     /** 同一课程的多条记录按课程去重，保留学分最高的一条，保证学分只入账一次。 */
@@ -205,6 +245,9 @@ object DegreeProgressCalculator {
         }
         return byKey.values.toList()
     }
+
+    private fun normalizedNonBlank(text: String?): String? =
+        text?.trim()?.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
 
     private fun normalize(text: String): String = text.trim().lowercase(Locale.ROOT)
 }

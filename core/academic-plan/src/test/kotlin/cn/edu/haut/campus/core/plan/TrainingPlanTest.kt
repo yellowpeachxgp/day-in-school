@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.plan
 
+import java.math.BigDecimal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -31,10 +32,14 @@ class TrainingPlanTest {
     )
 
     @Test
-    fun totalRequiredCreditsSumsLeafGroupsOnly() {
+    fun totalRequiredCreditsUsesHierarchyWithoutDoubleCounting() {
         val plan = PlanFixtures.plan(tree())
-        PlanFixtures.assertAmount("60", plan.totalRequiredCredits, "UNVERIFIED：父组 60 分 + 叶子 60 分不得累加成 120")
+        PlanFixtures.assertAmount("60", plan.totalRequiredCredits, "UNVERIFIED：父组 60 分 + 子组 60 分不得累加成 120")
         assertEquals("UNVERIFIED：两个叶子组", 2, plan.leafGroups().size)
+
+        val root = tree().single()
+        val higherRoot = PlanFixtures.plan(listOf(root.copy(requiredCredits = BigDecimal("80"))))
+        PlanFixtures.assertAmount("80", higherRoot.totalRequiredCredits, "UNVERIFIED：root 更高的汇总要求必须成为总要求")
     }
 
     @Test

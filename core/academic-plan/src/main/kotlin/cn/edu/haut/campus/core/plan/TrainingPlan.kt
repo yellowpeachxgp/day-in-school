@@ -18,20 +18,62 @@ enum class RequirementKind(val label: String) {
     GENERAL("通识")
 }
 
+/** 课程在方案中声明的开课学期；[UNKNOWN] 表示方案没有给出，风险判断不得臆测。 */
+enum class CourseOffering(val label: String) {
+    SPRING_ONLY("仅春季开设"),
+    AUTUMN_ONLY("仅秋季开设"),
+    BOTH("春秋均开设"),
+    UNKNOWN("开课学期未知")
+}
+
 /**
  * 方案里的一门可归属课程。教务的课程代码可能缺失，此时只按名称匹配。
  * 匹配一律精确比较（忽略大小写与首尾空白），不做模糊匹配，避免把相近课程算成同一门。
+ *
+ * [offering] 与 [prerequisites] 是方案可能声明的教学安排信息，只用于风险提示，
+ * 不参与学分核算；[prerequisites] 的元素是同一方案内其他课程的代码或名称原文。
  */
-data class PlanCourseRef(val code: String?, val name: String) {
+data class PlanCourseRef(
+    val code: String?,
+    val name: String,
+    val offering: CourseOffering = CourseOffering.UNKNOWN,
+    val prerequisites: List<String> = emptyList()
+) {
     init {
         require(name.isNotBlank()) { "方案课程名称不能为空" }
         require(code == null || code.isNotBlank()) { "课程代码为空时应传 null" }
+        require(prerequisites.all { it.isNotBlank() }) { "先修课程引用不能为空字符串" }
     }
 }
 
 /**
- * 培养方案要求组，可嵌套成树。父组学分是「整块要求」的展示值，
- * 真正承载课程与统计的是叶子组；两级学分一起累加会让总数虚高。
+ * 方案声明的替代课程规则：修完 [course] 可抵 [replaces] 的要求。
+ * 只在方案显式声明时生效；学校实际认定口径以人工认定（AuditOverride）为准。
+ */
+data class SubstitutionRule(
+    val course: PlanCourseRef,
+    val replaces: PlanCourseRef,
+    val note: String? = null
+) {
+    init {
+        require(note == null || note.length <= 256) { "替代规则说明过长" }
+    }
+}
+
+/**
+ * 方案声明的课程改名映射：成绩里的 [was] 按 [now] 参与匹配。
+ * 用于学校课程改名后老成绩归属；只在方案显式声明时生效，不做模糊猜测。
+ */
+data class CourseRename(
+    val was: PlanCourseRef,
+    val now: PlanCourseRef
+)
+
+/**
+ * 培养方案要求组，可嵌套成树。每组的 [requiredCredits] 是对本组子树的约束：
+ * 子组成绩计入祖先组的汇总进度，但同一门课程只在一个最直接归属组入账。
+ * 因此父组与子组学分不是简单相加关系；总量按「满足整棵树约束所需的最少学分」计算。
+ * 混合组（既有直接课程又有子组）的直接课程归属本组自身，不得静默丢弃。
  */
 data class RequirementGroup(
     val id: String,
@@ -49,7 +91,7 @@ data class RequirementGroup(
 
     val isLeaf: Boolean get() = children.isEmpty()
 
-    /** 先序遍历本组及其全部子组；顺序即毕业进度的归组优先级。 */
+    /** 先序遍历本组及其全部子组；自动归组时更深后代优先，遍历时序只作同层稳定次序。 */
     fun traverse(): List<RequirementGroup> = buildList {
         add(this@RequirementGroup)
         children.forEach { addAll(it.traverse()) }
@@ -68,7 +110,9 @@ data class TrainingPlan(
     val majors: Set<String> = emptySet(),
     val source: PlanSource,
     val confirmedForStudent: Boolean,
-    val groups: List<RequirementGroup>
+    val groups: List<RequirementGroup>,
+    val substitutions: List<SubstitutionRule> = emptyList(),
+    val renames: List<CourseRename> = emptyList()
 ) {
     init {
         require(id.isNotBlank() && title.isNotBlank() && version.isNotBlank()) {
@@ -84,13 +128,38 @@ data class TrainingPlan(
 
     fun allGroups(): List<RequirementGroup> = groups.flatMap { it.traverse() }
 
-    /** 只有叶子组承载实际课程要求，学分合计只累加叶子组。 */
+    /** 每个要求组在方案树中的深度；根为 0。自动归组用它保证后代/更深组优先于先序父组。 */
+    fun groupDepths(): Map<String, Int> {
+        val depths = LinkedHashMap<String, Int>()
+        fun visit(group: RequirementGroup, depth: Int) {
+            depths[group.id] = depth
+            group.children.forEach { visit(it, depth + 1) }
+        }
+        groups.forEach { visit(it, 0) }
+        return depths
+    }
+
+    /** 叶子组清单；混合父组的直接课程不在这里，但仍是本组自身的有效要求。 */
     fun leafGroups(): List<RequirementGroup> = allGroups().filter { it.isLeaf }
 
     fun groupById(id: String): RequirementGroup? = allGroups().firstOrNull { it.id == id }
 
+    /**
+     * 满足整棵要求树的最少总学分。子组要求会计入父组汇总，故递归取
+     * max（本组声明要求，各子组最少要求之和），避免父子重复累加；
+     * 当教务网关只给出 root 总要求而子组为 0 时，root 要求仍会正确成为总要求。
+     */
     val totalRequiredCredits: BigDecimal
-        get() = leafGroups().fold(BigDecimal.ZERO) { acc, group -> acc.add(group.requiredCredits) }
+        get() = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(minimumRequiredCredits(group)) }
+
+    companion object {
+        fun minimumRequiredCredits(group: RequirementGroup): BigDecimal {
+            val childMinimum = group.children.fold(BigDecimal.ZERO) { acc, child ->
+                acc.add(minimumRequiredCredits(child))
+            }
+            return maxOf(group.requiredCredits, childMinimum)
+        }
+    }
 
     /** 年级与专业是否适用于该方案；专业集合为空表示方案未限定专业。 */
     fun matches(gradeYear: Int, major: String?): Boolean {
