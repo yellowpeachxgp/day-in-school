@@ -22,7 +22,7 @@ canonicalJson(header)
 ciphertext || GCM tag
 ```
 
-header 只包含算法参数，不包含用户数据：`format=dis-backup-envelope/v1`、`formatVersion`、`kdf=PBKDF2WithHmacSHA256`、`iterations`、`cipher=AES/GCM/NoPadding`、salt、nonce、`keyCheck`、payloadFormat、plaintextSha256。默认导出迭代次数为 120000。header canonical bytes 同时作为 AES-GCM AAD；keyCheck 只用于把「口令错误」与「口令正确但密文/容器损坏」分开，不保存口令或派生密钥本身。
+header 只包含算法参数，不包含用户数据：`format=dis-backup-envelope/v1`、`formatVersion`、`kdf=PBKDF2WithHmacSHA256`、`iterations`、`cipher=AES/GCM/NoPadding`、salt、nonce、`keyCheck`、payloadFormat。默认导出迭代次数为 120000。PBKDF2 输出只作为 master key，再以 HMAC 域分离出 AES 子键和 key-check 子键。header canonical bytes 同时作为 AES-GCM AAD；keyCheck 只用于把「口令错误」与「口令正确但密文/容器损坏」分开，不保存口令或派生密钥本身。v1 刻意不在明文 header 放 plaintext 摘要，避免给未授权观察者提供内容指纹。
 
 ## 2. manifest.json
 

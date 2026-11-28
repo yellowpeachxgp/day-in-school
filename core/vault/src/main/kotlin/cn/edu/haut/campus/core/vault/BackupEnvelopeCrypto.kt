@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.core.vault
 
-import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.nio.ByteBuffer
@@ -38,20 +37,19 @@ internal object BackupEnvelopeCrypto {
         require(plaintextZip.size <= BackupFormatConstants.MAX_ARCHIVE_BYTES) { "备份明文超过大小上限" }
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val nonce = ByteArray(NONCE_BYTES).also(random::nextBytes)
-        val keyBytes = deriveKey(passphrase, salt, iterations)
+        val keys = deriveKeys(passphrase, salt, iterations)
         try {
-            val keyCheck = keyCheck(keyBytes)
+            val keyCheck = keyCheck(keys.check)
             val header = canonicalHeader(
                 iterations = iterations,
                 salt = salt,
                 nonce = nonce,
-                keyCheck = keyCheck,
-                plaintextSha256 = Digests.sha256Hex(plaintextZip)
+                keyCheck = keyCheck
             )
             val headerBytes = header.toByteArray(Charsets.UTF_8)
             require(headerBytes.size <= BackupFormatConstants.MAX_HEADER_BYTES) { "备份加密头过大" }
             val cipher = Cipher.getInstance(CIPHER)
-            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keys.encryption, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
             cipher.updateAAD(headerBytes)
             val ciphertext = cipher.doFinal(plaintextZip)
             val out = ByteBuffer.allocate(MAGIC.size + 4 + headerBytes.size + ciphertext.size)
@@ -63,7 +61,7 @@ internal object BackupEnvelopeCrypto {
             Arrays.fill(keyCheck, 0)
             return out.array()
         } finally {
-            Arrays.fill(keyBytes, 0)
+            keys.zero()
         }
     }
 
@@ -95,7 +93,7 @@ internal object BackupEnvelopeCrypto {
         }
         val allowedHeaderKeys = setOf(
             "format", "formatVersion", "kdf", "iterations", "cipher", "salt", "nonce",
-            "keyCheck", "payloadFormat", "plaintextSha256"
+            "keyCheck", "payloadFormat"
         )
         val unknownHeaderKeys = header.fields.keys - allowedHeaderKeys
         if (unknownHeaderKeys.isNotEmpty()) {
@@ -122,19 +120,13 @@ internal object BackupEnvelopeCrypto {
         val salt = decodeBase64Field(header, "salt")
         val nonce = decodeBase64Field(header, "nonce")
         val keyCheckExpected = decodeBase64Field(header, "keyCheck")
-        val plaintextSha256 = try {
-            header.requiredString("plaintextSha256")
-        } catch (error: Throwable) {
-            throw BackupCorruptedException("外层缺少明文摘要", error)
-        }
-        if (!plaintextSha256.matches(Regex("[0-9a-f]{64}"))) throw BackupCorruptedException("明文摘要非法")
         if (salt.size != SALT_BYTES || nonce.size != NONCE_BYTES || keyCheckExpected.size != 32) {
             throw BackupCorruptedException("salt/nonce/keyCheck 长度非法")
         }
 
-        val keyBytes = deriveKey(passphrase, salt, iterations)
+        val keys = deriveKeys(passphrase, salt, iterations)
         try {
-            val actualKeyCheck = keyCheck(keyBytes)
+            val actualKeyCheck = keyCheck(keys.check)
             if (!MessageDigest.isEqual(actualKeyCheck, keyCheckExpected)) {
                 Arrays.fill(actualKeyCheck, 0)
                 throw BackupWrongPassphraseException()
@@ -144,19 +136,15 @@ internal object BackupEnvelopeCrypto {
             if (ciphertext.isEmpty()) throw BackupCorruptedException("密文为空")
             val plaintext = try {
                 val cipher = Cipher.getInstance(CIPHER)
-                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keys.encryption, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
                 cipher.updateAAD(headerBytes)
                 cipher.doFinal(ciphertext)
             } catch (error: Throwable) {
                 throw BackupCorruptedException("AES-GCM 完整性校验失败", error)
             }
-            if (!MessageDigest.isEqual(Digests.sha256Hex(plaintext).toByteArray(Charsets.US_ASCII), plaintextSha256.toByteArray(Charsets.US_ASCII))) {
-                Arrays.fill(plaintext, 0)
-                throw BackupCorruptedException("明文 SHA-256 不匹配")
-            }
             return plaintext
         } finally {
-            Arrays.fill(keyBytes, 0)
+            keys.zero()
         }
     }
 
@@ -164,8 +152,7 @@ internal object BackupEnvelopeCrypto {
         iterations: Int,
         salt: ByteArray,
         nonce: ByteArray,
-        keyCheck: ByteArray,
-        plaintextSha256: String
+        keyCheck: ByteArray
     ): String {
         val encoder = Base64.getEncoder()
         return Json.canonical(
@@ -179,27 +166,45 @@ internal object BackupEnvelopeCrypto {
                     "salt" to JsonValue.Str(encoder.encodeToString(salt)),
                     "nonce" to JsonValue.Str(encoder.encodeToString(nonce)),
                     "keyCheck" to JsonValue.Str(encoder.encodeToString(keyCheck)),
-                    "payloadFormat" to JsonValue.Str("application/zip"),
-                    "plaintextSha256" to JsonValue.Str(plaintextSha256)
+                    "payloadFormat" to JsonValue.Str("application/zip")
                 )
             )
         )
     }
 
-    private fun deriveKey(passphrase: CharArray, salt: ByteArray, iterations: Int): ByteArray {
-        val spec = PBEKeySpec(passphrase.copyOf(), salt, iterations, KEY_BITS)
-        return try {
-            SecretKeyFactory.getInstance(KDF).generateSecret(spec).encoded
-        } finally {
-            spec.clearPassword()
+    private class DerivedKeys(val encryption: ByteArray, val check: ByteArray) {
+        fun zero() {
+            Arrays.fill(encryption, 0)
+            Arrays.fill(check, 0)
         }
     }
 
-    private fun keyCheck(keyBytes: ByteArray): ByteArray {
+    private fun deriveKeys(passphrase: CharArray, salt: ByteArray, iterations: Int): DerivedKeys {
+        val passwordCopy = passphrase.copyOf()
+        val spec = PBEKeySpec(passwordCopy, salt, iterations, KEY_BITS)
+        val master = try {
+            SecretKeyFactory.getInstance(KDF).generateSecret(spec).encoded
+        } finally {
+            spec.clearPassword()
+            passwordCopy.fill('\u0000')
+        }
+        return try {
+            DerivedKeys(
+                encryption = hmac(master, "dis-backup/v1/aes-key"),
+                check = hmac(master, "dis-backup/v1/key-check-key")
+            )
+        } finally {
+            Arrays.fill(master, 0)
+        }
+    }
+
+    private fun hmac(keyBytes: ByteArray, purpose: String): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(keyBytes, "HmacSHA256"))
-        return mac.doFinal(KEY_CHECK_PURPOSE.toByteArray(Charsets.UTF_8))
+        return mac.doFinal(purpose.toByteArray(Charsets.UTF_8))
     }
+
+    private fun keyCheck(keyBytes: ByteArray): ByteArray = hmac(keyBytes, KEY_CHECK_PURPOSE)
 
     private fun decodeBase64Field(header: JsonValue.Obj, key: String): ByteArray = try {
         Base64.getDecoder().decode(header.requiredString(key))
