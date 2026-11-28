@@ -93,7 +93,7 @@ internal fun expectNullableEnumWireValue(value: JsonValue?, path: String, allowe
 
 private val DATE_PATTERN = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 private val DATE_TIME_PATTERN = Regex(
-    "^([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+    "^([0-9]{4}-[0-9]{2}-[0-9]{2})[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
 )
 
 private fun validCalendarDate(raw: String): Boolean {
@@ -196,6 +196,9 @@ private fun isValidIpv6Literal(value: String): Boolean {
     }
     val left = parseSide(value.substring(0, firstCompression)) ?: return false
     val right = parseSide(value.substring(firstCompression + 2)) ?: return false
+    // IPv4 tail 只允许占据整个 IPv6 地址的最后 32 bit；位于 "::" 左侧时，
+    // 尾部实际是压缩零段，不能按混合格式接受。
+    if (left.any { it.contains('.') }) return false
     val leftGroups = ipv6PieceGroupCount(left)
     val rightGroups = ipv6PieceGroupCount(right)
     if (leftGroups < 0 || rightGroups < 0) return false
@@ -265,9 +268,10 @@ private fun validateHttpsAuthorityAndBracketPlacement(raw: String, path: String)
 
 internal fun expectHttpsUriValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
-    val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw)
+    val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw) &&
+        raw.indexOf('#') == raw.lastIndexOf('#')
     if (valid) validateHttpsAuthorityAndBracketPlacement(raw, path)
-    if (!valid) schemaFail(path, "must be an absolute HTTPS URI")
+    if (!valid) schemaFail(path, "must be an absolute RFC 3986 HTTPS URI")
     return raw
 }
 
