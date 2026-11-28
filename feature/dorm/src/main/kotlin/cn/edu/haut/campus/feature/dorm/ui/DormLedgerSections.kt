@@ -191,7 +191,7 @@ private fun SettlementSection(state: DormUiState, snapshot: DormSnapshot?, onAct
     val members = snapshot?.members.orEmpty()
     val balances = snapshot?.balances
     XPeachCard(modifier = Modifier.fillMaxWidth()) {
-        SectionTitle("余额与两方确认结算", "CONFIRMED 只表示两方确认了一其次账本记录，绝不表示支付成功")
+        SectionTitle("余额与两方确认结算", "CONFIRMED 只表示两方确认了一次账本记录，绝不表示支付成功")
         if (balances == null || balances.members.isEmpty()) {
             Text("暂无余额信息", style = MaterialTheme.typography.bodySmall)
         } else {
