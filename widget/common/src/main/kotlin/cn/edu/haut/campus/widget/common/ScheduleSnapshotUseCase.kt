@@ -12,7 +12,6 @@ import cn.edu.haut.campus.core.database.DirectScheduleData
 import android.widget.RemoteViews
 import android.net.Uri
 import cn.edu.haut.campus.core.domain.ScheduleEngine
-import cn.edu.haut.campus.core.domain.TimelineScheduleAdapter
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
 import cn.edu.haut.campus.core.model.CampusDeepLinkContract
 import cn.edu.haut.campus.core.model.ClassOccurrence
@@ -95,7 +94,7 @@ object ScheduleSnapshotUseCase {
         val repository = active.repository
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
         val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF053968.toInt())
-        val data = repository.timetableRepository.getDirectScheduleDataSnapshot()
+        val data = repository.getDirectScheduleDataSnapshot()
         return composeWidgetSnapshot(
             data = data,
             config = config,
@@ -131,24 +130,13 @@ object ScheduleSnapshotUseCase {
             periodTimes = data.periodTimes,
             calendarOverrides = data.calendarOverrides,
             occurrenceOverrides = data.occurrenceOverrides,
-            buildings = data.buildings,
-            occurrenceResolver = data.term?.let { activeTerm ->
-                TimelineScheduleAdapter.occurrenceResolver(
-                    term = activeTerm,
-                    courses = data.courses,
-                    rules = data.rules,
-                    periodTimes = data.periodTimes,
-                    calendarOverrides = data.calendarOverrides,
-                    occurrenceOverrides = data.occurrenceOverrides,
-                    buildings = data.buildings
-                )
-            }
+            buildings = data.buildings
         )
 
         val currentWeekNo = daySnapshot.teachingWeek ?: 1
         val activeTerm = data.term
         val weekOccurrences = if (activeTerm != null) {
-            TimelineScheduleAdapter.resolveOccurrencesForTeachingWeek(
+            ScheduleEngine.resolveOccurrencesForTeachingWeek(
                 teachingWeek = currentWeekNo,
                 term = activeTerm,
                 courses = data.courses,
