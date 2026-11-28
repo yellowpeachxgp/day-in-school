@@ -261,32 +261,34 @@ class TodayViewModelDurableWriteTest {
                 reminderCoordinator = createReminderCoordinator(fixture),
                 writeExecutor = executor
             )
+            val firstOperationKey = "operation-a"
+            val secondOperationKey = "operation-b"
 
-            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-token-a", writeToken = "token-a"))
-            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-token-b", writeToken = "token-b"))
+            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-operation-a", writeToken = firstOperationKey))
+            viewModel.onAction(TodayUiAction.SelectCurrentTerm("term-operation-b", writeToken = secondOperationKey))
             withTimeout(2_000) { firstStarted.await() }
             withTimeout(2_000) { secondStarted.await() }
-            assertEquals(setOf("token-a", "token-b"), viewModel.uiState.value.pendingWrites.map { it.token }.toSet())
+            assertEquals(setOf(firstOperationKey, secondOperationKey), viewModel.uiState.value.pendingWrites.map { it.token }.toSet())
 
             secondGate.complete(Unit)
             withTimeout(2_000) {
-                while (!viewModel.uiState.value.writeCompletions.containsKey("token-b")) yield()
+                while (!viewModel.uiState.value.writeCompletions.containsKey(secondOperationKey)) yield()
             }
-            assertFalse("同 kind 的第二次完成不得被第一次操作误消费", viewModel.uiState.value.writeCompletions.containsKey("token-a"))
-            val completionB = viewModel.uiState.value.writeCompletions.getValue("token-b")
-            assertEquals("token-b", completionB.token)
+            assertFalse("同 kind 的第二次完成不得被第一次操作误消费", viewModel.uiState.value.writeCompletions.containsKey(firstOperationKey))
+            val completionB = viewModel.uiState.value.writeCompletions.getValue(secondOperationKey)
+            assertEquals(secondOperationKey, completionB.token)
             assertTrue(completionB.isSuccess)
-            assertTrue(viewModel.uiState.value.pendingWrites.any { it.token == "token-a" })
+            assertTrue(viewModel.uiState.value.pendingWrites.any { it.token == firstOperationKey })
 
-            viewModel.onAction(TodayUiAction.ConsumeWriteCompletion("token-b"))
-            assertFalse(viewModel.uiState.value.writeCompletions.containsKey("token-b"))
+            viewModel.onAction(TodayUiAction.ConsumeWriteCompletion(secondOperationKey))
+            assertFalse(viewModel.uiState.value.writeCompletions.containsKey(secondOperationKey))
 
             firstGate.complete(Unit)
             withTimeout(2_000) {
-                while (!viewModel.uiState.value.writeCompletions.containsKey("token-a")) yield()
+                while (!viewModel.uiState.value.writeCompletions.containsKey(firstOperationKey)) yield()
             }
-            val completionA = viewModel.uiState.value.writeCompletions.getValue("token-a")
-            assertEquals("token-a", completionA.token)
+            val completionA = viewModel.uiState.value.writeCompletions.getValue(firstOperationKey)
+            assertEquals(firstOperationKey, completionA.token)
             assertTrue(completionA.isSuccess)
             assertTrue(viewModel.uiState.value.pendingWrites.isEmpty())
         } finally {
