@@ -161,7 +161,7 @@ class OpenAiCompatibleProviderTest {
     fun remoteErrorDetailsDoNotEchoKeyMaterialEvenIfProviderDoes() = runTest {
         val canary = AiTestFixtures.keyCanary()
         val transport = RecordingTransport(
-            AiTransportResponse(401, """{"error":{"type":"$canary","message":"bad key $canary"}}""")
+            AiTransportResponse(401, """{"error":{"type":"$canary","code":"$canary","message":"bad key $canary"}}""")
         )
         val harness = Harness(transport = transport)
         val req = AiTestFixtures.request()
