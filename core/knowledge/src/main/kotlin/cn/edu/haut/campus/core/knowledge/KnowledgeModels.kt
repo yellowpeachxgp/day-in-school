@@ -215,7 +215,8 @@ data class ReviewSchedule(
         require(planRevision > 0) { "复习排程 planRevision 必须大于 0" }
         require(blocks.size <= MAX_REVIEW_BLOCKS) { "单个复习任务的排程块数量超出上限" }
         require(blocks.map { it.id }.distinct().size == blocks.size) { "复习块 ID 不能重复" }
-        require(blocks.map { it.repetitionIndex }.distinct().size == blocks.size) { "复习块 repetitionIndex 不能重复" }
+        val plannedIndices = blocks.filter { it.state == ReviewBlockState.PLANNED }.map { it.repetitionIndex }
+        require(plannedIndices.distinct().size == plannedIndices.size) { "未来复习块 repetitionIndex 不能重复" }
         require(blocks.map { it.timelineEventId }.distinct().size == blocks.size) { "复习块 TimelineEventId 不能重复" }
         val ordered = blocks.sortedWith(compareBy<ReviewBlock> { it.start }.thenBy { it.repetitionIndex })
         for (index in 1 until ordered.size) {

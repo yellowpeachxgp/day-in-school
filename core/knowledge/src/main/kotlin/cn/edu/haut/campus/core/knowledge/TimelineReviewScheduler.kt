@@ -367,7 +367,7 @@ class TimelineReviewScheduler(
 
     private fun ReviewTask.hasOngoingPlannedBlock(now: Instant): Boolean =
         schedule?.blocks.orEmpty().any {
-            it.state == ReviewBlockState.PLANNED && !it.start.isAfter(now) && it.end.isAfter(now)
+            it.state == ReviewBlockState.PLANNED && it.start.isBefore(now) && it.end.isAfter(now)
         }
 
     private fun solverFailureDescription(result: SolveResult?): String = when (result) {

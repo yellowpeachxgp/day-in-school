@@ -100,7 +100,7 @@ class TimelineReviewSchedulerTest {
         val examBusy = timedEvent(
             id = "exam:linear-midterm",
             kind = TimelineKind.EXAM,
-            title = "线性代数",
+            title = "大学物理",
             start = Instant.parse("2026-03-04T01:00:00Z"),
             end = Instant.parse("2026-03-04T03:00:00Z"),
             entityType = EntityType.EXAM,
