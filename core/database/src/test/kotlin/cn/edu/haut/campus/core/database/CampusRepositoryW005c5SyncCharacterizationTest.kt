@@ -167,7 +167,7 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
           "reservation_jobs":[{"id":"job_c5_warmup","plan_id":"plan_srv_c5_warmup",
             "area_code":"5F_MID","area_name":"五层中区","candidate_seats":["W101"],
             "slot_window":"08:00-22:00","booking_local_date":"2099-01-04","target_local_time":"09:00:00",
-            "state":"CANCELLED","repeat_days":1,"remaining_days":0,
+            "state":"FAILED","repeat_days":1,"remaining_days":0,
             "student_no":"20240001","school_binding_id":"bind_c5"}],
           "orders":[],"parcels":[]}}
     """.trimIndent()
