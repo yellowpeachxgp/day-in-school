@@ -157,8 +157,7 @@ class RuleNoticeParserTest {
 
     @Test
     fun extractedTextFactoryPreservesLineOffsetsForSourceSpans() {
-        val input = ExtractedText.fromPlainText("第一行
-高等数学本周五停课")
+        val input = ExtractedText.fromPlainText("第一行\n高等数学本周五停课")
         val line = input.lines[1]
         assertEquals(4, line.startOffset)
         assertEquals("高等数学本周五停课", line.text)
