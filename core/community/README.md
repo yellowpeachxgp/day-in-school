@@ -15,6 +15,7 @@
 
 - 以 `filesDir/community-cache/account_<sha256(profileId)>` 做 Profile 隔离，文件名不包含学号或账号明文；
 - 原子写入、单条/总字节/条数上限、损坏或异常放大文件 fail-closed 删除；
+- 进程内按 root 共享锁与 wipe generation：擦除前已在途的旧实例写入不得重新种回，擦除后新实例可正常使用；
 - `CommunityClientFactory.createFileBacked` 是唯一受支持的装配形状；
 - 擦除链路经 `CommunityCacheWipeRegistration` 注册到 `ProfileDataWiper`，`CommunityCacheWipeTest` 断言当前 Profile 擦除后为 0 且不跨 Profile 误删。
 
