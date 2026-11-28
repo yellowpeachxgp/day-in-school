@@ -16,6 +16,22 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
+/** W4-12 窄令牌端口：仅供 E2EE 同步 HTTPS client 当前请求使用；不得持久化、写日志或暴露给插件。 */
+fun interface CloudIdentityE2eeAccessTokenProvider {
+    suspend fun resolve(forceRefresh: Boolean, failedAccessToken: String?): String
+}
+
+/** 按 Profile 隔离的进程内令牌端口注册表；由 CloudIdentityRepository 构造时自注册，避免扩大 CampusRepository 外观。 */
+object CloudIdentityE2eeAccessTokenProviderRegistry {
+    private val providers = ConcurrentHashMap<String, CloudIdentityE2eeAccessTokenProvider>()
+
+    internal fun register(profileId: String, provider: CloudIdentityE2eeAccessTokenProvider) {
+        providers[profileId] = provider
+    }
+
+    fun forProfile(profileId: String): CloudIdentityE2eeAccessTokenProvider? = providers[profileId]
+}
+
 /**
  * CloudIdentity 拆分期运行时端口。
  * 云同步编排仍由兼容外观的 Sync 后续批次所有者提供；本批只保持原有触发与传输读取时序。
@@ -39,22 +55,6 @@ internal interface CloudIdentityRuntimePort {
  * 实现从 CampusRepository 兼容门面逐字迁入；锁序（bookingPlanStateMutex 先于 cloudIdentityMutex）、
  * 世代推进、隔离时序与凭据写回顺序保持不变——三把锁仍为门面同一实例，经构造器传入。
  */
-/** W4-12 窄令牌端口：仅供 E2EE 同步 HTTPS client 当前请求使用；不得持久化、写日志或暴露给插件。 */
-fun interface CloudIdentityE2eeAccessTokenProvider {
-    suspend fun resolve(forceRefresh: Boolean, failedAccessToken: String?): String
-}
-
-/** 按 Profile 隔离的进程内令牌端口注册表；由 CloudIdentityRepository 构造时自注册，避免扩大 CampusRepository 外观。 */
-object CloudIdentityE2eeAccessTokenProviderRegistry {
-    private val providers = ConcurrentHashMap<String, CloudIdentityE2eeAccessTokenProvider>()
-
-    internal fun register(profileId: String, provider: CloudIdentityE2eeAccessTokenProvider) {
-        providers[profileId] = provider
-    }
-
-    fun forProfile(profileId: String): CloudIdentityE2eeAccessTokenProvider? = providers[profileId]
-}
-
 class CloudIdentityRepository internal constructor(
     private val environment: CampusRepositoryEnvironment,
     private val appContext: Context,
