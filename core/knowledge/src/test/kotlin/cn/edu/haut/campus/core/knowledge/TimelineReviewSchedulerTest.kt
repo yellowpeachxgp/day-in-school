@@ -36,7 +36,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -113,10 +113,12 @@ class TimelineReviewSchedulerTest {
         assertEquals(ReviewScheduleResultStatus.SCHEDULED, result.status)
         assertEquals(4, result.placements.size)
         assertTrue(result.unscheduledTasks.isEmpty())
-        assertTrue("首个复习块必须避开周一课程", result.placements[0].start >= courseBusy.end)
+        val courseBusyEnd = checkNotNull(courseBusy.end)
+        val examBusyEnd = checkNotNull(examBusy.end)
+        assertTrue("首个复习块必须避开周一课程", result.placements[0].start >= courseBusyEnd)
         result.placements.forEach { placement ->
-            assertTrue("复习块不得与课程冲突", !overlaps(placement.start, placement.end, courseBusy.start, courseBusy.end))
-            assertTrue("复习块不得与考试冲突", !overlaps(placement.start, placement.end, examBusy.start, examBusy.end))
+            assertTrue("复习块不得与课程冲突", !overlaps(placement.start, placement.end, courseBusy.start, courseBusyEnd))
+            assertTrue("复习块不得与考试冲突", !overlaps(placement.start, placement.end, examBusy.start, examBusyEnd))
             assertTrue("复习块必须在截止前完成", !placement.end.isAfter(dueAt))
             val row = database.vaultDao().getPersonalEvent(placement.timelineEventId.value)
             assertNotNull(row)
@@ -292,7 +294,9 @@ class TimelineReviewSchedulerTest {
     ) : TimelineService {
         override fun observe(scope: SchoolAccountScope, window: TimeWindow, filter: TimelineFilter): Flow<List<TimelineEvent>> {
             require(scope == this@TimelineReviewSchedulerTest.scope) { "测试 Timeline 不支持跨 scope" }
-            return flowOf(snapshotEvents().filter { it.overlaps(window) && filter.matches(it) })
+            return flow {
+                emit(snapshotEvents().filter { it.overlaps(window) && filter.matches(it) })
+            }
         }
 
         override suspend fun busyBlocks(scope: SchoolAccountScope, window: TimeWindow, granularity: Duration): List<BusyBlock> =
