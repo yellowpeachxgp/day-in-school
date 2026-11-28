@@ -45,7 +45,7 @@ internal fun expectStringValue(
     val length = codePointLength(string)
     if (length < min) schemaFail(path, "length must be at least " + min)
     if (length > max) schemaFail(path, "length must be at most " + max)
-    if (pattern != null && !pattern.matches(string)) schemaFail(path, "does not match required pattern " + pattern.pattern)
+    if (pattern != null && !pattern.containsMatchIn(string)) schemaFail(path, "does not match required pattern " + pattern.pattern)
     return string
 }
 
