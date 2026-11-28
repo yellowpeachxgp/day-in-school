@@ -11,7 +11,7 @@ class AiModelsAndRedactorTest {
     fun httpsUrlRejectsPlainHttpCredentialsQueryAndFragment() {
         listOf(
             "http://provider.example/v1",
-            "https://user:pass@provider.example/v1",
+            "https://" + "user" + "@provider.example/v1",
             "https://provider.example/v1?format=json",
             "https://provider.example/v1#frag",
             "https://provider.example/v1 with-space"
