@@ -206,6 +206,52 @@ internal fun decodeCourseMaterialDocument(obj: JsonValue.Obj): CourseMaterial? {
     )
 }
 
+internal fun encodeReviewBlock(block: ReviewBlock): JsonValue.Obj = jsonObjectOf(
+    "id" to JsonValue.Str(block.id),
+    "repetitionIndex" to JsonValue.Num(block.repetitionIndex.toString()),
+    "targetStart" to JsonValue.Str(block.targetStart.toString()),
+    "start" to JsonValue.Str(block.start.toString()),
+    "end" to JsonValue.Str(block.end.toString()),
+    "state" to JsonValue.Str(block.state.name),
+    "timelineEventId" to JsonValue.Str(block.timelineEventId.value)
+)
+
+internal fun decodeReviewBlock(value: JsonValue): ReviewBlock {
+    val obj = value.asObjOrNull ?: throw IllegalArgumentException("复习块必须是 object")
+    return ReviewBlock(
+        id = obj.requiredString("id"),
+        repetitionIndex = obj.requiredInt("repetitionIndex"),
+        targetStart = Instant.parse(obj.requiredString("targetStart")),
+        start = Instant.parse(obj.requiredString("start")),
+        end = Instant.parse(obj.requiredString("end")),
+        state = ReviewBlockState.valueOf(obj.requiredString("state")),
+        timelineEventId = TimelineEventId(obj.requiredString("timelineEventId"))
+    )
+}
+
+internal fun encodeReviewSchedule(schedule: ReviewSchedule?): JsonValue = schedule?.let {
+    jsonObjectOf(
+        "algorithm" to JsonValue.Str(it.algorithm),
+        "planRevision" to JsonValue.Num(it.planRevision.toString()),
+        "generatedAt" to JsonValue.Str(it.generatedAt.toString()),
+        "zone" to JsonValue.Str(it.zone.id),
+        "deadlineAt" to jsonString(it.deadlineAt?.toString()),
+        "blocks" to JsonValue.Arr(it.blocks.map(::encodeReviewBlock))
+    )
+} ?: JsonValue.Null
+
+internal fun decodeReviewSchedule(value: JsonValue): ReviewSchedule? {
+    val obj = value.asObjOrNull ?: return null
+    return ReviewSchedule(
+        algorithm = obj.requiredString("algorithm"),
+        planRevision = obj.requiredLong("planRevision"),
+        generatedAt = Instant.parse(obj.requiredString("generatedAt")),
+        zone = ZoneId.of(obj.requiredString("zone")),
+        deadlineAt = obj.nullableString("deadlineAt")?.let(Instant::parse),
+        blocks = obj.requiredArray("blocks").map(::decodeReviewBlock)
+    )
+}
+
 internal fun encodeReviewTaskDocument(task: ReviewTask): JsonValue.Obj = jsonObjectOf(
     "format" to JsonValue.Str(REVIEW_TASK_FORMAT),
     "deleted" to jsonBool(false),
@@ -218,6 +264,11 @@ internal fun encodeReviewTaskDocument(task: ReviewTask): JsonValue.Obj = jsonObj
     "state" to JsonValue.Str(task.state.name),
     "dueAt" to jsonString(task.dueAt?.toString()),
     "estimatedMinutes" to jsonInt(task.estimatedMinutes),
+    "masteryPercent" to JsonValue.Num(task.masteryPercent.toString()),
+    "successfulReviewCount" to JsonValue.Num(task.successfulReviewCount.toString()),
+    "lapseCount" to JsonValue.Num(task.lapseCount.toString()),
+    "lastReviewedAt" to jsonString(task.lastReviewedAt?.toString()),
+    "schedule" to encodeReviewSchedule(task.schedule),
     "revision" to JsonValue.Num(task.revision.toString()),
     "createdAt" to JsonValue.Str(task.createdAt.toString()),
     "updatedAt" to JsonValue.Str(task.updatedAt.toString())
@@ -238,7 +289,12 @@ internal fun decodeReviewTaskDocument(obj: JsonValue.Obj): ReviewTask? {
         estimatedMinutes = obj.nullableInt("estimatedMinutes"),
         revision = obj.requiredLong("revision"),
         createdAt = Instant.parse(obj.requiredString("createdAt")),
-        updatedAt = Instant.parse(obj.requiredString("updatedAt"))
+        updatedAt = Instant.parse(obj.requiredString("updatedAt")),
+        masteryPercent = obj.nullableInt("masteryPercent") ?: 0,
+        successfulReviewCount = obj.nullableInt("successfulReviewCount") ?: 0,
+        lapseCount = obj.nullableInt("lapseCount") ?: 0,
+        lastReviewedAt = obj.nullableString("lastReviewedAt")?.let(Instant::parse),
+        schedule = decodeReviewSchedule(obj.fields["schedule"] ?: JsonValue.Null)
     )
 }
 

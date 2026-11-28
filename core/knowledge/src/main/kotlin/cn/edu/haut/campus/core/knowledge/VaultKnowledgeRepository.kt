@@ -270,8 +270,15 @@ class VaultKnowledgeRepository internal constructor(
         val existingDocument = reviewDocuments.readDocument(task.id)
         val existing = existingDocument?.let(::decodeReviewTaskDocument)
         require(task.revision == (existing?.revision ?: 0L) + 1L) { "复习任务 revision 必须单调递增" }
-        return writer.write(ref = task.ref, actor = actor, actorDetail = "knowledge-review-task-upsert") {
+        val writeGroupId = "knowledge-review-task-" + writeGroupIdGenerator()
+        return writer.write(
+            ref = task.ref,
+            actor = actor,
+            actorDetail = "knowledge-review-task-upsert",
+            writeGroupId = writeGroupId
+        ) {
             reviewDocuments.writeDocument(task.id, encodeReviewTaskDocument(task))
+            reconcileReviewSchedule(existing, task, actor, writeGroupId)
             task
         }
     }
@@ -369,6 +376,87 @@ class VaultKnowledgeRepository internal constructor(
             writeGroupId = writeGroupId
         )
     }
+
+    /** 复习任务文档是复习块的权威状态；personal_events 只是其 Timeline 投影，重排/撤销都按同一 writeGroup 因果联动。 */
+    private suspend fun reconcileReviewSchedule(
+        oldTask: ReviewTask?,
+        task: ReviewTask,
+        actor: Actor,
+        writeGroupId: String
+    ) {
+        val oldBlocks = oldTask?.schedule?.blocks.orEmpty()
+        val newBlocks = task.schedule?.blocks.orEmpty()
+        val newEventIds = newBlocks.mapTo(linkedSetOf()) { it.timelineEventId }
+        newBlocks.sortedWith(compareBy<ReviewBlock> { it.start }.thenBy { it.repetitionIndex }).forEach { block ->
+            upsertReviewBlockEvent(task, block, actor, writeGroupId)
+        }
+        oldBlocks.forEach { oldBlock ->
+            if (oldBlock.timelineEventId !in newEventIds) {
+                personalEventStore.delete(
+                    id = oldBlock.timelineEventId,
+                    actor = actor,
+                    writeGroupId = writeGroupId,
+                    source = SourceRef(task.ref, reviewScheduleProvenance(task, oldBlock.id))
+                )
+            }
+        }
+    }
+
+    private suspend fun upsertReviewBlockEvent(
+        task: ReviewTask,
+        block: ReviewBlock,
+        actor: Actor,
+        writeGroupId: String
+    ) {
+        val schedule = task.schedule ?: return
+        val provenance = reviewScheduleProvenance(task, block.id)
+        val courseRef = task.course.courseRef(scope)
+        val materialRef = task.materialId?.let { EntityRef(EntityType.COURSE_MATERIAL, it, scope) }
+        val titlePrefix = when (block.state) {
+            ReviewBlockState.PLANNED -> "复习"
+            ReviewBlockState.DONE -> "复习完成"
+            ReviewBlockState.MISSED -> "漏复习"
+        }
+        val noteParts = listOfNotNull(
+            task.note?.takeIf { it.isNotBlank() },
+            "课程：" + task.course.courseName,
+            "第 " + block.repetitionIndex + " 次间隔复习"
+        )
+        personalEventStore.upsert(
+            PersonalEventDraft(
+                id = block.timelineEventId,
+                scope = scope,
+                kind = TimelineKind.REVIEW_BLOCK,
+                title = (titlePrefix + "：" + task.title).take(256),
+                note = noteParts.joinToString("\n").takeIf { it.isNotBlank() },
+                start = block.start,
+                end = block.end,
+                timeSemantics = TimelineTimeSemantics.TIMED,
+                zone = schedule.zone,
+                status = if (block.state == ReviewBlockState.DONE) EventStatus.DONE else EventStatus.SCHEDULED,
+                busy = BusyLevel.BUSY,
+                termId = task.course.termId,
+                provenance = provenance,
+                sourceEntity = task.ref,
+                links = listOfNotNull(task.ref, courseRef, materialRef).distinct()
+            ),
+            actor = actor,
+            writeGroupId = writeGroupId
+        )
+    }
+
+    private fun reviewScheduleProvenance(task: ReviewTask, sourceRecordId: String): DataProvenance = DataProvenance(
+        providerId = "local-review-scheduler",
+        schoolId = scope.schoolId,
+        accountId = scope.accountId,
+        sourceSystem = "spaced-repetition-solver",
+        sourceRecordId = sourceRecordId,
+        fetchedAt = task.updatedAt,
+        completeness = SnapshotCompleteness.COMPLETE,
+        trust = VerificationLevel.UNVERIFIED,
+        schemaVersion = 1,
+        contentRevision = task.schedule?.let { "plan-" + it.planRevision }
+    )
 
     private suspend fun readExtractionLines(blobId: String): List<KnowledgeTextLine> =
         searchProjector.readExtractionLines(blobId)
