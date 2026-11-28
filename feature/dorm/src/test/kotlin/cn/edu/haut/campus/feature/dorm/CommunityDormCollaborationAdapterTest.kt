@@ -94,7 +94,10 @@ class CommunityDormCollaborationAdapterTest {
         val firstRead = onlineClient.listGroups("haut", type = "dorm", limit = 100)
         assertTrue(firstRead is cn.edu.haut.campus.core.community.CommunityResult.Success)
 
-        val offlineTransport = CommunityTransport { throw IOException("synthetic offline") }
+        val offlineTransport = object : CommunityTransport {
+            override suspend fun execute(request: CommunityHttpRequest): CommunityHttpResponse =
+                throw IOException("synthetic offline")
+        }
         val adapter = CommunityDormCollaborationAdapter(client(offlineTransport, cache))
         val snapshot = adapter.loadSnapshot("haut", groupId)
 

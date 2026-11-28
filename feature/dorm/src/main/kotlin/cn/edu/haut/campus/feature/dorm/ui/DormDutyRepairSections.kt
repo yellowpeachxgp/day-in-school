@@ -23,6 +23,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.model.Staleness
 import cn.edu.haut.campus.feature.dorm.DormDutySwap
 import cn.edu.haut.campus.feature.dorm.DormDutyTask
 import cn.edu.haut.campus.feature.dorm.DormDutyTaskStatus
@@ -218,7 +219,7 @@ internal fun RepairTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (D
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { onAction(DormUiAction.SubmitRepairTicket) },
-            enabled = !state.actionInFlight,
+            enabled = !state.actionInFlight && snapshot?.staleness != Staleness.STALE,
             shape = RoundedCornerShape(12.dp),
         ) { Text("创建协调单") }
     }
