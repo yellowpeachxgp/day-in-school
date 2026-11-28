@@ -29,7 +29,6 @@ import cn.edu.haut.campus.core.campusservices.XiaomiApiSimpleResult
 import cn.edu.haut.campus.core.campusservices.XiaomiSyncSummary
 import cn.edu.haut.campus.core.campusservices.XiaomiTrackPoint
 import cn.edu.haut.campus.core.domain.SchoolDirectory
-import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.CalendarOverride
@@ -66,8 +65,6 @@ import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
-
-
 
 @Deprecated(
     message = "W0-05 拆分过渡外观：新代码应使用具体领域 Repository；本类仅为兼容委托门面。"
@@ -349,7 +346,6 @@ class CampusRepository internal constructor(
         reminderDao = reminderDao,
         utilityAndFocusDao = utilityAndFocusDao,
         cloudAndParcelDao = cloudAndParcelDao,
-        vaultDao = database.vaultDao(),
         academicCredentialVault = academicCredentialVault,
         academicCredentialMutex = academicCredentialMutex,
         cloudIdentityMutex = cloudIdentityMutex,
@@ -850,19 +846,6 @@ class CampusRepository internal constructor(
         preview = preview,
         overwriteUserConflicts = overwriteUserConflicts,
         setAsCurrentTerm = setAsCurrentTerm
-    )
-
-    /** 显式 actor 的导入确认入口；保留原 commitCourseImportDiff JVM 形状用于既有调用方。 */
-    suspend fun commitCourseImportDiffWithActor(
-        preview: ImportDiffPreview,
-        overwriteUserConflicts: Boolean = false,
-        setAsCurrentTerm: Boolean = true,
-        actor: Actor
-    ) = timetableRepository.commitCourseImportDiffWithActor(
-        preview = preview,
-        overwriteUserConflicts = overwriteUserConflicts,
-        setAsCurrentTerm = setAsCurrentTerm,
-        actor = actor
     )
 
     suspend fun saveImportedGrades(

@@ -1003,7 +1003,7 @@ fun ImporterScreen(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    repository.commitCourseImportDiffWithActor(
+                                    repository.timetableRepository.commitCourseImportDiffWithActor(
                                         preview = preview,
                                         overwriteUserConflicts = overwriteUserEdits,
                                         actor = Actor.USER

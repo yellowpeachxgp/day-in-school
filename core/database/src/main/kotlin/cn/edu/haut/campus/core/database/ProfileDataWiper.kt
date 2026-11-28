@@ -28,7 +28,6 @@ class ProfileDataWiper internal constructor(
     private val reminderDao: ReminderDao,
     private val utilityAndFocusDao: UtilityAndFocusDao,
     private val cloudAndParcelDao: CloudAndParcelDao,
-    private val vaultDao: VaultDao,
     private val academicCredentialVault: AcademicCredentialVault,
     private val academicCredentialMutex: Mutex,
     private val cloudIdentityMutex: Mutex,
@@ -37,6 +36,7 @@ class ProfileDataWiper internal constructor(
     private val cloudIdentityRepository: CloudIdentityRepository,
     private val syncOrchestrator: SyncOrchestrator
 ) {
+    private val vaultDao = database.vaultDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
