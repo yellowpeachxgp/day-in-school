@@ -32,6 +32,7 @@ dependencies {
     api(project(":core:model"))
     api(project(":core:academic-plan"))
     api(project(":core:vault"))
+    implementation(project(":core:academic-protocols"))
     implementation(project(":core:events"))
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

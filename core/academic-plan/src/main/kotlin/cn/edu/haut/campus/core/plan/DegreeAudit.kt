@@ -284,7 +284,7 @@ object DegreeAuditor {
                             assignmentsByGroup.getValue(target.id) += CourseAssignment(
                                 course = course,
                                 groupId = target.id,
-                                matchedBy = CourseMatchKind.CODE,
+                                matchedBy = CourseMatchKind.NAME,
                                 otherCandidateGroupIds = emptyList()
                             )
                             step(
