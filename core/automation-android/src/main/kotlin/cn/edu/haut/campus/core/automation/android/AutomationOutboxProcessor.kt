@@ -43,10 +43,14 @@ class AutomationOutboxProcessor(
                 emptyList()
             }
             val instances = rules.mapNotNull { rule ->
+                val activationCutoff = activationCutoffProvider(rule.id)
+                if (activationCutoff != null && event.occurredAt.isBefore(activationCutoff)) {
+                    return@mapNotNull null
+                }
                 val context = if (event is DomainEvent.UtilityBalanceSampled) {
                     ThresholdEvaluationContext(
                         previousSamples = utilitySamples,
-                        lastTriggeredAt = latestRunStartedAt(rule.id, activationCutoffProvider(rule.id)),
+                        lastTriggeredAt = latestRunStartedAt(rule.id, activationCutoff),
                         evaluatedAt = clock()
                     )
                 } else {

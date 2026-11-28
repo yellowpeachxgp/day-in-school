@@ -257,6 +257,17 @@ class AutomationOutboxProcessorTest {
         assertEquals(1, processor.consumeOnce())
 
         assertEquals("持续低于阈值只允许进入边沿触发一次", 1, action.calls.size)
+
+        val futureActivationProcessor = AutomationOutboxProcessor(
+            outbox,
+            ruleStore,
+            engine,
+            utilitySamplesProvider = { RoomUtilityBalanceHistoryProvider(database, scope).samples() },
+            activationCutoffProvider = { now.plusSeconds(3600) }
+        )
+        outbox.append(DomainEventCodecRegistry.DEFAULT.encode(utilityEvent("low-before-activation", 1900, now.plusSeconds(120))))
+        assertEquals(1, futureActivationProcessor.consumeOnce())
+        assertEquals("激活前事件不得被新/重启用规则回放", 1, action.calls.size)
         assertEquals(0, outbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
     }
 
