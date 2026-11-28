@@ -32,7 +32,14 @@
 - 冲突永不静默覆盖。UI 同时展示本机版本与远端版本（表、row key、logicalClock、内容摘要/canonical row），用户显式选择保留本机或使用远端；删除冲突提供「保留本机」与「接受远端删除」。
 - 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。
 
-## 5. 同意与生命周期 UI
+## 5. 云身份、设备与本地擦除
+
+- 本地同步状态显式绑定启用时的 `cloud_user_id`。切换 XPeach Cloud 账号后，旧 cursor/vector/object index 一律冻结 fail-closed；不得把旧账号因果状态用于新账号，也不得以 cursorless resync 删除本地 dirty 数据。用户必须显式停用/擦除旧同步状态后重新加入。
+- 停用顺序是先撤回 E2EE consent、再撤销当前设备：revoke 当前设备会失效其绑定的会话族，反向顺序会导致 consent 撤回不可达。UI 如实区分「远端已确认」与「本机已停止但远端未确认」。
+- 撤销是永久 tombstone；重新启用总是生成新的随机 installation UUID。设备列表只展示账号安全元数据，不展示硬件序列号、精确设备标识、密钥或 session 绑定。
+- 全量擦除注册在 ProfileDataWipe before-hook：best-effort 停用远端后无条件删除本机状态、pending write、cursor、冲突缓存、Keystore 包装密钥与密封 master key，并取消 WorkManager。
+
+## 6. 同意与生命周期 UI
 
 - 骨架 UI 放在「备份与恢复」卡片内，但文案明确区分静态备份和持续同步。用户必须勾选理解：云端只存密文但可见 bucket size/时间/设备在线模式；v1 设备、块数、字节与 24h 传输配额；撤回同意后 30 天保留、过期删除和设备撤销生命周期。
 - 勾选前不创建 consent、不注册设备、不生成或上传任何同步元数据。未登录 XPeach Cloud 时显示 NEEDS_LOGIN；离线/不支持/错误状态进入同一 SettingsUiMatrix。

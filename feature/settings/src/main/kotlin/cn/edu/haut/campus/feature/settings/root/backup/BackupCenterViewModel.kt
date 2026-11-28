@@ -280,11 +280,15 @@ class BackupCenterViewModel(
                 mutableUiState.update {
                     it.copy(
                         sync = it.sync.copy(
-                            consentDialog = it.sync.consentDialog.copy(
-                                running = false,
-                                generatedRecoveryKey = result.recoveryKeyForUserCopy,
-                                errorMessage = null
-                            )
+                            consentDialog = if (result.recoveryKeyForUserCopy == null) {
+                                E2eeSyncConsentDialogUiState(visible = false)
+                            } else {
+                                it.sync.consentDialog.copy(
+                                    running = false,
+                                    generatedRecoveryKey = result.recoveryKeyForUserCopy,
+                                    errorMessage = null
+                                )
+                            }
                         )
                     )
                 }
