@@ -21,6 +21,8 @@ data class UtilityBalanceReading(
     init {
         requireAutomationToken(meterId, "meterId", 256)
         require(balanceCents >= 0L) { "水电读数不能为负" }
+        require(provenance.fetchedAt != null) { "水电读数缺少来源采样时间，必须 fail-closed" }
+        require(provenance.fetchedAt == sampledAt) { "水电读数 sampledAt 必须与 provenance.fetchedAt 一致" }
     }
 }
 

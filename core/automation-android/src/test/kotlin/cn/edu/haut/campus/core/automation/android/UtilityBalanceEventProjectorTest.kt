@@ -74,6 +74,24 @@ class UtilityBalanceEventProjectorTest {
         assertEquals(before, database.vaultDao().countDomainOutbox())
     }
 
+    @Test
+    fun readPortUsesLatestCacheRefreshEvenWhenUnchangedBalancePublishesNoEvent() = runBlocking {
+        upsertRoom("12.50 度", updatedAt = 1_000L)
+        val projector = UtilityBalanceEventProjector(database, scope, clock = { Instant.parse("2026-03-02T08:00:00Z") })
+        assertEquals(1, projector.publishChangedBalances())
+
+        val refreshedAt = 8L * 24L * 3600L * 1000L + 1_000L
+        upsertRoom("12.50 度", updatedAt = refreshedAt)
+        assertEquals("余额未变化时不得制造新采样事件", 0, projector.publishChangedBalances())
+
+        val readings = RoomUtilityBalanceReadPort(database, scope).latestSamples(scope)
+
+        assertEquals(1, readings.size)
+        assertEquals(1250L, readings.single().balanceCents)
+        assertEquals(Instant.ofEpochMilli(refreshedAt), readings.single().sampledAt)
+        assertEquals(Instant.ofEpochMilli(refreshedAt), readings.single().provenance.fetchedAt)
+    }
+
     private suspend fun upsertRoom(balanceRaw: String, updatedAt: Long) {
         database.utilityAndFocusDao().upsertOnlineRooms(
             listOf(

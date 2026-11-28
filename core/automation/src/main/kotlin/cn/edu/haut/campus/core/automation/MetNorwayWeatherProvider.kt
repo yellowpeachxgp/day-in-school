@@ -212,6 +212,11 @@ class MetNorwayWeatherProvider(
             if (error is CancellationException || error is Error) throw error
             return unavailable(WeatherUnavailableReason.CACHE_UNUSABLE, "天气缓存写入失败，无法保证请求频率约束")
         }
+        if (headerExpiresAt != null && !headerExpiresAt.isAfter(now)) {
+            // 上游在响应那一刻已经声明过期。绝不能把过期 Expires 改写成“本次请求时间”
+            // 后交给较早的业务 ctx.now 误判为 FRESH；缓存只用于频率约束，不作为天气证据。
+            return unavailable(WeatherUnavailableReason.INVALID_RESPONSE, "MET Norway 响应的 Expires 已过期，天气条件按 UNKNOWN")
+        }
         return parseCached(cachedResponse, roundedLocation, request)
     }
 

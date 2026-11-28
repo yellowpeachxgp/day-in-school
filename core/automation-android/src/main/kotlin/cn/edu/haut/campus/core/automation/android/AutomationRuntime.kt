@@ -74,7 +74,7 @@ class AutomationRuntime private constructor(
     private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope, outbox = outbox)
     private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope, outbox = outbox)
     private val utilityBalanceHistoryProvider = RoomUtilityBalanceHistoryProvider(database, scope)
-    private val utilityBalanceReadPort = RoomUtilityBalanceReadPort(utilityBalanceHistoryProvider)
+    private val utilityBalanceReadPort = RoomUtilityBalanceReadPort(database, scope)
     private val weatherLocationPort = RepositoryWeatherLocationPort(repository)
     private val weatherProvider = MetNorwayWeatherProvider(
         cacheStore = FileWeatherResponseCacheStore(appContext, scope)

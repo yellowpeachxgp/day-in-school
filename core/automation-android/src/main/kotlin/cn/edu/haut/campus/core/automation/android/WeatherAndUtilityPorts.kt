@@ -8,10 +8,15 @@ import cn.edu.haut.campus.core.automation.WeatherCachedResponse
 import cn.edu.haut.campus.core.automation.WeatherLocationPort
 import cn.edu.haut.campus.core.automation.WeatherResponseCacheStore
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.decodeOnlineDevicesJson
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CustomCampusZoneCodec
+import cn.edu.haut.campus.core.model.DataProvenance
 import cn.edu.haut.campus.core.model.GeoPoint
 import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SnapshotCompleteness
+import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.io.File
@@ -45,21 +50,46 @@ class RepositoryWeatherLocationPort(
     }
 }
 
-/** 从 domain_outbox 的既有水电事实读取最新状态；只读，不触发新的采样或网络请求。 */
+/**
+ * 直接读取当前在线水电缓存。采样读取与 outbox 事件发布是两条分离语义：
+ * 余额不变时不会产生新事件，但只要上游缓存仍在新近刷新，状态条件就必须看到“最新读数”；
+ * 只读本地缓存，不触发新的网络采样，也不把投影发生时间伪造成来源采样时间。
+ */
 class RoomUtilityBalanceReadPort(
-    private val historyProvider: RoomUtilityBalanceHistoryProvider
+    private val database: HautDatabase,
+    private val scope: SchoolAccountScope
 ) : UtilityBalanceReadPort {
-    override suspend fun latestSamples(scope: SchoolAccountScope): List<UtilityBalanceReading> =
-        historyProvider.samples()
-            .filter { it.scope == scope }
-            .map { event ->
-                UtilityBalanceReading(
-                    meterId = event.meterRef.id,
-                    balanceCents = event.balanceCents,
-                    sampledAt = event.provenance.fetchedAt ?: event.occurredAt,
-                    provenance = event.provenance
+    override suspend fun latestSamples(scope: SchoolAccountScope): List<UtilityBalanceReading> {
+        if (scope != this.scope) return emptyList()
+        val readings = ArrayList<UtilityBalanceReading>()
+        for (room in database.utilityAndFocusDao().getOnlineRoomsSnapshot()) {
+            if (room.failed || room.updatedAtEpochMs <= 0L) continue
+            val sampledAt = Instant.ofEpochMilli(room.updatedAtEpochMs)
+            val devices = runCatching { decodeOnlineDevicesJson(room.devicesJson) }.getOrDefault(emptyList())
+            for (device in devices) {
+                val balanceCents = parseUtilityBalanceCents(device.balanceRaw) ?: continue
+                val meterId = "online/" + device.category.name.lowercase() + "/" + room.roomId + "/" + device.name
+                val provenance = DataProvenance(
+                    providerId = "wanxiao.utility",
+                    schoolId = scope.schoolId,
+                    accountId = scope.accountId,
+                    sourceSystem = "online-utility-cache",
+                    sourceRecordId = meterId,
+                    fetchedAt = sampledAt,
+                    completeness = SnapshotCompleteness.UNKNOWN,
+                    trust = VerificationLevel.SOURCE_CONFIRMED,
+                    schemaVersion = 1
+                )
+                readings += UtilityBalanceReading(
+                    meterId = meterId,
+                    balanceCents = balanceCents,
+                    sampledAt = sampledAt,
+                    provenance = provenance
                 )
             }
+        }
+        return readings
+    }
 }
 
 /**
@@ -88,51 +118,3 @@ class FileWeatherResponseCacheStore(
     override suspend fun write(key: String, value: WeatherCachedResponse) = withContext(Dispatchers.IO) {
         val file = cacheFile(key) ?: throw IOException("天气缓存键非法")
         if (!directory.exists() && !directory.mkdirs()) throw IOException("天气缓存目录不可写")
-        val encoded = encodeCachedResponse(value)
-        val tmp = File(directory, file.name + ".tmp")
-        tmp.writeText(encoded, Charsets.UTF_8)
-        if (!tmp.renameTo(file)) {
-            file.writeText(encoded, Charsets.UTF_8)
-            tmp.delete()
-        }
-    }
-
-    private fun cacheFile(key: String): File? {
-        if (!CACHE_KEY_REGEX.matches(key)) return null
-        return File(directory, key + ".json")
-    }
-
-    private companion object {
-        const val MAX_CACHE_FILE_BYTES: Long = 384 * 1024L
-        val CACHE_KEY_REGEX = Regex("^[0-9a-f]{64}$")
-    }
-}
-
-private fun encodeCachedResponse(value: WeatherCachedResponse): String = Json.canonical(
-    JsonValue.Obj(
-        mapOf(
-            "body" to JsonValue.Str(value.body),
-            "fetchedAtEpochMs" to JsonValue.Num(value.fetchedAt.toEpochMilli().toString()),
-            "cacheExpiresAtEpochMs" to JsonValue.Num(value.cacheExpiresAt.toEpochMilli().toString()),
-            "nextRequestAtEpochMs" to JsonValue.Num(value.nextRequestAt.toEpochMilli().toString())
-        ) + (value.contentRevision?.let { mapOf("contentRevision" to JsonValue.Str(it)) } ?: emptyMap())
-    )
-)
-
-private fun decodeCachedResponse(text: String): WeatherCachedResponse? = runCatching {
-    val root = Json.parse(text) as? JsonValue.Obj ?: return@runCatching null
-    val body = root.str("body") ?: return@runCatching null
-    val fetchedAt = root.obj("fetchedAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
-    val cacheExpiresAt = root.obj("cacheExpiresAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
-    val nextRequestAt = root.obj("nextRequestAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
-    WeatherCachedResponse(
-        body = body,
-        fetchedAt = fetchedAt,
-        cacheExpiresAt = cacheExpiresAt,
-        nextRequestAt = nextRequestAt,
-        contentRevision = root.str("contentRevision")
-    )
-}.getOrNull()
-
-private fun JsonValue.epochMillisOrNull(): Instant? =
-    (this as? JsonValue.Num)?.literal?.toLongOrNull()?.let(Instant::ofEpochMilli)

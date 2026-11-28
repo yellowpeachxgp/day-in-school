@@ -69,6 +69,23 @@ class WeatherProviderTest {
     }
 
     @Test
+    fun upstreamExpiredResponseIsRejectedAndNotPromotedByEarlierRunContext() = runTest {
+        val transport = RecordingTransport(expiresHeader = "Mon, 02 Mar 2026 00:00:00 GMT")
+        val provider = MetNorwayWeatherProvider(
+            transport = transport,
+            cacheStore = InMemoryWeatherResponseCacheStore(),
+            clock = Clock.fixed(now, ZoneOffset.UTC)
+        )
+
+        val first = provider.forecast(request(termsAccepted = true)) as WeatherProviderResult.Unavailable
+        val second = provider.forecast(request(termsAccepted = true)) as WeatherProviderResult.Unavailable
+
+        assertEquals(WeatherUnavailableReason.INVALID_RESPONSE, first.reason)
+        assertEquals(WeatherUnavailableReason.RATE_LIMITED, second.reason)
+        assertEquals(1, transport.urls.size)
+    }
+
+    @Test
     fun corruptedCachedResponseIsInvalidAndDoesNotNetworkAgain() = runTest {
         val transport = RecordingTransport()
         val corrupted = WeatherCachedResponse(
@@ -122,7 +139,8 @@ class WeatherProviderTest {
 
     private class RecordingTransport(
         private val body: String = COMPACT_FIXTURE,
-        private val statusCode: Int = 200
+        private val statusCode: Int = 200,
+        private val expiresHeader: String = "Mon, 02 Mar 2026 03:00:00 GMT"
     ) : WeatherHttpTransport {
         val urls = ArrayList<String>()
 
@@ -131,7 +149,7 @@ class WeatherProviderTest {
             return WeatherHttpResponse(
                 statusCode = statusCode,
                 body = body,
-                headers = mapOf("expires" to "Mon, 02 Mar 2026 03:00:00 GMT")
+                headers = mapOf("expires" to expiresHeader)
             )
         }
     }
