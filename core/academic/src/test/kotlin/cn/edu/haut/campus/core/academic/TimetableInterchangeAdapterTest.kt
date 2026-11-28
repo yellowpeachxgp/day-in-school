@@ -5,14 +5,17 @@ import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.ImportChangeType
+import cn.edu.haut.campus.core.model.PeriodTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 
 class TimetableInterchangeAdapterTest {
 
@@ -110,6 +113,23 @@ class TimetableInterchangeAdapterTest {
         assertFalse(exportedJson.contains("password"))
         assertFalse(exportedJson.contains("studentId"))
         assertFalse(exportedJson.contains("roomverify"))
+
+        val withSchemeRows = TimetableInterchangeAdapter.exportJson(
+            term = null,
+            courses = emptyList(),
+            rules = emptyList(),
+            periodTimes = listOf(
+                PeriodTime("base_1", "tt", 1, LocalTime.of(8, 0), LocalTime.of(8, 45)),
+                PeriodTime(
+                    "scheme_1", "tt", 1, LocalTime.of(9, 10), LocalTime.of(9, 55),
+                    schemeId = "scheme", termId = "term",
+                    validStartDate = LocalDate.of(2026, 10, 1), validEndDate = LocalDate.of(2026, 10, 31)
+                )
+            )
+        )
+        val periods = JSONObject(withSchemeRows).getJSONArray("periods")
+        assertEquals(1, periods.length())
+        assertEquals("08:00", periods.getJSONObject(0).getString("start"))
     }
 
     @Test

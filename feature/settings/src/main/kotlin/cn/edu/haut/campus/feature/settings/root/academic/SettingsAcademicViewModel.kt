@@ -33,7 +33,12 @@ class SettingsAcademicViewModel(
         viewModelScope.launch { repository.termsFlow.collectLatest { v -> mutableUiState.update { it.copy(terms = v) } } }
         viewModelScope.launch { repository.currentTermFlow.collectLatest { v -> mutableUiState.update { it.copy(currentTerm = v) } } }
         viewModelScope.launch { repository.rulesFlow.collectLatest { v -> mutableUiState.update { it.copy(rules = v) } } }
-        viewModelScope.launch { repository.periodTimesFlow.collectLatest { v -> mutableUiState.update { it.copy(periodTimes = v) } } }
+        viewModelScope.launch {
+            repository.periodTimesFlow.collectLatest { v ->
+                // 旧设置页只编辑默认参考作息；W0-04 的日期方案由课表页专用编辑器管理，避免同一节次重复显示。
+                mutableUiState.update { it.copy(periodTimes = v.filter { period -> period.schemeId == null }) }
+            }
+        }
         viewModelScope.launch { repository.calendarOverridesFlow.collectLatest { v -> mutableUiState.update { it.copy(calendarOverrides = v) } } }
         viewModelScope.launch { repository.preferencesFlow.collectLatest { v -> mutableUiState.update { it.copy(prefs = v) } } }
         viewModelScope.launch { repository.activeReminderTasksFlow.collectLatest { v -> mutableUiState.update { it.copy(activeReminderTasks = v) } } }
