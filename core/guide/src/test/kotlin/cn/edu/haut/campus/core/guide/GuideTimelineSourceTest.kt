@@ -2,7 +2,9 @@ package cn.edu.haut.campus.core.guide
 
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
 import cn.edu.haut.campus.core.timeline.BusyLevel
+import cn.edu.haut.campus.core.timeline.DefaultTimelineService
 import cn.edu.haut.campus.core.timeline.TimeWindow
+import cn.edu.haut.campus.core.timeline.TimelineFilter
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import java.time.Clock
@@ -127,6 +129,20 @@ class GuideTimelineSourceTest {
         assertFailsWithSuspend<GuideTimelineProjectionException> {
             source.observe(GuideTestFixtures.scope, window).first()
         }
+    }
+
+    @Test
+    fun guide_source_passes_default_timeline_service_consistency_merge() = runTest {
+        val pack = opportunityPack()
+        val store = InMemoryGuideProgressStore()
+        val tracker = OpportunityProgressTracker(store, clock)
+        tracker.track(GuideTestFixtures.scope, pack, "innovation-grant")
+        val service = DefaultTimelineService(GuideTimelineSource(listOf(pack), store, zone))
+
+        val events = service.observe(GuideTestFixtures.scope, window, TimelineFilter.ALL).first()
+
+        assertEquals(1, events.size)
+        assertEquals(TimelineKind.OPPORTUNITY_MILESTONE, events.single().kind)
     }
 
     private fun procedurePack() = GuideTestFixtures.guidePackage(

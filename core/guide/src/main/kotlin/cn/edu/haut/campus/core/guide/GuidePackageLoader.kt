@@ -59,6 +59,14 @@ object GuidePackageLoader {
 
     private fun verifyTrustBoundary(verified: VerifiedDataPack) {
         val canonicalBytes = verified.decoded.canonicalBytes
+        val decodedFromBytes = try {
+            DisDatapackLoader.decode(canonicalBytes)
+        } catch (error: IllegalArgumentException) {
+            throw GuideSecurityException("datapack canonical bytes 不能通过 W5-01 schema/exact-byte 复核：" + error.message)
+        }
+        if (decodedFromBytes.pack != verified.decoded.pack) {
+            throw GuideSecurityException("datapack typed pack 与 canonical bytes 不一致")
+        }
         val expectedArtifact = Digests.sha256Hex(canonicalBytes)
         if (verified.decoded.artifactSha256 != expectedArtifact) {
             throw GuideSecurityException("datapack artifactSha256 与 canonical bytes 不一致")

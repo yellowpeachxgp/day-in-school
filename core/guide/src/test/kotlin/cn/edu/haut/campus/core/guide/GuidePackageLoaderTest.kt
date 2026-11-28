@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.core.guide
 
-import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.packages.datapack.DataPackFreshness
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
 import cn.edu.haut.campus.core.packages.datapack.ProcedureQuestionOption
@@ -19,7 +18,7 @@ class GuidePackageLoaderTest {
         val loaded = GuidePackageLoader.loadVerified(verified, LocalDate.parse("2027-05-21"))
 
         assertEquals("haut.procedures", loaded.packId)
-        assertEquals(Digests.sha256Hex("{}".toByteArray(Charsets.UTF_8)), loaded.artifactSha256)
+        assertEquals(verified.decoded.artifactSha256, loaded.artifactSha256)
         assertEquals(DataPackFreshness.REVIEW_DUE, loaded.freshness)
         assertEquals(DataPackFreshness.REVIEW_DUE, loaded.metadataFor("student-certificate").freshness)
         assertEquals("https://example.com/haut/public-guide", loaded.metadataFor("student-certificate").sources.single().url)
