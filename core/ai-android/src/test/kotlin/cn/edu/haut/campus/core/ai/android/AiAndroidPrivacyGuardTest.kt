@@ -43,5 +43,7 @@ class AiAndroidPrivacyGuardTest {
         val source = File(repoRoot, "core/ai-android/src/main/kotlin/cn/edu/haut/campus/core/ai/android/AiByokWipeRegistration.kt").readText()
         assertTrue(source.contains("registerBeforeWipeHook"))
         assertTrue(source.contains("wipeAll"))
+        val application = File(repoRoot, "app/src/main/kotlin/cn/edu/haut/campus/HautCampusApplication.kt").readText()
+        assertTrue("应用账号生命周期必须注册 BYOK 擦除 hook", application.contains("AiByokWipeRegistration.register"))
     }
 }

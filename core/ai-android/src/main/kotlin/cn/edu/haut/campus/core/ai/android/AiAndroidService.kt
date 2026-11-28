@@ -69,7 +69,7 @@ object AiAndroidServiceRegistry {
         context: Context,
         scope: SchoolAccountScope,
         database: HautDatabase?
-    ): AiAndroidService = services.getOrPut(scope.profileId.value) {
+    ): AiAndroidService = services.getOrPut(AiConsentCenter.scopeFingerprint(scope)) {
         AiAndroidService.create(context.applicationContext, database)
     }
 
