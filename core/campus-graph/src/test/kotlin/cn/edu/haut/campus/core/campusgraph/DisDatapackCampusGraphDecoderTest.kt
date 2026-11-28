@@ -87,9 +87,13 @@ class DisDatapackCampusGraphDecoderTest {
         }
     }
 
-    private fun procedureBytes(placeRef: String): ByteArray = String(fixtureBytes(), Charsets.UTF_8)
-        .replace("haut/lianhuajie/building/administration", placeRef)
-        .toByteArray(Charsets.UTF_8)
+    private fun procedureBytes(placeRef: String): ByteArray {
+        val withStepRef = String(fixtureBytes(), Charsets.UTF_8)
+            .replace("haut/lianhuajie/building/administration", placeRef)
+        return withStepRef
+            .replace("],\"questions\"", "],\"placeRef\":\"" + placeRef + "\",\"questions\"")
+            .toByteArray(Charsets.UTF_8)
+    }
 
     private fun facilityPackBytes(): ByteArray = """
         {"format":"dis-datapack/v1","items":[{"capabilities":["wheelchair"],"facilityType":"service-desk","id":"service-desk-example","openingHours":"工作日 09:00-17:00","placeRef":"haut/lianhuajie/building/administration","title":"学生服务台"}],"kind":"facility-catalog","maintainers":["github:example-maintainer"],"packId":"haut.facilities","reviewBy":"2027-05-20","schoolId":"haut","sources":[{"retrievedAt":"2026-11-20","title":"学校服务台公开页","url":"https://example.com/haut/service-desk"}],"verificationLevel":"UNVERIFIED","verifiedAt":"2026-11-20","version":"2026.11.1"}
