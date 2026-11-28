@@ -43,22 +43,57 @@ object BackupCenterPreviewFixtures {
         )
     )
 
-    val loading = BackupCenterUiState(matrix = SettingsUiMatrix.Loading)
-    val empty = BackupCenterUiState(matrix = SettingsUiMatrix.Empty)
-    val content = BackupCenterUiState(matrix = SettingsUiMatrix.Content)
-    val partial = BackupCenterUiState(matrix = SettingsUiMatrix.Partial)
-    val stale = BackupCenterUiState(matrix = SettingsUiMatrix.Stale)
-    val errorRetryable = BackupCenterUiState(matrix = SettingsUiMatrix.error(retryable = true, message = "备份错误（可重试）"))
-    val errorTerminal = BackupCenterUiState(matrix = SettingsUiMatrix.error(retryable = false, message = "备份错误（不可重试）"))
-    val needsPermission = BackupCenterUiState(matrix = SettingsUiMatrix.NeedsPermission)
-    val needsLogin = BackupCenterUiState(matrix = SettingsUiMatrix.NeedsLogin)
-    val offline = BackupCenterUiState(matrix = SettingsUiMatrix.Offline)
-    val unsupported = BackupCenterUiState(matrix = SettingsUiMatrix.Unsupported, serviceAvailable = false)
+    private val sampleSyncConflict = E2eeSyncConflictSummary(
+        id = "sc-preview",
+        table = "courses",
+        rowKey = "t:8:course-1",
+        kind = "CONCURRENT_UPDATE",
+        reason = "本机与远端同时修改同一逻辑行，未静默覆盖",
+        localExcerpt = "{\"row\":{\"name\":{\"type\":\"text\",\"value\":\"本机课程名\"}}}",
+        remoteExcerpt = "{\"row\":{\"name\":{\"type\":\"text\",\"value\":\"远端课程名\"}}}",
+        remoteDeletion = false,
+        localDeletion = false
+    )
+
+    private fun syncPanel(matrix: SettingsUiMatrix, conflicts: List<E2eeSyncConflictSummary> = emptyList()) = E2eeSyncPanelUiState(
+        matrix = matrix,
+        enabled = matrix.status != SettingsUiMatrix.Status.EMPTY,
+        deviceIdShort = "a1b2c3d4",
+        syncSpaceIdShort = "space01",
+        lastRunSummary = "pulled=1,applied=1,uploaded=1,deleted=0,conflicts=" + conflicts.size + ",oversized=0",
+        conflicts = conflicts
+    )
+
+    val loading = BackupCenterUiState(matrix = SettingsUiMatrix.Loading, sync = syncPanel(SettingsUiMatrix.Loading))
+    val empty = BackupCenterUiState(matrix = SettingsUiMatrix.Empty, sync = syncPanel(SettingsUiMatrix.Empty))
+    val content = BackupCenterUiState(matrix = SettingsUiMatrix.Content, sync = syncPanel(SettingsUiMatrix.Content))
+    val partial = BackupCenterUiState(matrix = SettingsUiMatrix.Partial, sync = syncPanel(SettingsUiMatrix.Partial, listOf(sampleSyncConflict)))
+    val stale = BackupCenterUiState(matrix = SettingsUiMatrix.Stale, sync = syncPanel(SettingsUiMatrix.Stale))
+    val errorRetryable = BackupCenterUiState(matrix = SettingsUiMatrix.error(retryable = true, message = "备份错误（可重试）"), sync = syncPanel(SettingsUiMatrix.error(retryable = true, message = "同步错误（可重试）")))
+    val errorTerminal = BackupCenterUiState(matrix = SettingsUiMatrix.error(retryable = false, message = "备份错误（不可重试）"), sync = syncPanel(SettingsUiMatrix.error(retryable = false, message = "同步错误（不可重试）")))
+    val needsPermission = BackupCenterUiState(matrix = SettingsUiMatrix.NeedsPermission, sync = syncPanel(SettingsUiMatrix.NeedsPermission))
+    val needsLogin = BackupCenterUiState(matrix = SettingsUiMatrix.NeedsLogin, sync = syncPanel(SettingsUiMatrix.NeedsLogin))
+    val offline = BackupCenterUiState(matrix = SettingsUiMatrix.Offline, sync = syncPanel(SettingsUiMatrix.Offline))
+    val unsupported = BackupCenterUiState(matrix = SettingsUiMatrix.Unsupported, serviceAvailable = false, sync = E2eeSyncPanelUiState(matrix = SettingsUiMatrix.Unsupported, serviceAvailable = false))
 
     val exportWizard = content.copy(
         exportWizard = ExportWizardUiState(visible = true)
     )
 
+    val syncConsent = content.copy(
+        sync = content.sync.copy(consentDialog = E2eeSyncConsentDialogUiState(visible = true))
+    )
+
+    val syncRecoveryKey = content.copy(
+        sync = content.sync.copy(
+            consentDialog = E2eeSyncConsentDialogUiState(
+                visible = true,
+                generatedRecoveryKey = "dssk1.preview-preview-preview-preview"
+            )
+        )
+    )
+
+    val syncConflict = partial
     val restorePreview = content.copy(
         restoreWizard = RestoreWizardUiState(
             visible = true,

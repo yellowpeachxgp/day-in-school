@@ -65,5 +65,15 @@ class BackupCenterRoborazziTest {
             resolution: cn.edu.haut.campus.core.vault.BackupConflictResolution
         ) = Unit
         override fun restoreBackup() = Unit
+        override fun openSyncConsent() = Unit
+        override fun closeSyncConsent() = Unit
+        override fun enableSyncWithNewKey(deviceLabel: String) = Unit
+        override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) = Unit
+        override fun runSyncNow() = Unit
+        override fun disableSync() = Unit
+        override fun resolveSyncConflict(
+            conflictId: String,
+            resolution: cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
+        ) = Unit
     }
 }

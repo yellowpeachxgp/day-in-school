@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performTextInput
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupRowKey
 import cn.edu.haut.campus.core.vault.RestoreMode
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -76,6 +77,42 @@ class BackupCenterSectionTest {
     }
 
     @Test
+    fun syncPanelOpensConsentAndShowsRecoveryKeyState() {
+        val actions = RecordingActions()
+        val disabledSyncState = BackupCenterPreviewFixtures.content.copy(
+            sync = BackupCenterPreviewFixtures.content.sync.copy(enabled = false, matrix = cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix.Empty)
+        )
+        composeRule.setContent {
+            BackupCenterSection(state = disabledSyncState, actions = actions)
+        }
+
+        composeRule.onNodeWithTag("sync-open-consent").performClick()
+        assertTrue(actions.events.contains("sync-open-consent"))
+
+        composeRule.setContent {
+            BackupCenterSection(state = BackupCenterPreviewFixtures.syncRecoveryKey, actions = actions)
+        }
+        composeRule.onNodeWithText("开启端到端跨设备同步").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-generated-recovery-key").assertIsDisplayed()
+    }
+
+    @Test
+    fun syncConflictShowsTwoVersionsAndResolutionActions() {
+        val actions = RecordingActions()
+        composeRule.setContent {
+            BackupCenterSection(state = BackupCenterPreviewFixtures.syncConflict, actions = actions)
+        }
+
+        composeRule.onNodeWithTag("sync-conflict-local").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-conflict-remote").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-conflict-keep-local").performClick()
+        composeRule.onNodeWithTag("sync-conflict-use-remote").performClick()
+
+        assertTrue(actions.events.contains("sync-resolve:sc-preview:KEEP_LOCAL"))
+        assertTrue(actions.events.contains("sync-resolve:sc-preview:USE_REMOTE"))
+    }
+
+    @Test
     fun previewFixturesCoverElevenRequiredStates() {
         assertEquals(
             setOf(
@@ -99,5 +136,14 @@ class BackupCenterSectionTest {
             events += "resolve:" + key.table + ":" + resolution.name
         }
         override fun restoreBackup() { events += "restore" }
+        override fun openSyncConsent() { events += "sync-open-consent" }
+        override fun closeSyncConsent() { events += "sync-close-consent" }
+        override fun enableSyncWithNewKey(deviceLabel: String) { events += "sync-enable-new" }
+        override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) { events += "sync-enable-existing" }
+        override fun runSyncNow() { events += "sync-run" }
+        override fun disableSync() { events += "sync-disable" }
+        override fun resolveSyncConflict(conflictId: String, resolution: E2eeSyncConflictResolution) {
+            events += "sync-resolve:" + conflictId + ":" + resolution.name
+        }
     }
 }

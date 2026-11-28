@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +41,8 @@ import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupFormatConstants
 import cn.edu.haut.campus.core.vault.BackupRowConflict
 import cn.edu.haut.campus.core.vault.RestoreMode
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncProtocol
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
 
 /** W1-04 骨架 UI：导出向导与恢复向导。视觉打磨留给阶段 N，状态矩阵在此固定。 */
@@ -70,6 +74,8 @@ fun BackupCenterSection(
                 modifier = Modifier.weight(1f).testTag("backup-open-restore")
             ) { Text("恢复备份") }
         }
+        Spacer(modifier = Modifier.height(14.dp))
+        E2eeSyncPanel(state.sync, actions)
     }
 
     if (state.exportWizard.visible) {
@@ -317,6 +323,229 @@ private fun RestoreWizardDialog(state: BackupCenterUiState, actions: BackupCente
             TextButton(onClick = actions::closeRestoreWizard, enabled = !wizard.running) { Text("关闭") }
         }
     )
+}
+
+@Composable
+private fun E2eeSyncPanel(sync: E2eeSyncPanelUiState, actions: BackupCenterUiAction) {
+    Text("跨设备端到端同步", style = MaterialTheme.typography.titleSmall)
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        "持续复制 dis-backup 行模型；云端只存密文。备份导出仍是独立静态快照。",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    SyncMatrixBanner(sync.matrix)
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text = when {
+            !sync.serviceAvailable -> "同步服务不可用"
+            sync.enabled -> "已启用" + (sync.deviceIdShort?.let { " · 设备 " + it } ?: "") +
+                (sync.syncSpaceIdShort?.let { " · 同步空间 " + it } ?: "")
+            else -> "未启用；需要 XPeach Cloud 登录和显式 E2EE_CLOUD_SYNC 同意"
+        },
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.testTag("sync-status-text")
+    )
+    sync.lastRunSummary?.let {
+        Text("最近运行：" + it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (sync.pendingWriteCount > 0) {
+        Text("待确认写入 " + sync.pendingWriteCount + " 个；网络恢复后会按原幂等键重试", style = MaterialTheme.typography.labelSmall)
+    }
+    sync.lastErrorMessage?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!sync.enabled) {
+            OutlinedButton(
+                onClick = actions::openSyncConsent,
+                enabled = sync.serviceAvailable && !sync.running,
+                modifier = Modifier.weight(1f).testTag("sync-open-consent")
+            ) { Text("开启同步") }
+        } else {
+            OutlinedButton(
+                onClick = actions::runSyncNow,
+                enabled = !sync.running,
+                modifier = Modifier.weight(1f).testTag("sync-run-now")
+            ) { Text(if (sync.running) "同步中…" else "立即同步") }
+            OutlinedButton(
+                onClick = actions::disableSync,
+                enabled = !sync.running,
+                modifier = Modifier.weight(1f).testTag("sync-disable")
+            ) { Text("停用并撤销") }
+        }
+    }
+    if (sync.conflicts.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("同步冲突（不会静默覆盖）", style = MaterialTheme.typography.titleSmall)
+        sync.conflicts.take(3).forEach { conflict ->
+            SyncConflictRow(conflict, actions, enabled = !sync.running)
+        }
+        if (sync.conflicts.size > 3) {
+            Text("其余 " + (sync.conflicts.size - 3) + " 条将在前序冲突解决后显示", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+    if (sync.consentDialog.visible) {
+        E2eeSyncConsentDialog(sync, actions)
+    }
+}
+
+@Composable
+private fun SyncMatrixBanner(matrix: SettingsUiMatrix) {
+    val text = when (matrix.status) {
+        SettingsUiMatrix.Status.LOADING -> "正在处理跨设备同步…"
+        SettingsUiMatrix.Status.EMPTY -> "跨设备同步未启用"
+        SettingsUiMatrix.Status.CONTENT -> null
+        SettingsUiMatrix.Status.PARTIAL -> "同步部分完成：存在冲突或待确认写入"
+        SettingsUiMatrix.Status.STALE -> "同步 cursor 已过期，需要重新全量校验"
+        SettingsUiMatrix.Status.ERROR -> matrix.message ?: "同步操作失败"
+        SettingsUiMatrix.Status.NEEDS_PERMISSION -> "需要重新确认 E2EE_CLOUD_SYNC 同意"
+        SettingsUiMatrix.Status.NEEDS_LOGIN -> "需要先登录 XPeach Cloud"
+        SettingsUiMatrix.Status.OFFLINE -> "当前离线；同步会在网络恢复后重试"
+        SettingsUiMatrix.Status.UNSUPPORTED -> "当前环境不支持跨设备同步"
+    } ?: return
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (matrix.status == SettingsUiMatrix.Status.ERROR || matrix.status == SettingsUiMatrix.Status.UNSUPPORTED) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        modifier = Modifier.testTag("sync-matrix-banner")
+    )
+}
+
+@Composable
+private fun E2eeSyncConsentDialog(sync: E2eeSyncPanelUiState, actions: BackupCenterUiAction) {
+    var acknowledged by remember { mutableStateOf(false) }
+    var deviceLabel by remember { mutableStateOf("") }
+    var recoveryKey by remember { mutableStateOf("") }
+    val dialog = sync.consentDialog
+    AlertDialog(
+        onDismissRequest = { if (!dialog.running) actions.closeSyncConsent() },
+        title = { Text("开启端到端跨设备同步") },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+                E2eeSyncProtocol.CONSENT_DOCUMENT_TEXT.split("\n").forEachIndexed { index, line ->
+                    Text(
+                        text = if (index == 0) line else "• " + line,
+                        style = if (index == 0) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall
+                    )
+                    if (index == 0) Spacer(modifier = Modifier.height(6.dp))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "恢复密钥只由你手动保管；换机时必须粘贴同一密钥。它不是备份口令，也不会上传到云端。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = acknowledged,
+                        onCheckedChange = { acknowledged = it },
+                        enabled = !dialog.running,
+                        modifier = Modifier.testTag("sync-consent-checkbox")
+                    )
+                    Text("我理解上述云端元数据、配额与撤回生命周期，并明确同意 E2EE_CLOUD_SYNC", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = deviceLabel,
+                    onValueChange = { deviceLabel = it.take(80) },
+                    label = { Text("设备备注（可选，不填硬件序列号）") },
+                    singleLine = true,
+                    enabled = !dialog.running,
+                    modifier = Modifier.fillMaxWidth().testTag("sync-device-label")
+                )
+                dialog.errorMessage?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                dialog.generatedRecoveryKey?.let { generated ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("立即抄写恢复密钥；关闭后本界面不再显示。", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                    SelectionContainer {
+                        Text(
+                            generated,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth().testTag("sync-generated-recovery-key")
+                        )
+                    }
+                }
+                if (dialog.generatedRecoveryKey == null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { actions.enableSyncWithNewKey(deviceLabel) },
+                        enabled = acknowledged && !dialog.running,
+                        modifier = Modifier.fillMaxWidth().testTag("sync-enable-new-key")
+                    ) { Text(if (dialog.running) "启用中…" else "创建新同步空间并启用") }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = recoveryKey,
+                        onValueChange = { recoveryKey = it.trim() },
+                        label = { Text("已有恢复密钥（用于第二台设备）") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        enabled = !dialog.running,
+                        modifier = Modifier.fillMaxWidth().testTag("sync-recovery-key-input")
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            actions.enableSyncWithRecoveryKey(deviceLabel, recoveryKey)
+                            recoveryKey = ""
+                        },
+                        enabled = acknowledged && recoveryKey.isNotBlank() && !dialog.running,
+                        modifier = Modifier.fillMaxWidth().testTag("sync-enable-existing-key")
+                    ) { Text("使用已有恢复密钥启用") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = actions::closeSyncConsent, enabled = !dialog.running) {
+                Text(if (dialog.generatedRecoveryKey == null) "取消" else "我已抄写")
+            }
+        },
+        dismissButton = null
+    )
+}
+
+@Composable
+private fun SyncConflictRow(
+    conflict: E2eeSyncConflictSummary,
+    actions: BackupCenterUiAction,
+    enabled: Boolean
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        Text(conflict.table + " · " + shortRowKey(conflict.rowKey), style = MaterialTheme.typography.bodyMedium)
+        Text(conflict.kind + "：" + conflict.reason, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("本机版本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Text(
+            if (conflict.localDeletion) "（本机选择删除）" else conflict.localExcerpt ?: "（本机无该行）",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.testTag("sync-conflict-local")
+        )
+        Text("远端版本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Text(
+            if (conflict.remoteDeletion) "（远端已删除）" else conflict.remoteExcerpt ?: "（远端无可用密文版本）",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.testTag("sync-conflict-remote")
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { actions.resolveSyncConflict(conflict.id, E2eeSyncConflictResolution.KEEP_LOCAL) },
+                enabled = enabled,
+                modifier = Modifier.testTag("sync-conflict-keep-local")
+            ) { Text("保留本机") }
+            OutlinedButton(
+                onClick = { actions.resolveSyncConflict(conflict.id, E2eeSyncConflictResolution.USE_REMOTE) },
+                enabled = enabled,
+                modifier = Modifier.testTag("sync-conflict-use-remote")
+            ) { Text(if (conflict.remoteDeletion) "接受远端删除" else "使用远端") }
+        }
+    }
 }
 
 @Composable
