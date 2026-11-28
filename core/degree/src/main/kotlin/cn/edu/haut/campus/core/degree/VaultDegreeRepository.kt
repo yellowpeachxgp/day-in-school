@@ -161,6 +161,16 @@ class VaultDegreeRepository internal constructor(
     }
 
     override suspend fun recordOverride(input: OverrideInput, actor: Actor): AuditOverride {
+        val active = activeImport() ?: throw IllegalArgumentException("没有激活的培养方案，不能记录人工认定")
+        require(input.importId == null || input.importId == active.importId) {
+            "人工认定 importId 与当前激活方案不一致"
+        }
+        val activePlan = loadPlan(active.importId)
+            ?: throw IllegalArgumentException("激活的培养方案文档不存在: " + active.importId)
+        if (input.action == OverrideAction.ASSIGN) {
+            val target = input.mapToGroupId?.let(activePlan::groupById)
+            require(target != null) { "人工认定目标组不在当前培养方案中: " + input.mapToGroupId }
+        }
         val overrideId = "ovr-" + idGenerator().replace("-", "").take(16)
         val now = clock()
         val attemptRef = EntityRef(EntityType.GRADE_ATTEMPT, input.attemptId, scope)
@@ -171,7 +181,10 @@ class VaultDegreeRepository internal constructor(
             mapToGroupId = input.mapToGroupId,
             reason = input.reason,
             actor = actor,
-            at = now
+            at = now,
+            planImportId = active.importId,
+            planId = activePlan.id,
+            planVersion = activePlan.version
         )
         val ref = EntityRef(EntityType.AUDIT_OVERRIDE, overrideId, scope)
         writer.write(
@@ -203,7 +216,7 @@ class VaultDegreeRepository internal constructor(
         val active = activeImport() ?: return null
         val plan = loadPlan(active.importId) ?: return null
         val overrides = listOverrides()
-        return DegreeAuditor.audit(plan, attempts, overrides, now, context)
+        return DegreeAuditor.audit(plan, attempts, overrides, now, context, planImportId = active.importId)
     }
 
     private suspend fun readActivePointer(): String? {
@@ -276,6 +289,9 @@ class VaultDegreeRepository internal constructor(
         fields["reason"] = JsonValue.Str(override.reason)
         fields["actor"] = JsonValue.Str(override.actor.name)
         fields["at"] = JsonValue.Str(override.at.toString())
+        override.planImportId?.let { fields["planImportId"] = JsonValue.Str(it) }
+        override.planId?.let { fields["planId"] = JsonValue.Str(it) }
+        override.planVersion?.let { fields["planVersion"] = JsonValue.Str(it) }
         return JsonValue.Obj(fields)
     }
 
@@ -289,7 +305,10 @@ class VaultDegreeRepository internal constructor(
             mapToGroupId = document.str("mapToGroupId"),
             reason = document.requiredString("reason"),
             actor = Actor.valueOf(document.requiredString("actor")),
-            at = Instant.parse(document.requiredString("at"))
+            at = Instant.parse(document.requiredString("at")),
+            planImportId = document.str("planImportId"),
+            planId = document.str("planId"),
+            planVersion = document.str("planVersion")
         )
     }
 }

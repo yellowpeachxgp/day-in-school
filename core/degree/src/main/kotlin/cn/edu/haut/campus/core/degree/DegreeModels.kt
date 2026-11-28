@@ -37,7 +37,9 @@ data class OverrideInput(
     val attemptId: String,
     val action: OverrideAction,
     val mapToGroupId: String?,
-    val reason: String
+    val reason: String,
+    /** 调用方显式指定时必须与当前激活导入一致；存储层总会把认定绑定到该导入。 */
+    val importId: String? = null
 ) {
     init {
         require(attemptId.isNotBlank()) { "人工认定必须引用成绩记录" }

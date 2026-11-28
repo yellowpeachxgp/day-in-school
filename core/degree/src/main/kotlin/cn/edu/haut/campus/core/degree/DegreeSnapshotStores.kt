@@ -4,14 +4,14 @@ import cn.edu.haut.campus.core.events.CanonicalJson
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.SchoolAccountScope
-import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.vault.EntitySnapshotStore
 import java.time.Instant
 
 /**
  * training_plan_imports 的过渡 Vault snapshot store（AUTO-042）；物理版本在 blob_store。
- * 删除语义与 W3-04 一致：写 deleted 标记文档而不是抹除历史，journal 撤销按快照回放。
+ * journal 快照只存文档 blob 引用/摘要，完整方案原件留在 blob_store（blob 上限独立于 64 KiB 快照上限）。
+ * 删除语义与 W3-04 一致：写 deleted 标记文档而不是抹除历史，journal 撤销按快照引用回放。
  */
 internal class TrainingPlanImportSnapshotStore(
     private val documents: VersionedDegreeDocumentStore,
@@ -24,7 +24,9 @@ internal class TrainingPlanImportSnapshotStore(
         requireValidRef(ref)
         val document = documents.readDocument(ref.id) ?: return null
         if (isDeletedDocument(document)) return null
-        return CanonicalJson.of(canonicalJson(document))
+        val snapshot = documents.readSnapshot(ref.id)
+            ?: throw IllegalStateException("培养方案导入存在文档但缺少可引用快照: " + ref.id)
+        return CanonicalJson.of(canonicalJson(snapshot))
     }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
@@ -45,8 +47,7 @@ internal class TrainingPlanImportSnapshotStore(
             )
             return
         }
-        val obj = Json.parse(snapshot.text).asObjOrNull
-            ?: throw IllegalArgumentException("培养方案导入快照必须是 object")
+        val obj = documents.resolveSnapshotDocument(CanonicalSnapshotText(snapshot.text), ref.id)
         require(obj.requiredString("id") == ref.id) { "培养方案导入快照 id 与 EntityRef 不一致" }
         require(decodeScope(obj.requiredField("scope")) == ref.scope) { "培养方案导入快照 scope 与 EntityRef 不一致" }
         documents.writeDocument(ref.id, obj)
@@ -58,7 +59,7 @@ internal class TrainingPlanImportSnapshotStore(
     }
 }
 
-/** audit_overrides 的过渡 Vault snapshot store；人工认定的写入与撤销全部经 journal 回放。 */
+/** audit_overrides 的过渡 Vault snapshot store；人工认定的写入与撤销全部经 journal 引用快照回放。 */
 internal class AuditOverrideSnapshotStore(
     private val documents: VersionedDegreeDocumentStore,
     private val scope: SchoolAccountScope,
@@ -70,7 +71,9 @@ internal class AuditOverrideSnapshotStore(
         requireValidRef(ref)
         val document = documents.readDocument(ref.id) ?: return null
         if (isDeletedDocument(document)) return null
-        return CanonicalJson.of(canonicalJson(document))
+        val snapshot = documents.readSnapshot(ref.id)
+            ?: throw IllegalStateException("人工认定存在文档但缺少可引用快照: " + ref.id)
+        return CanonicalJson.of(canonicalJson(snapshot))
     }
 
     override suspend fun apply(ref: EntityRef, snapshot: CanonicalJson?) {
@@ -91,8 +94,7 @@ internal class AuditOverrideSnapshotStore(
             )
             return
         }
-        val obj = Json.parse(snapshot.text).asObjOrNull
-            ?: throw IllegalArgumentException("人工认定快照必须是 object")
+        val obj = documents.resolveSnapshotDocument(CanonicalSnapshotText(snapshot.text), ref.id)
         require(obj.requiredString("id") == ref.id) { "人工认定快照 id 与 EntityRef 不一致" }
         require(decodeScope(obj.requiredField("scope")) == ref.scope) { "人工认定快照 scope 与 EntityRef 不一致" }
         documents.writeDocument(ref.id, obj)
