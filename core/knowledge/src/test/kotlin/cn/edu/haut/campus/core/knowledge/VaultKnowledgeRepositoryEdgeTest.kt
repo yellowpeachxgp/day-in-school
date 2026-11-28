@@ -400,6 +400,8 @@ class VaultKnowledgeRepositoryEdgeTest {
         )
 
         assertEquals(1, extractor.imageExtractionCalls)
+        assertEquals(1, extractor.lastImageWidth)
+        assertEquals(1, extractor.lastImageHeight)
         assertEquals(ExtractionSourceKind.IMAGE_OCR, material.extraction?.sourceKind)
         val hits = repository.searchMaterials(scope, "缓存一致性")
         assertEquals(1, hits.size)
@@ -407,7 +409,11 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertEquals(0, hits[0].pageIndex)
         assertEquals(0, hits[0].lineIndex)
         assertEquals(KnowledgeCoordinateSpace.IMAGE_PIXEL_TOP_LEFT, hits[0].coordinateSpace)
-        assertNotNull("OCR 命中必须保留图片坐标", hits[0].bounds)
+        val bounds = checkNotNull(hits[0].bounds) { "OCR 命中必须保留图片坐标" }
+        assertEquals(0f, bounds.left)
+        assertEquals(0f, bounds.top)
+        assertEquals(100f, bounds.right)
+        assertEquals(10f, bounds.bottom)
     }
 
     @Test
@@ -587,9 +593,13 @@ class VaultKnowledgeRepositoryEdgeTest {
         var pdfLines: List<ExtractedTextLine> = emptyList()
         var imageLines: List<ExtractedTextLine> = emptyList()
         var imageExtractionCalls = 0
+        var lastImageWidth = 0
+        var lastImageHeight = 0
 
         override suspend fun extractImage(request: ImageExtractionRequest): ExtractedText {
             imageExtractionCalls++
+            lastImageWidth = request.image.width
+            lastImageHeight = request.image.height
             val provenance = DataProvenance(
                 providerId = "fake-textextract",
                 schoolId = scope.schoolId,
