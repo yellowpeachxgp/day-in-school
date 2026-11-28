@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import cn.edu.haut.campus.core.model.Staleness
+import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.feature.dorm.state.DormScreenStatus
 import cn.edu.haut.campus.feature.dorm.state.DormTab
 import cn.edu.haut.campus.feature.dorm.state.DormUiAction
@@ -32,6 +33,7 @@ class DormViewModel(
     private val mutableState = MutableStateFlow(DormUiState())
     val uiState: StateFlow<DormUiState> = mutableState.asStateFlow()
     private var refreshSequence = 0L
+    private val deliberateMutationKeys = mutableMapOf<String, String>()
 
     init {
         viewModelScope.launch {
@@ -149,12 +151,13 @@ class DormViewModel(
             mutableState.update { it.copy(notice = "请先填写宿舍群组名称") }
             return
         }
-        runMutation("已创建宿舍群组") {
+        val retry = retryTokenForPayload("dorm-group", schoolId, name)
+        runMutation("已创建宿舍群组", retry.payloadKey) {
             port.createDormGroup(
                 schoolId = schoolId,
                 name = name,
                 description = null,
-                idempotencyKey = newKey("dorm-group"),
+                idempotencyKey = retry.idempotencyKey,
             )
         }
     }
@@ -169,8 +172,9 @@ class DormViewModel(
             mutableState.update { it.copy(notice = error.message) }
             return
         }
-        runMutation("已追加账本记录；历史不会被改写") {
-            port.createLedgerEntry(groupId, input, newKey("ledger-entry"))
+        val retry = retryTokenForPayload("ledger-entry", groupId, input.title, input.amountFen.toString(), input.paidByMemberId, input.occurredAt, input.splitRule.toString(), input.entryKind.name, input.note.orEmpty())
+        runMutation("已追加账本记录；历史不会被改写", retry.payloadKey) {
+            port.createLedgerEntry(groupId, input, retry.idempotencyKey)
         }
     }
 
@@ -193,7 +197,7 @@ class DormViewModel(
                 entryId = original.entryId,
                 reason = "用户确认全额冲正：" + original.title,
                 input = input,
-                idempotencyKey = newKey("ledger-amend"),
+                idempotencyKey = stableKey("ledger-amend", groupId, original.entryId, input.amountFen.toString(), input.paidByMemberId, input.splitRule.toString()),
             )
         }
     }
@@ -219,7 +223,7 @@ class DormViewModel(
                     basisBalanceRevision = balances.balanceRevision,
                     note = "由宿舍协作骨架按当前余额生成；确认只记账，不付款",
                 ),
-                idempotencyKey = newKey("settlement"),
+                idempotencyKey = stableKey("settlement", groupId, balances.balanceRevision.toString(), debtor.memberId, creditor.memberId, amount.toString()),
             )
         }
     }
@@ -227,13 +231,13 @@ class DormViewModel(
     private fun confirmSettlement(settlementId: String) {
         val settlement = mutableState.value.snapshot?.settlements?.firstOrNull { it.settlementId == settlementId } ?: return
         runMutation("已记录本方确认；CONFIRMED 仍不代表支付完成") {
-            port.confirmSettlement(settlementId, settlement.basisBalanceRevision, newKey("settlement-confirm"))
+            port.confirmSettlement(settlementId, settlement.basisBalanceRevision, stableKey("settlement-confirm", settlementId, settlement.basisBalanceRevision.toString()))
         }
     }
 
     private fun cancelSettlement(settlementId: String) {
         runMutation("已取消结算账记录") {
-            port.cancelSettlement(settlementId, "用户在宿舍协作骨架中取消", newKey("settlement-cancel"))
+            port.cancelSettlement(settlementId, "用户在宿舍协作骨架中取消", stableKey("settlement-cancel", settlementId))
         }
     }
 
@@ -247,7 +251,8 @@ class DormViewModel(
             return
         }
         val today = LocalDate.now(clock)
-        runMutation("已创建值日轮班并生成近期任务") {
+        val retry = retryTokenForPayload("duty-rota", groupId, state.dutyRotaDraft.title, state.dutyRotaDraft.weekly.toString(), activeMembers.joinToString(","), today.toString())
+        runMutation("已创建值日轮班并生成近期任务", retry.payloadKey) {
             port.createDutyRota(
                 groupId = groupId,
                 input = DormDutyRotaInput(
@@ -258,23 +263,23 @@ class DormViewModel(
                     timeZone = clock.zone.id,
                     daysOfWeek = if (state.dutyRotaDraft.weekly) listOf(today.dayOfWeek.value) else emptyList(),
                 ),
-                idempotencyKey = newKey("duty-rota"),
+                idempotencyKey = retry.idempotencyKey,
             )
         }
     }
 
     private fun completeDutyTask(taskId: String) = runMutation("已标记值日完成，等待确认") {
-        port.completeDutyTask(taskId, "骨架 UI 确认完成", newKey("duty-complete"))
+        port.completeDutyTask(taskId, "骨架 UI 确认完成", stableKey("duty-complete", taskId))
     }
 
     private fun confirmDutyTask(taskId: String) = runMutation("已确认值日完成") {
-        port.confirmDutyTask(taskId, "骨架 UI 复核确认", newKey("duty-confirm"))
+        port.confirmDutyTask(taskId, "骨架 UI 复核确认", stableKey("duty-confirm", taskId))
     }
 
     private fun skipDutyTask(taskId: String, reason: String) = runMutation("已记录请假/跳过原因") {
         val cleanReason = reason.trim()
         require(cleanReason.isNotEmpty() && cleanReason.length <= 240) { "请假/跳过原因必须为 1..240 字" }
-        port.skipDutyTask(taskId, cleanReason, newKey("duty-skip"))
+        port.skipDutyTask(taskId, cleanReason, stableKey("duty-skip", taskId, cleanReason))
     }
 
     private fun requestDutySwap(taskId: String, targetMemberId: String) {
@@ -295,7 +300,7 @@ class DormViewModel(
     }
 
     private fun resolveDutySwap(swapId: String, action: String) = runMutation("已处理换班请求") {
-        port.resolveDutySwap(swapId, action, "骨架 UI 处理", newKey("duty-swap-resolve"))
+        port.resolveDutySwap(swapId, action, "骨架 UI 处理", stableKey("duty-swap-resolve", swapId, action))
     }
 
     private fun submitRepairTicket() {
@@ -306,7 +311,8 @@ class DormViewModel(
             mutableState.update { it.copy(notice = "报修标题、位置和描述都不能为空") }
             return
         }
-        runMutation("已创建宿舍内部报修协调单") {
+        val retry = retryTokenForPayload("repair", groupId, draft.title, draft.category, draft.locationText, draft.description)
+        runMutation("已创建宿舍内部报修协调单", retry.payloadKey) {
             port.createRepairTicket(
                 groupId = groupId,
                 input = DormRepairInput(
@@ -315,18 +321,18 @@ class DormViewModel(
                     locationText = draft.locationText.trim(),
                     description = draft.description.trim(),
                 ),
-                idempotencyKey = newKey("repair"),
+                idempotencyKey = retry.idempotencyKey,
             )
         }
     }
 
     private fun transitionRepair(repairId: String, toStatus: String) = runMutation("已更新报修协调状态（不代表学校/物业系统状态）") {
-        port.transitionRepairStatus(repairId, toStatus, "骨架 UI 状态流转", null, newKey("repair-transition"))
+        port.transitionRepairStatus(repairId, toStatus, "骨架 UI 状态流转", null, stableKey("repair-transition", repairId, toStatus))
     }
 
     private fun reviewRepair(repairId: String, rating: Int) = runMutation("已提交报修协调评价") {
         require(rating in 1..5) { "报修评价必须在 1..5 分" }
-        port.submitRepairReview(repairId, rating, "骨架 UI 用户显式提交 " + rating + " 分评价", newKey("repair-review"))
+        port.submitRepairReview(repairId, rating, "骨架 UI 用户显式提交 " + rating + " 分评价", stableKey("repair-review", repairId, rating.toString()))
     }
 
     private fun buildLedgerInput(draft: LedgerEntryDraft, members: List<DormMember>): DormLedgerEntryInput {
@@ -371,12 +377,13 @@ class DormViewModel(
         )
     }
 
-    private fun runMutation(successNotice: String, block: suspend () -> Unit) {
+    private fun runMutation(successNotice: String, retryKey: String? = null, block: suspend () -> Unit) {
         if (mutableState.value.actionInFlight) return
         mutableState.update { it.copy(actionInFlight = true, notice = null) }
         viewModelScope.launch {
             try {
                 block()
+                if (retryKey != null) deliberateMutationKeys.remove(retryKey)
                 mutableState.update { it.copy(actionInFlight = false) }
                 refresh(notice = successNotice)
             } catch (error: Throwable) {
@@ -387,7 +394,22 @@ class DormViewModel(
         }
     }
 
+    private data class RetryToken(val payloadKey: String, val idempotencyKey: String)
+
+    /** deliberate create 的 payload 级别重试键：成功后移除，用户再次明确创建会同 payload 也生成新键。 */
+    private fun retryTokenForPayload(prefix: String, vararg parts: String): RetryToken {
+        val payloadKey = prefix + "\u001f" + parts.joinToString("\u001f")
+        val idempotencyKey = deliberateMutationKeys.getOrPut(payloadKey) {
+            prefix + "-" + Digests.sha256Hex(payloadKey + "\u001f" + UUID.randomUUID().toString()).take(48)
+        }
+        return RetryToken(payloadKey, idempotencyKey)
+    }
+
     private fun newKey(prefix: String): String = prefix + "-" + UUID.randomUUID().toString()
+
+    /** 状态机/对象唯一写使用稳定键：网络结果未知后的用户重试必须命中同一 durable idempotency record。 */
+    private fun stableKey(prefix: String, vararg parts: String): String =
+        prefix + "-" + Digests.sha256Hex(parts.joinToString("\u001f")).take(40)
 
     companion object {
         fun factory(
