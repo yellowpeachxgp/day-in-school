@@ -71,7 +71,14 @@ class DegreeViewModel(
                 state.copy(expandedGroupIds = next)
             }
             is DegreeUiAction.OpenOverride -> {
-                val resolvedAttemptId = _uiState.value.report?.representativeAttemptIds?.get(action.attemptId)
+                val report = _uiState.value.report
+                val directIds = report?.representativeAttemptIds?.values.orEmpty()
+                val resolvedAttemptId = if (action.attemptId in directIds) {
+                    action.attemptId
+                } else {
+                    // 兼容旧调用方传逻辑 courseKey；新 UI 对未归类课程直接传成绩实体 ID，改名后不会再错查。
+                    report?.representativeAttemptIds?.get(action.attemptId)
+                }
                 if (resolvedAttemptId == null) {
                     _uiState.update { it.copy(notice = "找不到该课程的成绩记录，无法认定") }
                 } else {
@@ -101,6 +108,7 @@ class DegreeViewModel(
                 state.copy(overrideDraft = state.overrideDraft?.copy(reason = action.reason))
             }
             DegreeUiAction.SubmitOverride -> submitOverride()
+            is DegreeUiAction.RetractOverride -> retractOverride(action.attemptId)
             DegreeUiAction.DismissNotice -> _uiState.update { it.copy(notice = null) }
         }
     }
@@ -231,6 +239,28 @@ class DegreeViewModel(
                 throw cancelled
             } catch (error: Exception) {
                 _uiState.update { it.copy(notice = "认定失败：" + (error.message ?: "未知错误")) }
+            }
+        }
+    }
+
+    private fun retractOverride(attemptId: String) {
+        scope.launch {
+            try {
+                repository.recordOverride(
+                    OverrideInput(
+                        attemptId = attemptId,
+                        action = OverrideAction.RETRACT,
+                        mapToGroupId = null,
+                        reason = "用户撤销此前人工认定"
+                    ),
+                    Actor.USER
+                )
+                _uiState.update { it.copy(notice = "已撤销人工认定，课程回到自动匹配") }
+                refresh()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(notice = "撤销失败：" + (error.message ?: "未知错误")) }
             }
         }
     }

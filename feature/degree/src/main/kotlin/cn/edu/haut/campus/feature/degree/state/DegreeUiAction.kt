@@ -15,5 +15,7 @@ sealed interface DegreeUiAction {
     data class OverrideTargetChanged(val groupId: String?, val exclude: Boolean) : DegreeUiAction
     data class OverrideReasonChanged(val reason: String) : DegreeUiAction
     data object SubmitOverride : DegreeUiAction
+    /** 对当前方案内已生效认定追加 RETRACT；attemptId 必须是成绩实体 ID，不是改名后的展示 courseKey。 */
+    data class RetractOverride(val attemptId: String, val courseName: String) : DegreeUiAction
     data object DismissNotice : DegreeUiAction
 }

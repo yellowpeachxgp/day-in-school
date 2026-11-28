@@ -212,4 +212,28 @@ class DegreeViewModelTest {
         assertTrue(vm.uiState.value.notice.orEmpty().contains("找不到"))
         vm.closeForSessionEnd()
     }
+
+    @Test
+    fun overrideOpenAcceptsDirectAttemptIdAndRetractIsRecorded() = runBlocking {
+        val fake = FakeRepository()
+        fake.reportToReturn = DegreePreviewFixtures.reportDerived()
+        val vm = createViewModel(fake)
+        waitFor { vm.uiState.value.status == DegreeStatus.EMPTY }
+        vm.onAction(DegreeUiAction.OpenImportDialog)
+        vm.onAction(DegreeUiAction.ImportTextChanged("{}"))
+        vm.onAction(DegreeUiAction.SubmitImport)
+        waitFor { vm.uiState.value.status == DegreeStatus.READY }
+
+        vm.onAction(DegreeUiAction.OpenOverride("at-math", "高等数学A"))
+        assertEquals("at-math", vm.uiState.value.overrideDraft?.attemptId)
+        vm.onAction(DegreeUiAction.CloseOverride)
+
+        vm.onAction(DegreeUiAction.RetractOverride("at-math", "高等数学A"))
+        waitFor { fake.overrides.any { it.action == cn.edu.haut.campus.core.plan.OverrideAction.RETRACT } }
+        val retract = fake.overrides.last()
+        assertEquals("at-math", retract.attemptRef.id)
+        assertTrue(retract.reason.isNotBlank())
+        vm.closeForSessionEnd()
+    }
+
 }

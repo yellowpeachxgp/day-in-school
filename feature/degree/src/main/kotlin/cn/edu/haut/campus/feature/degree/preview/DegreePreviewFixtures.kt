@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import cn.edu.haut.campus.core.degree.TrainingPlanImportRecord
 import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.plan.AuditOverride
 import cn.edu.haut.campus.core.plan.AuditReport
 import cn.edu.haut.campus.core.plan.AuditStep
 import cn.edu.haut.campus.core.plan.CompletedCourse
@@ -11,6 +12,8 @@ import cn.edu.haut.campus.core.plan.CourseAssignment
 import cn.edu.haut.campus.core.plan.CourseMatchKind
 import cn.edu.haut.campus.core.plan.GroupProgress
 import cn.edu.haut.campus.core.plan.PlanRisk
+import cn.edu.haut.campus.core.plan.OverrideAction
+import cn.edu.haut.campus.core.plan.OverrideApplication
 import cn.edu.haut.campus.core.plan.PlanRiskKind
 import cn.edu.haut.campus.core.plan.PlanSource
 import cn.edu.haut.campus.core.plan.Provenance
@@ -92,7 +95,35 @@ object DegreePreviewFixtures {
         totalRemainingCredits = BigDecimal("4"),
         notes = listOf("本报告含 1 项生效人工认定，每项依据可在审计轨迹中展开"),
         basis = "按培养方案「计算机示范方案」2023.1 的 2 个叶子要求组审计 3 条成绩记录与 1 项人工认定",
-        representativeAttemptIds = mapOf("MATH1" to "at-math", "ART101" to "at-art")
+        representativeAttemptIds = mapOf("MATH1" to "at-math", "ART101" to "at-art"),
+        overrideApplications = listOf(
+            OverrideApplication(
+                override = AuditOverride(
+                    id = "ovr-demo",
+                    attemptRef = cn.edu.haut.campus.core.model.EntityRef(
+                        cn.edu.haut.campus.core.model.EntityType.GRADE_ATTEMPT,
+                        "at-art",
+                        cn.edu.haut.campus.core.model.SchoolAccountScope(
+                            cn.edu.haut.campus.core.model.SchoolId("demo"),
+                            cn.edu.haut.campus.core.model.AccountId("acct"),
+                            cn.edu.haut.campus.core.model.ProfileId("prof")
+                        )
+                    ),
+                    action = OverrideAction.ASSIGN,
+                    mapToGroupId = "open",
+                    reason = "教务处认定可计入开放选修",
+                    actor = Actor.USER,
+                    at = Instant.parse("2026-02-01T00:00:00Z"),
+                    planImportId = "tpl-demo",
+                    planId = "demo-cs-2023",
+                    planVersion = "2023.1"
+                ),
+                courseKey = "ART101",
+                courseName = "艺术鉴赏",
+                representativeAttemptId = "at-art",
+                targetGroupId = "open"
+            )
+        )
     )
 
     fun importRecord(active: Boolean) = TrainingPlanImportRecord(
@@ -140,7 +171,7 @@ object DegreePreviewFixtures {
         imports = listOf(importRecord(active = true)),
         activeImportId = "tpl-demo",
         report = reportDerived().copy(
-            unclassified = listOf(CompletedCourse("MUSIC1", "音乐欣赏", BigDecimal("1"))),
+            unclassified = listOf(CompletedCourse("MUSIC1", "音乐欣赏", BigDecimal("1"), representativeAttemptId = "at-music")),
             notes = listOf("有 1 门已修课程（合计 1 学分）未归类，可能是跨专业选课或方案外课程，可用人工认定归组"),
             representativeAttemptIds = mapOf("MUSIC1" to "at-music")
         ),

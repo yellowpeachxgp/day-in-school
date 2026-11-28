@@ -150,7 +150,7 @@ private fun ReadyContent(state: DegreeUiState, onAction: (DegreeUiAction) -> Uni
             }
             if (report.risks.isNotEmpty()) {
                 item { Text("风险提示", style = MaterialTheme.typography.titleMedium) }
-                items(report.risks, key = { it.kind.name + it.title }) { risk ->
+                items(report.risks) { risk ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(risk.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
@@ -181,8 +181,51 @@ private fun ReadyContent(state: DegreeUiState, onAction: (DegreeUiAction) -> Uni
                                 )
                             }
                             TextButton(onClick = {
-                                onAction(DegreeUiAction.OpenOverride(course.courseKey, course.courseName))
+                                onAction(
+                                    DegreeUiAction.OpenOverride(
+                                        course.representativeAttemptId ?: course.courseKey,
+                                        course.courseName
+                                    )
+                                )
                             }) { Text("人工认定") }
+                        }
+                    }
+                }
+            }
+            if (report.overrideApplications.isNotEmpty()) {
+                item {
+                    Text("人工认定", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "认定只绑定当前方案/导入；改派会追加新认定，撤销后课程回到自动匹配",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                items(report.overrideApplications, key = { it.override.id }) { application ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(application.courseName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                            val target = application.targetGroupId?.let { groupId ->
+                                report.groupById(groupId)?.title ?: groupId
+                            } ?: "排除（不计入任何组）"
+                            Text("当前处理：" + target + "；依据：" + application.override.reason, style = MaterialTheme.typography.bodySmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    onAction(
+                                        DegreeUiAction.OpenOverride(
+                                            application.representativeAttemptId ?: application.override.attemptRef.id,
+                                            application.courseName
+                                        )
+                                    )
+                                }) { Text("改派") }
+                                TextButton(onClick = {
+                                    onAction(
+                                        DegreeUiAction.RetractOverride(
+                                            application.representativeAttemptId ?: application.override.attemptRef.id,
+                                            application.courseName
+                                        )
+                                    )
+                                }) { Text("撤销认定") }
+                            }
                         }
                     }
                 }
@@ -311,8 +354,15 @@ private fun GroupCard(
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
+                        val evidence = buildList {
+                            step.attemptId?.let { add("成绩 " + it) }
+                            if (step.academicYear != null && step.termNumber != null) {
+                                add(step.academicYear + " 第" + step.termNumber + "学期")
+                            }
+                            step.gradeSource?.let { add("来源 " + it.name) }
+                        }
                         Text(
-                            "依据：" + step.basis,
+                            "依据：" + step.basis + if (evidence.isNotEmpty()) "（" + evidence.joinToString(" · ") + "）" else "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

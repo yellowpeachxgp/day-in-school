@@ -5,6 +5,8 @@ import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.AttemptType
+import cn.edu.haut.campus.core.model.EntityRef
+import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
@@ -13,12 +15,22 @@ import cn.edu.haut.campus.core.plan.ImportInput
 import cn.edu.haut.campus.core.plan.OverrideAction
 import cn.edu.haut.campus.core.plan.PlanSource
 import cn.edu.haut.campus.core.plan.Provenance
+import cn.edu.haut.campus.core.vault.BackupSelection
+import cn.edu.haut.campus.core.vault.RestoreMode
+import cn.edu.haut.campus.core.vault.RoomEventOutbox
+import cn.edu.haut.campus.core.vault.RoomVaultJournal
+import cn.edu.haut.campus.core.vault.VaultBackupService
+import cn.edu.haut.campus.core.vault.VaultBlobStore
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -106,6 +118,45 @@ class VaultDegreeRepositoryTest {
     fun tearDown() {
         repository.close()
         database.close()
+    }
+
+    private fun newDegreeJournal(outbox: RoomEventOutbox): RoomVaultJournal {
+        val blobStore = VaultBlobStore(database = database, clock = { now })
+        val planDocuments = VersionedDegreeDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = EntityType.TRAINING_PLAN_IMPORT,
+            mimeType = VersionedDegreeDocumentStore.PLAN_IMPORT_MIME,
+            clock = { now }
+        )
+        val overrideDocuments = VersionedDegreeDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = EntityType.AUDIT_OVERRIDE,
+            mimeType = VersionedDegreeDocumentStore.AUDIT_OVERRIDE_MIME,
+            clock = { now }
+        )
+        return RoomVaultJournal(
+            database = database,
+            outbox = outbox,
+            snapshotStores = listOf(
+                TrainingPlanImportSnapshotStore(planDocuments, scope, clock = { now }),
+                AuditOverrideSnapshotStore(overrideDocuments, scope, clock = { now })
+            ),
+            clock = { now }
+        )
+    }
+
+    private fun largeSampleJson(): String {
+        val extraCourses = (1..1800).joinToString(",") { index ->
+            "{" + "\"code\": \"PAD" + index + "\", \"name\": \"填充课程" + index + "-01234567890123456789\"}"
+        }
+        return sampleJson().replace(
+            "{\"code\": \"CS101\", \"name\": \"程序设计基础\"}",
+            "{\"code\": \"CS101\", \"name\": \"程序设计基础\"}," + extraCourses
+        )
     }
 
     @Test
@@ -215,4 +266,102 @@ class VaultDegreeRepositoryTest {
             assertEquals(scope.profileId.value, row.scopeProfileId)
         }
     }
+
+    @Test
+    fun overrideDoesNotLeakAfterSwitchingPlanImport() = runBlocking {
+        val first = repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
+        val secondJson = sampleJson()
+            .replace("demo-cs-2023", "demo-cs-2024")
+            .replace("2023.1", "2024.1")
+            .replace("计算机示范方案", "另一套计算机方案")
+        val second = repository.importPlan(ImportInput.JsonDocument(secondJson), Actor.USER)
+        repository.recordOverride(
+            OverrideInput("at-art", OverrideAction.ASSIGN, "open", "第一套方案中认定为开放选修"),
+            Actor.USER
+        )
+        val attempts = listOf(attempt("ART101", "艺术鉴赏", "2", "at-art"))
+
+        repository.setActiveImport(second.importId, Actor.USER)
+        val switched = repository.auditActivePlan(attempts, LocalDate.of(2026, 3, 1))!!
+        assertEquals(0, BigDecimal.ZERO.compareTo(switched.groupById("open")!!.earnedCredits))
+        assertEquals(1, switched.unclassified.size)
+        assertTrue(switched.trace.any { it.rule == "override-plan-mismatch" })
+
+        repository.setActiveImport(first.importId, Actor.USER)
+        val original = repository.auditActivePlan(attempts, LocalDate.of(2026, 3, 1))!!
+        assertEquals(0, BigDecimal("2").compareTo(original.groupById("open")!!.earnedCredits))
+    }
+
+    @Test
+    fun largePlanUsesBlobReferenceSnapshotAndConfirmRevertRestoresPriorState() = runBlocking {
+        val largeJson = largeSampleJson()
+        assertTrue("测试方案必须超过 Vault 64 KiB 快照硬限", largeJson.toByteArray(Charsets.UTF_8).size > 64 * 1024)
+        val record = repository.importPlan(ImportInput.JsonDocument(largeJson), Actor.USER)
+        repository.setConfirmedForStudent(record.importId, true, Actor.USER)
+
+        val rows = database.vaultDao().observeJournalForEntity("TRAINING_PLAN_IMPORT", record.importId).first()
+        val confirmRow = rows.first { it.actorDetail == "training-plan-confirm" }
+        val after = confirmRow.afterJson.orEmpty()
+        assertTrue("journal 快照必须引用 blob，不得内联 planDocument", !after.contains("planDocument"))
+        assertTrue(after.contains("documentSha256"))
+        assertTrue(after.toByteArray(Charsets.UTF_8).size < 64 * 1024)
+
+        val outbox = RoomEventOutbox(database)
+        try {
+            val journal = newDegreeJournal(outbox)
+            val result = journal.revert(confirmRow.changeId, Actor.USER)
+            assertNotNull(result.revertChangeId)
+        } finally {
+            outbox.close()
+        }
+        val restored = repository.loadPlan(record.importId)
+        assertNotNull(restored)
+        assertFalse("撤销确认后必须回到未确认状态", restored!!.confirmedForStudent)
+    }
+
+    @Test
+    fun backupRestoreKeepsLatestVersionByExplicitWriteSequence() = runBlocking {
+        val record = repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
+        repository.setConfirmedForStudent(record.importId, true, Actor.USER)
+        val outbox = RoomEventOutbox(database)
+        try {
+            val backupJournal = newDegreeJournal(outbox)
+            val service = VaultBackupService(
+                database = database,
+                scope = scope,
+                journal = backupJournal,
+                appVersion = "degree-test",
+                clock = { now },
+                pbkdf2Iterations = 600_000
+            )
+            val passphrase = "backup-passphrase".toCharArray()
+            val out = ByteArrayOutputStream()
+            service.export(scope, BackupSelection.ALL, passphrase, out)
+            val backup = out.toByteArray()
+            assertTrue(backup.isNotEmpty())
+
+            database.vaultDao().clearBlobStore()
+            assertEquals(0, database.vaultDao().countBlobStore())
+            val preview = service.inspect(ByteArrayInputStream(backup), passphrase)
+            service.restore(preview, RestoreMode.REPLACE, emptyMap())
+        } finally {
+            outbox.close()
+        }
+
+        val restored = repository.loadPlan(record.importId)
+        assertNotNull(restored)
+        assertTrue("备份恢复后仍应读到最新确认版本", restored!!.confirmedForStudent)
+        val envelopeRows = database.vaultDao().getBlobsForOwner(
+            schoolId = scope.schoolId.value,
+            accountId = scope.accountId.value,
+            profileId = scope.profileId.value,
+            ownerEntityType = "TRAINING_PLAN_IMPORT",
+            ownerEntityId = record.importId
+        ).filter { it.mimeType == VersionedDegreeDocumentStore.PLAN_IMPORT_MIME }
+        val sequences = envelopeRows.mapNotNull { row ->
+            Regex("\"writeSequence\":(\\d+)").find(row.content.toString(Charsets.UTF_8))?.groupValues?.get(1)?.toLong()
+        }.sorted()
+        assertEquals("版本信封必须携带显式单调 writeSequence", listOf(1L, 2L), sequences)
+    }
+
 }
