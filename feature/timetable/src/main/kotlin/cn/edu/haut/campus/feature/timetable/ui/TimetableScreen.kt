@@ -63,6 +63,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
+import cn.edu.haut.campus.core.domain.TimelineScheduleAdapter
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import java.time.LocalDate
@@ -70,6 +71,7 @@ import cn.edu.haut.campus.feature.timetable.state.TimetableScreenStatus
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.timelineEventsForTerm
 
 @Composable
 fun TimetableScreen(
@@ -113,6 +115,7 @@ private fun TimetableLegacyContent(
     val periodTimeSchemes = state.periodTimeSchemes
     val calendarOverrides = state.calendarOverrides
     val occurrenceOverrides = state.occurrenceOverrides
+    val timelineEvents = state.timelineEventsForTerm(term)
     val buildings = state.buildings
     val unscheduledCourses = state.unscheduledCourses
     val pendingLegacyReviewTargets = state.pendingLegacyReviewTargets
@@ -151,6 +154,14 @@ private fun TimetableLegacyContent(
     var confirmDeleteMasterRule by interactionState.confirmDeleteMasterRule
     var viewMode by interactionState.viewMode // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
+    val openOccurrenceEditor: (ClassOccurrence) -> Unit = { occurrence ->
+        term?.id?.let { ownerTermId ->
+            editingOccurrence = TimetableEditingOccurrence(
+                occurrence = occurrence,
+                ownerTermId = ownerTermId
+            )
+        }
+    }
 
     // 已取消分组语义（与恢复一致）：
     // - 新版跨日调课（moveId != null）按 moveId 折叠为一个原子恢复动作；
@@ -192,28 +203,6 @@ private fun TimetableLegacyContent(
         termCanceledGroups.map { it.first() }
     }
 
-    val weekOccurrencesMap = remember(
-        selectedWeek,
-        term,
-        courses,
-        rules,
-        periodTimes,
-        calendarOverrides,
-        occurrenceOverrides,
-        buildings
-    ) {
-        val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-        ScheduleEngine.resolveOccurrencesForTeachingWeek(
-            teachingWeek = selectedWeek,
-            term = activeTerm,
-            courses = courses,
-            rules = rules,
-            periodTimes = periodTimes,
-            calendarOverrides = calendarOverrides,
-            occurrenceOverrides = occurrenceOverrides,
-            buildings = buildings
-        )
-    }
 
     Column(
         modifier = modifier
@@ -760,6 +749,7 @@ private fun TimetableLegacyContent(
             val activeWeekOccurrencesMap = remember(
                 activeWeek,
                 term,
+                timelineEvents,
                 courses,
                 rules,
                 periodTimes,
@@ -768,16 +758,19 @@ private fun TimetableLegacyContent(
                 buildings
             ) {
                 val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-                ScheduleEngine.resolveOccurrencesForTeachingWeek(
-                    teachingWeek = activeWeek,
-                    term = activeTerm,
-                    courses = courses,
-                    rules = rules,
-                    periodTimes = periodTimes,
-                    calendarOverrides = calendarOverrides,
-                    occurrenceOverrides = occurrenceOverrides,
-                    buildings = buildings
-                )
+                activeWeekDates.associateWith { date ->
+                    TimelineScheduleAdapter.resolveOccurrencesForDateFromEvents(
+                        date = date,
+                        events = timelineEvents,
+                        term = activeTerm,
+                        periodTimes = periodTimes,
+                        courses = courses,
+                        rules = rules,
+                        calendarOverrides = calendarOverrides,
+                        occurrenceOverrides = occurrenceOverrides,
+                        buildings = buildings
+                    )
+                }
             }
 
             when (activeMode) {
@@ -786,7 +779,7 @@ private fun TimetableLegacyContent(
                         weekDates = activeWeekDates,
                         today = today,
                         weekOccurrencesMap = activeWeekOccurrencesMap,
-                        onEditOccurrence = { editingOccurrence = it },
+                        onEditOccurrence = openOccurrenceEditor,
                         onNavigateToMapWithRoom = onNavigateToMapWithRoom
                     )
                 }
@@ -1056,7 +1049,7 @@ private fun TimetableLegacyContent(
                                                     blockBorder,
                                                     RoundedCornerShape(if (showSevenDays) 10.dp else 12.dp)
                                                 )
-                                                .clickable { editingOccurrence = occ }
+                                                .clickable { openOccurrenceEditor(occ) }
                                         ) {
                                             Column(modifier = Modifier.fillMaxSize()) {
                                                 Box(
