@@ -118,3 +118,52 @@ class FileWeatherResponseCacheStore(
     override suspend fun write(key: String, value: WeatherCachedResponse) = withContext(Dispatchers.IO) {
         val file = cacheFile(key) ?: throw IOException("天气缓存键非法")
         if (!directory.exists() && !directory.mkdirs()) throw IOException("天气缓存目录不可写")
+        val encoded = encodeCachedResponse(value)
+        val tmp = File(directory, file.name + ".tmp")
+        tmp.writeText(encoded, Charsets.UTF_8)
+        if (!tmp.renameTo(file)) {
+            file.writeText(encoded, Charsets.UTF_8)
+            tmp.delete()
+        }
+    }
+
+    private fun cacheFile(key: String): File? {
+        if (!CACHE_KEY_REGEX.matches(key)) return null
+        return File(directory, key + ".json")
+    }
+
+    private companion object {
+        const val MAX_CACHE_FILE_BYTES: Long = 384 * 1024L
+        val CACHE_KEY_REGEX = Regex("^[0-9a-f]{64}$")
+    }
+}
+
+private fun encodeCachedResponse(value: WeatherCachedResponse): String = Json.canonical(
+    JsonValue.Obj(
+        mapOf(
+            "body" to JsonValue.Str(value.body),
+            "fetchedAtEpochMs" to JsonValue.Num(value.fetchedAt.toEpochMilli().toString()),
+            "cacheExpiresAtEpochMs" to JsonValue.Num(value.cacheExpiresAt.toEpochMilli().toString()),
+            "nextRequestAtEpochMs" to JsonValue.Num(value.nextRequestAt.toEpochMilli().toString())
+        ) + (value.contentRevision?.let { mapOf("contentRevision" to JsonValue.Str(it)) } ?: emptyMap())
+    )
+)
+
+private fun decodeCachedResponse(text: String): WeatherCachedResponse? = runCatching {
+    val root = Json.parse(text) as? JsonValue.Obj ?: return@runCatching null
+    val body = root.str("body") ?: return@runCatching null
+    val fetchedAt = root.obj("fetchedAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
+    val cacheExpiresAt = root.obj("cacheExpiresAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
+    val nextRequestAt = root.obj("nextRequestAtEpochMs")?.epochMillisOrNull() ?: return@runCatching null
+    WeatherCachedResponse(
+        body = body,
+        fetchedAt = fetchedAt,
+        cacheExpiresAt = cacheExpiresAt,
+        nextRequestAt = nextRequestAt,
+        contentRevision = root.str("contentRevision")
+    )
+}.getOrNull()
+
+private fun JsonValue.epochMillisOrNull(): Instant? =
+    (this as? JsonValue.Num)?.literal?.toLongOrNull()?.let(Instant::ofEpochMilli)
+
