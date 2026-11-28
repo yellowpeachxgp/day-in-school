@@ -168,9 +168,9 @@ class DegreeAuditorTest {
         val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
         assertEquals(1, report.unclassified.size)
         assertEquals("艺术鉴赏", report.unclassified.first().courseName)
-        val totalInGroups = report.groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.earnedCredits) }
-        PlanFixtures.assertAmount("5", totalInGroups, "跨专业课程不得计入任何组")
-        PlanFixtures.assertAmount("5", report.totalEarnedCredits)
+        val totalInLeafGroups = report.groups.filter { it.groupId != "root" }.fold(BigDecimal.ZERO) { acc, group -> acc.add(group.earnedCredits) }
+        PlanFixtures.assertAmount("5", totalInLeafGroups, "跨专业课程不得计入任何组")
+        PlanFixtures.assertAmount("5", report.totalEarnedCredits, "汇总 root 不得导致总入学分重复计算")
         assertTrue(report.notes.any { it.contains("未归类") })
         assertTrue(report.trace.any { it.rule == "unclassified" && it.courseName == "艺术鉴赏" })
     }
