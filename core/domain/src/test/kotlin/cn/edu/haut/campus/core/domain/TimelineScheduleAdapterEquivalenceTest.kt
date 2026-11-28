@@ -201,6 +201,39 @@ class TimelineScheduleAdapterEquivalenceTest {
     }
 
     @Test
+    fun twoHundredThousandCharRoomUsesTruncatedMetadataAndAuthoritativeFallback() {
+        val rawRoom = "cdmc" + "室".repeat(199_996)
+        val hugeRoomCourse = Course(
+            id = "c-huge-room-manual",
+            externalId = "manual-huge-room",
+            name = "超长教室课程",
+            teacher = "教师",
+            colorArgb = 0xFF222222,
+            source = CourseSource.MANUAL
+        )
+        val hugeRoomRule = CourseScheduleRule(
+            id = "r-huge-room-manual", courseId = hugeRoomCourse.id, termId = term.id, weekday = DayOfWeek.MONDAY,
+            startPeriod = 1, endPeriod = 2, weeks = setOf(2), rawRoom = rawRoom
+        )
+        val allCourses = courses + hugeRoomCourse
+        val allRules = baseRules() + hugeRoomRule
+
+        val engineOut = ScheduleEngine.resolveOccurrencesForDate(
+            date = monday, term = term, courses = allCourses, rules = allRules, periodTimes = periods, buildings = buildings
+        )
+        val timelineOut = TimelineScheduleAdapter.resolveOccurrencesForDate(
+            date = monday, term = term, courses = allCourses, rules = allRules, periodTimes = periods, buildings = buildings
+        )
+
+        assertEquals(engineOut, timelineOut)
+        assertEquals(
+            "200000 字符教室在 metadata 截断后必须由权威输入兜底逐字还原",
+            rawRoom,
+            timelineOut.first { it.courseId == hugeRoomCourse.id }.rawRoom
+        )
+    }
+
+    @Test
     fun emptyTermOrRulesProduceEmptyProjection() {
         val out = TimelineScheduleAdapter.resolveOccurrencesForDate(
             date = monday, term = term, courses = courses, rules = emptyList(), periodTimes = periods, buildings = buildings

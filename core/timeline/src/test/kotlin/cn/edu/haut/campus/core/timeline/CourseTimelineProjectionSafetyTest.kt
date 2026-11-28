@@ -95,6 +95,25 @@ class CourseTimelineProjectionSafetyTest {
     }
 
     @Test
+    fun twoHundredThousandCharRoomStaysWithinMetadataBudgetAndMarksTruncated() {
+        val room = "cdmc" + "室".repeat(199_996)
+        val course = fixture.course(id = "c-huge-room", externalId = "manual-huge-room", name = "超长教室课程")
+        val rule = fixture.rule(id = "r-huge-room", courseId = course.id, weeks = setOf(1), rawRoom = room)
+        val snapshot = fixture.scheduleSnapshot(courses = listOf(course), rules = listOf(rule))
+
+        val events = CourseTimelineProjection.projectAll(
+            snapshot = snapshot,
+            scope = fixture.scope,
+            window = fixture.dayWindow(LocalDate.of(2026, 8, 31))
+        )
+        val event = events.single { it.kind == TimelineKind.COURSE }
+
+        assertTrue("分片预算必须始终满足 TimelineEvent 64 条上限", event.sourceMetadata.size <= 64)
+        assertTrue(event.sourceMetadata.values.all { value -> value.length <= 4096 && value.none { it.isISOControl() } })
+        assertEquals("true", event.sourceMetadata["courseOccurrence.rawRoom.json.truncated"])
+    }
+
+    @Test
     fun controlAndOversizedOverrideReasonRoundTripsExactly() {
         val reason = "override\u0001\u0085" + "因".repeat(4_200) + "\u007F"
         val course = fixture.course(id = "c-unsafe-reason", externalId = "manual-unsafe-reason", name = "调课课程")

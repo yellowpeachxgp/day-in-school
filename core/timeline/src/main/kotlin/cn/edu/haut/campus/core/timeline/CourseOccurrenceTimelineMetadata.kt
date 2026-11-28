@@ -77,26 +77,8 @@ object CourseOccurrenceTimelineMetadata {
         }
     }
 
-    /**
-     * 自由文本的统一信封：安全短文本沿用原 key；控制字符/超长文本改用 JSON 分片。
-     * 每次最多再占 count+truncated 两个控制项，因此不会突破 TimelineEvent 64 条 metadata 上限。
-     */
-    private fun MutableMap<String, String>.putLosslessText(baseKey: String, value: String) {
-        if (value.none { it.isISOControl() } && value.length <= METADATA_VALUE_LIMIT) {
-            put(baseKey, value)
-            return
-        }
-        val encodedChunks = metadataJsonString(value).chunked(METADATA_VALUE_LIMIT)
-        val maxChunks = (METADATA_ENTRY_LIMIT - size - 2).coerceAtLeast(0)
-        val storedChunks = encodedChunks.take(maxChunks)
-        put(baseKey + JSON_CHUNK_COUNT_SUFFIX, storedChunks.size.toString())
-        storedChunks.forEachIndexed { index, chunk ->
-            put(baseKey + JSON_CHUNK_PREFIX_SUFFIX + index, chunk)
-        }
-        if (storedChunks.size < encodedChunks.size) {
-            put(baseKey + JSON_TRUNCATED_SUFFIX, "true")
-        }
-    }
+    private fun isSimpleLosslessText(value: String): Boolean =
+        value.none { it.isISOControl() } && value.length <= METADATA_VALUE_LIMIT
 
     /** 读取统一信封；完整 JSON 分片逐字还原，安全短文本按原 key 直读，截断/残缺返回 null 让调用侧兜底。 */
     private fun decodeLosslessText(metadata: Map<String, String>, baseKey: String): String? {
@@ -136,12 +118,35 @@ object CourseOccurrenceTimelineMetadata {
         )
         put(TIME_EVIDENCE, occurrence.timeEvidence.name)
 
-        // 三个既有自由文本与课程名共用同一 JSON 分片协议；普通安全短文本仍保持旧 key/原值。
-        this.putLosslessText(RAW_ROOM, occurrence.rawRoom)
-        occurrence.teacher?.let { this.putLosslessText(TEACHER, it) }
-        occurrence.overrideReason?.let { this.putLosslessText(OVERRIDE_REASON, it) }
-        if (safeTimelineTitle(occurrence.courseName) != occurrence.courseName) {
-            this.putLosslessText(COURSE_NAME, occurrence.courseName)
+        // 三个既有自由文本与课程名共用同一 JSON 分片协议。先把安全短文本放入原 key，
+        // 再对需要分片的字段做全局 64 条硬预算：任何字段都不能先把预算吃满导致后续 put 崩流；
+        // 装不下的尾部真正丢弃并显式 truncated，还原侧只有看到这个标记才启用权威输入兜底。
+        val textInputs = buildList {
+            add(RAW_ROOM to occurrence.rawRoom)
+            occurrence.teacher?.let { add(TEACHER to it) }
+            occurrence.overrideReason?.let { add(OVERRIDE_REASON to it) }
+            if (safeTimelineTitle(occurrence.courseName) != occurrence.courseName) {
+                add(COURSE_NAME to occurrence.courseName)
+            }
+        }
+        val encodedTextInputs = textInputs.filterNot { (_, value) -> isSimpleLosslessText(value) }
+        textInputs.filter { (_, value) -> isSimpleLosslessText(value) }.forEach { (key, value) ->
+            put(key, value)
+        }
+        encodedTextInputs.forEachIndexed { index, (baseKey, value) ->
+            val encodedChunks = metadataJsonString(value).chunked(METADATA_VALUE_LIMIT)
+            val remainingEncodedFields = encodedTextInputs.size - index - 1
+            // count + truncated 是每字段最少控制开销；为后续字段也保留最低控制开销。
+            val reservedControlEntries = 2 + remainingEncodedFields * 2
+            val availableChunkCount = (METADATA_ENTRY_LIMIT - size - reservedControlEntries).coerceAtLeast(0)
+            val storedChunks = encodedChunks.take(availableChunkCount)
+            put(baseKey + JSON_CHUNK_COUNT_SUFFIX, storedChunks.size.toString())
+            storedChunks.forEachIndexed { chunkIndex, chunk ->
+                put(baseKey + JSON_CHUNK_PREFIX_SUFFIX + chunkIndex, chunk)
+            }
+            if (storedChunks.size < encodedChunks.size) {
+                put(baseKey + JSON_TRUNCATED_SUFFIX, "true")
+            }
         }
     }
 
