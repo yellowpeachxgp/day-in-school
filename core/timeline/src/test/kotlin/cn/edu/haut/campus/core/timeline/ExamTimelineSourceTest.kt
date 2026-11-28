@@ -54,7 +54,7 @@ class ExamTimelineSourceTest {
         assertEquals(EventStatus.TENTATIVE, event.status)
         assertEquals(BusyLevel.FREE, event.busy)
         assertNull(event.end)
-        assertEquals(exam.examDate!!.atStartOfDay(zone).toInstant(), event.start)
+        assertEquals(exam.examDate!!.atTime(LocalTime.of(9, 0)).atZone(zone).toInstant(), event.start)
     }
 
     @Test

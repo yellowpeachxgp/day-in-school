@@ -45,7 +45,10 @@ class ExamTimelineSource(
     ): TimelineEvent? {
         val date = examDate ?: return null
         val preciseWindow = preciseWindowOrNull(date, startTime, endTime, snapshot.zone)
-        val start = preciseWindow?.first ?: date.atStartOfDay(snapshot.zone).toInstant()
+        // 时间不完整时仍使用最强的已解析起点证据；只有连起点也缺失时才退到日期零点。
+        val start = preciseWindow?.first
+            ?: startTime?.let { localInstant(date, it, snapshot.zone) }
+            ?: date.atStartOfDay(snapshot.zone).toInstant()
         val uncertainTime = preciseWindow == null
         val provenance = snapshot.provenance.copy(sourceRecordId = id)
         val examEntity = EntityRef(EntityType.EXAM, id, scope)

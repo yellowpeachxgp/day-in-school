@@ -318,6 +318,45 @@ class CourseTimelineSourceTest {
     }
 
     @Test
+    fun 特殊教学周覆盖使用自定义周次展开() = runTest {
+        val customWeek = CalendarOverride(
+            id = "cal-custom-week",
+            termId = term.id,
+            date = LocalDate.of(2026, 9, 14),
+            overrideType = CalendarOverrideType.CUSTOM_TEACHING_WEEK,
+            customTeachingWeek = 2,
+            title = "特殊教学周"
+        )
+        val snapshot = fixture.scheduleSnapshot(
+            rules = listOf(fixture.rule(weeks = setOf(2))),
+            calendarOverrides = listOf(customWeek)
+        )
+        val source = CourseTimelineSource(CourseScheduleTimelineInputProvider { _, _ -> flowOf(snapshot) })
+
+        val events = source.observe(scope, fixture.dayWindow(LocalDate.of(2026, 9, 14))).first()
+
+        assertEquals(1, events.size)
+        assertEquals("course:2026-2027-1/r-math/2026-09-14", events.single().id.value)
+        assertEquals(EventStatus.SCHEDULED, events.single().status)
+    }
+
+    @Test
+    fun 教学周边界外不投影而最后教学周仍投影() = runTest {
+        val snapshot = fixture.scheduleSnapshot(rules = listOf(fixture.rule(weeks = setOf(1, 20))))
+        val source = CourseTimelineSource(CourseScheduleTimelineInputProvider { _, _ -> flowOf(snapshot) })
+
+        val beforeTerm = source.observe(scope, fixture.dayWindow(LocalDate.of(2026, 8, 30))).first()
+        val firstWeek = source.observe(scope, fixture.dayWindow(LocalDate.of(2026, 8, 31))).first()
+        val lastWeekMonday = source.observe(scope, fixture.dayWindow(LocalDate.of(2027, 1, 11))).first()
+        val afterTerm = source.observe(scope, fixture.dayWindow(LocalDate.of(2027, 1, 18))).first()
+
+        assertEquals(emptyList<TimelineEvent>(), beforeTerm)
+        assertEquals(1, firstWeek.size)
+        assertEquals(1, lastWeekMonday.size)
+        assertEquals(emptyList<TimelineEvent>(), afterTerm)
+    }
+
+    @Test
     fun 课程输入证据跨账号时failclosed() {
         val snapshot = fixture.scheduleSnapshot(
             provenance = fixture.provenance(accountId = AccountId("other-account"))
