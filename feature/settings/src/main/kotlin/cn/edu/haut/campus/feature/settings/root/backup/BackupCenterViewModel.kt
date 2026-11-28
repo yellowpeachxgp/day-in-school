@@ -198,6 +198,7 @@ class BackupCenterViewModel(
                         matrix = SettingsUiMatrix.Content,
                         restoreWizard = it.restoreWizard.copy(
                             running = false,
+                            preview = null,
                             resultMessage = "恢复完成：新增 " + report.insertedRows +
                                 "，更新 " + report.updatedRows +
                                 "，保留 " + report.keptExistingRows +
