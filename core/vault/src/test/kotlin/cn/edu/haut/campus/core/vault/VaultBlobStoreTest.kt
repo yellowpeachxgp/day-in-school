@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.vault
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.AccountId
@@ -170,6 +171,29 @@ class VaultBlobStoreTest {
         val winner = results.mapNotNull { it.getOrNull() }.single()
         val stored = blobs.get(winner.blobId, scope)
         assertEquals(winner.owner, stored?.ref?.owner)
+    }
+
+    @Test
+    fun insertAbortConflictNeverOverwritesStoredMetadata() = runBlocking {
+        val ref = blobs.put(byteArrayOf(11, 11, 11), "text/plain", scope)
+        val winner = checkNotNull(database.vaultDao().getBlob(ref.blobId))
+
+        val mimeConflict = runCatching {
+            database.vaultDao().insertBlobOrAbort(winner.copy(mimeType = "application/json"))
+        }.exceptionOrNull()
+        assertTrue(mimeConflict is SQLiteConstraintException)
+
+        val ownerConflict = runCatching {
+            database.vaultDao().insertBlobOrAbort(
+                winner.copy(ownerEntityType = EntityType.INBOX_ITEM.name, ownerEntityId = "inbox-direct-conflict")
+            )
+        }.exceptionOrNull()
+        assertTrue(ownerConflict is SQLiteConstraintException)
+
+        val stored = database.vaultDao().getBlob(ref.blobId)
+        assertEquals("text/plain", stored?.mimeType)
+        assertEquals(null, stored?.ownerEntityType)
+        assertEquals(null, stored?.ownerEntityId)
     }
 
     @Test
