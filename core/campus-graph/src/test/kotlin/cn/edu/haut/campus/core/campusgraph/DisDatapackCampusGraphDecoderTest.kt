@@ -95,8 +95,8 @@ class DisDatapackCampusGraphDecoderTest {
         val standalone = decoder.decodeVerified(fakeVerified(decoded))
         assertEquals(2, standalone.size)
         assertEquals(2, standalone.map { it.ref.id }.distinct().size)
-        assertTrue(standalone[0].ref.id.endsWith("/procedure/dp-aidSforms"))
-        assertTrue(standalone[1].ref.id.endsWith("/procedure/dp-aidHforms"))
+        assertTrue(standalone[0].ref.id.endsWith("/procedure/dp-aid:forms"))
+        assertTrue(standalone[1].ref.id.endsWith("/procedure/dp-aid-forms"))
 
         val bundle = PackageBundle.of(listOf(PackageFile.of("assets/haut.procedures.json", bytes)))
         val embedded = decoder.decode(manifest(bundle, id = "haut.procedures"), bundle)

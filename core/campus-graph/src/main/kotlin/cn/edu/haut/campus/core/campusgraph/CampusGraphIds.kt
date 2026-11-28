@@ -42,9 +42,9 @@ object CampusGraphIds {
      * dis-datapack item ID 的防碰撞图 slug。
      *
      * datapack item 字符集是 lowercase alphanumeric + . _ / -。这里不用面向显示名的
-     * normalizeSlug 折叠规则：点、斜线、连字符、下划线分别映射到大写 D/S/H/U，
-     * 小写字母数字保持不变；输出再进入 dp- 专用命名空间。因为小写输入绝不会产生
-     * 大写哨兵字符，该一一映射是可逆且 injective 的，aid/forms 与 aid-forms 不会折叠。
+     * normalizeSlug 折叠规则：. _ - 在稳定 ID 中本来合法所以逐字保留，唯一会切开
+     * 四段图 ID 的斜线映射为输入字符集不可能包含的冒号；输出再进入 dp- 专用命名空间。
+     * 该映射不依赖大小写，逐字符可逆且 injective，aid/forms 与 aid-forms 不会折叠。
      */
     fun buildDatapackEntity(
         schoolId: SchoolId,
@@ -69,11 +69,8 @@ object CampusGraphIds {
         return buildString(itemId.length) {
             for (ch in itemId) {
                 when (ch) {
-                    in 'a'..'z', in '0'..'9' -> append(ch)
-                    '.' -> append('D')
-                    '/' -> append('S')
-                    '-' -> append('H')
-                    '_' -> append('U')
+                    in 'a'..'z', in '0'..'9', '.', '-', '_' -> append(ch)
+                    '/' -> append(':')
                     else -> throw IllegalArgumentException("datapack item ID 含契约外字符，不能安全投影：" + itemId)
                 }
             }
