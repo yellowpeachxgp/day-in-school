@@ -177,6 +177,8 @@ class CommunityClient(
             message = message,
             statusCode = statusCode,
             retryable = retryable,
+            userAction = detail?.str("user_action"),
+            detail = detail?.obj("detail")?.asObjOrNull,
         )
     }
 

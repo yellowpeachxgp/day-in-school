@@ -235,6 +235,8 @@ class CommunityClientTest {
         assertEquals("GROUP_PERMISSION_DENIED", error.code)
         assertEquals(403, error.statusCode)
         assertFalse(error.retryable)
+        assertEquals("RETRY_LATER", error.userAction)
+        assertEquals("synthetic", error.detail?.str("reason"))
     }
 
     @Test

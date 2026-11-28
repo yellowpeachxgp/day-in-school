@@ -40,6 +40,8 @@ internal fun errorBody(code: String, retryable: Boolean, requestId: String = "re
             "code" to JsonValue.Str(code),
             "message" to JsonValue.Str("synthetic contract error"),
             "retryable" to JsonValue.Bool(retryable),
+            "user_action" to JsonValue.Str("RETRY_LATER"),
+            "detail" to JsonValue.Obj(linkedMapOf("reason" to JsonValue.Str("synthetic"))),
         ),
     )
     val root = JsonValue.Obj(

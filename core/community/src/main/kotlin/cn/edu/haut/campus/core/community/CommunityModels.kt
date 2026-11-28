@@ -53,6 +53,8 @@ data class CommunityError(
     val message: String,
     val statusCode: Int? = null,
     val retryable: Boolean = false,
+    val userAction: String? = null,
+    val detail: JsonValue.Obj? = null,
 )
 
 enum class CommunityCacheFallbackReason {

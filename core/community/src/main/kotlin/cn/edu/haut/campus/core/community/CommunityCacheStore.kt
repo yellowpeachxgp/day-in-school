@@ -263,7 +263,7 @@ internal fun parseCommunityEnvelope(raw: JsonValue.Obj): CommunityEnvelope? {
     val requestId = raw.str("request_id")?.takeIf { it.isNotBlank() } ?: return null
     val meta = raw.obj("meta")?.asObjOrNull ?: return null
     if (meta.str("request_id") != requestId) return null
-    if (meta.str("api_version").isNullOrBlank()) return null
+    if (meta.str("api_version") != "v1") return null
     val data = if (raw.fields.containsKey("data")) raw.fields["data"] else return null
     return CommunityEnvelope(
         ok = true,
