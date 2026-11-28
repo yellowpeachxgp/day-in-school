@@ -124,7 +124,7 @@ object GuideTestFixtures {
         items = items
     )
 
-    fun verified(pack: DisDatapack, canonicalBytes: ByteArray = byteArrayOf('{', '}')): VerifiedDataPack {
+    fun verified(pack: DisDatapack, canonicalBytes: ByteArray = "{}".toByteArray(Charsets.UTF_8)): VerifiedDataPack {
         val artifact = Digests.sha256Hex(canonicalBytes)
         val payload = DisDatapackSignature.payloadSha256ForCanonicalBytes(canonicalBytes)
         val fingerprint = "c".repeat(64)

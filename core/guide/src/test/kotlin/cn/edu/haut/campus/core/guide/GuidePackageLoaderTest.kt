@@ -19,7 +19,7 @@ class GuidePackageLoaderTest {
         val loaded = GuidePackageLoader.loadVerified(verified, LocalDate.parse("2027-05-21"))
 
         assertEquals("haut.procedures", loaded.packId)
-        assertEquals(Digests.sha256Hex(byteArrayOf('{', '}')), loaded.artifactSha256)
+        assertEquals(Digests.sha256Hex("{}".toByteArray(Charsets.UTF_8)), loaded.artifactSha256)
         assertEquals(DataPackFreshness.REVIEW_DUE, loaded.freshness)
         assertEquals(DataPackFreshness.REVIEW_DUE, loaded.metadataFor("student-certificate").freshness)
         assertEquals("https://example.com/haut/public-guide", loaded.metadataFor("student-certificate").sources.single().url)
