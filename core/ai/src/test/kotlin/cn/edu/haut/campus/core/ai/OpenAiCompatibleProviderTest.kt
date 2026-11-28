@@ -145,9 +145,9 @@ class OpenAiCompatibleProviderTest {
         attachmentReader: AiAttachmentReader? = null
     ) {
         val consentCenter = AiConsentCenter()
-        val configurationAccess = object : AiProviderConfigurationAccess {
-            override suspend fun configuration(scope: SchoolAccountScope): AiProviderConfiguration =
-                AiProviderConfiguration(
+        val settingsAccess = object : AiSettingsAccess {
+            override suspend fun settings(scope: SchoolAccountScope): AiSettings =
+                AiSettings(
                     endpoint = AiTestFixtures.endpoint,
                     keyStatus = AiKeyStatus.CONFIGURED,
                     enabled = enabled
@@ -155,7 +155,7 @@ class OpenAiCompatibleProviderTest {
         }
         val keyAccess = RecordingKeyAccess()
         val provider = OpenAiCompatibleProvider(
-            configurationAccess = configurationAccess,
+            settingsAccess = settingsAccess,
             keyMaterialAccess = keyAccess,
             consentCenter = consentCenter,
             attachmentReader = attachmentReader,

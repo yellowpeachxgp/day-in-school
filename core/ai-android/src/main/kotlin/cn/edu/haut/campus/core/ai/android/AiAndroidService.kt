@@ -5,7 +5,7 @@ import cn.edu.haut.campus.core.ai.AiConsentCenter
 import cn.edu.haut.campus.core.ai.AiConsentToken
 import cn.edu.haut.campus.core.ai.AiEndpoint
 import cn.edu.haut.campus.core.ai.AiKeyStatus
-import cn.edu.haut.campus.core.ai.AiProviderConfiguration
+import cn.edu.haut.campus.core.ai.AiSettings
 import cn.edu.haut.campus.core.ai.AiProviderPort
 import cn.edu.haut.campus.core.ai.AiRequest
 import cn.edu.haut.campus.core.ai.AiResult
@@ -24,8 +24,8 @@ class AiAndroidService internal constructor(
     val consentCenter: AiConsentCenter,
     private val provider: AiProviderPort
 ) {
-    fun configuration(scope: SchoolAccountScope): Flow<AiProviderConfiguration> = store.observeConfiguration(scope)
-    fun keyStatus(scope: SchoolAccountScope): Flow<cn.edu.haut.campus.core.ai.AiKeyStatus> = store.status(scope)
+    fun settings(scope: SchoolAccountScope): Flow<AiSettings> = store.observeSettings(scope)
+    fun keyStatus(scope: SchoolAccountScope): Flow<AiKeyStatus> = store.status(scope)
 
     suspend fun saveEndpointAndKey(scope: SchoolAccountScope, endpoint: AiEndpoint, key: CharArray) =
         store.put(scope, endpoint, key)
@@ -50,7 +50,7 @@ class AiAndroidService internal constructor(
             val store = AndroidAiKeyStore(context)
             val consentCenter = AiConsentCenter()
             val provider = OpenAiCompatibleProvider(
-                configurationAccess = store,
+                settingsAccess = store,
                 keyMaterialAccess = store,
                 consentCenter = consentCenter,
                 attachmentReader = database?.let(::VaultAiAttachmentReader),

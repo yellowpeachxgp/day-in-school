@@ -23,6 +23,21 @@ class AiModelsAndRedactorTest {
     }
 
     @Test
+    fun aiSettingsDefaultIsDisabledConfiguredOnlyWhenEndpointAndKeyAreReady() {
+        val empty = AiSettings()
+        assertFalse(empty.enabled)
+        assertFalse(empty.configured)
+        assertEquals(AiKeyStatus.NONE, empty.keyStatus)
+        assertEquals(null, empty.endpoint)
+
+        val endpoint = AiEndpoint(HttpsUrl("https://provider.example/v1"), "chat-test", supportsVision = false)
+        val configured = AiSettings(endpoint, AiKeyStatus.CONFIGURED, enabled = true)
+        assertTrue(configured.configured)
+        assertTrue(configured.enabled)
+        assertFalse(AiSettings(endpoint, AiKeyStatus.NONE, enabled = false).configured)
+    }
+
+    @Test
     fun redactorMasksStudentPhoneNationalIdAndDormWithoutRetainingOriginals() {
         val student = "202012345678"
         val phone = "13812345678"

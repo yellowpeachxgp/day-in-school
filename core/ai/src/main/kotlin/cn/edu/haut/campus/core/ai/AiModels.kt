@@ -158,12 +158,27 @@ data class AiConsentToken(
     }
 }
 
-data class AiProviderConfiguration(
+/**
+ * BYOK 非秘密设置骨架：只描述 endpoint、Key 状态和用户显式开关；
+ * 永远不含 Key 明文、密文、Authorization 或可还原 secret 材料。默认关闭。
+ */
+data class AiSettings(
     val endpoint: AiEndpoint? = null,
     val keyStatus: AiKeyStatus = AiKeyStatus.NONE,
     val enabled: Boolean = false
 ) {
     val configured: Boolean get() = endpoint != null && keyStatus == AiKeyStatus.CONFIGURED
+}
+
+/** Provider 只需要的只读设置面；不存在任何 Key 读取能力。 */
+interface AiSettingsAccess {
+    suspend fun settings(scope: SchoolAccountScope): AiSettings
+}
+
+/** Profile 隔离的设置骨架公开面；Android 实现负责持久化、观察与默认关闭开关。 */
+interface AiSettingsStore : AiSettingsAccess {
+    fun observeSettings(scope: SchoolAccountScope): Flow<AiSettings>
+    suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean)
 }
 
 data class AiUsage(

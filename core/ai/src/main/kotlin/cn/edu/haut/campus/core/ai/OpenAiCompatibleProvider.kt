@@ -6,11 +6,6 @@ import kotlinx.coroutines.CancellationException
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
-/** Provider 配置读取端口；实现可以读取 endpoint 和开关，但此接口不存在任何 Key 读取能力。 */
-interface AiProviderConfigurationAccess {
-    suspend fun configuration(scope: SchoolAccountScope): AiProviderConfiguration
-}
-
 /**
  * Key 材料受控使用端口。实现只在 callback 生命周期内提供明文副本，并必须在 callback 返回或抛出后清零；
  * 该接口故意不支持“返回 Key 给调用方保存”。
@@ -32,7 +27,7 @@ private class AiLocalFailure(val result: AiResult.Failure) : Exception(null, nul
 
 /** OpenAI 兼容 chat/vision Provider。所有网络发送都必须先通过单次同意中心。 */
 class OpenAiCompatibleProvider(
-    private val configurationAccess: AiProviderConfigurationAccess,
+    private val settingsAccess: AiSettingsAccess,
     private val keyMaterialAccess: AiKeyMaterialAccess,
     private val consentCenter: AiConsentCenter,
     private val attachmentReader: AiAttachmentReader? = null,
@@ -90,14 +85,14 @@ class OpenAiCompatibleProvider(
     }
 
     private suspend fun requireReadyEndpoint(scope: SchoolAccountScope): AiEndpoint {
-        val configuration = configurationAccess.configuration(scope)
-        if (!configuration.enabled) {
+        val settings = settingsAccess.settings(scope)
+        if (!settings.enabled) {
             throw AiProviderException(AiError.FEATURE_DISABLED, "BYOK AI 默认关闭，请先单独开启")
         }
-        if (configuration.keyStatus != AiKeyStatus.CONFIGURED || configuration.endpoint == null) {
+        if (settings.keyStatus != AiKeyStatus.CONFIGURED || settings.endpoint == null) {
             throw AiProviderException(AiError.NOT_CONFIGURED, "尚未配置 AI endpoint 或 Key")
         }
-        return configuration.endpoint
+        return settings.endpoint
     }
 
     private fun buildPreview(scope: SchoolAccountScope, endpoint: AiEndpoint, req: AiRequest): AiSendPreview {

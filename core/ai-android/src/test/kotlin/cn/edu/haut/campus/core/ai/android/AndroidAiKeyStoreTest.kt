@@ -53,10 +53,10 @@ class AndroidAiKeyStoreTest {
         assertFalse(allBytes.containsText(endpoint.baseUrl.withoutTrailingSlash))
 
         store.setEnabled(scope, true)
-        val configuration = store.configuration(scope)
-        assertEquals(endpoint, configuration.endpoint)
-        assertEquals(AiKeyStatus.CONFIGURED, configuration.keyStatus)
-        assertTrue(configuration.enabled)
+        val settings = store.settings(scope)
+        assertEquals(endpoint, settings.endpoint)
+        assertEquals(AiKeyStatus.CONFIGURED, settings.keyStatus)
+        assertTrue(settings.enabled)
 
         store.wipeAll(scope)
     }
@@ -89,7 +89,7 @@ class AndroidAiKeyStoreTest {
         vault?.writeBytes(byteArrayOf(1, 2, 3, 4))
 
         assertEquals(AiKeyStatus.INVALID, store.status(scope).first())
-        assertEquals(AiKeyStatus.INVALID, store.configuration(scope).keyStatus)
+        assertEquals(AiKeyStatus.INVALID, store.settings(scope).keyStatus)
         assertThrows(AiKeyAccessException::class.java) {
             kotlinx.coroutines.runBlocking {
                 store.withKeyMaterial(scope) { _, _ -> Unit }
@@ -108,7 +108,7 @@ class AndroidAiKeyStoreTest {
         store.wipeAll(scope)
 
         assertEquals(AiKeyStatus.NONE, store.status(scope).first())
-        assertFalse(store.configuration(scope).enabled)
+        assertFalse(store.settings(scope).enabled)
         assertTrue(store.rootDir.listFiles()?.isEmpty() != false)
     }
 

@@ -9,8 +9,8 @@ import cn.edu.haut.campus.core.ai.AiKeyAccessException
 import cn.edu.haut.campus.core.ai.AiKeyMaterialAccess
 import cn.edu.haut.campus.core.ai.AiKeyStatus
 import cn.edu.haut.campus.core.ai.AiKeyStore
-import cn.edu.haut.campus.core.ai.AiProviderConfiguration
-import cn.edu.haut.campus.core.ai.AiProviderConfigurationAccess
+import cn.edu.haut.campus.core.ai.AiSettings
+import cn.edu.haut.campus.core.ai.AiSettingsStore
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -87,11 +87,11 @@ class AndroidAiKeyStore internal constructor(
     context: Context,
     internal val rootDir: File = File(context.applicationContext.noBackupFilesDir, "ai_byok_v1"),
     private val keys: AiAesKeyProvider = AndroidAiAesKeyProvider()
-) : AiKeyStore, AiProviderConfigurationAccess, AiKeyMaterialAccess {
+) : AiKeyStore, AiSettingsStore, AiKeyMaterialAccess {
     private val appContext = context.applicationContext
     private val mutex = Mutex()
     private val statusFlows = ConcurrentHashMap<String, MutableStateFlow<AiKeyStatus?>>()
-    private val configurationFlows = ConcurrentHashMap<String, MutableStateFlow<AiProviderConfiguration?>>()
+    private val settingsFlows = ConcurrentHashMap<String, MutableStateFlow<AiSettings?>>()
 
     override suspend fun put(scope: SchoolAccountScope, endpoint: AiEndpoint, key: CharArray) {
         require(key.isNotEmpty() && key.size <= 4096) { "AI Key 为空或过长" }
@@ -144,15 +144,15 @@ class AndroidAiKeyStore internal constructor(
         statusFlow(storageKey).filterNotNull().collect { emit(it) }
     }.distinctUntilChanged()
 
-    fun observeConfiguration(scope: SchoolAccountScope): Flow<AiProviderConfiguration> = flow {
+    override fun observeSettings(scope: SchoolAccountScope): Flow<AiSettings> = flow {
         val storageKey = AiByokStorageFormat.scopeStorageKey(scope)
-        emit(readConfiguration(scope))
-        configurationFlow(storageKey).filterNotNull().collect { emit(it) }
+        emit(readSettings(scope))
+        settingsFlow(storageKey).filterNotNull().collect { emit(it) }
     }.distinctUntilChanged()
 
-    override suspend fun configuration(scope: SchoolAccountScope): AiProviderConfiguration = readConfiguration(scope)
+    override suspend fun settings(scope: SchoolAccountScope): AiSettings = readSettings(scope)
 
-    suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean) {
+    override suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean) {
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 if (enabled) {
@@ -198,16 +198,16 @@ class AndroidAiKeyStore internal constructor(
         }
     }
 
-    private suspend fun readConfiguration(scope: SchoolAccountScope): AiProviderConfiguration = withContext(Dispatchers.IO) {
+    private suspend fun readSettings(scope: SchoolAccountScope): AiSettings = withContext(Dispatchers.IO) {
         mutex.withLock {
             when (val read = decryptEnvelopeLocked(scope)) {
                 is EnvelopeRead.Valid -> {
                     val endpoint = read.payload.endpoint
                     read.payload.wipe()
-                    AiProviderConfiguration(endpoint, AiKeyStatus.CONFIGURED, readEnabledLocked(scope))
+                    AiSettings(endpoint, AiKeyStatus.CONFIGURED, readEnabledLocked(scope))
                 }
-                EnvelopeRead.Missing -> AiProviderConfiguration(null, AiKeyStatus.NONE, false)
-                EnvelopeRead.Invalid -> AiProviderConfiguration(null, AiKeyStatus.INVALID, false)
+                EnvelopeRead.Missing -> AiSettings(null, AiKeyStatus.NONE, false)
+                EnvelopeRead.Invalid -> AiSettings(null, AiKeyStatus.INVALID, false)
             }
         }
     }
@@ -215,14 +215,14 @@ class AndroidAiKeyStore internal constructor(
     private suspend fun publish(scope: SchoolAccountScope) {
         val storageKey = AiByokStorageFormat.scopeStorageKey(scope)
         statusFlow(storageKey).value = readStatus(scope)
-        configurationFlow(storageKey).value = readConfiguration(scope)
+        settingsFlow(storageKey).value = readSettings(scope)
     }
 
     private fun statusFlow(storageKey: String): MutableStateFlow<AiKeyStatus?> =
         statusFlows.getOrPut(storageKey) { MutableStateFlow(null) }
 
-    private fun configurationFlow(storageKey: String): MutableStateFlow<AiProviderConfiguration?> =
-        configurationFlows.getOrPut(storageKey) { MutableStateFlow(null) }
+    private fun settingsFlow(storageKey: String): MutableStateFlow<AiSettings?> =
+        settingsFlows.getOrPut(storageKey) { MutableStateFlow(null) }
 
     private fun envelopeFile(scope: SchoolAccountScope): File =
         File(rootDir, AiByokStorageFormat.scopeStorageKey(scope) + ".vault")
