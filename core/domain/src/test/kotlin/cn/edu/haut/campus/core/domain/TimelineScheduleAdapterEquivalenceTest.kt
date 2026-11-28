@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.domain
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.CourseSource
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.Term
@@ -163,6 +164,35 @@ class TimelineScheduleAdapterEquivalenceTest {
         )
         assertTrue(timelineOut.isNotEmpty())
         assertFalse("缺作息表时不得冒充精确时间", timelineOut.all { it.hasResolvedTime })
+    }
+
+    @Test
+    fun longAndControlManualCourseNamesRoundTripExactly() {
+        val rawName = "手工\u0001\n" + "长".repeat(300) + "\u0007"
+        val weirdCourse = Course(
+            id = "c-weird-manual",
+            externalId = "manual-weird",
+            name = rawName,
+            teacher = "手工教师",
+            colorArgb = 0xFF111111,
+            source = CourseSource.MANUAL
+        )
+        val weirdRule = CourseScheduleRule(
+            id = "r-weird-manual", courseId = weirdCourse.id, termId = term.id, weekday = DayOfWeek.MONDAY,
+            startPeriod = 1, endPeriod = 2, weeks = setOf(2), rawRoom = "手工教室"
+        )
+        val allCourses = courses + weirdCourse
+        val allRules = baseRules() + weirdRule
+
+        val engineOut = ScheduleEngine.resolveOccurrencesForDate(
+            date = monday, term = term, courses = allCourses, rules = allRules, periodTimes = periods, buildings = buildings
+        )
+        val timelineOut = TimelineScheduleAdapter.resolveOccurrencesForDate(
+            date = monday, term = term, courses = allCourses, rules = allRules, periodTimes = periods, buildings = buildings
+        )
+
+        assertEquals("含超长/控制字符课程名的展示模型必须与旧展开路径逐字段一致", engineOut, timelineOut)
+        assertEquals(rawName, timelineOut.first { it.courseId == weirdCourse.id }.courseName)
     }
 
     @Test

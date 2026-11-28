@@ -205,6 +205,7 @@ private fun TodayLegacyContent(
         currentNow,
         term,
         courseTimelineEvents,
+        courses,
         periodTimes,
         calendarOverrides,
         buildings,
@@ -226,6 +227,7 @@ private fun TodayLegacyContent(
                     events = courseTimelineEvents,
                     term = activeTerm,
                     periodTimes = periodTimes,
+                    courses = courses,
                     buildings = buildings
                 )
             }
@@ -490,11 +492,13 @@ private fun TodayLegacyContent(
                         val todayCanceledCount = remember(
                             selectedDate,
                             courseTimelineEvents,
+                            courses,
                             buildings
                         ) {
                             TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                                 date = selectedDate,
                                 events = courseTimelineEvents,
+                                courses = courses,
                                 buildings = buildings
                             ).size
                         }
@@ -594,6 +598,7 @@ private fun TodayLegacyContent(
                         currentNow,
                         term,
                         courseTimelineEvents,
+                        courses,
                         periodTimes,
                         calendarOverrides,
                         buildings,
@@ -615,6 +620,7 @@ private fun TodayLegacyContent(
                                     events = courseTimelineEvents,
                                     term = activeTerm,
                                     periodTimes = periodTimes,
+                                    courses = courses,
                                     buildings = buildings
                                 )
                             }
@@ -623,11 +629,13 @@ private fun TodayLegacyContent(
                     val canceledOnDate = remember(
                         dateForView,
                         courseTimelineEvents,
+                        courses,
                         buildings
                     ) {
                         TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                             date = dateForView,
                             events = courseTimelineEvents,
+                            courses = courses,
                             buildings = buildings
                         )
                     }

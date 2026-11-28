@@ -140,6 +140,7 @@ object TimelineScheduleAdapter {
             events = events,
             term = term,
             periodTimes = periodTimes,
+            courses = courses,
             buildings = buildings
         )
     }
@@ -194,6 +195,7 @@ object TimelineScheduleAdapter {
         return resolveCanceledOccurrencesForDateFromEvents(
             date = date,
             events = events,
+            courses = courses,
             buildings = buildings
         )
     }
@@ -210,11 +212,13 @@ object TimelineScheduleAdapter {
         events: List<TimelineEvent>,
         term: Term,
         periodTimes: List<PeriodTime>,
+        courses: List<Course> = emptyList(),
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
+        val courseNamesById = courses.associate { it.id to it.name }
         val active = events
             .filter { it.isCourseOccurrenceProjection() && it.status != EventStatus.CANCELLED_TODAY }
-            .map { CourseOccurrenceTimelineMetadata.decode(it) }
+            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById) }
             .filter { it.date == date }
         return active.presentationPostProcessed(date, term, periodTimes, buildings)
     }
@@ -223,12 +227,14 @@ object TimelineScheduleAdapter {
     fun resolveCanceledOccurrencesForDateFromEvents(
         date: LocalDate,
         events: List<TimelineEvent>,
+        courses: List<Course> = emptyList(),
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val buildingMap = buildings.associateBy { it.id }
+        val courseNamesById = courses.associate { it.id to it.name }
         return events
             .filter { it.isCourseOccurrenceProjection() && it.status == EventStatus.CANCELLED_TODAY }
-            .map { CourseOccurrenceTimelineMetadata.decode(it) }
+            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById) }
             .filter { it.date == date }
             .map { occ -> occ.copy(buildingName = occ.buildingId?.let { buildingMap[it]?.name }) }
             .sortedBy { it.startPeriod }
@@ -239,6 +245,7 @@ object TimelineScheduleAdapter {
         events: List<TimelineEvent>,
         term: Term,
         periodTimes: List<PeriodTime>,
+        courses: List<Course> = emptyList(),
         buildings: List<Building> = emptyList()
     ): (LocalDate) -> List<ClassOccurrence> = { date ->
         resolveOccurrencesForDateFromEvents(
@@ -246,6 +253,7 @@ object TimelineScheduleAdapter {
             events = events,
             term = term,
             periodTimes = periodTimes,
+            courses = courses,
             buildings = buildings
         )
     }

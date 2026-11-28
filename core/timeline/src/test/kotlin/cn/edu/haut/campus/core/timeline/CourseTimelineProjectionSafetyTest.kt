@@ -1,0 +1,63 @@
+package cn.edu.haut.campus.core.timeline
+
+import cn.edu.haut.campus.core.model.ClassOccurrence
+import java.time.LocalDate
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** 课程名进入 TimelineEvent 信封时的安全化回归：信封必须合法，领域还原必须无损。 */
+class CourseTimelineProjectionSafetyTest {
+    private val fixture = TimelineSourceTestFixtures
+
+    private fun projectCourseName(rawName: String): Pair<TimelineEvent, ClassOccurrence> {
+        val course = fixture.course(
+            id = "c-unsafe-name",
+            externalId = "manual-unsafe-name",
+            name = rawName
+        )
+        val rule = fixture.rule(
+            id = "r-unsafe-name",
+            courseId = course.id,
+            weeks = setOf(1)
+        )
+        val snapshot = fixture.scheduleSnapshot(
+            courses = listOf(course),
+            rules = listOf(rule)
+        )
+        val events = CourseTimelineProjection.projectAll(
+            snapshot = snapshot,
+            scope = fixture.scope,
+            window = fixture.dayWindow(LocalDate.of(2026, 8, 31))
+        )
+        val event = events.single { it.kind == TimelineKind.COURSE }
+        return event to CourseOccurrenceTimelineMetadata.decode(event)
+    }
+
+    @Test
+    fun longAndControlCourseNameUsesSafeEnvelopeAndRoundTripsExactly() {
+        val rawName = "手工\u0001\n" + "长".repeat(5_000) + "\u0007结尾"
+
+        val (event, decoded) = projectCourseName(rawName)
+
+        assertTrue("信封标题不得超过 TimelineEvent 上限", event.title.length <= 256)
+        assertTrue("信封标题不得包含控制字符", event.title.none { it.isISOControl() })
+        assertTrue(event.title != rawName)
+        assertTrue(
+            "JSON 转义后的长原文必须分片保存在 sourceMetadata",
+            event.sourceMetadata.getValue(CourseOccurrenceTimelineMetadata.COURSE_NAME_JSON_CHUNK_COUNT).toInt() >= 2
+        )
+        assertEquals("还原给课表显示的课程名必须逐字等于原输入", rawName, decoded.courseName)
+    }
+
+    @Test
+    fun allControlCourseNameStillProducesNonBlankEnvelopeAndExactRestore() {
+        val rawName = "\u0001\u0007\n"
+
+        val (event, decoded) = projectCourseName(rawName)
+
+        assertTrue(event.title.isNotBlank())
+        assertTrue(event.title.none { it.isISOControl() })
+        assertEquals(rawName, decoded.courseName)
+    }
+}

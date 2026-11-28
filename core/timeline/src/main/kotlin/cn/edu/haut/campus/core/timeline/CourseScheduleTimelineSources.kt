@@ -219,7 +219,7 @@ internal object CourseScheduleTimelineProjector {
             id = eventId,
             scope = scope,
             kind = kind,
-            title = courseName,
+            title = CourseOccurrenceTimelineMetadata.safeTimelineTitle(courseName),
             start = start,
             end = end,
             timeSemantics = timeSemantics,
