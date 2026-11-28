@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 12,
-    "identityHash": "6f17bf84d5bfaf9cf36a3a1215f90861",
+    "identityHash": "62c2f602f59dbb211c98d0e9c74446a6",
     "entities": [
       {
         "tableName": "student_profile",
