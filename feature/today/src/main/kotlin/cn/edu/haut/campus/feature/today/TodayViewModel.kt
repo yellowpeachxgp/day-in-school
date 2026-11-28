@@ -58,19 +58,19 @@ class TodayViewModel internal constructor(
     val effects = _effects.asSharedFlow()
 
     init {
-        collect(repository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
-        collect(repository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }
-        collect(repository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
-        collect(repository.rulesFlow) { value -> _uiState.update { it.copy(scheduleRules = value) } }
-        collect(repository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
-        collect(repository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
-        collect(repository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
+        collect(repository.termRepository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
+        collect(repository.termRepository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }
+        collect(repository.timetableRepository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
+        collect(repository.timetableRepository.rulesFlow) { value -> _uiState.update { it.copy(scheduleRules = value) } }
+        collect(repository.termRepository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
+        collect(repository.termRepository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
+        collect(repository.timetableRepository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
         collect(repository.timetableRepository.legacyRestoreReviewTargetsFlow) { value ->
             _uiState.update { it.copy(pendingLegacyRestoreTargets = value) }
         }
-        collect(repository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
-        collect(repository.examSchedulesFlow) { value -> _uiState.update { it.copy(examSchedules = value) } }
-        collect(repository.unscheduledCoursesFlow) { value -> _uiState.update { it.copy(unscheduledCourses = value) } }
+        collect(repository.timetableRepository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
+        collect(repository.examRepository.examSchedulesFlow) { value -> _uiState.update { it.copy(examSchedules = value) } }
+        collect(repository.timetableRepository.unscheduledCoursesFlow) { value -> _uiState.update { it.copy(unscheduledCourses = value) } }
         collect(repository.preferencesFlow) { value -> _uiState.update { it.copy(prefs = value) } }
         collect(repository.activeFocusSessionFlow) { value -> _uiState.update { it.copy(activeFocusSession = value) } }
         collect(repository.completedFocusSessionsFlow) { value -> _uiState.update { it.copy(completedFocusSessions = value) } }

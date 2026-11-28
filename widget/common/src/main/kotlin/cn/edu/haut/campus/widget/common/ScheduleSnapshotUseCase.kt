@@ -95,7 +95,7 @@ object ScheduleSnapshotUseCase {
         val repository = active.repository
         val config = repository.getWidgetConfigOrDefault(appWidgetId, defaultType)
         val themeAccentArgb = runCatching { repository.getActiveThemeAccentArgb() }.getOrDefault(0xFF053968.toInt())
-        val data = repository.getDirectScheduleDataSnapshot()
+        val data = repository.timetableRepository.getDirectScheduleDataSnapshot()
         return composeWidgetSnapshot(
             data = data,
             config = config,
