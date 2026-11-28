@@ -89,14 +89,16 @@ class DisDatapackCampusGraphDecoderTest {
 
     @Test
     fun datapackItemSeparatorsUseCollisionSafeNamespaceInStandaloneAndEmbeddedPaths() {
-        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid-forms"))
+        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid-forms", "aid.forms", "aid_forms"))
         val decoded = DisDatapackLoader.decode(bytes)
 
         val standalone = decoder.decodeVerified(fakeVerified(decoded))
-        assertEquals(2, standalone.size)
-        assertEquals(2, standalone.map { it.ref.id }.distinct().size)
+        assertEquals(4, standalone.size)
+        assertEquals(4, standalone.map { it.ref.id }.distinct().size)
         assertTrue(standalone[0].ref.id.endsWith("/procedure/dp-aid:forms"))
         assertTrue(standalone[1].ref.id.endsWith("/procedure/dp-aid-forms"))
+        assertTrue(standalone[2].ref.id.endsWith("/procedure/dp-aid.forms"))
+        assertTrue(standalone[3].ref.id.endsWith("/procedure/dp-aid_forms"))
 
         val bundle = PackageBundle.of(listOf(PackageFile.of("assets/haut.procedures.json", bytes)))
         val embedded = decoder.decode(manifest(bundle, id = "haut.procedures"), bundle)
@@ -119,9 +121,13 @@ class DisDatapackCampusGraphDecoderTest {
             val bytes = String(indoorPackBytes(), Charsets.UTF_8)
                 .replace("\"itemType\":\"node\"", "\"itemType\":\"" + itemType + "\"")
                 .toByteArray(Charsets.UTF_8)
-            val pack = DisDatapackLoader.decode(bytes).pack
-            assertThrowsIllegalArgument {
-                decoder.decode(pack)
+            val decoded = DisDatapackLoader.decode(bytes)
+            assertEquals(itemType, (decoded.pack.items.single() as cn.edu.haut.campus.core.packages.datapack.DisDatapackItem.IndoorGraph).itemType.wireId)
+            try {
+                decoder.decodeVerified(fakeVerified(decoded))
+                throw AssertionError("expected decodeVerified to reject indoor " + itemType)
+            } catch (error: IllegalArgumentException) {
+                assertTrue(error.message.orEmpty().contains("indoor-graph"))
             }
         }
     }
