@@ -1,7 +1,7 @@
 package cn.edu.haut.campus.core.degree
 
 import androidx.room.withTransaction
-import cn.edu.haut.campus.core.database.BlobStoreEntity
+import cn.edu.haut.campus.core.database.BlobStoreMetadataRow
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
@@ -41,18 +41,21 @@ internal class VersionedDegreeDocumentStore(
                 scope = scope,
                 owner = EntityRef(ownerType, ownerId, scope)
             )
-            val rows = dao.getBlobsForOwner(
+            val rows = dao.getBlobMetadataForOwner(
                 schoolId = scope.schoolId.value,
                 accountId = scope.accountId.value,
                 profileId = scope.profileId.value,
                 ownerEntityType = ownerType.name,
-                ownerEntityId = ownerId
+                ownerEntityId = ownerId,
+                mimeType = mimeType
             )
-            val nextSequence = rows.asSequence()
-                .filter { it.inScope() && it.mimeType == mimeType }
-                .mapNotNull { row -> runCatching { decodeEnvelope(row).writeSequence }.getOrNull() }
-                .maxOrNull()
-                ?.plus(1L) ?: 1L
+            var maxSequence: Long? = null
+            rows.filter { it.inScope() && it.mimeType == mimeType }
+                .forEach { row ->
+                    val sequence = runCatching { decodeEnvelope(row).writeSequence }.getOrNull()
+                    if (sequence != null) maxSequence = maxOf(maxSequence ?: 0L, sequence)
+                }
+            val nextSequence = (maxSequence ?: 0L) + 1L
             val now = clock()
             val envelope = jsonObjectOf(
                 "format" to JsonValue.Str(VERSIONED_DOCUMENT_FORMAT_V2),
@@ -77,23 +80,25 @@ internal class VersionedDegreeDocumentStore(
     }
 
     suspend fun readDocument(ownerId: String): JsonValue.Obj? {
-        val rows = dao.getBlobsForOwner(
+        val rows = dao.getBlobMetadataForOwner(
             schoolId = scope.schoolId.value,
             accountId = scope.accountId.value,
             profileId = scope.profileId.value,
             ownerEntityType = ownerType.name,
-            ownerEntityId = ownerId
+            ownerEntityId = ownerId,
+            mimeType = mimeType
         )
         val envelope = latestEnvelope(rows) ?: return null
         return loadDocument(envelope)
     }
 
     suspend fun listDocuments(): Map<String, JsonValue.Obj> {
-        val rows = dao.getBlobsByOwnerType(
+        val rows = dao.getBlobMetadataByOwnerType(
             schoolId = scope.schoolId.value,
             accountId = scope.accountId.value,
             profileId = scope.profileId.value,
-            ownerEntityType = ownerType.name
+            ownerEntityType = ownerType.name,
+            mimeType = mimeType
         )
         val grouped = rows.filter { it.ownerEntityId != null && it.mimeType == mimeType }
             .groupBy { it.ownerEntityId.orEmpty() }
@@ -109,12 +114,13 @@ internal class VersionedDegreeDocumentStore(
      * 同一逻辑文档重写为新 writeSequence 后快照文本仍完全一致， revert invariant 可精确校验。
      */
     suspend fun readSnapshot(ownerId: String): JsonValue.Obj? {
-        val rows = dao.getBlobsForOwner(
+        val rows = dao.getBlobMetadataForOwner(
             schoolId = scope.schoolId.value,
             accountId = scope.accountId.value,
             profileId = scope.profileId.value,
             ownerEntityType = ownerType.name,
-            ownerEntityId = ownerId
+            ownerEntityId = ownerId,
+            mimeType = mimeType
         )
         val envelope = latestEnvelope(rows) ?: return null
         val ref = envelope.documentRef
@@ -167,19 +173,21 @@ internal class VersionedDegreeDocumentStore(
             ?: throw IllegalArgumentException("版本化毕业审计文档必须是 object")
     }
 
-    private fun latestEnvelope(rows: List<BlobStoreEntity>): VersionedDocument? {
-        return rows.asSequence()
-            .filter { row -> row.inScope() && row.mimeType == mimeType }
-            .map(::decodeEnvelope)
-            .maxWithOrNull(
-                compareBy<VersionedDocument> { it.writeSequence }
-                    .thenBy { it.writeAtEpochMs }
-                    .thenBy { it.writeNonce }
-            )
+    private suspend fun latestEnvelope(rows: List<BlobStoreMetadataRow>): VersionedDocument? {
+        val envelopes = mutableListOf<VersionedDocument>()
+        rows.filter { row -> row.inScope() && row.mimeType == mimeType }
+            .forEach { row -> envelopes += decodeEnvelope(row) }
+        return envelopes.maxWithOrNull(
+            compareBy<VersionedDocument> { it.writeSequence }
+                .thenBy { it.writeAtEpochMs }
+                .thenBy { it.writeNonce }
+        )
     }
 
-    private fun decodeEnvelope(row: BlobStoreEntity): VersionedDocument {
-        val obj = Json.parse(row.content.toString(Charsets.UTF_8)).asObjOrNull
+    private suspend fun decodeEnvelope(row: BlobStoreMetadataRow): VersionedDocument {
+        val blob = blobStore.get(row.blobId, scope)
+            ?: throw IllegalStateException("版本化毕业审计信封 blob 不存在: " + row.blobId)
+        val obj = Json.parse(blob.content().toString(Charsets.UTF_8)).asObjOrNull
             ?: throw IllegalArgumentException("版本化毕业审计文档必须是 object")
         val format = obj.requiredString("format")
         require(format == VERSIONED_DOCUMENT_FORMAT_V2 || format == VERSIONED_DOCUMENT_FORMAT_V1) {
@@ -204,7 +212,7 @@ internal class VersionedDegreeDocumentStore(
         )
     }
 
-    private fun BlobStoreEntity.inScope(): Boolean =
+    private fun BlobStoreMetadataRow.inScope(): Boolean =
         scopeSchoolId == scope.schoolId.value &&
             scopeAccountId == scope.accountId.value &&
             scopeProfileId == scope.profileId.value &&

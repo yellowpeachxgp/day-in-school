@@ -10,6 +10,7 @@ import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.plan.ImportInput
 import cn.edu.haut.campus.core.plan.OverrideAction
 import cn.edu.haut.campus.core.plan.PlanSource
@@ -319,6 +320,53 @@ class VaultDegreeRepositoryTest {
     }
 
     @Test
+    fun multiMiBVersionedDocumentRoundTripsWithMetadataEnvelopeProjection() = runBlocking {
+        val blobStore = VaultBlobStore(database = database, clock = { now })
+        val store = VersionedDegreeDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = EntityType.TRAINING_PLAN_IMPORT,
+            mimeType = VersionedDegreeDocumentStore.PLAN_IMPORT_MIME,
+            clock = { now }
+        )
+        val padding = "x".repeat(3 * 1024 * 1024 + 17)
+        val document = jsonObjectOf(
+            "format" to JsonValue.Str("large-degree-document-test/v1"),
+            "revision" to JsonValue.Num("1"),
+            "title" to JsonValue.Str("数 MiB 合成大文档"),
+            "padding" to JsonValue.Str(padding)
+        )
+        assertTrue(
+            "回归文档必须超过典型 2 MiB CursorWindow",
+            canonicalJson(document).toByteArray(Charsets.UTF_8).size > 3 * 1024 * 1024
+        )
+
+        store.writeDocument("large-doc", document)
+        val first = store.readDocument("large-doc")
+        assertNotNull(first)
+        assertEquals(padding.length, first!!.requiredString("padding").length)
+
+        val second = document.copy(fields = document.fields + ("revision" to JsonValue.Num("2")))
+        store.writeDocument("large-doc", second)
+        val reloaded = store.readDocument("large-doc")
+        assertNotNull(reloaded)
+        assertEquals(2L, reloaded!!.nullableLong("revision"))
+        assertEquals(padding.length, reloaded.requiredString("padding").length)
+
+        val envelopeRows = database.vaultDao().getBlobMetadataForOwner(
+            schoolId = scope.schoolId.value,
+            accountId = scope.accountId.value,
+            profileId = scope.profileId.value,
+            ownerEntityType = EntityType.TRAINING_PLAN_IMPORT.name,
+            ownerEntityId = "large-doc",
+            mimeType = VersionedDegreeDocumentStore.PLAN_IMPORT_MIME
+        )
+        assertEquals("两次写入应产生两个小型版本信封", 2, envelopeRows.size)
+        assertTrue(envelopeRows.all { it.byteCount < 64 * 1024 })
+    }
+
+    @Test
     fun backupRestoreKeepsLatestVersionByExplicitWriteSequence() = runBlocking {
         val record = repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
         repository.setConfirmedForStudent(record.importId, true, Actor.USER)
@@ -359,8 +407,10 @@ class VaultDegreeRepositoryTest {
             ownerEntityType = "TRAINING_PLAN_IMPORT",
             ownerEntityId = record.importId
         ).filter { it.mimeType == VersionedDegreeDocumentStore.PLAN_IMPORT_MIME }
+        val blobReader = VaultBlobStore(database = database, clock = { now })
         val sequences = envelopeRows.mapNotNull { row ->
-            Regex("\"writeSequence\":(\\d+)").find(row.content.toString(Charsets.UTF_8))?.groupValues?.get(1)?.toLong()
+            val text = blobReader.get(row.blobId, scope)?.content()?.toString(Charsets.UTF_8)
+            Regex("\"writeSequence\":(\\d+)").find(text.orEmpty())?.groupValues?.get(1)?.toLong()
         }.sorted()
         assertEquals("版本信封必须携带显式单调 writeSequence", listOf(1L, 2L), sequences)
     }
