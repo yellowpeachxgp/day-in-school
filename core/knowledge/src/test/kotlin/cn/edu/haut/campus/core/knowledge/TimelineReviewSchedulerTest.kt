@@ -24,6 +24,7 @@ import cn.edu.haut.campus.core.timeline.BusyFreeCalculator
 import cn.edu.haut.campus.core.timeline.BusyLevel
 import cn.edu.haut.campus.core.timeline.EventStatus
 import cn.edu.haut.campus.core.timeline.FreeSlot
+import cn.edu.haut.campus.core.timeline.LocalTimeWindow
 import cn.edu.haut.campus.core.timeline.SlotConstraints
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineEvent
@@ -177,6 +178,34 @@ class TimelineReviewSchedulerTest {
     }
 
     @Test
+    fun smallClockDriftInsideSameQuantumKeepsPlanRevisionAndTimelineEventIds() = runBlocking {
+        now = Instant.parse("2026-03-02T00:10:00Z") // 08:10，本地，首个实际块落在 08:30 量子
+        insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
+        val scheduler = schedulerWith(staticEvents = emptyList())
+        val fixedSlotRequest = request().copy(
+            constraints = SlotConstraints(
+                zone = zone,
+                dailyWindows = listOf(LocalTimeWindow(java.time.LocalTime.of(8, 30), java.time.LocalTime.of(9, 0)))
+            )
+        )
+        val first = scheduler.schedule(fixedSlotRequest)
+        assertEquals(ReviewScheduleResultStatus.SCHEDULED, first.status)
+        val firstIds = first.placements.map { it.timelineEventId }.sortedBy { it.value }
+        val firstRevision = repository.listReviewTasks(scope).single().revision
+        val firstPlanRevision = repository.listReviewTasks(scope).single().schedule!!.planRevision
+        val firstRowCount = database.vaultDao().countPersonalEvents()
+
+        now = now.plusSeconds(10 * 60) // 仍在同一 30 分钟量子内，实际 start/end 不变，只有 targetStart 漂移
+        val second = scheduler.schedule(fixedSlotRequest)
+
+        assertEquals(ReviewScheduleResultStatus.SCHEDULED, second.status)
+        assertEquals("时钟漂移不得改变 TimelineEventId", firstIds, second.placements.map { it.timelineEventId }.sortedBy { it.value })
+        assertEquals(firstRowCount, database.vaultDao().countPersonalEvents())
+        assertEquals(firstRevision, repository.listReviewTasks(scope).single().revision)
+        assertEquals(firstPlanRevision, repository.listReviewTasks(scope).single().schedule!!.planRevision)
+    }
+
+    @Test
     fun expiredPlannedBlockBecomesMissedAndReplacementKeepsTaskAndHistory() = runBlocking {
         insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
         val scheduler = schedulerWith(staticEvents = emptyList())
@@ -226,6 +255,29 @@ class TimelineReviewSchedulerTest {
         assertTrue("因果撤销必须删除首次排程派生的 REVIEW_BLOCK", eventIds.all {
             database.vaultDao().getPersonalEvent(it.value) == null
         })
+    }
+
+    @Test
+    fun eightConsecutiveMissedRoundsCanStillBeRescheduled() = runBlocking {
+        insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
+        val scheduler = schedulerWith(staticEvents = emptyList())
+        var result = scheduler.schedule(request())
+        assertEquals(ReviewScheduleResultStatus.SCHEDULED, result.status)
+
+        repeat(8) {
+            val lastPlannedEnd = result.placements.maxOf { it.end }
+            now = lastPlannedEnd.plusSeconds(60)
+            result = scheduler.schedule(request())
+            assertEquals(ReviewScheduleResultStatus.SCHEDULED, result.status)
+        }
+
+        val task = repository.listReviewTasks(scope).single { it.id == "review-linear" }
+        val blocks = task.schedule!!.blocks
+        assertEquals("8 轮漏做必须保留 32 个 MISSED 历史块", 32, blocks.count { it.state == ReviewBlockState.MISSED })
+        assertEquals("历史块不得挤占未来 PLANNED 配额", 4, blocks.count { it.state == ReviewBlockState.PLANNED })
+        assertEquals(36, blocks.size)
+        assertTrue(blocks.any { it.state == ReviewBlockState.PLANNED && it.start.isAfter(now) })
+        assertEquals(32, task.lapseCount)
     }
 
     @Test

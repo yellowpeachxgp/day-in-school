@@ -392,8 +392,8 @@ class TimelineReviewScheduler(
     }
 
     private fun List<ReviewBlock>.sameTimingAs(plan: GeneratedReviewPlan): Boolean {
-        val left = sortedBy { it.repetitionIndex }.map { BlockTiming(it.repetitionIndex, it.targetStart, it.start, it.end) }
-        val right = plan.blocks.sortedBy { it.repetitionIndex }.map { BlockTiming(it.repetitionIndex, it.targetStart, it.start, it.end) }
+        val left = sortedBy { it.repetitionIndex }.map { BlockTiming(it.repetitionIndex, it.start, it.end) }
+        val right = plan.blocks.sortedBy { it.repetitionIndex }.map { BlockTiming(it.repetitionIndex, it.start, it.end) }
         return left == right
     }
 
@@ -420,7 +420,7 @@ class TimelineReviewScheduler(
     private fun minInstant(left: Instant, right: Instant): Instant = if (left.isBefore(right)) left else right
 
     private data class DeadlineResolution(val deadlineAt: Instant?, val overdue: Boolean)
-    private data class BlockTiming(val repetitionIndex: Int, val targetStart: Instant, val start: Instant, val end: Instant)
+    private data class BlockTiming(val repetitionIndex: Int, val start: Instant, val end: Instant)
 
     companion object {
         private val MAX_SCHEDULING_WINDOW: Duration = Duration.ofDays(62)

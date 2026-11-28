@@ -194,12 +194,12 @@ data class ReviewBlock(
 ) {
     init {
         requireStableKnowledgeId(id, "review block id")
-        require(repetitionIndex in 1..ReviewSchedule.MAX_REVIEW_BLOCKS) { "复习块序号超出范围" }
+        require(repetitionIndex in 1..ReviewSchedule.MAX_PLANNED_REVIEW_BLOCKS) { "复习块序号超出范围" }
         require(end.isAfter(start)) { "复习块 end 必须晚于 start" }
     }
 }
 
-/** 一个复习任务的完整本地排程快照；历史 DONE/MISSED 块会随重排继续保留。 */
+/** 一个复习任务的完整本地排程快照；历史 DONE/MISSED 块会随重排继续保留，且不占未来排程块配额。 */
 data class ReviewSchedule(
     val algorithm: String,
     val planRevision: Long,
@@ -213,7 +213,8 @@ data class ReviewSchedule(
             "复习排程算法标识非法"
         }
         require(planRevision > 0) { "复习排程 planRevision 必须大于 0" }
-        require(blocks.size <= MAX_REVIEW_BLOCKS) { "单个复习任务的排程块数量超出上限" }
+        val plannedCount = blocks.count { it.state == ReviewBlockState.PLANNED }
+        require(plannedCount <= MAX_PLANNED_REVIEW_BLOCKS) { "单个复习任务的未来排程块数量超出上限" }
         require(blocks.map { it.id }.distinct().size == blocks.size) { "复习块 ID 不能重复" }
         val plannedIndices = blocks.filter { it.state == ReviewBlockState.PLANNED }.map { it.repetitionIndex }
         require(plannedIndices.distinct().size == plannedIndices.size) { "未来复习块 repetitionIndex 不能重复" }
@@ -225,7 +226,11 @@ data class ReviewSchedule(
     }
 
     companion object {
-        const val MAX_REVIEW_BLOCKS: Int = 32
+        /** 配额只限制未来 PLANNED 块；DONE/MISSED 历史是审计事实，不能因达到配额而让任务无法重排。 */
+        const val MAX_PLANNED_REVIEW_BLOCKS: Int = 32
+
+        /** 兼容首轮 W3-05 引用；语义等同 MAX_PLANNED_REVIEW_BLOCKS。 */
+        const val MAX_REVIEW_BLOCKS: Int = MAX_PLANNED_REVIEW_BLOCKS
     }
 }
 
