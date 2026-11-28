@@ -8,6 +8,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.feature.settings.extension.ExtensionPluginSlot
 import cn.edu.haut.campus.feature.settings.parcel.ui.ParcelHubScreenContent
 import cn.edu.haut.campus.feature.settings.state.rememberSettingsSessionViewModelStoreOwner
 import cn.edu.haut.campus.feature.settings.state.settingsSessionKey
@@ -28,5 +29,17 @@ fun ParcelHubRoute(
         factory = ParcelHubViewModel.factory(repository, sessionStates)
     )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    ParcelHubScreenContent(state = state, actions = viewModel, onBack = onBack)
+    val parcelCardsContent: @Composable () -> Unit = {
+        ExtensionPluginSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, "parcel.cards", allowedHostRoutes = emptySet())
+    }
+    val parcelProvidersContent: @Composable () -> Unit = {
+        ExtensionPluginSlot(repository.profileId, repository.schoolId, repository.sessionGeneration, "parcel.providers", allowedHostRoutes = emptySet())
+    }
+    ParcelHubScreenContent(
+        state = state,
+        actions = viewModel,
+        onBack = onBack,
+        parcelCardsContent = parcelCardsContent,
+        parcelProvidersContent = parcelProvidersContent
+    )
 }
