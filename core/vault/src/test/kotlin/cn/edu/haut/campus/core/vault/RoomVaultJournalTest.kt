@@ -138,6 +138,55 @@ class RoomVaultJournalTest {
     }
 
     @Test
+    fun moveAndMergedSuppressionRowsDoNotPublishCourseChangedButIndependentCancelDoes() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(
+                    overrideRow("token-move-source").copy(
+                        id = "ov_move_source",
+                        canceled = true,
+                        reason = "已调至 2026-10-13",
+                        moveId = "move-1",
+                        moveRole = "SOURCE"
+                    ),
+                    overrideRow("token-move-target").copy(
+                        id = "ov_move_target",
+                        canceled = true,
+                        reason = "暂停调入课",
+                        moveId = "move-1",
+                        moveRole = "TARGET"
+                    ),
+                    overrideRow("token-merged").copy(
+                        id = "ov_merged_suppression",
+                        canceled = true,
+                        reason = "MERGED_INTO:rule-1"
+                    )
+                )
+            )
+        }
+        assertEquals(0, outbox.pendingUnacked("automation").count { it.envelope.eventType == "course.changed" })
+
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-real-cancel").copy(id = "ov_real_cancel", canceled = true, reason = "单次停课"))
+            )
+        }
+
+        val courseEvents = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+        assertEquals(1, courseEvents.size)
+        assertEquals(JsonValue.Bool(true), courseEvents.single().diff.changes.single().after)
+        assertTrue(courseEvents.single().diff.changes.single().path.contains("ov_real_cancel"))
+    }
+
+    @Test
     fun editThenCancelReplacementUsesStableOverrideIdsAndDoesNotRollback() = runBlocking {
         val outbox = InMemoryEventOutbox()
         val journal = newJournal(outbox)

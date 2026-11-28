@@ -4,6 +4,7 @@ import cn.edu.haut.campus.core.automation.CourseCancellationStatePort
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
+import cn.edu.haut.campus.core.model.OccurrenceCancellationSemantics
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 
 /** Room 当前课程聚合停课状态；只读，不把历史触发事件当作当前事实。 */
@@ -25,9 +26,17 @@ class RoomCourseCancellationStatePort(
             row.courseId == courseRef.id || row.courseRuleId in ruleIds
         }
         return if (overrideIds.isEmpty()) {
-            courseRows.any { it.canceled }
+            courseRows.any(::isIndependentCancellation)
         } else {
-            courseRows.any { it.id in overrideIds && it.canceled }
+            courseRows.any { it.id in overrideIds && isIndependentCancellation(it) }
         }
     }
+
+    private fun isIndependentCancellation(row: cn.edu.haut.campus.core.database.OccurrenceOverrideEntity): Boolean =
+        OccurrenceCancellationSemantics.isIndependentCancellation(
+            canceled = row.canceled,
+            moveId = row.moveId,
+            moveRole = row.moveRole,
+            reason = row.reason
+        )
 }

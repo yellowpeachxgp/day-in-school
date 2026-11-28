@@ -175,6 +175,26 @@ data class OccurrenceOverride(
     }
 }
 
+/** occurrence override 中「独立停课」与结构性调课/连堂抑制行的共同语义。 */
+object OccurrenceCancellationSemantics {
+    const val MERGED_INTO_PREFIX: String = "MERGED_INTO:"
+
+    /**
+     * 只有无 moveId/moveRole 且不是 MERGED_INTO 内部抑制行的 canceled=true 才是独立停课。
+     * 跨日调课 SOURCE/TARGET 即使 canceled=true 也只表达调课占用/暂停；MERGED_INTO 只表达
+     * 同日并入主连堂，二者都不得被自动化或审计投影误认为临时停课。
+     */
+    fun isIndependentCancellation(
+        canceled: Boolean,
+        moveId: String?,
+        moveRole: String?,
+        reason: String?
+    ): Boolean = canceled &&
+        moveId.isNullOrBlank() &&
+        moveRole.isNullOrBlank() &&
+        reason?.startsWith(MERGED_INTO_PREFIX) != true
+}
+
 enum class ClassStatus {
     UPCOMING,
     IN_PROGRESS,

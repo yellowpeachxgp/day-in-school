@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.FieldChange
 import cn.edu.haut.campus.core.model.FieldChangeKind
 import cn.edu.haut.campus.core.model.FieldDiff
+import cn.edu.haut.campus.core.model.OccurrenceCancellationSemantics
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 
@@ -29,16 +30,16 @@ internal object CourseCancellationEventProjector {
         for (id in ids) {
             val old = beforeOverrides[id]
             val new = afterOverrides[id]
-            val oldValue = old?.obj("canceled") as? JsonValue.Bool
-            val newValue = new?.obj("canceled") as? JsonValue.Bool
+            val oldValue = old?.let(::effectiveCancellationValue)
+            val newValue = new?.let(::effectiveCancellationValue)
             when {
-                old == null && new != null && newValue != null -> fieldChanges += FieldChange(
+                oldValue == null && newValue != null -> fieldChanges += FieldChange(
                     path = cancellationPath(id),
                     kind = FieldChangeKind.ADDED,
                     before = null,
                     after = newValue
                 )
-                old != null && new == null && oldValue != null -> fieldChanges += FieldChange(
+                oldValue != null && newValue == null -> fieldChanges += FieldChange(
                     path = cancellationPath(id),
                     kind = FieldChangeKind.REMOVED,
                     before = oldValue,
@@ -61,6 +62,23 @@ internal object CourseCancellationEventProjector {
             change = change.op,
             diff = FieldDiff(fieldChanges)
         )
+    }
+
+    /** 结构性调课/连堂抑制行没有“独立停课”值；只有共同语义认可的独立行才参与投影。 */
+    private fun effectiveCancellationValue(row: JsonValue.Obj): JsonValue.Bool? {
+        val canceled = row.obj("canceled") as? JsonValue.Bool ?: return null
+        return if (
+            OccurrenceCancellationSemantics.isIndependentCancellation(
+                canceled = canceled.value,
+                moveId = row.str("moveId"),
+                moveRole = row.str("moveRole"),
+                reason = row.str("reason")
+            )
+        ) {
+            canceled
+        } else {
+            null
+        }
     }
 
     private fun parseObjectOrNull(snapshot: CanonicalJson): JsonValue.Obj? =
