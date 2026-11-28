@@ -12,6 +12,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.model.SchoolProfile
+import cn.edu.haut.campus.feature.settings.extension.ExtensionPluginSlot
 import cn.edu.haut.campus.feature.settings.root.home.state.SettingsHomeUiEffect
 import cn.edu.haut.campus.feature.settings.root.home.ui.SettingsHomeSectionContent
 import cn.edu.haut.campus.feature.settings.state.SettingsTransientResetRegistry
@@ -65,6 +66,24 @@ fun SettingsHomeRouteSection(
             }
         }
     }
+    val settingsEntriesContent: @Composable () -> Unit = {
+        ExtensionPluginSlot(
+            profileId = repository.profileId,
+            schoolId = repository.schoolId,
+            sessionGeneration = repository.sessionGeneration,
+            slotId = "settings.entries",
+            allowedHostRoutes = setOf("settings.extensions", "parcel.hub", "library.seats", "library.catalog", "campus.services"),
+            onOpenHostRoute = { route ->
+                when (route) {
+                    "settings.extensions" -> onNavigateToXpeachCloud()
+                    "parcel.hub" -> onNavigateToParcelHub()
+                    "library.seats" -> onNavigateToLibrarySeats()
+                    "library.catalog" -> onNavigateToLibraryCatalog()
+                    "campus.services" -> onNavigateToSchoolCenter()
+                }
+            }
+        )
+    }
     SettingsHomeSectionContent(
         state = state,
         activeSchool = activeSchool,
@@ -83,6 +102,7 @@ fun SettingsHomeRouteSection(
         onNavigateToSchoolCenter = onNavigateToSchoolCenter,
         onNavigateToParcelHub = onNavigateToParcelHub,
         onNavigateToXpeachCloud = onNavigateToXpeachCloud,
-        onShowImportHistory = onShowImportHistory
+        onShowImportHistory = onShowImportHistory,
+        settingsEntriesContent = settingsEntriesContent
     )
 }
