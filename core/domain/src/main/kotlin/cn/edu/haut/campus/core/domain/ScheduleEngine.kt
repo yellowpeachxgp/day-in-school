@@ -17,6 +17,7 @@ import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.TermDateStatus
 import cn.edu.haut.campus.core.model.TimeEvidence
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
+import cn.edu.haut.campus.core.timeline.ScheduleOccurrenceExpander
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
@@ -34,32 +35,7 @@ object ScheduleEngine {
         date: LocalDate,
         term: Term,
         periodTimes: List<PeriodTime>
-    ): Map<Int, PeriodTime> {
-        val rowsForTable = periodTimes.filter { it.timeTableId == term.timeTableId }
-        val baseRows = rowsForTable.filter { it.schemeId == null }
-        val activeSchemeRows = rowsForTable.filter { row ->
-            val start = row.validStartDate
-            val end = row.validEndDate
-            row.schemeId != null && row.termId == term.id &&
-                start != null && end != null &&
-                !date.isBefore(start) && !date.isAfter(end)
-        }
-        if (activeSchemeRows.isEmpty()) {
-            return baseRows.associateBy { it.periodNo }
-        }
-        val selectedSchemeId = activeSchemeRows
-            .groupBy { it.schemeId!! }
-            .entries
-            .maxWithOrNull(
-                compareBy<Map.Entry<String, List<PeriodTime>>> { entry ->
-                    entry.value.mapNotNull { it.validStartDate }.maxOrNull()?.toEpochDay() ?: Long.MIN_VALUE
-                }.thenBy { it.key }
-            )
-            ?.key
-        return activeSchemeRows
-            .filter { it.schemeId == selectedSchemeId }
-            .associateBy { it.periodNo }
-    }
+    ): Map<Int, PeriodTime> = ScheduleOccurrenceExpander.periodMapForDate(date, term, periodTimes)
 
     /**
      * 无单一日期上下文（如「本学期课表依据完整性」）使用的合并视图：
@@ -88,11 +64,7 @@ object ScheduleEngine {
         termId: String,
         courseIds: Set<String>,
         termWeekCount: Int = Int.MAX_VALUE
-    ): Boolean = rule.termId == termId &&
-        rule.weeks.any { it in 1..termWeekCount } &&
-        rule.startPeriod >= 1 &&
-        rule.startPeriod <= rule.endPeriod &&
-        rule.courseId in courseIds
+    ): Boolean = ScheduleOccurrenceExpander.isExpandableScheduleRule(rule, termId, courseIds, termWeekCount)
 
     /**
      * 覆盖行关联规则的本学期解析：courseRuleId 必须指向**同一学期**的现存规则——
@@ -103,9 +75,7 @@ object ScheduleEngine {
         override: OccurrenceOverride,
         termId: String,
         rulesById: Map<String, CourseScheduleRule>
-    ): CourseScheduleRule? = override.courseRuleId
-        ?.let { rulesById[it] }
-        ?.takeIf { it.termId == termId }
+    ): CourseScheduleRule? = ScheduleOccurrenceExpander.sameTermBaseRule(override, termId, rulesById)
 
     /**
      * 单日覆盖「可展开」统一校验：仅非停课覆盖（补课/改时间/改教室）才可能展开为课程事件，
@@ -118,12 +88,7 @@ object ScheduleEngine {
         termId: String,
         rulesById: Map<String, CourseScheduleRule>,
         courseIds: Set<String>
-    ): Boolean {
-        if (override.termId != termId || override.canceled) return false
-        val baseRule = sameTermBaseRule(override, termId, rulesById)
-        val targetCourseId = override.courseId ?: baseRule?.courseId ?: return false
-        return targetCourseId in courseIds
-    }
+    ): Boolean = ScheduleOccurrenceExpander.isExpandableOccurrenceOverride(override, termId, rulesById, courseIds)
 
     /**
      * 单日覆盖的「可展开时间窗」共享校验：与展开器完全同一取值顺序与同一解析路径——
@@ -139,19 +104,13 @@ object ScheduleEngine {
         rulesById: Map<String, CourseScheduleRule>,
         courseIds: Set<String>,
         periodMap: Map<Int, PeriodTime>
-    ): ResolvedPeriodWindow? {
-        if (!isExpandableOccurrenceOverride(override, termId, rulesById, courseIds)) return null
-        val baseRule = sameTermBaseRule(override, termId, rulesById)
-        val startPeriod = override.startPeriod ?: baseRule?.startPeriod ?: 1
-        val endPeriod = override.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
-        return resolvePeriodWindow(
-            startPeriod = startPeriod,
-            endPeriod = endPeriod,
-            customStart = override.startAt ?: baseRule?.customStartTime,
-            customEnd = override.endAt ?: baseRule?.customEndTime,
-            periodMap = periodMap
-        )
-    }
+    ): ResolvedPeriodWindow? = ScheduleOccurrenceExpander.expandableOverrideTimeWindow(
+        occurrenceOverride = override,
+        termId = termId,
+        rulesById = rulesById,
+        courseIds = courseIds,
+        periodMap = periodMap
+    )?.toDomainWindow()
 
     /**
      * 排课规则自身时间输入的可解析窗口（与展开器同一解析路径，绝不另起口径）：
@@ -163,13 +122,13 @@ object ScheduleEngine {
     fun ruleSchedulePeriodWindow(
         rule: CourseScheduleRule,
         periodMap: Map<Int, PeriodTime>
-    ): ResolvedPeriodWindow = resolvePeriodWindow(
+    ): ResolvedPeriodWindow = ScheduleOccurrenceExpander.resolvePeriodWindow(
         startPeriod = rule.startPeriod,
         endPeriod = rule.endPeriod,
         customStart = rule.customStartTime,
         customEnd = rule.customEndTime,
         periodMap = periodMap
-    )
+    ).toDomainWindow()
 
     /**
      * 解析指定日期的实际课程列表（包含学期日历调休、单日停课/改教室/改时间、临时补课、连续同课合并与冲突分栏计算）。
@@ -184,155 +143,23 @@ object ScheduleEngine {
         occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
-        val courseMap = courses.associateBy { it.id }
-        val rulesById = rules.associateBy { it.id }
-        val periodMap = periodMapForDate(date, term, periodTimes)
+        // W1-05 收敛：课表展开（教学周对齐、调休、单日覆盖、连堂合并）的唯一实现
+        // 是 core:timeline 的 ScheduleOccurrenceExpander；engine 不再保留第二套语义，
+        // 此处只补楼宇名、连堂课内部课间与冲突分栏等展示后处理。
+        val expansion = ScheduleOccurrenceExpander.expandDate(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
         val buildingMap = buildings.associateBy { it.id }
-
-        val effectiveDate = TeachingWeekCalculator.resolveDate(date, term, calendarOverrides)
-        val dayOverrides = occurrenceOverrides.filter { it.termId == term.id && it.date == date }
-        val overridesByRuleId = dayOverrides.filter { it.courseRuleId != null }.associateBy { it.courseRuleId!! }
-        val absorbedCompanionsByPrimaryRuleId: Map<String, List<String>> = dayOverrides
-            .filter { it.canceled && !it.courseRuleId.isNullOrBlank() && it.reason?.startsWith("MERGED_INTO:") == true }
-            .groupBy(
-                keySelector = { it.reason!!.removePrefix("MERGED_INTO:").trim() },
-                valueTransform = { it.courseRuleId!! }
-            )
-
-        val rawOccurrences = mutableListOf<ClassOccurrence>()
-
-        // 1. 常规排课规则匹配（若非放假停课）
-        if (effectiveDate.status != TermDateStatus.HOLIDAY_NO_CLASS &&
-            effectiveDate.teachingWeek != null
-        ) {
-            val activeWeek = effectiveDate.teachingWeek
-            val targetWeekday = effectiveDate.weekdayUsed
-            val matchingRules = rules.filter { rule ->
-                isExpandableScheduleRule(rule, term.id, courseMap.keys, term.weekCount) &&
-                    rule.weekday == targetWeekday &&
-                    activeWeek in rule.weeks
-            }
-
-            for (rule in matchingRules) {
-                val course = courseMap[rule.courseId] ?: continue
-                val ruleOverride = overridesByRuleId[rule.id]
-                if (ruleOverride?.canceled == true) {
-                    continue
-                }
-
-                val startPeriod = ruleOverride?.startPeriod ?: rule.startPeriod
-                val endPeriod = ruleOverride?.endPeriod ?: rule.endPeriod
-                val resolvedWindow = resolvePeriodWindow(
-                    startPeriod = startPeriod,
-                    endPeriod = endPeriod,
-                    customStart = ruleOverride?.startAt ?: rule.customStartTime,
-                    customEnd = ruleOverride?.endAt ?: rule.customEndTime,
-                    periodMap = periodMap
-                )
-
-                val finalRoom = ruleOverride?.room ?: rule.rawRoom
-                val finalBuildingId = ruleOverride?.buildingId ?: rule.buildingId
-                val isOverridden = ruleOverride != null || effectiveDate.status == TermDateStatus.MAKEUP_RESCHEDULED
-                val reason = ruleOverride?.reason ?: effectiveDate.calendarNotice
-
-                val mergedRuleIdsWithCompanions = (
-                    listOf(rule.id) + absorbedCompanionsByPrimaryRuleId[rule.id].orEmpty()
-                    ).distinct()
-
-                rawOccurrences.add(
-                    ClassOccurrence(
-                        occurrenceId = "${date}_${rule.id}",
-                        courseId = course.id,
-                        ruleId = rule.id,
-                        mergedRuleIds = mergedRuleIdsWithCompanions,
-                        overrideId = ruleOverride?.id,
-                        courseName = course.name,
-                        teacher = course.teacher,
-                        colorArgb = course.colorArgb,
-                        date = date,
-                        teachingWeek = effectiveDate.teachingWeek,
-                        weekday = date.dayOfWeek,
-                        startPeriod = startPeriod,
-                        endPeriod = endPeriod,
-                        startTime = resolvedWindow.startTime,
-                        endTime = resolvedWindow.endTime,
-                        rawRoom = finalRoom,
-                        buildingId = finalBuildingId,
-                        buildingName = finalBuildingId?.let { buildingMap[it]?.name },
-                        isMakeupOrOverridden = isOverridden,
-                        overrideReason = reason,
-                        userModified = course.userModified || rule.userModified || ruleOverride != null,
-                        hasResolvedTime = resolvedWindow.hasResolvedTime,
-                        timeEvidence = resolvedWindow.evidence
-                    )
-                )
-            }
-        }
-
-        // 2. 单日临时补课或跨天调入课程（courseRuleId 不在今日常规触发集，或纯手工补课）
-        val handledOverrideIds = rawOccurrences.mapNotNull { it.overrideId }.toSet()
-        for (extraOverride in dayOverrides) {
-            if (extraOverride.id in handledOverrideIds) continue
-            // 与「课表依据」判定共用同一校验与同一时间窗解析：
-            // 跨学期关联视为无关联，时间输入取值顺序完全一致。
-            val resolvedWindow = expandableOverrideTimeWindow(
-                override = extraOverride,
-                termId = term.id,
-                rulesById = rulesById,
-                courseIds = courseMap.keys,
-                periodMap = periodMap
-            ) ?: continue
-            val baseRule = sameTermBaseRule(extraOverride, term.id, rulesById)
-            val targetCourseId = extraOverride.courseId ?: baseRule?.courseId ?: continue
-            val course = courseMap[targetCourseId] ?: continue
-
-            val startPeriod = extraOverride.startPeriod ?: baseRule?.startPeriod ?: 1
-            val endPeriod = extraOverride.endPeriod ?: baseRule?.endPeriod ?: (startPeriod + 1)
-            val finalRoom = extraOverride.room ?: baseRule?.rawRoom ?: "待定教室"
-            val finalBuildingId = extraOverride.buildingId ?: baseRule?.buildingId
-
-            val extraMergedIds = if (baseRule != null) {
-                (listOf(baseRule.id) + absorbedCompanionsByPrimaryRuleId[baseRule.id].orEmpty()).distinct()
-            } else emptyList()
-
-            rawOccurrences.add(
-                ClassOccurrence(
-                    occurrenceId = "${date}_override_${extraOverride.id}",
-                    courseId = course.id,
-                    ruleId = baseRule?.id,
-                    mergedRuleIds = extraMergedIds,
-                    overrideId = extraOverride.id,
-                    courseName = course.name,
-                    teacher = course.teacher,
-                    colorArgb = course.colorArgb,
-                    date = date,
-                    teachingWeek = effectiveDate.teachingWeek,
-                    weekday = date.dayOfWeek,
-                    startPeriod = startPeriod,
-                    endPeriod = endPeriod,
-                    startTime = resolvedWindow.startTime,
-                    endTime = resolvedWindow.endTime,
-                    rawRoom = finalRoom,
-                    buildingId = finalBuildingId,
-                    buildingName = finalBuildingId?.let { buildingMap[it]?.name },
-                    isMakeupOrOverridden = true,
-                    overrideReason = extraOverride.reason ?: "临时调课/补课",
-                    userModified = true,
-                    hasResolvedTime = resolvedWindow.hasResolvedTime,
-                    timeEvidence = resolvedWindow.evidence
-                )
-            )
-        }
-
-        // 3. 同一天同一门课同一教室相邻节次纵向合并，并自动识别连堂课内部的小课间/大课间
-        val merged = mergeAdjacentSameCourse(
-            rawOccurrences.sortedWith(
-                compareBy<ClassOccurrence> { it.startTime }
-                    .thenBy { it.startPeriod }
-                    .thenBy { it.courseName }
-            )
-        ).map { occ ->
+        val periodMap = periodMapForDate(date, term, periodTimes)
+        val merged = expansion.active.map { occ ->
             occ.copy(
+                buildingName = occ.buildingId?.let { buildingMap[it]?.name },
                 internalBreaks = computeInternalBreaks(
                     startPeriod = occ.startPeriod,
                     endPeriod = occ.endPeriod,
@@ -340,8 +167,6 @@ object ScheduleEngine {
                 )
             )
         }
-
-        // 4. 冲突检测与并列分栏标记
         return assignConflictColumns(merged)
     }
 
@@ -360,139 +185,20 @@ object ScheduleEngine {
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val activeTerm = term ?: return emptyList()
-        val courseMap = courses.associateBy { it.id }
-        val periodMap = periodMapForDate(date, activeTerm, periodTimes)
+        // W1-05 收敛：停课投影同样由 ScheduleOccurrenceExpander 统一展开，此处只补楼宇名。
+        val expansion = ScheduleOccurrenceExpander.expandDate(
+            date = date,
+            term = activeTerm,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
         val buildingMap = buildings.associateBy { it.id }
-
-        val effectiveDate = TeachingWeekCalculator.resolveDate(date, activeTerm, calendarOverrides)
-        if (effectiveDate.status == TermDateStatus.HOLIDAY_NO_CLASS || effectiveDate.teachingWeek == null) {
-            return emptyList()
+        return expansion.cancelled.map { occ ->
+            occ.copy(buildingName = occ.buildingId?.let { buildingMap[it]?.name })
         }
-        val activeWeek = effectiveDate.teachingWeek
-        val targetWeekday = effectiveDate.weekdayUsed
-        val allDayOverrides = occurrenceOverrides.filter { it.termId == activeTerm.id && it.date == date }
-        val activeNonCanceledRuleIds = allDayOverrides
-            .filter { !it.canceled && it.courseRuleId != null }
-            .mapNotNull { it.courseRuleId }
-            .toSet()
-
-        val dayCanceledRuleOverrides = allDayOverrides.filter { ov ->
-            if (!ov.canceled || ov.courseRuleId == null) return@filter false
-            // 忽略连堂课单次调课时为副规则自动生成的内部吸收标记（MERGED_INTO:<primaryRuleId>），除非主规则自身也已停课
-            val mergedTarget = ov.reason?.removePrefix("MERGED_INTO:")?.takeIf { ov.reason?.startsWith("MERGED_INTO:") == true }
-            if (mergedTarget != null) {
-                val primaryAlsoCanceled = allDayOverrides.any { it.canceled && it.courseRuleId == mergedTarget }
-                return@filter primaryAlsoCanceled && mergedTarget !in activeNonCanceledRuleIds
-            }
-            true
-        }.associateBy { it.courseRuleId!! }
-
-        val standaloneCanceledOverrides = allDayOverrides.filter {
-            it.canceled && it.courseRuleId == null && it.courseId != null
-        }
-        if (dayCanceledRuleOverrides.isEmpty() && standaloneCanceledOverrides.isEmpty()) return emptyList()
-
-        val matchingRules = rules.filter { rule ->
-            rule.termId == activeTerm.id &&
-                rule.weekday == targetWeekday &&
-                activeWeek in rule.weeks &&
-                rule.id in dayCanceledRuleOverrides
-        }
-        val rawRuleCanceled = matchingRules.mapNotNull { rule ->
-            val course = courseMap[rule.courseId] ?: return@mapNotNull null
-            val ov = dayCanceledRuleOverrides[rule.id] ?: return@mapNotNull null
-            val resolvedWindow = resolvePeriodWindow(
-                startPeriod = rule.startPeriod,
-                endPeriod = rule.endPeriod,
-                customStart = rule.customStartTime,
-                customEnd = rule.customEndTime,
-                periodMap = periodMap
-            )
-            val cleanReason = ov.reason?.takeUnless { it.startsWith("MERGED_INTO:") } ?: "单次停课"
-            ClassOccurrence(
-                occurrenceId = "canceled_${date}_${rule.id}",
-                courseId = course.id,
-                ruleId = rule.id,
-                overrideId = ov.id,
-                courseName = course.name,
-                teacher = course.teacher,
-                colorArgb = course.colorArgb,
-                date = date,
-                teachingWeek = activeWeek,
-                weekday = date.dayOfWeek,
-                startPeriod = rule.startPeriod,
-                endPeriod = rule.endPeriod,
-                startTime = resolvedWindow.startTime,
-                endTime = resolvedWindow.endTime,
-                rawRoom = rule.rawRoom,
-                buildingId = rule.buildingId,
-                buildingName = rule.buildingId?.let { buildingMap[it]?.name },
-                isMakeupOrOverridden = true,
-                overrideReason = cleanReason,
-                userModified = true,
-                hasResolvedTime = resolvedWindow.hasResolvedTime,
-                timeEvidence = resolvedWindow.evidence
-            )
-        }.sortedBy { it.startPeriod }
-
-        // 将相邻同课程同教室的已停课规则合并为同一条可一键完整恢复的连堂记录（保留全部 mergedRuleIds）
-        val mergedRuleCanceled = mutableListOf<ClassOccurrence>()
-        for (item in rawRuleCanceled) {
-            val last = mergedRuleCanceled.lastOrNull()
-            if (last != null &&
-                last.courseId == item.courseId &&
-                last.rawRoom == item.rawRoom &&
-                last.endPeriod + 1 == item.startPeriod
-            ) {
-                mergedRuleCanceled[mergedRuleCanceled.lastIndex] = last.copy(
-                    endPeriod = item.endPeriod,
-                    endTime = item.endTime,
-                    mergedRuleIds = (last.mergedRuleIds + item.mergedRuleIds).distinct(),
-                    hasResolvedTime = last.hasResolvedTime && item.hasResolvedTime,
-                    timeEvidence = TimeEvidence.worstOf(last.timeEvidence, item.timeEvidence)
-                )
-            } else {
-                mergedRuleCanceled.add(item)
-            }
-        }
-
-        val standaloneCanceled = standaloneCanceledOverrides.mapNotNull { ov ->
-            val course = courseMap[ov.courseId] ?: return@mapNotNull null
-            val startPeriod = ov.startPeriod ?: 1
-            val endPeriod = ov.endPeriod ?: (startPeriod + 1)
-            val resolvedWindow = resolvePeriodWindow(
-                startPeriod = startPeriod,
-                endPeriod = endPeriod,
-                customStart = ov.startAt,
-                customEnd = ov.endAt,
-                periodMap = periodMap
-            )
-            ClassOccurrence(
-                occurrenceId = "canceled_${date}_ov_${ov.id}",
-                courseId = course.id,
-                ruleId = null,
-                overrideId = ov.id,
-                courseName = course.name,
-                teacher = course.teacher,
-                colorArgb = course.colorArgb,
-                date = date,
-                teachingWeek = activeWeek,
-                weekday = date.dayOfWeek,
-                startPeriod = startPeriod,
-                endPeriod = endPeriod,
-                startTime = resolvedWindow.startTime,
-                endTime = resolvedWindow.endTime,
-                rawRoom = ov.room ?: "待定教室",
-                buildingId = ov.buildingId,
-                buildingName = ov.buildingId?.let { buildingMap[it]?.name },
-                isMakeupOrOverridden = true,
-                overrideReason = ov.reason ?: "单次停课",
-                userModified = true,
-                hasResolvedTime = resolvedWindow.hasResolvedTime,
-                timeEvidence = resolvedWindow.evidence
-            )
-        }
-        return (mergedRuleCanceled + standaloneCanceled).sortedBy { it.startPeriod }
     }
 
     /**
@@ -512,6 +218,10 @@ object ScheduleEngine {
         val hasResolvedTime: Boolean get() = evidence.hasResolvedTime
     }
 
+    /** Timeline 展开器时间窗到 engine 公开类型的映射；字段语义完全一致，仅类型归属不同。 */
+    private fun ScheduleOccurrenceExpander.ResolvedPeriodWindow.toDomainWindow(): ResolvedPeriodWindow =
+        ResolvedPeriodWindow(startTime = startTime, endTime = endTime, evidence = evidence)
+
     /**
      * 解析课程节次对应的起止时刻并给出独立「时间证据等级」（[TimeEvidence]）：
      * - 起止均显式提供且 end>start → [TimeEvidence.EXPLICIT_VALID]（缺作息表但自带
@@ -524,67 +234,7 @@ object ScheduleEngine {
      * - 起止均无法解析（作息表缺节次且未自带起点）→ [TimeEvidence.UNRESOLVED]，
      *   严禁回退伪造为晨间 `08:00`！仅按已知相邻节次向后生成单调排序锚点。
      */
-    private fun resolvePeriodWindow(
-        startPeriod: Int,
-        endPeriod: Int,
-        customStart: LocalTime?,
-        customEnd: LocalTime?,
-        periodMap: Map<Int, PeriodTime>
-    ): ResolvedPeriodWindow {
-        val span = (endPeriod - startPeriod + 1).coerceAtLeast(1)
-        val startPt = periodMap[startPeriod]
-        val endPt = periodMap[endPeriod]
-        // 端点来源取值顺序与展开器完全一致：自带 custom 字段优先，其次学期作息表节次
-        val resolvedStart = customStart ?: startPt?.startLocalTime
-        val resolvedEnd = customEnd ?: endPt?.endLocalTime
 
-        if (resolvedStart != null && resolvedEnd != null) {
-            val evidence = when {
-                // 两端明确但顺序非法（反向/零时长）→ 非法时间证据，绝不冒充已解析
-                !resolvedEnd.isAfter(resolvedStart) -> TimeEvidence.INVALID
-                // 起止均显式提供且合法 → 最强证据（与作息表是否缺失无关）
-                customStart != null && customEnd != null -> TimeEvidence.EXPLICIT_VALID
-                // 纯作息表或显式端×作息端混合且两端明确合法 → 可信
-                else -> TimeEvidence.TIMETABLE_VALID
-            }
-            return ResolvedPeriodWindow(resolvedStart, resolvedEnd, evidence)
-        }
-
-        if (customStart != null) {
-            // 仅自带起点、无任何可用终点：按节次跨度推算补全为排序锚点——ESTIMATED，
-            // 展示/提醒维持原布尔兼容，但依据判定不得采信。
-            val estimatedEnd = addMinutesClampedBeforeMidnight(
-                customStart, 45L * span + 5L * (span - 1)
-            )
-            return ResolvedPeriodWindow(customStart, estimatedEnd, TimeEvidence.ESTIMATED)
-        }
-
-        // 起点无法解析（缺作息定义且未自带起点）：绝不伪造晨间 08:00！
-        // 按已知相邻节次计算单调排序锚点并标记 UNRESOLVED
-        val precedingKnown = periodMap.entries
-            .filter { it.key < startPeriod }
-            .maxByOrNull { it.key }
-        val anchorStart = when {
-            startPt != null -> startPt.startLocalTime
-            precedingKnown != null -> {
-                val gapPeriods = (startPeriod - precedingKnown.key - 1).coerceAtLeast(0)
-                addMinutesClampedBeforeMidnight(
-                    precedingKnown.value.endLocalTime,
-                    10L + gapPeriods * 50L
-                )
-            }
-            else -> LocalTime.of(22, 0)
-        }
-        val anchorEnd = resolvedEnd?.takeIf { it.isAfter(anchorStart) }
-            ?: addMinutesClampedBeforeMidnight(anchorStart, 45L * span)
-        return ResolvedPeriodWindow(anchorStart, anchorEnd, TimeEvidence.UNRESOLVED)
-    }
-
-    private fun addMinutesClampedBeforeMidnight(base: LocalTime, minutesToAdd: Long): LocalTime {
-        val baseMins = base.hour * 60L + base.minute
-        val targetMins = (baseMins + minutesToAdd).coerceIn(0L, 23L * 60L + 59L)
-        return LocalTime.of((targetMins / 60L).toInt(), (targetMins % 60L).toInt())
-    }
     /**
      * 自动识别连堂课（如 1-2 节、3-4 节、1-4 节实验课）内部各小节之间的课间时间。
      * 例如 1-2 节（08:30–10:05）包含第 1 节结束（09:15）至第 2 节开始（09:20）的 5 分钟小课间。
@@ -755,7 +405,8 @@ object ScheduleEngine {
         buildings: List<Building> = emptyList(),
         pxPerMinute: Float = 2.0f,
         defaultStart: LocalTime = LocalTime.of(7, 45),
-        defaultEnd: LocalTime = LocalTime.of(21, 45)
+        defaultEnd: LocalTime = LocalTime.of(21, 45),
+        occurrenceResolver: ((LocalDate) -> List<ClassOccurrence>)? = null
     ): DayTimelineSnapshot {
         if (term == null) {
             val totalMinutes = Duration.between(defaultStart, defaultEnd).toMinutes().coerceAtLeast(60)
@@ -778,16 +429,21 @@ object ScheduleEngine {
         }
 
         val effectiveDate = TeachingWeekCalculator.resolveDate(date, term, calendarOverrides)
-        val occurrences = resolveOccurrencesForDate(
-            date = date,
-            term = term,
-            courses = courses,
-            rules = rules,
-            periodTimes = periodTimes,
-            calendarOverrides = calendarOverrides,
-            occurrenceOverrides = occurrenceOverrides,
-            buildings = buildings
-        )
+        // W1-05：消费端注入 Timeline 投影展开器时一律走注入路径（含下一课前瞻），
+        // 缺省回退 engine 委托同一展开内核的兼容路径，两种路径语义同一。
+        val resolveOccurrences = occurrenceResolver ?: { candidate: LocalDate ->
+            resolveOccurrencesForDate(
+                date = candidate,
+                term = term,
+                courses = courses,
+                rules = rules,
+                periodTimes = periodTimes,
+                calendarOverrides = calendarOverrides,
+                occurrenceOverrides = occurrenceOverrides,
+                buildings = buildings
+            )
+        }
+        val occurrences = resolveOccurrences(date)
 
         val resolvedForBounds = occurrences.filter { it.hasResolvedTime }
         val earliestClass = resolvedForBounds.minOfOrNull { it.startTime }
@@ -922,13 +578,7 @@ object ScheduleEngine {
         val nextClassDayHint = if (activeOrNextClass == null) {
             findNextClassDayHint(
                 fromDate = date,
-                term = term,
-                courses = courses,
-                rules = rules,
-                periodTimes = periodTimes,
-                calendarOverrides = calendarOverrides,
-                occurrenceOverrides = occurrenceOverrides,
-                buildings = buildings
+                resolveOccurrences = resolveOccurrences
             )
         } else {
             null
@@ -980,26 +630,11 @@ object ScheduleEngine {
 
     private fun findNextClassDayHint(
         fromDate: LocalDate,
-        term: Term,
-        courses: List<Course>,
-        rules: List<CourseScheduleRule>,
-        periodTimes: List<PeriodTime>,
-        calendarOverrides: List<CalendarOverride>,
-        occurrenceOverrides: List<OccurrenceOverride>,
-        buildings: List<Building>
+        resolveOccurrences: (LocalDate) -> List<ClassOccurrence>
     ): NextClassDayHint? {
         for (offset in 1L..21L) {
             val candidateDate = fromDate.plusDays(offset)
-            val occurrences = resolveOccurrencesForDate(
-                date = candidateDate,
-                term = term,
-                courses = courses,
-                rules = rules,
-                periodTimes = periodTimes,
-                calendarOverrides = calendarOverrides,
-                occurrenceOverrides = occurrenceOverrides,
-                buildings = buildings
-            )
+            val occurrences = resolveOccurrences(candidateDate)
             if (occurrences.isNotEmpty()) {
                 val first = occurrences.firstOrNull { it.hasResolvedTime } ?: occurrences.first()
                 return NextClassDayHint(
@@ -1016,37 +651,8 @@ object ScheduleEngine {
         return null
     }
 
-    private fun mergeAdjacentSameCourse(sorted: List<ClassOccurrence>): List<ClassOccurrence> {
-        if (sorted.size <= 1) return sorted
-        val merged = mutableListOf<ClassOccurrence>()
-        var current = sorted.first()
 
-        for (i in 1 until sorted.size) {
-            val next = sorted[i]
-            val canMerge = current.courseId == next.courseId &&
-                current.rawRoom == next.rawRoom &&
-                current.endPeriod + 1 == next.startPeriod &&
-                !current.isMakeupOrOverridden &&
-                !next.isMakeupOrOverridden
-
-            current = if (canMerge) {
-                current.copy(
-                    endPeriod = next.endPeriod,
-                    endTime = next.endTime,
-                    mergedRuleIds = (current.mergedRuleIds + next.mergedRuleIds).distinct(),
-                    hasResolvedTime = current.hasResolvedTime && next.hasResolvedTime,
-                    timeEvidence = TimeEvidence.worstOf(current.timeEvidence, next.timeEvidence)
-                )
-            } else {
-                merged.add(current)
-                next
-            }
-        }
-        merged.add(current)
-        return merged
-    }
-
-    private fun assignConflictColumns(occurrences: List<ClassOccurrence>): List<ClassOccurrence> {
+    internal fun assignConflictColumns(occurrences: List<ClassOccurrence>): List<ClassOccurrence> {
         if (occurrences.size <= 1) return occurrences
         val result = occurrences.toMutableList()
         var clusterStart = 0

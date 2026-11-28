@@ -103,7 +103,12 @@ data class TimelineEvent(
     val status: EventStatus,
     val busy: BusyLevel,
     val revision: Long,
-    val links: List<EntityRef> = emptyList()
+    val links: List<EntityRef> = emptyList(),
+    /**
+     * 来源自有结构的无层级元数据。通用 Timeline 消费者不得把它当契约字段；
+     * 它只让同源适配层在不伪造时间语义的前提下还原领域投影（例如课表节次证据）。
+     */
+    val sourceMetadata: Map<String, String> = emptyMap()
 ) {
     init {
         require(title.isNotBlank() && title.length <= 256) { "事件标题为空或过长" }
@@ -129,6 +134,15 @@ data class TimelineEvent(
         require(place == null || place.schoolId == scope.schoolId) { "地点必须属于事件 scope 的学校" }
         require(links.distinct().size == links.size) { "事件 links 不能重复" }
         require(links.all { it.scope == scope }) { "事件 links 必须属于同一学校账号 scope" }
+        require(sourceMetadata.size <= 64) { "事件 sourceMetadata 条目过多" }
+        sourceMetadata.forEach { (key, value) ->
+            require(key.length in 1..80 && key.none { it.isISOControl() || it.isWhitespace() }) {
+                "事件 sourceMetadata key 为空、过长或含空白/控制字符"
+            }
+            require(value.length <= 4096 && value.none { it.isISOControl() }) {
+                "事件 sourceMetadata value 过长或含控制字符"
+            }
+        }
     }
 
     val isDeadline: Boolean

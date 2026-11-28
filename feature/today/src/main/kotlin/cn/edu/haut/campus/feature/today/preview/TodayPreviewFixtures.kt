@@ -4,11 +4,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.tooling.preview.Preview
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
+import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.DataProvenance
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.ProfileId
+import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.timeline.CourseScheduleTimelineSnapshot
+import cn.edu.haut.campus.core.timeline.CourseTimelineProjection
+import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.feature.today.state.TodayScreenStatus
 import cn.edu.haut.campus.feature.today.state.TodayUiState
 import cn.edu.haut.campus.feature.today.ui.LocalTodayClock
@@ -71,6 +79,48 @@ object TodayPreviewFixtures {
         rawRoom = "示例教学楼 A101"
     )
 
+    private val previewScope = SchoolAccountScope(
+        schoolId = SchoolId("preview-school"),
+        accountId = AccountId("preview-account"),
+        profileId = ProfileId("preview-profile")
+    )
+
+    /**
+     * 截图 fixture 与运行期同一路径：先投影 Timeline 事件，再由 UI 还原课程。
+     * periodTimes 为空的状态必须重新投影为 UNCERTAIN，不能复用精确时间事件。
+     */
+    private fun TodayUiState.withPreviewTimelineEvents(): TodayUiState {
+        val activeTerm = currentTerm ?: return copy(timelineEvents = emptyList())
+        val window = TimeWindow(
+            start = activeTerm.startDate.minusDays(7).atStartOfDay(HAUT_ZONE_ID).toInstant(),
+            end = activeTerm.startDate.plusWeeks(activeTerm.weekCount.toLong()).plusDays(22)
+                .atStartOfDay(HAUT_ZONE_ID).toInstant()
+        )
+        val snapshot = CourseScheduleTimelineSnapshot(
+            zone = HAUT_ZONE_ID,
+            provenance = DataProvenance(
+                providerId = "preview.fixture",
+                schoolId = previewScope.schoolId,
+                accountId = previewScope.accountId,
+                sourceSystem = "screenshot-fixture"
+            ),
+            revision = 1L,
+            terms = listOf(activeTerm),
+            courses = courses,
+            rules = scheduleRules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
+        return copy(
+            timelineEvents = CourseTimelineProjection.projectAll(
+                snapshot = snapshot,
+                scope = previewScope,
+                window = window
+            )
+        )
+    }
+
     private val contentState = TodayUiState(
         status = TodayScreenStatus.CONTENT,
         terms = listOf(previewTerm),
@@ -78,7 +128,7 @@ object TodayPreviewFixtures {
         courses = listOf(previewCourse),
         scheduleRules = listOf(previewRule),
         periodTimes = previewPeriodTimes
-    )
+    ).withPreviewTimelineEvents()
 
     private val emptyState = TodayUiState(
         status = TodayScreenStatus.EMPTY,
@@ -94,13 +144,13 @@ object TodayPreviewFixtures {
         TodayScreenStatus.PARTIAL to contentState.copy(
             status = TodayScreenStatus.PARTIAL,
             periodTimes = emptyList()
-        ),
-        TodayScreenStatus.STALE to contentState.copy(status = TodayScreenStatus.STALE),
+        ).withPreviewTimelineEvents(),
+        TodayScreenStatus.STALE to contentState.copy(status = TodayScreenStatus.STALE).withPreviewTimelineEvents(),
         TodayScreenStatus.ERROR_RETRYABLE to emptyState.copy(status = TodayScreenStatus.ERROR_RETRYABLE),
         TodayScreenStatus.ERROR_TERMINAL to emptyState.copy(status = TodayScreenStatus.ERROR_TERMINAL),
         TodayScreenStatus.NEEDS_PERMISSION to emptyState.copy(status = TodayScreenStatus.NEEDS_PERMISSION),
         TodayScreenStatus.NEEDS_LOGIN to emptyState.copy(status = TodayScreenStatus.NEEDS_LOGIN),
-        TodayScreenStatus.OFFLINE to contentState.copy(status = TodayScreenStatus.OFFLINE),
+        TodayScreenStatus.OFFLINE to contentState.copy(status = TodayScreenStatus.OFFLINE).withPreviewTimelineEvents(),
         TodayScreenStatus.UNSUPPORTED to emptyState.copy(status = TodayScreenStatus.UNSUPPORTED)
     )
 
