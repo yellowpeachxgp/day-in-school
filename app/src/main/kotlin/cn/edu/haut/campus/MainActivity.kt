@@ -134,6 +134,7 @@ import cn.edu.haut.campus.feature.settings.SettingsScreen
 import cn.edu.haut.campus.feature.settings.SchoolCenterScreen
 import cn.edu.haut.campus.feature.settings.StudyFocusScreen
 import cn.edu.haut.campus.feature.settings.XPeachCloudAccountScreen
+import cn.edu.haut.campus.feature.teamtime.TeamTimeRoute
 import cn.edu.haut.campus.feature.timetable.TimetableScreen
 import cn.edu.haut.campus.feature.today.TodayScreen
 import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
@@ -634,6 +635,13 @@ fun HautCampusRootApp(
                     onBack = { overlayScreen = null }
                 )
             }
+            "teamtime" -> {
+                TeamTimeRoute(
+                    activeSession = activeSession,
+                    onBack = { overlayScreen = null },
+                    onNavigateToCloudLogin = { overlayScreen = "xpeach_cloud" }
+                )
+            }
             "xpeach_cloud" -> {
                 XPeachCloudAccountScreen(
                     repository = repository,
@@ -805,6 +813,7 @@ fun HautCampusRootApp(
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
                                 onNavigateToAutomation = { overlayScreen = "automation" },
+                                onNavigateToTeamTime = { overlayScreen = "teamtime" },
                                 activeSchool = activeSession.school,
                                 activeProfileLabel = activeSession.label,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0
