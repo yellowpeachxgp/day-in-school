@@ -90,6 +90,8 @@ enum class CapabilityKind {
 
 /** 证据等级只描述证据，不等价于当前账号已经可以使用。 */
 enum class VerificationLevel {
+    /** D1 数据包/代理整理数据的默认态：有来源线索但尚未完成独立核验，绝不能渲染为校方确认。 */
+    UNVERIFIED,
     SOURCE_CONFIRMED,
     MOCK_TESTED,
     DEVICE_TESTED,
