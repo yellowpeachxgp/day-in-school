@@ -317,7 +317,8 @@ object DegreeAuditor {
                     courseName = null,
                     credits = null,
                     decision = "最新认定为撤销，本课程回到自动匹配",
-                    basis = "撤销依据：" + latest.reason
+                    basis = "撤销依据：" + latest.reason,
+                    attempt = attempts.firstOrNull { it.id == latest.attemptRef.id }
                 )
             } else {
                 effectiveOverrides[normalizedKey] = latest

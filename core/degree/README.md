@@ -11,7 +11,7 @@
 
 任务卡为 training_plan_imports、audit_overrides 预留 Room v15，但 v14（W2-05）未按编号顺序合入。按 AUTO-042 裁决（同 AUTO-037/041 先例），本实现采用过渡持久化、不消耗 v14/v15：
 
-1. 导入记录（含 univ-training-plan/v1 canonical 方案本体）与人工认定都是版本化 canonical JSON，经 versioned-degree-document/v1 信封写入既有 blob_store；激活指针是非实体小型状态，不进 journal；
+1. 导入记录（含 univ-training-plan/v1 canonical 方案本体）与人工认定都是版本化 canonical JSON。完整逻辑文档原件单独存 blob_store（不受 Vault 64 KiB journal 快照限制），versioned-degree-document/v2 信封只存 documentRef、摘要与显式单调 writeSequence；journal 快照只存引用/摘要。备份恢复不依赖 rowid/blobId 顺序。激活指针是非实体小型状态，不进 journal；
 2. 逻辑实体类型为 TRAINING_PLAN_IMPORT / AUDIT_OVERRIDE（EntityType 纯枚举追加，非迁移）；全部实体写经 Vault EntityWriter，与 journal/outbox 同事务；
 3. 待 v14 合入且 v15 窗口可用时，应按这些格式做显式迁移，不得重写既有 blob 内容身份。
 
@@ -25,5 +25,6 @@ DegreeRuntimeFactory.create(database, scope) 返回 DegreeRepository。应用层
 
 - 导入按内容摘要去重：同一文件重复导入不产生第二条记录；首次导入自动激活，重复导入不改变激活选择。
 - 文件导入来源初始 UNKNOWN；用户在界面确认适用后升级 USER_CONFIRMED（确认行为是来源升级的唯一通道），审计信任级别由 ESTIMATED 升 DERIVED；取消确认不回退来源。
-- 人工认定按课程维度生效：同一课程的补考/重修记录共享同一归属结论；同一课程最新认定优先，RETRACT 撤销后回到自动匹配。
-- 网关视图导入不捏造分组要求学分：页面未给出的字段保持 0/空缺并记 warnings，由人工核对补录。
+- 人工认定按逻辑课程维度生效并绑定创建时的 plan/import/version：同一课程的补考/重修及声明改名后的旧码/新码共享同一归属结论；同一课程最新认定优先，RETRACT 撤销后回到自动匹配；切换方案不串用历史认定。
+- 要求组按层次约束审计：子组成就计入父组汇总，root 总要求不会因叶子为 0 而丢失；混合父组的直接课程参与匹配，一门逻辑课程仍只入账一次。
+- 网关视图导入不捏造分组要求学分：页面给出的总要求作为 root 汇总约束统计缺口；未给出的字段保持 0/空缺并记 warnings，由人工核对补录。

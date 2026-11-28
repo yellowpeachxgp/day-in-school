@@ -364,4 +364,25 @@ class VaultDegreeRepositoryTest {
         assertEquals("版本信封必须携带显式单调 writeSequence", listOf(1L, 2L), sequences)
     }
 
+
+    @Test
+    fun retractRecordedInSameMillisecondStillWinsAsLatestOverride() = runBlocking {
+        repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
+        val assign = repository.recordOverride(
+            OverrideInput("at-math", OverrideAction.ASSIGN, "open", "先人工归入开放选修"),
+            Actor.USER
+        )
+        val retract = repository.recordOverride(
+            OverrideInput("at-math", OverrideAction.RETRACT, null, "撤销改派，恢复自动匹配"),
+            Actor.USER
+        )
+        assertTrue("同一 wall-clock 毫秒内撤销也必须可比较最新性", retract.at.toEpochMilli() > assign.at.toEpochMilli())
+
+        val attempts = listOf(attempt("MATH1", "高等数学A", "5", "at-math"))
+        val report = repository.auditActivePlan(attempts, LocalDate.of(2026, 3, 1))!!
+        assertEquals(0, BigDecimal.ZERO.compareTo(report.groupById("open")!!.earnedCredits))
+        assertEquals(0, BigDecimal("5").compareTo(report.groupById("basic")!!.earnedCredits))
+        assertTrue(report.trace.any { it.rule == "override-retract" && it.attemptId == "at-math" })
+    }
+
 }

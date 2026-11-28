@@ -23,6 +23,7 @@ import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * W3-01 毕业审计的 Vault 实现（AUTO-042 过渡）。
@@ -42,6 +43,7 @@ class VaultDegreeRepository internal constructor(
     private val writeGroupIdGenerator: () -> String = { UUID.randomUUID().toString() },
     private val ownedCloseables: List<AutoCloseable> = emptyList()
 ) : DegreeRepository {
+    private val overrideClockFloor = AtomicLong(0L)
 
     override fun close() {
         ownedCloseables.forEach { it.close() }
@@ -95,8 +97,7 @@ class VaultDegreeRepository internal constructor(
         return documents.entries
             .filter { (ownerId, _) -> ownerId != VersionedDegreeDocumentStore.ACTIVE_POINTER_OWNER }
             .mapNotNull { (_, document) -> decodeImportDocument(document) }
-            .filter { it != null }
-            .map { it!!.copy(active = it.importId == activeId) }
+            .map { it.copy(active = it.importId == activeId) }
             .sortedBy { it.importedAt }
     }
 
@@ -172,7 +173,7 @@ class VaultDegreeRepository internal constructor(
             require(target != null) { "人工认定目标组不在当前培养方案中: " + input.mapToGroupId }
         }
         val overrideId = "ovr-" + idGenerator().replace("-", "").take(16)
-        val now = clock()
+        val now = nextOverrideInstant()
         val attemptRef = EntityRef(EntityType.GRADE_ATTEMPT, input.attemptId, scope)
         val override = AuditOverride(
             id = overrideId,
@@ -217,6 +218,19 @@ class VaultDegreeRepository internal constructor(
         val plan = loadPlan(active.importId) ?: return null
         val overrides = listOverrides()
         return DegreeAuditor.audit(plan, attempts, overrides, now, context, planImportId = active.importId)
+    }
+
+    /**
+     * 认定动作是独立实体，不能依赖同一毫秒的 wall clock 或随机 ID 决定“最新”。
+     * 在仓库生命周期内结合既有认定时间生成严格递增时间戳；恢复/重启后也不会早于历史认定。
+     */
+    private suspend fun nextOverrideInstant(): Instant {
+        val candidate = clock().toEpochMilli()
+        val existingMax = listOverrides().maxOfOrNull { it.at.toEpochMilli() } ?: 0L
+        val next = overrideClockFloor.updateAndGet { previous ->
+            maxOf(previous + 1L, candidate, existingMax + 1L)
+        }
+        return Instant.ofEpochMilli(next)
     }
 
     private suspend fun readActivePointer(): String? {
