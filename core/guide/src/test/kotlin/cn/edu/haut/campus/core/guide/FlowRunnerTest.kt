@@ -1,6 +1,9 @@
 package cn.edu.haut.campus.core.guide
 
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
+import cn.edu.haut.campus.core.packages.datapack.ProcedureQuestion
+import cn.edu.haut.campus.core.packages.datapack.ProcedureQuestionOption
+import cn.edu.haut.campus.core.packages.datapack.ProcedureStep
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -118,6 +121,47 @@ class FlowRunnerTest {
         assertEquals(1, state.completedCount)
         assertEquals("submit", state.currentStep?.id)
         assertTrue(state.snapshot.completedStepIds.contains("guardian"))
+    }
+
+    @Test
+    fun clearing_answer_invalidates_downstream_questions_by_trigger_not_declaration_order() = runTest {
+        val lateDeclaredFirst = ProcedureQuestion(
+            id = "late",
+            question = "末端确认？",
+            options = listOf(
+                ProcedureQuestionOption("yes", "是", nextStepId = "end"),
+                ProcedureQuestionOption("no", "否", nextStepId = "end")
+            )
+        )
+        val earlyDeclaredSecond = ProcedureQuestion(
+            id = "early",
+            question = "需要中段步骤吗？",
+            options = listOf(
+                ProcedureQuestionOption("yes", "需要", nextStepId = "branch"),
+                ProcedureQuestionOption("no", "不需要", nextStepId = "end")
+            )
+        )
+        val item = GuideTestFixtures.simpleProcedure("ordered").copy(
+            steps = listOf(
+                ProcedureStep("start", "开始", "开始"),
+                ProcedureStep("branch", "中段", "中段"),
+                ProcedureStep("end", "结束", "结束")
+            ),
+            questions = listOf(lateDeclaredFirst, earlyDeclaredSecond)
+        )
+        val orderedPack = GuideTestFixtures.guidePackage(DisDatapackKind.PROCEDURE_GUIDE, listOf(item))
+        val store = InMemoryGuideProgressStore()
+        val runner = FlowRunner(store, clock)
+        runner.start(GuideTestFixtures.scope, orderedPack, "ordered")
+        runner.answer(GuideTestFixtures.scope, orderedPack, "ordered", "early", "yes")
+        runner.answer(GuideTestFixtures.scope, orderedPack, "ordered", "late", "yes")
+        val before = runner.restore(GuideTestFixtures.scope, orderedPack, "ordered")
+        assertTrue(before is GuideRestoreResult.Restored)
+        assertEquals(2, (before as GuideRestoreResult.Restored).state.snapshot.answers.size)
+
+        val cleared = runner.clearAnswerFrom(GuideTestFixtures.scope, orderedPack, "ordered", "early")
+
+        assertEquals(emptyMap<String, String>(), cleared.snapshot.answers)
     }
 
     private suspend inline fun <reified T : Throwable> assertFailsWithSuspend(block: suspend () -> Unit): T {

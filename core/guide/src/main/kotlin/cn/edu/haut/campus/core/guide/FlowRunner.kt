@@ -158,8 +158,8 @@ class FlowRunner(
     }
 
     /**
-     * 允许用户修正早前回答。保守清除该问题及声明顺序后续问题的答案，防止旧分支上的
-     * 下游答案在新分支语义中被误用；完成历史保留但只对仍在新路径中的步骤计数。
+     * 允许用户修正早前回答。保守清除该问题及触发点不早于它的全部下游问题答案，
+     * 防止旧分支答案在新分支语义中被误用；完成历史保留但只对仍在新路径中的步骤计数。
      */
     suspend fun clearAnswerFrom(
         scope: SchoolAccountScope,
@@ -174,7 +174,15 @@ class FlowRunner(
         if (!snapshot.answers.containsKey(questionId)) {
             throw GuideOperationException("问题尚未回答，不能清除：" + questionId)
         }
-        val idsToClear = item.questions.drop(index).mapTo(hashSetOf()) { it.id }
+        val stepIndex = item.steps.mapIndexed { index, step -> step.id to index }.toMap()
+        val triggerByQuestion = ProcedurePathEvaluator.triggerQuestions(item, stepIndex)
+            .flatMap { (trigger, questions) -> questions.map { it.id to trigger } }
+            .toMap()
+        val cutoff = triggerByQuestion[questionId]
+            ?: throw GuideOperationException("问题缺少确定触发点：" + questionId)
+        val idsToClear = item.questions
+            .filter { question -> (triggerByQuestion[question.id] ?: 0) >= cutoff }
+            .mapTo(hashSetOf()) { it.id }
         val updated = touch(snapshot.copy(answers = snapshot.answers.filterKeys { it !in idsToClear }))
         store.saveProcedureRun(updated)
         return evaluate(guidePackage, itemId, updated)
