@@ -48,7 +48,7 @@
 | W1-03 | `:core:vault`：journal、FTS、outbox 落库、`personal_events`、`blob_store` | Android | W1-01、W0-05、R01、R06 | Room v12 | C05 C06 C27 | 未开始 | — | — | — | — | — | — |
 | W1-04 | 备份与恢复 `dis-backup/v1` | Android | W1-03 | — | C07 C27 | 未开始 | — | — | — | — | — | — |
 | W1-05 | Today、Timetable、小组件改为读取 Timeline（截图不变） | Android | W1-02b、W0-06a | — | C04 C26 | 未开始 | — | — | — | — | — | — |
-| W1-07 | `:core:campus-graph`：统一楼宇、教室、设施、入口、流程实体，迁入现有目录数据 | Android | W0-05 | — | C17 C20 C23 | 未开始 | — | — | — | — | — | — |
+| W1-07 | `:core:campus-graph`：统一楼宇、教室、设施、入口、流程实体，迁入现有目录数据 | Android | W0-05 | — | C17 C20 C23 | PR 待审（quick/android/secrets 已通过） | m-w107b | feat/cis-w1-07-campus-graph | PR#135 | 2b7a6dc7 | — | 目录迁移类 PR，需 2 独立审阅 |
 | W2-01 | `:core:automation` 引擎核心（规则、SPI、去重、试运行、运行记录模型） | Android | W1-01、W1-02a | — | C08 | 已合并 | m-w201 等 | feat/cis-w2-01-automation-core | PR#105 | — | b39940eb | Devin 2 项 lease/确认语义留 W2-02 硬验收 |
 | W2-02 | 内置触发器、条件与动作，Android 调度与 outbox 消费 | Android | W2-01、W1-03 | Room v13 | C08 | 未开始 | — | — | — | — | — | — |
 | W2-03 | 4 个规则模板与 `WeatherProvider` SPI | Android | W2-02、R03 | — | C08 | 未开始 | — | — | — | — | — | — |
