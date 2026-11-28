@@ -2,10 +2,10 @@ package cn.edu.haut.campus.feature.settings.root.backup
 
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -97,7 +97,7 @@ class BackupCenterSectionTest {
             BackupCenterSection(state = BackupCenterPreviewFixtures.syncRecoveryKey, actions = RecordingActions())
         }
         composeRule.onNodeWithText("开启端到端跨设备同步").assertIsDisplayed()
-        composeRule.onNodeWithTag("sync-generated-recovery-key").assertExists()
+        assertTrue(composeRule.onAllNodesWithTag("sync-generated-recovery-key").fetchSemanticsNodes().isNotEmpty())
     }
 
     @Test
@@ -107,8 +107,8 @@ class BackupCenterSectionTest {
             BackupCenterSection(state = BackupCenterPreviewFixtures.syncConflict, actions = actions)
         }
 
-        composeRule.onNodeWithTag("sync-conflict-local").assertExists()
-        composeRule.onNodeWithTag("sync-conflict-remote").assertExists()
+        assertTrue(composeRule.onAllNodesWithTag("sync-conflict-local").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithTag("sync-conflict-remote").fetchSemanticsNodes().isNotEmpty())
         composeRule.onNodeWithTag("sync-conflict-keep-local").performClick()
         composeRule.onNodeWithTag("sync-conflict-use-remote").performClick()
 
