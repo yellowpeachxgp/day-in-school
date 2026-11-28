@@ -208,12 +208,12 @@ data class CreateGroupPollRequest(
 }
 
 data class UpsertGroupPollVoteRequest(val optionId: String) : CommunityRequestBody {
-    init { requireText(optionId, "option_id") }
+    init { requireUuid(optionId, "option_id") }
     override fun toJson(): JsonValue.Obj = jsonObject(linkedMapOf("option_id" to JsonValue.Str(optionId)))
 }
 
 data class ConfirmGroupPollRequest(val optionId: String) : CommunityRequestBody {
-    init { requireText(optionId, "option_id") }
+    init { requireUuid(optionId, "option_id") }
     override fun toJson(): JsonValue.Obj = jsonObject(linkedMapOf("option_id" to JsonValue.Str(optionId)))
 }
 

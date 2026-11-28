@@ -79,12 +79,22 @@ class FileCommunityCacheStore(
     private val responsesDir: Path = rootDir.resolve("responses")
     private val lock = Any()
 
+    init {
+        require(maxEntries > 0) { "maxEntries 必须为正数" }
+        require(maxBytes > 0L) { "maxBytes 必须为正数" }
+        require(maxEntryBytes > 0) { "maxEntryBytes 必须为正数" }
+    }
+
     constructor(rootDir: File) : this(rootDir.toPath())
 
     override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = withContext(Dispatchers.IO) {
         synchronized(lock) {
             val file = responsesDir.resolve(key.storageId + ".json")
             if (!Files.isRegularFile(file)) return@synchronized null
+            if (runCatching { Files.size(file) }.getOrDefault(Long.MAX_VALUE) > maxEntryBytes) {
+                runCatching { Files.deleteIfExists(file) }
+                return@synchronized null
+            }
             val parsed = runCatching {
                 val text = Files.readString(file, Charsets.UTF_8)
                 Json.parse(text).asObjOrNull

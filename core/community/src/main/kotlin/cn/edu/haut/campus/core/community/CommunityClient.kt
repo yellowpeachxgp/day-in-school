@@ -61,6 +61,12 @@ class CommunityClient(
             body = body?.let { Json.canonical(it) },
         )
 
+        if (!operation.readOnly) {
+            // 写请求即使网络失败也可能已在服务端提交（STORAGE_COMMIT_UNKNOWN 类竞态）。
+            // 乐观丢弃本地快照最多造成一次重新拉取；保留旧快照则可能继续展示已退出成员或已撤回共享。
+            runCatching { cacheStore?.invalidateAll() }
+        }
+
         val response = try {
             transport.execute(request)
         } catch (error: IOException) {
@@ -94,7 +100,7 @@ class CommunityClient(
                     runCatching { store.write(cacheKey, envelope, clock.millis()) }
                 }
             } else {
-                // 写成功意味着所有读快照都可能过期；保守清空比展示错误协作状态更安全。
+                // 写前已保守清空；这里重复一次以覆盖写前清理自身失败但写成功的少见路径。
                 runCatching { cacheStore?.invalidateAll() }
             }
             return CommunityResult.Success(

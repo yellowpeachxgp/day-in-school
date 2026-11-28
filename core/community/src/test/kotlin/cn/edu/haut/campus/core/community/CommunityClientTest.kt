@@ -174,6 +174,26 @@ class CommunityClientTest {
     }
 
     @Test
+    fun failedMutationStillInvalidatesSnapshotsBecauseServerCommitMayBeUnknown() = runTest {
+        val cache = InMemoryCommunityCacheStore()
+        val transport = RecordingCommunityTransport(
+            jsonResponse(successBody("[]", requestId = "req-list-before-write")),
+            networkFailure(),
+        )
+        val subject = client(transport, cacheStore = cache)
+        assertTrue(subject.listGroups("haut") is CommunityResult.Success)
+        assertEquals(1, cache.countEntries())
+
+        val write = subject.createGroup(
+            CreateGroupRequest("haut", "study", "可能未知提交"),
+            idempotencyKey = "idem-create-unknown",
+        )
+
+        assertTrue(write is CommunityResult.Failure)
+        assertEquals(0, cache.countEntries())
+    }
+
+    @Test
     fun disabledFeatureAndMissingTokenDoNotTouchTransportOrCache() = runTest {
         val transport = RecordingCommunityTransport()
         val cache = InMemoryCommunityCacheStore()
