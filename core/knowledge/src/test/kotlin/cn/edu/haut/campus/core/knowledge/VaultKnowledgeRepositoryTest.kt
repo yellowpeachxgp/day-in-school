@@ -294,6 +294,88 @@ class VaultKnowledgeRepositoryTest {
     }
 
     @Test
+    fun revertAssignmentDeadlineAdditionRemovesTimelineEvent() = runBlocking {
+        val bytes = "先无截止后有截止".toByteArray(Charsets.UTF_8)
+        val created = repository.archiveMaterial(assignmentArchiveRequest(bytes, "补交作业", null))
+        assertNull(created.assignment)
+        val due = Instant.parse("2026-03-09T12:00:00Z")
+        now = now.plusSeconds(60)
+        val updated = repository.archiveMaterial(assignmentArchiveRequest(bytes, "补交作业", due))
+        assertEquals(2L, updated.revision)
+        val eventId = VaultKnowledgeRepository.assignmentEventId(updated.id)
+        assertNotNull(database.vaultDao().getPersonalEvent(eventId.value))
+
+        val journal = createKnowledgeJournal()
+        val materialRef = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            updated.id,
+            scope
+        )
+        val history = journal.history(materialRef).first()
+        assertEquals(2, history.size)
+        journal.revert(history.last().changeId, Actor.USER)
+
+        val restored = repository.getMaterial(scope, updated.id)
+        assertNull("撤销新增截止的更新后，资料必须回到无截止状态", restored?.assignment)
+        assertNull("因果撤销必须删除新增 personal_event", database.vaultDao().getPersonalEvent(eventId.value))
+    }
+
+    @Test
+    fun revertAssignmentDeadlineChangeRestoresPreviousTimelineEvent() = runBlocking {
+        val bytes = "截止改期".toByteArray(Charsets.UTF_8)
+        val firstDue = Instant.parse("2026-03-09T12:00:00Z")
+        val secondDue = Instant.parse("2026-03-10T12:00:00Z")
+        repository.archiveMaterial(assignmentArchiveRequest(bytes, "改期作业", firstDue))
+        now = now.plusSeconds(60)
+        val updated = repository.archiveMaterial(assignmentArchiveRequest(bytes, "改期作业", secondDue))
+        val eventId = VaultKnowledgeRepository.assignmentEventId(updated.id)
+        assertEquals(secondDue.toEpochMilli(), database.vaultDao().getPersonalEvent(eventId.value)?.startAtEpochMs)
+
+        val journal = createKnowledgeJournal()
+        val materialRef = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            updated.id,
+            scope
+        )
+        val history = journal.history(materialRef).first()
+        assertEquals(2, history.size)
+        journal.revert(history.last().changeId, Actor.USER)
+
+        val restored = repository.getMaterial(scope, updated.id)
+        assertEquals(firstDue, restored?.assignment?.dueAt)
+        val row = database.vaultDao().getPersonalEvent(eventId.value)
+        assertNotNull("因果撤销必须恢复改期前 personal_event", row)
+        assertEquals(firstDue.toEpochMilli(), row?.startAtEpochMs)
+    }
+
+    @Test
+    fun revertAssignmentDeadlineRemovalRestoresTimelineEvent() = runBlocking {
+        val bytes = "截止被移除".toByteArray(Charsets.UTF_8)
+        val due = Instant.parse("2026-03-09T12:00:00Z")
+        repository.archiveMaterial(assignmentArchiveRequest(bytes, "移除截止作业", due))
+        now = now.plusSeconds(60)
+        val updated = repository.archiveMaterial(assignmentArchiveRequest(bytes, "移除截止作业", null))
+        val eventId = VaultKnowledgeRepository.assignmentEventId(updated.id)
+        assertNull(database.vaultDao().getPersonalEvent(eventId.value))
+
+        val journal = createKnowledgeJournal()
+        val materialRef = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            updated.id,
+            scope
+        )
+        val history = journal.history(materialRef).first()
+        assertEquals(2, history.size)
+        journal.revert(history.last().changeId, Actor.USER)
+
+        val restored = repository.getMaterial(scope, updated.id)
+        assertEquals(due, restored?.assignment?.dueAt)
+        val row = database.vaultDao().getPersonalEvent(eventId.value)
+        assertNotNull("因果撤销必须恢复被删除的 personal_event", row)
+        assertEquals(due.toEpochMilli(), row?.startAtEpochMs)
+    }
+
+    @Test
     fun materialsAndSearchAreInvisibleAcrossProfileScopes() = runBlocking {
         repository.archiveMaterial(
             ArchiveMaterialRequest(
@@ -356,6 +438,20 @@ class VaultKnowledgeRepositoryTest {
             searchIndex = searchIndex
         )
     }
+
+    private fun assignmentArchiveRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
+        ArchiveMaterialRequest(
+            scope = scope,
+            course = course,
+            kind = CourseMaterialKind.ASSIGNMENT,
+            title = title,
+            note = null,
+            fileName = "assignment-revert.txt",
+            mimeType = "text/plain",
+            contentBytes = bytes,
+            assignmentDueAt = due,
+            deadlineZone = ZoneId.of("Asia/Shanghai")
+        )
 
     private fun extractedLine(index: Int, page: Int, text: String, left: Float, top: Float, right: Float, bottom: Float): ExtractedTextLine {
         return ExtractedTextLine(
