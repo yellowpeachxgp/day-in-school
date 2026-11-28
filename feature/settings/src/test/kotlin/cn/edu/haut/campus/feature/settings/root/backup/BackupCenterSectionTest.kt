@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupRowKey
 import cn.edu.haut.campus.core.vault.RestoreMode
@@ -45,8 +46,8 @@ class BackupCenterSectionTest {
         }
 
         composeRule.onNodeWithText("格式 v1 · schema v12 · 42 条目").assertIsDisplayed()
-        composeRule.onNodeWithText("冲突行（逐条选择）").assertIsDisplayed()
-        composeRule.onNodeWithTag("backup-conflict-use").performClick()
+        composeRule.onNodeWithText("冲突行（逐条选择）").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("backup-conflict-use").performScrollTo().performClick()
         composeRule.onNodeWithTag("backup-restore-run").assertIsEnabled().performClick()
 
         assertTrue(actions.events.contains("resolve:courses:USE_BACKUP"))
