@@ -29,6 +29,7 @@ import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.timeline.BusyBlock
 import cn.edu.haut.campus.core.timeline.EventStatus
 import cn.edu.haut.campus.core.timeline.PersonalEventDraft
@@ -84,7 +85,9 @@ class CommunityTeamTimeRepository(
     override val scope: SchoolAccountScope,
     override val zone: ZoneId,
     private val clock: Clock = Clock.systemUTC(),
-    private val idempotencyKeyFactory: () -> String = { "tt-" + UUID.randomUUID().toString() },
+    private val idempotencyKeyFactory: (String) -> String = { fingerprint ->
+        "tt-" + Digests.sha256Hex(fingerprint).take(40)
+    },
 ) : TeamTimeRepository {
     override suspend fun currentCloudUserId(): String? = cloudUserIdProvider()
 
@@ -95,7 +98,7 @@ class CommunityTeamTimeRepository(
     override suspend fun createGroup(name: String, type: String): CommunityResult<TeamTimeGroup> =
         client.createGroup(
             request = CreateGroupRequest(schoolId = scope.schoolId.value, type = type, name = name),
-            idempotencyKey = idempotencyKeyFactory(),
+            idempotencyKey = stableIdempotencyKey("create-group", scope.schoolId.value, type, name),
         ).mapEnvelopeData(TeamTimeJson::parseGroup)
 
     override suspend fun listMembers(groupId: String): CommunityResult<List<TeamTimeMember>> =
@@ -113,12 +116,22 @@ class CommunityTeamTimeRepository(
         return client.replaceMyGroupAvailability(
             groupId = groupId,
             request = ReplaceGroupAvailabilityRequest(blocks = inputs, ttlSeconds = ttlSeconds),
-            idempotencyKey = idempotencyKeyFactory(),
+            idempotencyKey = stableIdempotencyKey(
+                "share-availability",
+                groupId,
+                formatTeamTimeInstant(window.start),
+                formatTeamTimeInstant(window.end),
+                ttlSeconds.toString(),
+                inputs.joinToString(";") { it.startAt + "/" + it.endAt },
+            ),
         ).mapEnvelopeData(TeamTimeJson::parseShare)
     }
 
     override suspend fun withdrawMyBusyBlocks(groupId: String): CommunityResult<Unit> =
-        client.deleteMyGroupAvailability(groupId, idempotencyKeyFactory()).mapEnvelopeData { }
+        client.deleteMyGroupAvailability(
+            groupId = groupId,
+            idempotencyKey = stableIdempotencyKey("withdraw-availability", groupId),
+        ).mapEnvelopeData { }
 
     override suspend fun queryAvailability(
         groupId: String,
@@ -134,7 +147,14 @@ class CommunityTeamTimeRepository(
                 durationMinutes = durationMinutes,
                 minAttendees = minAttendees,
             ),
-            idempotencyKey = idempotencyKeyFactory(),
+            idempotencyKey = stableIdempotencyKey(
+                "query-availability",
+                groupId,
+                formatTeamTimeInstant(window.start),
+                formatTeamTimeInstant(window.end),
+                durationMinutes.toString(),
+                minAttendees.toString(),
+            ),
         ).mapEnvelopeData(TeamTimeJson::parseAvailabilityQuery)
 
     override suspend fun createPoll(
@@ -150,21 +170,29 @@ class CommunityTeamTimeRepository(
                 options = candidates.map { GroupPollOptionInput(formatTeamTimeInstant(it.startAt), formatTeamTimeInstant(it.endAt)) },
                 votingDeadlineAt = formatTeamTimeInstant(votingDeadlineAt),
             ),
-            idempotencyKey = idempotencyKeyFactory(),
+            idempotencyKey = stableIdempotencyKey(
+                "create-poll",
+                groupId,
+                title,
+                formatTeamTimeInstant(votingDeadlineAt),
+                candidates.joinToString(";") { it.key },
+            ),
         ).mapEnvelopeData(TeamTimeJson::parsePoll)
 
     override suspend fun vote(pollId: String, optionId: String): CommunityResult<TeamTimePoll> =
         client.upsertGroupPollVote(
             pollId = pollId,
             request = UpsertGroupPollVoteRequest(optionId),
-            idempotencyKey = idempotencyKeyFactory(),
+            // 投票是单选 upsert，重复提交同一最终选项天然幂等；每次 deliberate change 必须换新键，
+            // 避免 A→B→A 时命中旧 A 键而返回陈旧 replay。
+            idempotencyKey = "tt-vote-" + UUID.randomUUID().toString(),
         ).mapEnvelopeData(TeamTimeJson::parseVoteResult)
 
     override suspend fun confirm(pollId: String, optionId: String): CommunityResult<TeamTimeConfirmation> {
         val cloudResult = client.confirmGroupPoll(
             pollId = pollId,
             request = ConfirmGroupPollRequest(optionId),
-            idempotencyKey = idempotencyKeyFactory(),
+            idempotencyKey = stableIdempotencyKey("confirm", pollId, optionId),
         ).mapEnvelopeData(TeamTimeJson::parseConfirmResult)
         return when (cloudResult) {
             is CommunityResult.Success -> {
@@ -191,6 +219,17 @@ class CommunityTeamTimeRepository(
             is CommunityResult.Disabled -> CommunityResult.Disabled(cloudResult.feature, cloudResult.reason)
             CommunityResult.AuthenticationRequired -> CommunityResult.AuthenticationRequired
         }
+    }
+
+    private fun stableIdempotencyKey(kind: String, vararg parts: String): String {
+        val fingerprint = listOf(
+            scope.schoolId.value,
+            scope.accountId.value,
+            scope.profileId.value,
+            kind,
+            *parts,
+        ).joinToString("\u001f")
+        return idempotencyKeyFactory(fingerprint)
     }
 
     private suspend fun writeConfirmedEventToTimeline(
