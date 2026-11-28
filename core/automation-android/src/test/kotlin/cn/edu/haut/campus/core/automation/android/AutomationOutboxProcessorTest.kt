@@ -9,6 +9,7 @@ import cn.edu.haut.campus.core.automation.ActionSpec
 import cn.edu.haut.campus.core.automation.AutomationExtensionRegistry
 import cn.edu.haut.campus.core.automation.AutomationRule
 import cn.edu.haut.campus.core.automation.BuiltinAutomationTypes
+import cn.edu.haut.campus.core.automation.BuiltinTriggerPlanner
 import cn.edu.haut.campus.core.automation.CompareOp
 import cn.edu.haut.campus.core.automation.DefaultAutomationEngine
 import cn.edu.haut.campus.core.automation.InMemoryAutomationDedupeStore
@@ -104,9 +105,12 @@ class AutomationOutboxProcessorTest {
         )
         val processor = AutomationOutboxProcessor(flakyOutbox, ruleStore, engine)
         val event = utilityEvent()
+        assertEquals(rule, ruleStore.list().single())
+        assertTrue(BuiltinTriggerPlanner.instanceForDomainEvent(rule, event) != null)
         flakyOutbox.append(DomainEventCodecRegistry.DEFAULT.encode(event))
 
         val first = runCatching { processor.consumeOnce() }
+        first.exceptionOrNull()?.let { println("first consume error: " + it::class.qualifiedName + ": " + it.message) }
         assertTrue(first.isFailure)
         assertEquals(1, action.calls.size)
         assertEquals(1, database.vaultDao().countDomainOutbox())

@@ -117,7 +117,7 @@ class RoomAutomationStoresTest {
         assertTrue(replay is ActionCheckpointClaimResult.ReplayCompleted)
         assertEquals(outcome, (replay as ActionCheckpointClaimResult.ReplayCompleted).checkpoint.outcome)
 
-        val contested = checkpoint("checkpoint-2", owner = "owner-old", attempt = 1)
+        val contested = checkpoint("checkpoint-2", owner = "owner-old", attempt = 1, runId = "run-room-2")
         assertTrue(store.claim(contested) is ActionCheckpointClaimResult.Execute)
         val takeoverClaim = store.claim(contested.copy(executionOwner = "owner-new"))
         assertTrue(takeoverClaim is ActionCheckpointClaimResult.Execute)
@@ -163,10 +163,10 @@ class RoomAutomationStoresTest {
         leaseExpiresAt = leaseEnd
     )
 
-    private fun checkpoint(key: String, owner: String, attempt: Long) = AutomationActionCheckpoint(
+    private fun checkpoint(key: String, owner: String, attempt: Long, runId: String = "run-room") = AutomationActionCheckpoint(
         checkpointKey = key,
         dedupeKey = "dedupe-room",
-        runId = "run-room",
+        runId = runId,
         ruleId = "rule-room",
         triggerInstanceKey = "trigger-room",
         actionIndex = 0,
