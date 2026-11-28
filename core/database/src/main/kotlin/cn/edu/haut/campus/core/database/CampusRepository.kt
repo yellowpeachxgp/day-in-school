@@ -1428,6 +1428,16 @@ class CampusRepository internal constructor(
     suspend fun isCloudIdentitySnapshotCurrent(snapshot: CloudIdentitySessionSnapshot): Boolean =
         cloudIdentityRepository.isCloudIdentitySnapshotCurrent(snapshot)
 
+    /** community client 专用窄缝：令牌只在数据库模块内解析，feature 层不得直接读取凭据。 */
+    internal suspend fun resolveCommunityAccessToken(snapshot: CloudIdentitySessionSnapshot): String =
+        cloudIdentityRepository.resolveValidCloudAccessToken(
+            forceRefresh = false,
+            expectedIdentity = snapshot,
+        )
+
+    /** community 文件缓存根目录窄缝；不暴露 appContext 本身。 */
+    internal fun communityFilesDir(): java.io.File = appContext.filesDir
+
 
     @Volatile
     internal var cloudHttpTransportForTest: ((String, String, String?, String?, Map<String, String>) -> String)? = null
