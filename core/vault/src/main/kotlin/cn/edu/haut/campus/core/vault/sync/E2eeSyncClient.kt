@@ -41,6 +41,10 @@ class E2eeSyncClient internal constructor(
             if (state.cloudUserId != cloudUserId) {
                 throw E2eeSyncConsentException("云账号已变化，原同步状态已冻结；请先停用本地同步状态")
             }
+            if (mode == E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE) {
+                // 已启用时重复 JOIN 也必须校验同 key；否则不同 recovery key 会被早退误当成成功。
+                importJoinKeySafely(state, recoveryKeyInput)
+            }
             return@withLock E2eeSyncEnableResult(
                 deviceId = state.deviceId.orEmpty(),
                 consentId = state.consentId.orEmpty(),
@@ -62,39 +66,7 @@ class E2eeSyncClient internal constructor(
                 }
             }
             E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE -> {
-                val recovery = recoveryKeyInput?.trim().orEmpty()
-                if (recovery.isEmpty()) throw E2eeSyncCryptoException("请输入另一台设备显示的同步恢复密钥")
-                val (candidateMaster, candidateSpace) = E2eeSyncRecoveryKeys.decode(recovery)
-                try {
-                    val candidateSpaceId = E2eeSyncRecoveryKeys.syncSpaceId(candidateSpace)
-                    val candidateKeyId = E2eeSyncBlockCipher.keyId(candidateMaster)
-                    if (state.syncSpaceId != null && state.syncSpaceId != candidateSpaceId) {
-                        throw E2eeSyncCryptoException("本机已有不同同步空间状态；必须先显式清除本机同步状态后才能换 key 加入")
-                    }
-                    if ((state.objects.isNotEmpty() || state.pendingWrites.isNotEmpty() || state.conflicts.isNotEmpty()) &&
-                        state.syncSpaceId != candidateSpaceId
-                    ) {
-                        throw E2eeSyncCryptoException("本机存在旧同步对象/冲突；禁止用另一把 key 覆盖混入，必须先显式清除同步状态")
-                    }
-                    if (keyStore.exists()) {
-                        val existing = keyStore.load()
-                        try {
-                            val sameMaster = MessageDigest.isEqual(existing.masterKey, candidateMaster)
-                            val sameSpace = existing.syncSpaceId == candidateSpaceId && existing.keyId == candidateKeyId
-                            if (!sameMaster || !sameSpace) {
-                                throw E2eeSyncCryptoException("本机已密封不同步 key；JOIN 不得覆盖。请先显式执行清除本机同步状态/rekey")
-                            }
-                            // 同一恢复密钥重复加入是幂等操作，不覆盖既有密封文件。
-                        } finally {
-                            existing.zero()
-                        }
-                    } else {
-                        keyStore.importRecoveryKey(recovery)
-                    }
-                } finally {
-                    java.util.Arrays.fill(candidateMaster, 0)
-                    java.util.Arrays.fill(candidateSpace, 0)
-                }
+                importJoinKeySafely(state, recoveryKeyInput)
             }
         }
         val material = keyStore.load()
@@ -154,6 +126,43 @@ class E2eeSyncClient internal constructor(
 
     suspend fun resolveConflict(conflictId: String, resolution: E2eeSyncConflictResolution): E2eeSyncRunReport =
         newEngineForCurrentState().resolveConflict(conflictId, resolution)
+
+    /** 校验/导入 JOIN 恢复密钥；不同 key 绝不覆盖既有密封材料，explicit wipe/rekey 是唯一换 key 路径。 */
+    private suspend fun importJoinKeySafely(state: E2eeSyncState, recoveryKeyInput: String?) {
+        val recovery = recoveryKeyInput?.trim().orEmpty()
+        if (recovery.isEmpty()) throw E2eeSyncCryptoException("请输入另一台设备显示的同步恢复密钥")
+        val (candidateMaster, candidateSpace) = E2eeSyncRecoveryKeys.decode(recovery)
+        try {
+            val candidateSpaceId = E2eeSyncRecoveryKeys.syncSpaceId(candidateSpace)
+            val candidateKeyId = E2eeSyncBlockCipher.keyId(candidateMaster)
+            if (state.syncSpaceId != null && state.syncSpaceId != candidateSpaceId) {
+                throw E2eeSyncCryptoException("本机已有不同同步空间状态；必须先显式清除本机同步状态后才能换 key 加入")
+            }
+            if ((state.objects.isNotEmpty() || state.pendingWrites.isNotEmpty() || state.conflicts.isNotEmpty()) &&
+                state.syncSpaceId != candidateSpaceId
+            ) {
+                throw E2eeSyncCryptoException("本机存在旧同步对象/冲突；禁止用另一把 key 覆盖混入，必须先显式清除同步状态")
+            }
+            if (keyStore.exists()) {
+                val existing = keyStore.load()
+                try {
+                    val sameMaster = MessageDigest.isEqual(existing.masterKey, candidateMaster)
+                    val sameSpace = existing.syncSpaceId == candidateSpaceId && existing.keyId == candidateKeyId
+                    if (!sameMaster || !sameSpace) {
+                        throw E2eeSyncCryptoException("本机已密封不同步 key；JOIN 不得覆盖。请先显式执行清除本机同步状态/rekey")
+                    }
+                    // 同一恢复密钥重复加入是幂等操作，不覆盖既有密封文件。
+                } finally {
+                    existing.zero()
+                }
+            } else {
+                keyStore.importRecoveryKey(recovery)
+            }
+        } finally {
+            java.util.Arrays.fill(candidateMaster, 0)
+            java.util.Arrays.fill(candidateSpace, 0)
+        }
+    }
 
     /** 撤销任意一台仍属当前云账号的同步设备；撤销当前设备时同时走本地停用/cursor 失效路径。 */
     suspend fun revokeDevice(deviceId: String, reason: String = "USER_REMOVED") {
