@@ -53,7 +53,7 @@ object DegreePreviewFixtures {
     )
 
     private fun assignment(key: String, name: String, credits: String, groupId: String) = CourseAssignment(
-        course = CompletedCourse(key, name, BigDecimal(credits)),
+        course = CompletedCourse(key, name, BigDecimal(credits), representativeAttemptId = "at-" + key),
         groupId = groupId,
         matchedBy = CourseMatchKind.CODE,
         otherCandidateGroupIds = emptyList()

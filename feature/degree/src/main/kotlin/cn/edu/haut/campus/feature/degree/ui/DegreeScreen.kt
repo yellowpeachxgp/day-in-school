@@ -31,13 +31,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.plan.AuditReport
+import cn.edu.haut.campus.core.plan.AuditStep
 import cn.edu.haut.campus.core.plan.GroupProgress
 import cn.edu.haut.campus.core.plan.Provenance
+import cn.edu.haut.campus.core.plan.TrainingPlanImporter
 import cn.edu.haut.campus.feature.degree.state.DegreeStatus
 import cn.edu.haut.campus.feature.degree.state.DegreeUiAction
 import cn.edu.haut.campus.feature.degree.state.DegreeUiState
 import java.math.BigDecimal
 import java.math.RoundingMode
+
+/** group-total 等规则级轨迹没有课程名；标题不得把 null 拼进用户可见文案。 */
+internal fun auditStepTitle(step: AuditStep): String {
+    val courseName = step.courseName?.takeIf { it.isNotBlank() }
+    return if (courseName != null) courseName + " · " + step.decision else step.decision
+}
 
 /** 毕业进度看板骨架 UI：只渲染 UiState、发送 UiAction，不持有任何业务逻辑。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -340,8 +348,9 @@ private fun GroupCard(
             if (expanded) {
                 HorizontalDivider()
                 Text("审计依据", style = MaterialTheme.typography.labelMedium)
+                val evidenceAssignments = group.subtreeAssignedCourses.ifEmpty { group.assignedCourses }
                 val steps = report.trace.filter { step ->
-                    group.assignedCourses.any { it.course.courseKey == step.courseKey } ||
+                    evidenceAssignments.any { it.course.courseKey == step.courseKey } ||
                         (step.rule == "group-total")
                 }
                 if (steps.isEmpty()) {
@@ -350,7 +359,7 @@ private fun GroupCard(
                 steps.forEach { step ->
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            step.courseName?.plus(" · ").plus(step.decision),
+                            auditStepTitle(step),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
                         )
@@ -368,13 +377,34 @@ private fun GroupCard(
                         )
                     }
                 }
-                group.assignedCourses.forEach { assignment ->
+                if (evidenceAssignments.isNotEmpty()) {
                     Text(
-                        "· " + assignment.course.courseName + " 入账 " +
-                            assignment.course.credits.stripTrailingZeros().toPlainString() + " 学分（" +
-                            (if (assignment.matchedBy.name == "CODE") "代码匹配" else "名称/认定匹配") + "）",
-                        style = MaterialTheme.typography.bodySmall
+                        if (evidenceAssignments.any { it.groupId != group.groupId }) "入账来源（含子组逐条来源）" else "入账来源",
+                        style = MaterialTheme.typography.labelMedium
                     )
+                }
+                evidenceAssignments.forEach { assignment ->
+                    val sourceTitle = report.groupById(assignment.groupId)?.title ?: assignment.groupId
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "· " + assignment.course.courseName + " 入账 " +
+                                    assignment.course.credits.stripTrailingZeros().toPlainString() + " 学分（" +
+                                    (if (assignment.matchedBy.name == "CODE") "代码匹配" else "名称/认定匹配") + "）",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "来源组：" + sourceTitle + if (assignment.overrideId != null) "；人工认定 " + assignment.overrideId else "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        assignment.course.representativeAttemptId?.let { attemptId ->
+                            TextButton(onClick = {
+                                onAction(DegreeUiAction.OpenOverride(attemptId, assignment.course.courseName))
+                            }) { Text("改派/排除") }
+                        }
+                    }
                 }
             }
         }
@@ -390,7 +420,10 @@ private fun ImportDialog(state: DegreeUiState, onAction: (DegreeUiAction) -> Uni
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "粘贴 univ-training-plan/v1 JSON（以 { 开头）或扁平 CSV 文本。CSV 列：" +
-                        "group_path,kind,required_credits,course_code,course_name,offering,prerequisites",
+                        "group_path,kind,required_credits,course_code,course_name,offering,prerequisites。" +
+                        "CSV 硬上限：" + TrainingPlanImporter.CSV_MAX_INPUT_CHARS + " 字符、" +
+                        TrainingPlanImporter.CSV_MAX_ROWS + " 行、路径 " + TrainingPlanImporter.CSV_MAX_GROUP_DEPTH +
+                        " 层；引号字段必须闭合",
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
