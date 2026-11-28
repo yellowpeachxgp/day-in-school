@@ -88,6 +88,9 @@ sealed interface CommunityResult<out T> {
     ) : CommunityResult<Nothing>
 
     data object AuthenticationRequired : CommunityResult<Nothing>
+
+    /** D2 保留能力的统一关闭态；不同于 active 协作功能的可配置 Disabled。 */
+    data object NotEnabled : CommunityResult<Nothing>
 }
 
 /** 成功 envelope 的轻量运行时视图；data 保持契约 JSON，避免在本卡伪造未生成 schema 类型。 */
