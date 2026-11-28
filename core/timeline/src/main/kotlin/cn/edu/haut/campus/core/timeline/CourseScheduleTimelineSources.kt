@@ -188,6 +188,13 @@ internal object CourseScheduleTimelineProjector {
             TimeEvidence.UNRESOLVED,
             TimeEvidence.INVALID -> null
         }
+        val timeSemantics = when (timeEvidence) {
+            TimeEvidence.UNRESOLVED,
+            TimeEvidence.INVALID -> TimelineTimeSemantics.UNCERTAIN
+            TimeEvidence.EXPLICIT_VALID,
+            TimeEvidence.TIMETABLE_VALID,
+            TimeEvidence.ESTIMATED -> TimelineTimeSemantics.TIMED
+        }
         val status = when {
             cancelled -> EventStatus.CANCELLED_TODAY
             timeEvidence != TimeEvidence.EXPLICIT_VALID && timeEvidence != TimeEvidence.TIMETABLE_VALID -> EventStatus.TENTATIVE
@@ -195,7 +202,7 @@ internal object CourseScheduleTimelineProjector {
             else -> EventStatus.SCHEDULED
         }
         val busy = when {
-            cancelled -> BusyLevel.BUSY
+            cancelled -> BusyLevel.FREE
             timeEvidence == TimeEvidence.EXPLICIT_VALID || timeEvidence == TimeEvidence.TIMETABLE_VALID -> BusyLevel.BUSY
             timeEvidence == TimeEvidence.ESTIMATED -> BusyLevel.TENTATIVE
             else -> BusyLevel.FREE
@@ -215,6 +222,7 @@ internal object CourseScheduleTimelineProjector {
             title = courseName,
             start = start,
             end = end,
+            timeSemantics = timeSemantics,
             zone = snapshot.zone,
             place = placeResolver.resolve(scope, rawRoom, buildingId, null),
             source = SourceRef(occurrenceEntity, provenance),

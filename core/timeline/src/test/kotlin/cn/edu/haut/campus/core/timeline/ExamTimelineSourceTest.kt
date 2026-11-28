@@ -14,7 +14,9 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExamTimelineSourceTest {
@@ -54,6 +56,8 @@ class ExamTimelineSourceTest {
         assertEquals(EventStatus.TENTATIVE, event.status)
         assertEquals(BusyLevel.FREE, event.busy)
         assertNull(event.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertFalse(event.isDeadline)
         assertEquals(exam.examDate!!.atTime(LocalTime.of(9, 0)).atZone(zone).toInstant(), event.start)
     }
 
@@ -66,6 +70,28 @@ class ExamTimelineSourceTest {
 
         assertEquals(EventStatus.TENTATIVE, event.status)
         assertNull(event.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertFalse(event.isDeadline)
+    }
+
+    @Test
+    fun 只有日期的考试是不确定锚点且导出不成截止点() = runTest {
+        val exam = exam(startTime = null, endTime = null)
+        val source = ExamTimelineSource(ExamTimelineInputProvider { _, _ -> flowOf(snapshot(listOf(exam))) })
+
+        val event = source.observe(scope, fixture.dayWindow(exam.examDate!!)).first().single()
+        val ics = StandardIcsExporter.export(listOf(event), "考试")
+        val roundTrip = IcsParser.parseEvents(ics).single()
+
+        assertEquals(exam.examDate!!.atStartOfDay(zone).toInstant(), event.start)
+        assertNull(event.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertFalse(event.isDeadline)
+        assertTrue(event.isTimeUncertain)
+        assertFalse(ics.contains("X-DIS-DEADLINE:TRUE"))
+        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\\r\\n"))
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\\r\\n"))
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, roundTrip.timeSemantics)
     }
 
     @Test
@@ -112,6 +138,7 @@ class ExamTimelineSourceTest {
 
     private fun exam(
         examDate: LocalDate? = LocalDate.of(2026, 9, 20),
+        startTime: LocalTime? = LocalTime.of(9, 0),
         endTime: LocalTime? = LocalTime.of(11, 0)
     ): ExamScheduleItem = ExamScheduleItem(
         id = "exam-1",
@@ -123,7 +150,7 @@ class ExamTimelineSourceTest {
         examFormat = "闭卷",
         rawTimeText = "2026-09-20 09:00-11:00",
         examDate = examDate,
-        startTime = LocalTime.of(9, 0),
+        startTime = startTime,
         endTime = endTime,
         rawRoom = "W111",
         seatNumber = "01",

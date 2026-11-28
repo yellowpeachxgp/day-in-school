@@ -59,6 +59,7 @@ class ExamTimelineSource(
             title = courseName,
             start = start,
             end = preciseWindow?.second,
+            timeSemantics = if (uncertainTime) TimelineTimeSemantics.UNCERTAIN else TimelineTimeSemantics.TIMED,
             zone = snapshot.zone,
             place = placeResolver.resolve(scope, rawRoom, null, campusName),
             source = SourceRef(examEntity, provenance),

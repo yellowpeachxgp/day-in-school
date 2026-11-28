@@ -24,6 +24,11 @@ data class PersonalEventDraft(
     val note: String? = null,
     val start: Instant,
     val end: Instant? = null,
+    val timeSemantics: TimelineTimeSemantics = if (end == null) {
+        TimelineTimeSemantics.DEADLINE
+    } else {
+        TimelineTimeSemantics.TIMED
+    },
     val zone: ZoneId,
     val placeText: String? = null,
     val place: PlaceRef? = null,
@@ -43,6 +48,17 @@ data class PersonalEventDraft(
         require(title.none { it.isISOControl() }) { "个人日程标题不能包含控制字符" }
         require(note == null || note.length <= 16 * 1024) { "个人日程备注过长" }
         if (end != null) require(end.isAfter(start)) { "定时个人日程 end 必须晚于 start" }
+        when (timeSemantics) {
+            TimelineTimeSemantics.TIMED -> require(end != null) { "TIMED 个人日程必须有 end" }
+            TimelineTimeSemantics.DEADLINE -> require(end == null) { "DEADLINE 个人日程 end 必须为 null" }
+            TimelineTimeSemantics.UNCERTAIN -> require(end == null) { "UNCERTAIN 个人日程不能伪造 end" }
+        }
+        require(timeSemantics != TimelineTimeSemantics.UNCERTAIN || busy == BusyLevel.FREE) {
+            "不确定个人日程没有可信占用窗口，busy 必须为 FREE"
+        }
+        require(status != EventStatus.CANCELLED_TODAY || busy == BusyLevel.FREE) {
+            "取消的个人日程不占忙，busy 必须为 FREE"
+        }
         require(placeText == null || placeText.length <= 512) { "个人日程地点文本过长" }
         require(place == null || place.schoolId == scope.schoolId) { "个人日程地点必须属于同一学校" }
         require(termId == null || termId.isNotBlank()) { "termId 不能为空白" }
@@ -72,7 +88,8 @@ interface PersonalEventStore {
 
 /**
  * personal_events 的纯 JVM 读取模型。id 是完整 TimelineEventId（含 personal: 前缀），
- * 与 W1-03 表行主键保持一致；TimelineSource 不再拼接或改写身份。
+ * 与 W1-03 表行主键保持一致；TimelineSource 不再拼接或改写身份。timeSemantics
+ * 显式区分真实截止点与时间证据不完整的锚点，避免 null end 被误读。
  */
 data class PersonalEventRecord(
     val id: TimelineEventId,
@@ -81,6 +98,11 @@ data class PersonalEventRecord(
     val title: String,
     val start: Instant,
     val end: Instant?,
+    val timeSemantics: TimelineTimeSemantics = if (end == null) {
+        TimelineTimeSemantics.DEADLINE
+    } else {
+        TimelineTimeSemantics.TIMED
+    },
     val zone: ZoneId,
     val place: PlaceRef?,
     val status: EventStatus,
@@ -96,6 +118,17 @@ data class PersonalEventRecord(
         require(title.isNotBlank() && title.length <= 256) { "个人日程标题为空或过长" }
         require(title.none { it.isISOControl() }) { "个人日程标题不能包含控制字符" }
         if (end != null) require(end.isAfter(start)) { "个人日程 end 必须晚于 start；截止时间点应使用 null end" }
+        when (timeSemantics) {
+            TimelineTimeSemantics.TIMED -> require(end != null) { "TIMED 个人日程必须有 end" }
+            TimelineTimeSemantics.DEADLINE -> require(end == null) { "DEADLINE 个人日程 end 必须为 null" }
+            TimelineTimeSemantics.UNCERTAIN -> require(end == null) { "UNCERTAIN 个人日程不能伪造 end" }
+        }
+        require(timeSemantics != TimelineTimeSemantics.UNCERTAIN || busy == BusyLevel.FREE) {
+            "不确定个人日程没有可信占用窗口，busy 必须为 FREE"
+        }
+        require(status != EventStatus.CANCELLED_TODAY || busy == BusyLevel.FREE) {
+            "取消的个人日程不占忙，busy 必须为 FREE"
+        }
         require(revision >= 0) { "个人日程 revision 不能为负" }
         require(place == null || place.schoolId == scope.schoolId) { "个人日程地点必须属于同一学校" }
         require(provenance.schoolId == scope.schoolId) { "provenance 学校与 scope 不一致" }
@@ -140,6 +173,7 @@ class PersonalTimelineSource(
             title = title,
             start = start,
             end = end,
+            timeSemantics = timeSemantics,
             zone = zone,
             place = place,
             source = SourceRef(sourceEntity ?: selfRef, eventProvenance),

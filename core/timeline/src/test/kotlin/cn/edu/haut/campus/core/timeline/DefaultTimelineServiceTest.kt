@@ -137,7 +137,8 @@ class DefaultTimelineServiceTest {
             "course:monday-cancelled",
             "2026-03-02T09:00:00Z",
             "2026-03-02T10:00:00Z",
-            status = EventStatus.CANCELLED_TODAY
+            status = EventStatus.CANCELLED_TODAY,
+            busy = BusyLevel.FREE
         )
         val makeup = event(
             "course:saturday-makeup",
@@ -173,7 +174,8 @@ class DefaultTimelineServiceTest {
             "course:cancelled",
             "2026-03-02T10:00:00Z",
             "2026-03-02T11:00:00Z",
-            status = EventStatus.CANCELLED_TODAY
+            status = EventStatus.CANCELLED_TODAY,
+            busy = BusyLevel.FREE
         )
         val busy = event("course:busy", "2026-03-02T09:00:00Z", "2026-03-02T10:00:00Z")
         val makeup = event(
@@ -205,7 +207,7 @@ class DefaultTimelineServiceTest {
     @Test
     fun `过滤前先解决 revision 最新取消不会让旧日程复活`() = runTest {
         val older = event("course:cancelled-latest", revision = 1)
-        val newerCancelled = older.copy(status = EventStatus.CANCELLED_TODAY, revision = 2)
+        val newerCancelled = older.copy(status = EventStatus.CANCELLED_TODAY, busy = BusyLevel.FREE, revision = 2)
         val service = DefaultTimelineService(
             FakeSource("course", setOf(TimelineKind.COURSE), listOf(listOf(older, newerCancelled)))
         )

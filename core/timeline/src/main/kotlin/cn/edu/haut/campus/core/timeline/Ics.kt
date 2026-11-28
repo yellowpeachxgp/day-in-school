@@ -18,6 +18,7 @@ data class IcsEventSnapshot(
     val title: String,
     val start: Instant,
     val end: Instant?,
+    val timeSemantics: TimelineTimeSemantics,
     val zone: ZoneId,
     val location: String?,
     val kind: TimelineKind?,
@@ -31,6 +32,7 @@ data class IcsEventSnapshot(
             title = event.title,
             start = event.start,
             end = event.end,
+            timeSemantics = event.timeSemantics,
             zone = event.zone,
             location = event.place?.id,
             kind = event.kind,
@@ -48,7 +50,9 @@ class IcsParseException(message: String, cause: Throwable? = null) : IllegalArgu
  *
  * UID 逐字使用 TimelineEventId.value；DTSTAMP 使用固定 epoch，因为 TimelineEvent 没有创建时间，
  * 同时保证同一输入导出结果幂等。scope、账号、source/provenance 不进入 ICS；忙闲、真实状态、
- * 截止点语义只放在 dis 私有扩展属性中，避免把学校账号标识泄漏到用户导出的日历文件。
+ * 截止点/不确定时间语义只放在 dis 私有扩展属性中，避免把学校账号标识泄漏到用户导出的日历文件。
+ * RFC 5545 没有「起止时间不确定」标准表示；UNCERTAIN 事件因此不写 DTEND、不伪装 DEADLINE，
+ * 用 X-DIS-TIME-UNCERTAIN 明示锚点语义，并以 TRANSPARENT 避免零时长事件占用日历忙闲。
  */
 object StandardIcsExporter : IcsExporter {
     private const val CRLF = "\r\n"
@@ -94,7 +98,10 @@ object StandardIcsExporter : IcsExporter {
                 EventStatus.RESCHEDULED,
                 EventStatus.DONE -> "CONFIRMED"
             }
-            lines += "TRANSP:" + if (event.busy == BusyLevel.FREE) "TRANSPARENT" else "OPAQUE"
+            val transparent = event.busy == BusyLevel.FREE ||
+                event.status == EventStatus.CANCELLED_TODAY ||
+                event.timeSemantics == TimelineTimeSemantics.UNCERTAIN
+            lines += "TRANSP:" + if (transparent) "TRANSPARENT" else "OPAQUE"
             if (event.revision <= MAX_ICS_SEQUENCE) {
                 lines += "SEQUENCE:" + event.revision.toString()
             }
@@ -103,7 +110,11 @@ object StandardIcsExporter : IcsExporter {
             lines += "X-DIS-EVENT-STATUS:" + event.status.name
             lines += "X-DIS-BUSY-LEVEL:" + event.busy.name
             lines += "X-DIS-REVISION:" + event.revision.toString()
-            if (event.end == null) lines += "X-DIS-DEADLINE:TRUE"
+            when (event.timeSemantics) {
+                TimelineTimeSemantics.DEADLINE -> lines += "X-DIS-DEADLINE:TRUE"
+                TimelineTimeSemantics.UNCERTAIN -> lines += "X-DIS-TIME-UNCERTAIN:TRUE"
+                TimelineTimeSemantics.TIMED -> Unit
+            }
             lines += "END:VEVENT"
         }
         lines += "END:VCALENDAR"
@@ -225,6 +236,7 @@ object IcsParser {
         var disRevision: Long? = null
         var sequence: Long? = null
         var deadline = false
+        var timeUncertain = false
 
         properties.forEach { property ->
             when (property.name) {
@@ -241,11 +253,8 @@ object IcsParser {
                 "X-DIS-EVENT-STATUS" -> disStatus = parseEnum<EventStatus>(property.value, property.name)
                 "X-DIS-BUSY-LEVEL" -> disBusy = parseEnum<BusyLevel>(property.value, property.name)
                 "X-DIS-REVISION" -> disRevision = parseNonNegativeLong(property.value, property.name)
-                "X-DIS-DEADLINE" -> deadline = when (property.value.uppercase()) {
-                    "TRUE" -> true
-                    "FALSE" -> false
-                    else -> throw IcsParseException("X-DIS-DEADLINE 必须是 TRUE 或 FALSE")
-                }
+                "X-DIS-DEADLINE" -> deadline = parseDisBoolean(property.value, property.name)
+                "X-DIS-TIME-UNCERTAIN" -> timeUncertain = parseDisBoolean(property.value, property.name)
             }
         }
 
@@ -254,16 +263,24 @@ object IcsParser {
         if (parsedEnd != null && parsedEnd.second != parsedStart.second) {
             throw IcsParseException("DTSTART 与 DTEND 时区不一致")
         }
-        if (deadline && parsedEnd != null) {
-            throw IcsParseException("截止点 VEVENT 不能同时携带 DTEND")
+        if (deadline && timeUncertain) {
+            throw IcsParseException("VEVENT 不能同时是截止点和不确定时间")
         }
-        if (!deadline && parsedEnd == null) {
+        val timeSemantics = when {
+            deadline -> TimelineTimeSemantics.DEADLINE
+            timeUncertain -> TimelineTimeSemantics.UNCERTAIN
+            else -> TimelineTimeSemantics.TIMED
+        }
+        if (timeSemantics != TimelineTimeSemantics.TIMED && parsedEnd != null) {
+            throw IcsParseException("截止点/不确定时间 VEVENT 不能同时携带 DTEND")
+        }
+        if (timeSemantics == TimelineTimeSemantics.TIMED && parsedEnd == null) {
             throw IcsParseException("非截止点 VEVENT 缺少 DTEND；RFC 5545 缺省是零时长而非 Timeline deadline")
         }
         if (disRevision != null && sequence != null && disRevision != sequence) {
             throw IcsParseException("SEQUENCE 与 X-DIS-REVISION 冲突")
         }
-        val endInstant = if (deadline) null else parsedEnd?.first
+        val endInstant = if (timeSemantics == TimelineTimeSemantics.TIMED) parsedEnd?.first else null
         if (endInstant != null && !endInstant.isAfter(parsedStart.first)) {
             throw IcsParseException("非截止点 VEVENT 的 DTEND 必须晚于 DTSTART")
         }
@@ -272,6 +289,7 @@ object IcsParser {
             title = title?.takeIf { it.isNotBlank() } ?: throw IcsParseException("VEVENT 缺少 SUMMARY"),
             start = parsedStart.first,
             end = endInstant,
+            timeSemantics = timeSemantics,
             zone = disZone ?: parsedStart.second,
             location = location,
             kind = disKind,
@@ -307,6 +325,12 @@ object IcsParser {
         ZoneId.of(value)
     } catch (error: DateTimeException) {
         throw IcsParseException("TZID 非法: $value", error)
+    }
+
+    private fun parseDisBoolean(value: String, property: String): Boolean = when (value.uppercase()) {
+        "TRUE" -> true
+        "FALSE" -> false
+        else -> throw IcsParseException(property + " 必须是 TRUE 或 FALSE")
     }
 
     private fun parseStandardStatus(value: String): EventStatus = when (value.uppercase()) {

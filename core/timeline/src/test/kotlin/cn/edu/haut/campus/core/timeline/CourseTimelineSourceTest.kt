@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -177,7 +178,12 @@ class CourseTimelineSourceTest {
         assertEquals(1, events.size)
         assertEquals("course:2026-2027-1/cancelled/ov-cancel", events.single().id.value)
         assertEquals(EventStatus.CANCELLED_TODAY, events.single().status)
+        assertEquals(BusyLevel.FREE, events.single().busy)
         assertEquals(emptyList<BusyBlock>(), busy)
+
+        val ics = StandardIcsExporter.export(events, "课程")
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\r\n"))
+        assertFalse(ics.contains("TRANSP:OPAQUE\r\n"))
     }
 
     @Test
@@ -270,8 +276,33 @@ class CourseTimelineSourceTest {
 
         assertEquals(EventStatus.TENTATIVE, event.status)
         assertNull(event.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertFalse(event.isDeadline)
+        assertTrue(event.isTimeUncertain)
         assertEquals(BusyLevel.FREE, event.busy)
         assertEquals(emptyList<BusyBlock>(), busy)
+
+        val ics = StandardIcsExporter.export(listOf(event), "课程")
+        assertFalse(ics.contains("X-DIS-DEADLINE:TRUE"))
+        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\r\n"))
+    }
+
+    @Test
+    fun 非法反向时间也标记不确定而不是截止点() = runTest {
+        val invalidRule = fixture.rule(weeks = setOf(3)).copy(
+            customStartTime = LocalTime.of(10, 0),
+            customEndTime = LocalTime.of(9, 0)
+        )
+        val snapshot = fixture.scheduleSnapshot(rules = listOf(invalidRule))
+        val source = CourseTimelineSource(CourseScheduleTimelineInputProvider { _, _ -> flowOf(snapshot) })
+
+        val event = source.observe(scope, fixture.dayWindow(LocalDate.of(2026, 9, 14))).first().single()
+
+        assertEquals(EventStatus.TENTATIVE, event.status)
+        assertNull(event.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertFalse(event.isDeadline)
+        assertEquals(BusyLevel.FREE, event.busy)
     }
 
     @Test
