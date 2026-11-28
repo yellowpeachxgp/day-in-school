@@ -179,8 +179,9 @@ class CampusGraphSnapshot private constructor(
     }
 
     /**
-     * 保守解析教务教室文本。纯数字房号在没有校区上下文且图内存在多校区楼宇时绝不自动落点；
-     * 该规则与 legacy ClassroomBuildingResolver 的跨校区防跳楼语义保持一致。
+     * 保守解析教务教室文本。纯数字房号即使有校区上下文也不按裸房号精确落点，
+     * 在没有校区上下文且图内存在多校区楼宇时更不自动落点；该规则与 legacy
+     * ClassroomBuildingResolver 的同校区待确认、跨校区防跳楼语义保持一致。
      */
     fun resolveRoomText(rawRoom: String, campusId: CampusId? = null): CampusGraphRoomResolution {
         val trimmed = rawRoom.trim()
@@ -196,38 +197,40 @@ class CampusGraphSnapshot private constructor(
         val multiCampusPool = allBuildingPool.map { it.ref.campusId }.distinct().size > 1
         val pureNumericRoom = Regex("^\\d{4,5}$").matches(trimmed)
 
-        if (!(pureNumericRoom && effectiveCampusId == null && multiCampusPool)) {
+        // 裸数字房号即使带校区上下文也不走 exact-room 快捷路径：房间→楼宇关联可能来自
+        // verifiedAt=null 的自习室候选名录，不能用楼宇本体核验反推关联可信；后续别名/编号
+        // 推断与 legacy 一致，最高只给 FUZZY_NEEDS_CONFIRMATION。
+        if (!pureNumericRoom) {
             exactRoomMatch(trimmed, roomPool)?.let { matched ->
-            return when (matched.size) {
-                1 -> {
-                    val room = matched.single()
-                    val building = byRef[room.buildingRef] as? BuildingNode
-                    // BuildingMatchStatus 描述的是楼宇落点是否可核验；房间对象只是更细证据。
-                    // 因而已核验楼宇内的房间解析不被自习室候选名录的 verifiedAt=null 降级，
-                    // 但 W111 这类挂在未核验楼宇上的房间仍不得冒充 EXACT_VERIFIED。
-                    val verified = building?.provenance?.verifiedAt != null
-                    CampusGraphRoomResolution(
+                return when (matched.size) {
+                    1 -> {
+                        val room = matched.single()
+                        val building = byRef[room.buildingRef] as? BuildingNode
+                        // 非纯数字的精确房间名（如嵩山1教101）仍以楼宇落点核验判定；
+                        // W111 这类挂在未核验楼宇上的房间不得冒充 EXACT_VERIFIED。
+                        val verified = building?.provenance?.verifiedAt != null
+                        CampusGraphRoomResolution(
+                            rawRoom = rawRoom,
+                            status = if (verified) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                            room = room,
+                            building = building,
+                            roomNumberHint = room.roomNumber,
+                            confidence = if (verified) 0.98f else 0.68f,
+                            matchedAlias = room.name,
+                            candidateBuildings = if (verified) emptyList() else listOfNotNull(building),
+                            reason = if (verified) null else "room-needs-verification"
+                        )
+                    }
+                    else -> CampusGraphRoomResolution(
                         rawRoom = rawRoom,
-                        status = if (verified) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
-                        room = room,
-                        building = building,
-                        roomNumberHint = room.roomNumber,
-                        confidence = if (verified) 0.98f else 0.68f,
-                        matchedAlias = room.name,
-                        candidateBuildings = if (verified) emptyList() else listOfNotNull(building),
-                        reason = if (verified) null else "room-needs-verification"
+                        status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
+                        roomNumberHint = roomNumberHint,
+                        confidence = 0.45f,
+                        candidateBuildings = matched.mapNotNull { byRef[it.buildingRef] as? BuildingNode }.distinctBy { it.ref }.take(4),
+                        reason = "multiple-exact-room-matches"
                     )
                 }
-                else -> CampusGraphRoomResolution(
-                    rawRoom = rawRoom,
-                    status = BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
-                    roomNumberHint = roomNumberHint,
-                    confidence = 0.45f,
-                    candidateBuildings = matched.mapNotNull { byRef[it.buildingRef] as? BuildingNode }.distinctBy { it.ref }.take(4),
-                    reason = "multiple-exact-room-matches"
-                )
             }
-        }
         }
 
         val directMatches = directBuildingMatches(trimmed, buildingPool)

@@ -178,6 +178,27 @@ class LegacyCampusGraphMigrationTest {
     }
 
     @Test
+    fun pureNumericRoomResolutionStaysFuzzyAndNeverCrossesCampus() {
+        val sameCampus = snapshot.resolveRoomText("3101", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, sameCampus.status)
+        assertEquals("b_t3", sameCampus.building?.legacyBuildingId)
+        assertNotNull(sameCampus.building?.provenance?.verifiedAt)
+        assertEquals("3101", sameCampus.room?.roomNumber)
+        assertNull(sameCampus.room?.provenance?.verifiedAt)
+        assertTrue(sameCampus.confidence < 0.98f)
+        assertEquals("alias-needs-confirmation", sameCampus.reason)
+
+        val wrongCampus = snapshot.resolveRoomText("3101", LegacyCampusGraphMigration.SONGSHANLU_CAMPUS_ID)
+        assertEquals(BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION, wrongCampus.status)
+        assertNull(wrongCampus.building)
+        assertNull(wrongCampus.room)
+        assertEquals("numeric-room-not-in-current-campus", wrongCampus.reason)
+        assertTrue(wrongCampus.candidateBuildings.isNotEmpty())
+        assertTrue(wrongCampus.candidateBuildings.all { it.ref.campusId == LegacyCampusGraphMigration.SONGSHANLU_CAMPUS_ID })
+        assertFalse(wrongCampus.candidateBuildings.any { it.ref.campusId == LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID })
+    }
+
+    @Test
     fun unverifiedLegacyAliasesStayOutOfExactAliasesAndResolveAsFuzzy() {
         val building = snapshot.buildingByLegacyId("b_t2", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)!!
         assertFalse(building.aliases.any { it == "A座" })
