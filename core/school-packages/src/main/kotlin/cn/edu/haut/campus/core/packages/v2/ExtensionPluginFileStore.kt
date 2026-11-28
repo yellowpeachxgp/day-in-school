@@ -192,11 +192,10 @@ class ExtensionPluginFileStore(
         val installationCount = if (Files.exists(installationFile(schoolId, pluginId))) 1 else 0
         val storageCount = countScopedFiles("storage", schoolId, pluginId)
         val cacheCount = countScopedFiles("cache", schoolId, pluginId)
-        val packageVersionCount = countRegularFiles(versionsDir.resolve(encodeKey(pluginId)))
         Files.deleteIfExists(installationFile(schoolId, pluginId))
         deleteRecursively(storageDir.resolve(encodeKey(schoolId)).resolve(encodeKey(pluginId)))
         deleteRecursively(cacheDir.resolve(encodeKey(schoolId)).resolve(encodeKey(pluginId)))
-        deleteRecursively(versionsDir.resolve(encodeKey(pluginId)))
+        val packageVersionCount = deleteUnreferencedPackageVersions(pluginId)
         appendAudit("UNINSTALL_PLUGIN", pluginId, schoolId, reason)
         return ExtensionCleanupResult(installationCount, storageCount, cacheCount, packageVersionCount)
     }
@@ -223,6 +222,60 @@ class ExtensionPluginFileStore(
 
     fun auditLines(): List<String> =
         if (Files.isRegularFile(auditPath)) Files.readAllLines(auditPath, StandardCharsets.UTF_8) else emptyList()
+
+    /**
+     * Package versions are shared by every school scope in this profile partition.
+     * Uninstalling one scope must never withdraw bytes another scope still needs for
+     * active rendering, pending review, or rollback. References are derived from the
+     * remaining installation pointers; a same-plugin unreadable installation is treated
+     * conservatively as still referencing every version rather than breaking that scope.
+     */
+    private fun deleteUnreferencedPackageVersions(pluginId: String): Int {
+        val pluginVersionsDir = versionsDir.resolve(encodeKey(pluginId))
+        if (!Files.isDirectory(pluginVersionsDir)) return 0
+        val referencedVersions = mutableSetOf<String>()
+        var preserveAllForUnreadableInstallation = false
+        if (Files.isDirectory(installationsDir)) {
+            Files.list(installationsDir).use { schoolDirs ->
+                for (schoolDir in schoolDirs) {
+                    if (!Files.isDirectory(schoolDir)) continue
+                    Files.list(schoolDir).use { installationFiles ->
+                        for (file in installationFiles) {
+                            if (!file.fileName.toString().endsWith(".json")) continue
+                            val installation = runCatching { readInstallation(file) }.getOrElse {
+                                if (file.fileName.toString() == encodeKey(pluginId) + ".json") {
+                                    preserveAllForUnreadableInstallation = true
+                                }
+                                null
+                            } ?: continue
+                            if (installation.pluginId == pluginId) {
+                                referencedVersions += encodeKey(installation.activeVersion)
+                                installation.pendingVersion?.let { referencedVersions += encodeKey(it) }
+                                installation.previousVersion?.let { referencedVersions += encodeKey(it) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (preserveAllForUnreadableInstallation) return 0
+
+        var deletedFiles = 0
+        if (referencedVersions.isEmpty()) {
+            deletedFiles = countRegularFiles(pluginVersionsDir)
+            deleteRecursively(pluginVersionsDir)
+            return deletedFiles
+        }
+        Files.list(pluginVersionsDir).use { versionEntries ->
+            for (entry in versionEntries) {
+                if (entry.fileName.toString() !in referencedVersions) {
+                    deletedFiles += countRegularFiles(entry)
+                    deleteRecursively(entry)
+                }
+            }
+        }
+        return deletedFiles
+    }
 
     private fun writeFileWithHook(target: Path, bytes: ByteArray, relativePath: String, writeIndex: Int) {
         Files.createDirectories(target.parent)

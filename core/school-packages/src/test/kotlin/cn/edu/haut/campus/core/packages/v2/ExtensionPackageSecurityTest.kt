@@ -231,6 +231,93 @@ class ExtensionPackageSecurityTest {
     }
 
     @Test
+    fun uninstallingOneSchoolKeepsSharedVersionForOtherSchoolAndOnlyClearsOwnScope() {
+        val root = Files.createTempDirectory("w602-cross-school-uninstall")
+        try {
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val artifact = "shared data".toByteArray()
+            val manifest = signedManifest(artifacts = mapOf("dist/data.txt" to artifact))
+            installer.install(manifest.toByteArray(), mapOf("dist/data.txt" to artifact), "schoolx")
+            installer.install(manifest.toByteArray(), mapOf("dist/data.txt" to artifact), "schooly")
+            installer.putScopedStorageForTest("schoolx", "org.example.signed", "x", ByteArray(1), cache = false)
+            installer.putScopedStorageForTest("schoolx", "org.example.signed", "x-cache", ByteArray(1), cache = true)
+            installer.putScopedStorageForTest("schooly", "org.example.signed", "y", ByteArray(1), cache = false)
+            installer.putScopedStorageForTest("schooly", "org.example.signed", "y-cache", ByteArray(1), cache = true)
+
+            val cleanup = installer.uninstall("schoolx", "org.example.signed", "cross school uninstall")
+
+            assertEquals(1, cleanup.installationFiles)
+            assertEquals(1, cleanup.storageFiles)
+            assertEquals(1, cleanup.cacheFiles)
+            assertEquals(0, cleanup.packageVersionFiles)
+            assertEquals(null, installer.installation("schoolx", "org.example.signed"))
+            assertEquals(0 to 0, installer.scopedStorageCounts("schoolx", "org.example.signed"))
+            assertEquals("1.0.0", installer.installation("schooly", "org.example.signed")?.activeVersion)
+            assertEquals(1 to 1, installer.scopedStorageCounts("schooly", "org.example.signed"))
+            assertEquals(
+                "org.example.signed",
+                installer.verifiedStoredPackage("schooly", "org.example.signed").manifest.pluginId
+            )
+            assertTrue("shared signed package bytes must survive for schooly", countRegularFiles(root.resolve("versions")) >= 2)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun uninstallDeletesOnlyVersionsNoRemainingSchoolInstallationReferences() {
+        val root = Files.createTempDirectory("w602-version-refcounts")
+        try {
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val v1Artifact = "v1".toByteArray()
+            val v2Artifact = "v2".toByteArray()
+            val v1 = signedManifest(version = "1.0.0", artifacts = mapOf("dist/data.txt" to v1Artifact))
+            val v2 = signedManifest(version = "1.1.0", artifacts = mapOf("dist/data.txt" to v2Artifact))
+            installer.install(v1.toByteArray(), mapOf("dist/data.txt" to v1Artifact), "schoolx")
+            installer.install(v1.toByteArray(), mapOf("dist/data.txt" to v1Artifact), "schooly")
+            installer.install(v2.toByteArray(), mapOf("dist/data.txt" to v2Artifact), "schoolx")
+            assertEquals("1.1.0", installer.installation("schoolx", "org.example.signed")?.activeVersion)
+
+            val cleanup = installer.uninstall("schoolx", "org.example.signed", "selective version cleanup")
+
+            assertEquals("only the exclusive v1.1 artifact files are removed", 2, cleanup.packageVersionFiles)
+            assertEquals("schooly v1.0 artifact files remain", 2L, countRegularFiles(root.resolve("versions")))
+            assertEquals("1.0.0", installer.verifiedStoredPackage("schooly", "org.example.signed").manifest.version.value)
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pendingUpgradeCanDisableAndReenableOldVersionWithoutImplicitConfirmation() {
+        val root = Files.createTempDirectory("w602-pending-toggle")
+        try {
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val artifact = "same".toByteArray()
+            val v1 = signedManifest(version = "1.0.0", permissions = listOf("ui.slot.render"), artifacts = mapOf("dist/data.txt" to artifact))
+            val v2 = signedManifest(version = "1.1.0", permissions = listOf("ui.slot.render", "network.request"), artifacts = mapOf("dist/data.txt" to artifact))
+            installer.install(v1.toByteArray(), mapOf("dist/data.txt" to artifact), "schoolx")
+            installer.install(v2.toByteArray(), mapOf("dist/data.txt" to artifact), "schoolx")
+            assertEquals("PENDING_PERMISSION_REVIEW", installer.installation("schoolx", "org.example.signed")?.status)
+
+            val disabled = installer.setEnabled("schoolx", "org.example.signed", false)
+            assertEquals("DISABLED", disabled.status)
+            assertEquals("1.0.0", disabled.activeVersion)
+            assertEquals("1.1.0", disabled.pendingVersion)
+            assertEquals(listOf("ui.slot.render"), disabled.grantedPermissions)
+
+            val reenabled = installer.setEnabled("schoolx", "org.example.signed", true)
+            assertEquals("PENDING_PERMISSION_REVIEW", reenabled.status)
+            assertEquals("1.0.0", reenabled.activeVersion)
+            assertEquals("1.1.0", reenabled.pendingVersion)
+            assertEquals(listOf("ui.slot.render"), reenabled.grantedPermissions)
+            assertFalse(reenabled.grantedPermissions.contains("network.request"))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun uninstallAndWipeRemoveInstallationAuthorizationStorageCacheAndWriteAudit() {
         val root = Files.createTempDirectory("w601a-cleanup")
         try {

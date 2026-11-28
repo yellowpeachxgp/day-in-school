@@ -143,9 +143,8 @@ class ExtensionPluginInstaller(
     fun setEnabled(schoolId: String, pluginId: String, enabled: Boolean): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val next = if (enabled) {
-            if (existing.status == "PENDING_PERMISSION_REVIEW") {
-                return confirmPendingPermissions(schoolId, pluginId)
-            }
+            // Enabling must never double as permission consent. A disabled upgrade enters
+            // review here; only the explicit confirmPendingPermissions action may activate it.
             existing.copy(
                 status = if (existing.pendingVersion != null) "PENDING_PERMISSION_REVIEW" else "ENABLED",
                 disabledReason = null,

@@ -108,9 +108,9 @@ class ExtensionUiPackageLoader(
             allowedOrigins = origins
         )
 
-        if (installation.status != "ENABLED") {
+        val oldVersionStillEffective = installation.status == "ENABLED" || installation.status == "PENDING_PERMISSION_REVIEW"
+        if (!oldVersionStillEffective) {
             val reason = when (installation.status) {
-                "PENDING_PERMISSION_REVIEW" -> "插件等待新增权限确认"
                 "DISABLED" -> installation.disabledReason ?: "插件已停用"
                 else -> "插件状态不可渲染：" + installation.status
             }

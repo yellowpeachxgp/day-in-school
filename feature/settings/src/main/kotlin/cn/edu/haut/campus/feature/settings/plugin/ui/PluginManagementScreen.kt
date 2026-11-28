@@ -156,12 +156,13 @@ private fun PluginCard(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val oldVersionStillEffective = plugin.status == "ENABLED" || plugin.status == "PENDING_PERMISSION_REVIEW"
                 FilledTonalButton(
-                    onClick = { onAction(PluginManagementUiAction.SetEnabled(plugin.pluginId, plugin.status != "ENABLED")) },
-                    enabled = actionsEnabled && plugin.status != "PENDING_PERMISSION_REVIEW" && plugin.status != "LEGACY_UNVERIFIED" &&
-                        (plugin.status == "ENABLED" || plugin.signatureVerified),
+                    onClick = { onAction(PluginManagementUiAction.SetEnabled(plugin.pluginId, !oldVersionStillEffective)) },
+                    enabled = actionsEnabled && plugin.status != "LEGACY_UNVERIFIED" &&
+                        (oldVersionStillEffective || plugin.signatureVerified),
                     modifier = Modifier.weight(1f).testTag("toggle-plugin")
-                ) { Text(if (plugin.status == "ENABLED") "停用" else "启用") }
+                ) { Text(if (oldVersionStillEffective) "停用" else "启用") }
                 OutlinedButton(
                     onClick = { onAction(PluginManagementUiAction.Rollback(plugin.pluginId)) },
                     enabled = actionsEnabled && plugin.previousVersion != null,

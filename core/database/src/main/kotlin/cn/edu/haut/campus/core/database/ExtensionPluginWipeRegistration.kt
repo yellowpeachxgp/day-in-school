@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.core.database
 
-import cn.edu.haut.campus.core.packages.v2.ExtensionPluginFileStore
 import java.io.File
 import java.security.MessageDigest
 
@@ -27,7 +26,7 @@ object ExtensionPluginWipeRegistration {
 
     fun register(repository: CampusRepository, pluginStoreRoot: File) {
         repository.registerBeforeWipeHook(HOOK_KEY) {
-            ExtensionPluginFileStore(pluginStoreRoot.toPath()).wipeAll("USER_DATA_DELETE")
+            ExtensionPluginRuntimeRegistry.installerForRoot(pluginStoreRoot).wipeAll("USER_DATA_DELETE")
             repository.databaseForAdoption().cloudAndParcelDao().clearInstalledExtensionPlugins()
         }
     }

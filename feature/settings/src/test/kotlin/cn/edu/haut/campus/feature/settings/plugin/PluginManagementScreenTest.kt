@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -70,6 +71,29 @@ class PluginManagementScreenTest {
                 PluginManagementUiAction.Uninstall("org.example.repair-club"),
                 PluginManagementUiAction.ConfirmUpgrade("org.example.parcel-notes")
             ),
+            actions
+        )
+    }
+
+    @Test
+    fun pendingUpgradeToggleDisablesOldVersionWithoutConfirmingUpgrade() {
+        val actions = mutableListOf<PluginManagementUiAction>()
+        val state = PluginManagementPreviewFixtures.content.copy(
+            plugins = listOf(PluginManagementPreviewFixtures.pendingUpgradePlugin)
+        )
+        composeRule.setContent {
+            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                PluginManagementScreen(state = state, onAction = { action -> actions += action })
+            }
+        }
+
+        val toggle = composeRule.onNodeWithTag("toggle-plugin").performScrollTo()
+        toggle.assertIsEnabled()
+        composeRule.onNodeWithText("停用").assertIsDisplayed()
+        toggle.performClick()
+
+        assertEquals(
+            listOf(PluginManagementUiAction.SetEnabled("org.example.parcel-notes", false)),
             actions
         )
     }

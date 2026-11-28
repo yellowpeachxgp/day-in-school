@@ -13,7 +13,8 @@ object VerifiedShowDataExecutor {
     ): String? = runCatching {
         require(command.type == "show_data") { "only show_data may read signed artifacts" }
         val installation = installer.installation(schoolId, command.pluginId) ?: error("插件未安装")
-        if (installation.status != "ENABLED") error("插件已停用")
+        val oldVersionStillEffective = installation.status == "ENABLED" || installation.status == "PENDING_PERMISSION_REVIEW"
+        if (!oldVersionStillEffective) error("插件已停用")
         val verified = installer.verifiedStoredPackage(schoolId, command.pluginId)
         val decision = DeclarativeCommandGate.resolve(
             pluginId = command.pluginId,

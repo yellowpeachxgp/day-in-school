@@ -90,6 +90,43 @@ class ExtensionUiPackageLoaderTest {
         assertTrue(contributions.all { it.errorMessage.orEmpty().contains("冲突") })
     }
 
+    @Test
+    fun pendingPermissionReviewKeepsOldActiveVersionEffectiveForRenderAndShowData() {
+        val root = Files.createTempDirectory("ui-runtime-pending-old-version")
+        try {
+            val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+            val registry = PublisherKeyRegistry(mapOf("test-publisher" to rawPublic(keyPair)))
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val slots = listOf("home.cards" to "demo.card")
+            val v1Artifacts = mapOf(
+                "cards/demo-card.json" to validCardJson(title = "旧版服务").toByteArray(Charsets.UTF_8),
+                "assets/data.json" to """{"items":["old"]}""".toByteArray(Charsets.UTF_8)
+            )
+            val v2Artifacts = mapOf(
+                "cards/demo-card.json" to validCardJson(title = "新版服务").toByteArray(Charsets.UTF_8),
+                "assets/data.json" to """{"items":["new"]}""".toByteArray(Charsets.UTF_8)
+            )
+            val v1 = signedManifest(keyPair, v1Artifacts, slots, version = "1.0.0", permissions = listOf("ui.slot.render"))
+            val v2 = signedManifest(keyPair, v2Artifacts, slots, version = "1.1.0", permissions = listOf("ui.slot.render", "network.request"))
+            installer.install(v1.toByteArray(Charsets.UTF_8), v1Artifacts, "schoolx")
+            installer.install(v2.toByteArray(Charsets.UTF_8), v2Artifacts, "schoolx")
+            val installation = installer.installation("schoolx", PLUGIN_ID)
+            assertEquals("PENDING_PERMISSION_REVIEW", installation?.status)
+            assertEquals("1.0.0", installation?.activeVersion)
+
+            val contribution = ExtensionUiPackageLoader(installer, "schoolx").loadContributions().single()
+
+            assertEquals(ExtensionContributionStatus.READY, contribution.status)
+            assertEquals("1.0.0", contribution.activeVersion)
+            assertEquals("旧版服务", contribution.card?.title)
+            val declaration = contribution.commands.single { it.name == "show" }
+            val command = ResolvedDeclarativeCommand(PLUGIN_ID, declaration, "show_data", "assets/data.json")
+            assertEquals("""{"items":["old"]}""", VerifiedShowDataExecutor.readUtf8(installer, "schoolx", command))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
     private fun withInstalledPlugin(
         cardJson: String?,
         slots: List<Pair<String, String>> = listOf("home.cards" to "demo.card"),
@@ -111,12 +148,12 @@ class ExtensionUiPackageLoaderTest {
         }
     }
 
-    private fun validCardJson(): String = """
+    private fun validCardJson(title: String = "合成服务"): String = """
         {
           "slot": "home.cards",
           "component_id": "demo-card",
           "template": "metric-card/v1",
-          "title": "合成服务",
+          "title": "$title",
           "nodes": [
             {"kind":"Metric","label":"排队","value":"3 人"},
             {"kind":"ActionButton","label":"查看","command":"show"}
@@ -124,7 +161,13 @@ class ExtensionUiPackageLoaderTest {
         }
     """.trimIndent()
 
-    private fun signedManifest(keyPair: KeyPair, artifacts: Map<String, ByteArray>, slots: List<Pair<String, String>>): String {
+    private fun signedManifest(
+        keyPair: KeyPair,
+        artifacts: Map<String, ByteArray>,
+        slots: List<Pair<String, String>>,
+        version: String = "1.0.0",
+        permissions: List<String> = listOf("ui.slot.render")
+    ): String {
         val artifactRows = artifacts.entries.sortedBy { it.key }.map { (path, bytes) ->
             JsonValue.Obj(mapOf(
                 "path" to JsonValue.Str(path),
@@ -136,10 +179,10 @@ class ExtensionUiPackageLoaderTest {
             "schema_version" to JsonValue.Str("dis-extension/v2"),
             "plugin_id" to JsonValue.Str(PLUGIN_ID),
             "name" to JsonValue.Str("Signed UI Fixture"),
-            "version" to JsonValue.Str("1.0.0"),
+            "version" to JsonValue.Str(version),
             "min_host_api" to JsonValue.Num("2"),
             "max_host_api" to JsonValue.Num("2"),
-            "permissions" to JsonValue.Arr(listOf(JsonValue.Str("ui.slot.render"))),
+            "permissions" to JsonValue.Arr(permissions.map { JsonValue.Str(it) }),
             "allowed_origins" to JsonValue.Arr(emptyList()),
             "ui_slots" to JsonValue.Arr(slots.map { (slotId, cardId) ->
                 JsonValue.Obj(mapOf(

@@ -17,8 +17,12 @@ object ExtensionPluginRuntimeRegistry {
     private val installers = HashMap<String, ExtensionPluginInstaller>()
 
     @Synchronized
-    fun installerForProfile(filesDir: File, profileId: String): ExtensionPluginInstaller {
-        val root = ExtensionPluginWipeRegistration.rootForProfile(filesDir, profileId)
+    fun installerForProfile(filesDir: File, profileId: String): ExtensionPluginInstaller =
+        installerForRoot(ExtensionPluginWipeRegistration.rootForProfile(filesDir, profileId))
+
+    /** Return the process-local installer for an already derived profile package partition. */
+    @Synchronized
+    fun installerForRoot(root: File): ExtensionPluginInstaller {
         val key = root.absoluteFile.toPath().normalize().toString()
         return installers.getOrPut(key) {
             ExtensionPluginInstaller(
